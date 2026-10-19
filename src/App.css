@@ -1275,3 +1275,80 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
    panel's width less its strip's (200 − 30 px), with the panel's slide */
 .react-flow__controls { transition: transform 0.2s ease-out; }
 .workspace > .palette.overlay:not(.inspector):not(.closing) ~ .canvas .react-flow__controls { transform: translateX(170px); }
+/* the Note's blocks: figures and pictures (width, place, numbered caption), text boxes, tables */
+.rich-doc .rich-pic { display: block; margin: 6pt auto 8pt; position: relative; }
+.rich-doc .rich-pic.align-left { margin-left: 0; margin-right: auto; }
+.rich-doc .rich-pic.align-right { margin-left: auto; margin-right: 0; }
+.rich-doc .rich-pic svg, .rich-doc .rich-pic img { display: block; width: 100%; height: auto; }
+.rich-doc .rich-pic.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rich-doc .rich-caption { font-size: 0.9em; margin-top: 3pt; text-align: center; display: flex; gap: 4px; justify-content: center; align-items: baseline; }
+.rich-doc figure.rich-pic .rich-caption { display: block; }
+.rich-doc .rich-caption input { flex: 1; min-width: 60px; font: inherit; color: inherit; background: transparent; border: none; border-bottom: 1px dashed #bbbbbb; padding: 0; }
+.rich-doc .rich-pic-missing { padding: 12px; border: 1px dashed #bbbbbb; color: #777777; text-align: center; }
+.rich-doc .rich-pic-tools { position: absolute; top: -30px; left: 0; display: flex; gap: 3px; align-items: center; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px; z-index: 2; font-size: var(--fs-small); white-space: nowrap; }
+.rich-doc .rich-pic-line { color: #555555; }
+.rich-doc .rich-box { margin-bottom: 6pt; }
+.rich-doc .rich-box > :last-child { margin-bottom: 0; }
+.rich-doc table { border-collapse: collapse; width: 100%; margin: 0 0 6pt; table-layout: fixed; }
+.rich-doc td, .rich-doc th { border: 0.75pt solid #777777; padding: 2pt 4pt; vertical-align: top; position: relative; }
+.rich-doc th { background: #f0f0f0; font-weight: bold; text-align: left; }
+.rich-doc td > p, .rich-doc th > p { margin: 0; }
+.rich-doc .selectedCell::after { content: ''; position: absolute; inset: 0; background: rgb(80 120 220 / 0.18); pointer-events: none; }
+.rich-doc .column-resize-handle { position: absolute; right: -2px; top: 0; bottom: 0; width: 4px; background: var(--accent); pointer-events: none; }
+.rich-doc .tableWrapper { overflow: visible; }
+.rt-context { border-left: 2px solid var(--accent); padding-left: 6px; }
+.rt-figure { width: 92px; }
+.rt-figure-icon { margin-left: -2px; opacity: 0.7; }
+/* formulas: in the editor (KaTeX; a click opens them), in the node (their LaTeX), the formula panel */
+.rich-doc [data-type='inline-math'], .rich-doc [data-type='block-math'] { cursor: pointer; }
+.rich-doc [data-type='block-math'] { text-align: center; margin: 6pt 0; }
+.rich-doc code.rich-math { font-family: 'Cambria Math', 'Times New Roman', serif; font-style: italic; color: #333333; }
+.rich-doc .rich-math-block { text-align: center; }
+.rt-math { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--border); border-radius: 6px; padding: 8px; background: var(--panel); }
+.rt-math-src { width: 100%; box-sizing: border-box; font-family: var(--mono); resize: vertical; }
+.rt-math-preview { background: #ffffff; color: #111111; border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; min-height: 28px; overflow-x: auto; text-align: center; }
+.rt-math-group { display: flex; flex-direction: column; gap: 2px; }
+.rt-math-items { display: flex; flex-wrap: wrap; gap: 2px; }
+.rt-math-btn { min-width: 30px; height: 30px; padding: 0 4px; background: #ffffff; color: #111111; border: 1px solid var(--border); border-radius: 4px; font-size: 12px; overflow: hidden; }
+.rt-math-btn:hover { border-color: var(--accent); }
+/* the note's toolbar: labelled groups (Insert, Export), the figures' menu, the page buttons (open: green, close: red) */
+.rt-labelled { border: 1px solid var(--border); border-radius: 5px; padding: 2px 4px; gap: 3px; }
+.rt-label { display: inline-flex; align-items: center; gap: 3px; color: var(--muted); font-size: var(--fs-small); margin-right: 2px; }
+.rt-wide { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 6px; }
+.rt-wide.on { background: var(--accent); color: #ffffff; border-color: var(--accent); }
+.rt-menu { position: relative; display: inline-flex; }
+.rt-menu-list { position: absolute; top: 100%; left: 0; z-index: 30; display: flex; flex-direction: column; gap: 2px; min-width: 220px; max-height: 260px; overflow-y: auto; padding: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 5px; box-shadow: 0 6px 18px rgb(0 0 0 / 0.25); }
+.rt-menu-list button { text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rt-btn.rt-page-open { background: #2e9e6a; border-color: #2e9e6a; color: #ffffff; }
+.rt-btn.rt-page-close { background: #d64545; border-color: #d64545; color: #ffffff; }
+.rt-btn.rt-page-open:hover, .rt-btn.rt-page-close:hover { filter: brightness(1.1); }
+/* placed blocks (figures, pictures, boxes, tables): a grip to move them, a corner to size them; the text flows beside
+   those that wrap; the note holds its floats */
+.rich-doc .rich-placed { position: relative; }
+.rich-doc .ProseMirror::after, .rich-doc.rich-full::after { content: ''; display: table; clear: both; }
+.rich-doc .rich-grip { position: absolute; top: 2px; left: 2px; width: 16px; height: 22px; display: flex; align-items: center; justify-content: center; color: #6a6a6a; background: rgb(255 255 255 / 0.85); border: 1px solid #d0d0d0; cursor: grab; opacity: 0; transition: opacity 0.12s; border-radius: 3px; z-index: 3; }
+.rich-doc .rich-placed:hover > .rich-grip, .rich-doc .rich-placed.selected > .rich-grip, .rich-doc .rich-placed.ProseMirror-selectednode > .rich-grip { opacity: 1; }
+.rich-doc .rich-grip:hover { background: #e8e8e8; color: #333333; }
+.rich-doc .rich-resize { position: absolute; right: -5px; bottom: -5px; width: 11px; height: 11px; background: #ffffff; border: 1.5px solid var(--accent); border-radius: 2px; cursor: nwse-resize; opacity: 0; z-index: 3; }
+.rich-doc .rich-placed:hover > .rich-resize, .rich-doc .rich-placed.selected > .rich-resize { opacity: 1; }
+.rich-doc .rich-table-frame { margin-bottom: 6pt; }
+/* a table's grip and corner outside it (not over its first and last cells); room for them on the paper */
+.rich-doc .rich-table-frame > .rich-grip { left: -22px; top: 0; }
+.rich-doc .rich-table-frame > .rich-resize { right: -13px; bottom: -13px; }
+.rich-paper { padding-left: 26px; padding-right: 16px; padding-bottom: 16px; }
+.rich-doc .rich-table-frame.ProseMirror-selectednode, .rich-doc .rich-box.ProseMirror-selectednode { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* the note's editor in the node itself (compact): no frame of its own, the text typed there; a figure or a picture as one
+   line (its number and caption), tables and boxes small and in the flow, nothing to drag or size there */
+.note-rich { overflow-y: auto; cursor: text; }
+.rich-editor.compact { gap: 0; }
+.rich-editor.compact .rich-paper { border: none; padding: 0; min-height: 0; max-height: none; background: transparent; overflow: visible; cursor: text; }
+.rich-editor.compact .rich-paper .rich-doc { min-height: 0; font-size: 9pt; }
+.rich-editor.compact .rich-pic, .rich-editor.compact .rich-box, .rich-editor.compact .rich-table-frame { width: auto !important; float: none !important; margin: 0 0 4px !important; }
+.rich-editor.compact .rich-pic > svg, .rich-editor.compact .rich-pic > img, .rich-editor.compact .rich-pic-missing, .rich-editor.compact .rich-pic-tools { display: none !important; }
+.rich-editor.compact .rich-caption { justify-content: flex-start; margin: 0; color: #555555; }
+.rich-editor.compact .rich-caption::before { content: '▣'; margin-right: 2px; }
+.rich-editor.compact .rich-grip, .rich-editor.compact .rich-resize, .rich-editor.compact .column-resize-handle { display: none !important; }
+.rich-editor.compact table { font-size: 0.85em; }
+.rich-editor.compact td, .rich-editor.compact th { padding: 1px 3px; }
+.rich-editor.compact .rich-pic.selected { outline: none; }

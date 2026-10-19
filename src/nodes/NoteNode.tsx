@@ -1,6 +1,7 @@
-// A free note (what was measured, how, why), kept in the project. A plain note is typed in the node; a formatted one (a
-// small word processor in the options panel, or on a page of its own) shows its beginning in the node — the whole
-// document is in the panel. The grip at its bottom-right corner changes its width and height (kept in the project).
+// A free note (what was measured, how, why), kept in the project. A plain note is typed in the node; a formatted one too
+// — its text typed in the node, its figures and pictures there as a line, its tables small — while the toolbar, the
+// blocks and the export are in the options panel (a small word processor), or on a page of its own. The grip at its
+// bottom-right corner changes its width and height (kept in the project).
 import { lazy, Suspense, useState } from 'react';
 import { NodeResizeControl, useReactFlow, useStore, type NodeProps } from '@xyflow/react';
 import type { AppNode, NoteNode } from '../types.ts';
@@ -25,8 +26,10 @@ export function NoteNodeView({ id, data }: NodeProps<NoteNode>) {
   return (
     <div className={`node node-note${sized ? ' sized' : ''}`}>
       {data.doc ? (
-        <div className="note-rich nowheel" title="Double-click: the note on a page of its own; click: the whole note in the options panel" onDoubleClick={(e) => (e.stopPropagation(), setPage(true))}>
-          <RichView doc={data.doc} limit={12} />
+        <div className="note-rich nodrag nowheel" title="Type here; the toolbar, figures, pictures, tables and the export: in the options panel">
+          <Suspense fallback={<RichView doc={data.doc} limit={12} />}>
+            <RichEditor doc={data.doc} text={data.text} onChange={change} compact />
+          </Suspense>
         </div>
       ) : (
         <textarea className="nodrag nowheel note-text" value={data.text} placeholder="Notes: sample, instrument, settings (formatting, the whole note: in the options panel)" spellCheck={false} onChange={(e) => updateNodeData(id, { text: e.target.value })} />

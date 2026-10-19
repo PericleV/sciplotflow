@@ -1,5 +1,9 @@
 // Checks of the computations (npm run check): CSV reading, formulas, statistics (against values computed with
 // numpy / by hand), axis ticks, and every example graph evaluated without errors.
+import { noteMarkdown } from '../src/nodes/noteMd.ts';
+import { noteDocx } from '../src/nodes/noteDocx.ts';
+import { latexToOmml } from '../src/nodes/noteMath.ts';
+import { copiedFigure, figureCopied } from '../src/nodes/figureClip.ts';
 import { docFromText, isPlain, plainOf } from '../src/nodes/richDoc.ts';
 import { NODE_HELP, NODE_SHORT } from '../src/help.ts';
 import * as Sg from '../src/engine/signal.ts';
@@ -4664,6 +4668,86 @@ for (const ex of EXAMPLES) {
   ok(d0.content?.length === 3 && plainOf(d0) === 'Sample A\n\nmeasured at 20 °C' && isPlain(d0), 'Note: a plain text as paragraphs, and back');
   const rich = { type: 'doc', content: [{ type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Results' }] }, { type: 'bulletList', content: [{ type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'a', marks: [{ type: 'bold' }] }] }] }, { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'b' }] }] }] }, { type: 'paragraph', attrs: { textAlign: 'center' }, content: [{ type: 'text', text: 'c' }] }] };
   ok(plainOf(rich) === 'Results\n• a\n• b\nc' && !isPlain(rich) && !isPlain({ type: 'doc', content: [{ type: 'paragraph', attrs: { textAlign: 'center' }, content: [{ type: 'text', text: 'x' }] }] }) && isPlain({ type: 'doc', content: [{ type: 'paragraph', attrs: { textAlign: 'left', indent: 0, lineHeight: null }, content: [{ type: 'text', text: 'x' }] }] }), 'Note: the plain text of a formatted document (headings, lists); formatting kept as a document');
+}
+{
+  // a Note as a Word file: styles, runs, lists (their own numbering), tables (merged cells), a box, a figure with its
+  // numbered caption, formulas as Word equations — every part well formed
+  const t = (text: string, marks?: object[]) => ({ type: 'text', text, ...(marks ? { marks } : {}) });
+  const p = (content: object[], attrs?: object) => ({ type: 'paragraph', ...(attrs ? { attrs } : {}), content });
+  const nd = {
+    type: 'doc',
+    content: [
+      { type: 'heading', attrs: { level: 1 }, content: [t('Results & <discussion>')] },
+      p([t('Bold', [{ type: 'bold' }]), t(' red', [{ type: 'textStyle', attrs: { color: '#cc0000', fontSize: '14pt' } }]), t('2', [{ type: 'superscript' }]), { type: 'inlineMath', attrs: { latex: 'x^2' } }], { textAlign: 'justify', lineHeight: '1.5', spaceAfter: 12, indent: 1 }),
+      { type: 'orderedList', attrs: { start: 3 }, content: [{ type: 'listItem', content: [p([t('third')])] }] },
+      { type: 'table', content: [{ type: 'tableRow', content: [{ type: 'tableHeader', attrs: { colspan: 2 }, content: [p([t('H')])] }] }, { type: 'tableRow', content: [{ type: 'tableCell', attrs: { rowspan: 2 }, content: [p([t('tall')])] }, { type: 'tableCell', content: [p([t('b')])] }] }, { type: 'tableRow', content: [{ type: 'tableCell', content: [p([t('c')])] }] }] },
+      { type: 'textBox', attrs: { width: 60, align: 'center', border: '#555555', borderWidth: 1, fill: '#fff3c4' }, content: [p([t('boxed')])] },
+      { type: 'figureRef', attrs: { node: 'p1', width: 80, caption: 'The spectrum.' } },
+      { type: 'blockMath', attrs: { latex: String.raw`\frac{\Delta R}{R} = \sum_{i=1}^{n} x_i^2` } },
+    ],
+  };
+  const files = unzipSync(noteDocx(nd, (n) => (n.type === 'figureRef' ? { bytes: new Uint8Array([137, 80, 78, 71]), ext: 'png', w: 300, h: 200 } : null), latexToOmml, 'Test'));
+  const dx = strFromU8(files['word/document.xml']);
+  const balanced = (xml: string) => {
+    const stack: string[] = [];
+    for (const m of xml.matchAll(/<(\/?)([\w:]+)[^>]*?(\/?)>/g)) {
+      if (m[0].startsWith('<?')) continue;
+      if (m[3]) continue;
+      if (!m[1]) stack.push(m[2]);
+      else if (stack.pop() !== m[2]) return false;
+    }
+    return stack.length === 0;
+  };
+  const parts = Object.keys(files).filter((n) => /\.(xml|rels)$/.test(n));
+  ok(parts.every((n) => balanced(strFromU8(files[n]))) && !!files['word/media/image10.png'], `Note ▸ Word: every part well formed, the figure's picture inside (${parts.length} parts)`);
+  ok(
+    ['w:pStyle w:val="Heading1"', 'Results &amp; &lt;discussion&gt;', 'w:jc w:val="both"', 'w:line="360"', 'w:after="240"', 'w:ind w:left="360"', 'w:color w:val="CC0000"', 'w:sz w:val="28"', 'w:vertAlign w:val="superscript"', 'w:gridSpan w:val="2"', 'w:vMerge w:val="restart"', 'w:fill="FFF3C4"', 'SEQ Figure', 'The spectrum.', '<m:oMathPara>', '<m:nary>', '<m:f>'].every((k) => dx.includes(k)) && strFromU8(files['word/numbering.xml']).includes('w:startOverride w:val="3"'),
+    'Note ▸ Word: headings, alignment, spacing, indent, colours, sizes, superscript, merged cells, a filled box, a numbered caption, equations, a list starting at 3',
+  );
+  // placed blocks in Word: a figure with the text beside it, a box, a table — floating (tblpPr) at their side and width
+  const placed = unzipSync(
+    noteDocx(
+      {
+        type: 'doc',
+        content: [
+          { type: 'figureRef', attrs: { node: 'p1', width: 40, align: 'right', wrap: true, caption: 'Beside the text.' } },
+          p([t('text beside the figure')]),
+          { type: 'textBox', attrs: { width: 30, align: 'left', wrap: true }, content: [p([t('box')])] },
+          { type: 'table', attrs: { width: 50, align: 'center' }, content: [{ type: 'tableRow', content: [{ type: 'tableCell', content: [p([t('a')])] }] }] },
+        ],
+      },
+      () => ({ bytes: new Uint8Array([137, 80, 78, 71]), ext: 'png', w: 300, h: 200 }),
+    ),
+  );
+  const px = strFromU8(placed['word/document.xml']);
+  ok(px.includes('w:tblpXSpec="right"') && px.includes('w:tblpXSpec="left"') && px.includes('<w:tblW w:w="2000" w:type="pct"/>') && px.includes('<w:tblW w:w="1500" w:type="pct"/>') && px.includes('<w:tblW w:w="2500" w:type="pct"/><w:jc w:val="center"/>') && balanced(px), 'Note ▸ Word: a figure and a box with the text beside them float at their side; a table at its width, centred');
+  // Markdown: marks, links, lists, a table, a box as a quote, a figure's file and caption, formulas
+  const md = noteMarkdown(
+    {
+      type: 'doc',
+      content: [
+        { type: 'heading', attrs: { level: 2 }, content: [t('Results')] },
+        p([t('A '), t('bold', [{ type: 'bold' }]), t(' x'), t('2', [{ type: 'superscript' }]), t(' '), t('here', [{ type: 'link', attrs: { href: 'https://example.org' } }]), t(' 5*3 '), { type: 'inlineMath', attrs: { latex: String.raw`\alpha` } }]),
+        { type: 'bulletList', content: [{ type: 'listItem', content: [p([t('one')]), { type: 'orderedList', attrs: { start: 1 }, content: [{ type: 'listItem', content: [p([t('nested')])] }] }] }] },
+        { type: 'table', content: [{ type: 'tableRow', content: [{ type: 'tableHeader', content: [p([t('λ')])] }, { type: 'tableHeader', content: [p([t('R')])] }] }, { type: 'tableRow', content: [{ type: 'tableCell', content: [p([t('520')])] }, { type: 'tableCell', content: [p([t('0.8|x')])] }] }] },
+        { type: 'textBox', content: [p([t('boxed')])] },
+        { type: 'figureRef', attrs: { node: 'p', caption: 'The spectrum.' } },
+        { type: 'blockMath', attrs: { latex: 'E = mc^2' } },
+      ],
+    },
+    (_n, k) => `figures/figure-${k}.png`,
+  );
+  ok(
+    md.startsWith('## Results\n\nA **bold** x<sup>2</sup> [here](https://example.org) 5\\*3 $\\alpha$\n\n- one\n  1. nested\n\n| λ | R |\n| --- | --- |\n| 520 | 0.8\\|x |\n\n> boxed\n\n![The spectrum.](figures/figure-1.png)\n\n*Figure 1. The spectrum.*\n\n$$\nE = mc^2\n$$'),
+    `Note ▸ Markdown: headings, marks, links, nested lists, a table, a box, a figure's file and caption, formulas (${JSON.stringify(md.slice(0, 120))})`,
+  );
+  // LaTeX as Word equations
+  const om = (l: string) => latexToOmml(l, false);
+  ok(om(String.raw`\frac{a}{b}`).includes('<m:f><m:num>') && om(String.raw`\sqrt[3]{x}`).includes('<m:deg>') && om(String.raw`\int_0^1 f`).includes('<m:chr m:val="∫"/>') && om(String.raw`\hat{x}`).includes('<m:acc>') && om(String.raw`\bar{y}`).includes('<m:bar>') && om(String.raw`\begin{pmatrix} a & b \\ c & d \end{pmatrix}`).includes('<m:mr>') && om(String.raw`\binom{n}{k}`).includes('noBar') && om('x_i^2').includes('<m:sSubSup>'), 'Note ▸ formulas: fractions, roots, integrals, accents, bars, matrices, binomials, sub- and superscripts as Word equations');
+  ok(plainOf({ type: 'doc', content: [p([t('a '), { type: 'inlineMath', attrs: { latex: 'x^2' } }]), { type: 'blockMath', attrs: { latex: 'E=mc^2' } }] }) === 'a $x^2$\n$$E=mc^2$$', 'Note: the plain text of formulas (their LaTeX)');
+  // a figure copied under its node: pasted (an image of its size) into a note, the live figure
+  figureCopied('plot-a', 1004, 768);
+  ok(copiedFigure(1004, 768) === 'plot-a' && copiedFigure(1003, 768) === null, 'Note: a figure just copied is known by the size of its picture');
 }
 {
   // the help in a node: every node a short text (a sentence or two), the whole one in Help

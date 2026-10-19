@@ -4,6 +4,7 @@
 import { useContext, useEffect, useId, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useNodeId, useReactFlow } from '@xyflow/react';
+import { figureCopied } from './figureClip.ts';
 import { makeEmbedded, type Embedded } from '../figure/embed.ts';
 import { ProjectInfoContext } from '../projectInfo.ts';
 import { exportPng, exportSvg, exportTiff, copyPng, printPdf, pixelSize, safeName, MAX_PIXELS } from '../figure/export.ts';
@@ -444,7 +445,11 @@ export function FigureView({ fig, width, maxHeight = 480, page, setPage, layoutT
         <button className="nodrag" disabled={busy} title={`TIFF (deflate compression), ${px.w} × ${px.h} pixels at ${page.dpi} dpi — what many journals ask for`} onClick={() => svg() && run(() => exportTiff(svg()!, fig, page.dpi, name))}>
           TIFF
         </button>
-        <button className="nodrag" disabled={busy} title="Copy the figure as an image (paste it into a document or a slide)" onClick={() => svg() && run(() => copyPng(svg()!, fig, Math.min(page.dpi, 300)))}>
+        <button className="nodrag" disabled={busy} title="Copy the figure as an image (paste it into a document or a slide; into a Note of this project: the live figure)" onClick={() => svg() && run(async () => {
+            await copyPng(svg()!, fig, Math.min(page.dpi, 300));
+            const cp = pixelSize(fig, Math.min(page.dpi, 300));
+            if (nodeId) figureCopied(nodeId, cp.w, cp.h);
+          })}>
           Copy
         </button>
         <Select
