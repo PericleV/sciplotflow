@@ -1,0 +1,1702 @@
+// Example projects (Examples menu): complete graphs that show how the nodes work together.
+import { peakRunKey } from './engine/peaks.ts';
+import type { Edge } from '@xyflow/react';
+import { REGION_COLORS } from './nodes/regionColors.ts';
+import { PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
+import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, COLORBAR_DEFAULTS, CURVE_STYLE_DEFAULTS, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, SIDE_DEFAULTS, TEXT_SPEC_DEFAULTS, type AxesStyle, type CurveStyle, type SideStyle } from './figure/spec.ts';
+import { PROJECT_VERSION, type Project } from './project.ts';
+import type { AnnotationItem, AppNode, ImportSheet, NodeType, Plot1DData, PlotLegend, PlotPage } from './types.ts';
+import type { FitParamSpec } from './engine/fit.ts';
+import { SC_D, SC_LAMBDA, SC_R } from './data/strongCoupling.ts';
+import { JOHNSON_AU } from './data/johnsonGold.ts';
+
+type Builder = { nodes: AppNode[]; edges: Edge[] };
+const builder = (): Builder => ({ nodes: [], edges: [] });
+function add<T extends NodeType>(b: Builder, type: T, id: string, x: number, y: number, data: Extract<AppNode, { type: T }>['data']): string {
+  const d = structuredClone(data) as Record<string, unknown>;
+  // a Peak analyzer of an example: shown fitted (as if Run analysis had been pressed)
+  if (type === 'peaks' && d.needRun && !d.ran) d.ran = peakRunKey(d);
+  b.nodes.push({ id, type, position: { x, y }, data: d } as AppNode);
+  return id;
+}
+function link(b: Builder, source: string, target: string, targetHandle: string, sourceHandle = 'out') {
+  b.edges.push({ id: `e-${source}-${sourceHandle}-${target}-${targetHandle}`, source, sourceHandle, target, targetHandle });
+}
+// A 1D plot: its curves, axes, legend (hidden when not given), annotations and page.
+type Figure = { axes?: Partial<AxesStyle>; legend?: Partial<PlotLegend>; notes?: AnnotationItem[]; page?: Partial<PlotPage> };
+const plot = (curves: Omit<Plot1DData, 'axes' | 'legend' | 'annotations' | 'page'>, f: Figure = {}): Plot1DData => ({
+  ...curves,
+  axes: f.axes ? axes(f.axes) : undefined,
+  legend: f.legend ? { ...PLOT1D_DEFAULTS.legend!, ...f.legend, show: true } : { show: false },
+  annotations: f.notes ?? [],
+  page: { ...PLOT_PAGE_DEFAULTS, ...f.page },
+});
+const note = <T extends AnnotationItem['type']>(id: string, type: T, spec: object): AnnotationItem => ({ id, type, spec }) as AnnotationItem;
+const project = (b: Builder, name: string): Project => ({ app: 'graph-flow', version: PROJECT_VERSION, nodes: b.nodes, edges: b.edges, name });
+const curve = (k: number, patch: Partial<CurveStyle> = {}): CurveStyle => ({ ...CURVE_STYLE_DEFAULTS, color: PALETTE[k], ...patch });
+const side = (patch: Partial<SideStyle> = {}): SideStyle => ({ ...SIDE_DEFAULTS, ...patch });
+function axes(patch: Partial<AxesStyle> = {}): AxesStyle {
+  return { ...AXES_STYLE_DEFAULTS, ...patch };
+}
+
+// A seeded generator (the example data are the same every time).
+function rng(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), a | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const gauss = (r: () => number) => Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(2 * Math.PI * r());
+
+// An instrument export: two header lines to skip, names and units (written into the names), semicolons and decimal commas — an absorbance
+// spectrum of gold nanoparticles (plasmon band near 520 nm) measured three times.
+function uvvisFile(): string {
+  const r = rng(7);
+  const lines = ['UV-Vis spectrometer export;;;', 'Sample: Au nanoparticles, 20 nm, 1 cm cuvette;;;', 'Wavelength;A1;A2;A3', 'nm;a.u.;a.u.;a.u.'];
+  for (let w = 400; w <= 700; w += 5) {
+    const base = 0.35 * Math.exp(-(w - 400) / 140) + 0.62 * Math.exp(-(((w - 521) / 38) ** 2)) + 0.04;
+    const reps = [0, 1, 2].map(() => (base * (1 + 0.012 * gauss(r)) + 0.006 * gauss(r)).toFixed(4).replace('.', ','));
+    lines.push([String(w), ...reps].join(';'));
+  }
+  return lines.join('\r\n');
+}
+
+function spectrumExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'import-uv', 0, 0, { ...IMPORT_DEFAULTS, fileName: 'AuNP_uvvis.csv', text: uvvisFile(), textId: 'example', csv: { ...IMPORT_DEFAULTS.csv, skip: 2, nameLine: 1, unitLine: 2 } });
+  // the three replicates of every wavelength: mean ± SD (a dataset: Wavelength X, Mean Y, SD ±Y)
+  const rows = add(b, 'stats', 'replicates', 640, 0, { ...STATS_DEFAULTS, on: 'rows', cols: 'A1-A3', err: 'sd' });
+  link(b, imp, rows, 'in');
+  // the statistics of each replicate over the plasmon band (500–560 nm)
+  const stats = add(b, 'stats', 'stats-band', 640, 820, { cols: 'A1-A3', rows: { mode: 'range', by: 'x', ranges: [{ from: 500, to: 560 }] } });
+  link(b, imp, stats, 'in');
+  // an arrow on the plasmon band, in the units of the data (it stays on the peak whatever the limits), and its label
+  const p1 = add(
+    b,
+    'plot1d',
+    'plot-mean',
+    1160,
+    0,
+    plot(
+      { label: 'mean ± SD (n = 3)', style: curve(1, { mode: 'linesymbol', symbol: 'circle', symbolSize: 3.5, lineWidth: 0.8, errCap: 2.5 }), cols: { x: 'Wavelength (nm)', y: 'Mean', yerr: 'SD' } },
+      {
+        axes: {
+          x: { ...AXES_STYLE_DEFAULTS.x, min: 400, max: 700, minor: 1 },
+          y: { ...AXES_STYLE_DEFAULTS.y, range: 'padded' },
+          // the top axis shows the photon energy of the bottom wavelengths: E [eV] = 1239.84 / λ [nm]
+          top: { mode: 'function', scale: { ...AXES_STYLE_DEFAULTS.x, step: 0.25, minor: 0 }, fn: '1239.84/x' },
+          sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Wavelength λ (nm)' }), left: side({ title: 'Absorbance (a.u.)' }), top: side({ title: 'Photon energy (eV)', minorTicks: false }) },
+        },
+        legend: { x: 3, y: 30, anchor: 'tl' },
+        notes: [
+          note('arrow-lspr', 'shape', { ...SHAPE_DEFAULTS, kind: 'arrow', coords: 'data', x1: 590, y1: 0.72, x2: 535, y2: 0.78, width: 0.75, headSize: 5 }),
+          note('text-lspr', 'text', { ...TEXT_SPEC_DEFAULTS, text: 'LSPR\nλ_{max} ≈ 520 nm', coords: 'data', x: 593, y: 0.72, anchor: 'cl', style: { size: 7 } }),
+        ],
+        page: { name: 'AuNP_absorbance' },
+      },
+    ),
+  );
+  link(b, rows, p1, 'dataset');
+  return project(b, 'UV-Vis spectrum: mean ± SD of three measurements');
+}
+
+function generatedExample(): Project {
+  const b = builder();
+  const t = add(b, 'gencol', 'gen-t', 0, 0, { ...GENCOL_DEFAULTS, name: 'Time (ns)', mode: 'linspace', count: 301, start: 0, stop: 10 });
+  const model = add(b, 'mathcol', 'model', 420, 0, { ...MATHCOL_DEFAULTS, formula: 'exp(-A/3)*cos(2*pi*A/1.6)', name: 'Signal (mV)' });
+  link(b, t, model, 'in-0');
+  const env = add(b, 'mathcol', 'envelope', 420, 300, { ...MATHCOL_DEFAULTS, formula: 'exp(-A/3)', name: 'Envelope (mV)' });
+  link(b, t, env, 'in-0');
+  const ts = add(b, 'gencol', 'gen-ts', 0, 520, { ...GENCOL_DEFAULTS, name: 'Time (ns)', mode: 'linspace', count: 41, start: 0, stop: 10 });
+  const noise = add(b, 'gencol', 'gen-noise', 420, 560, { ...GENCOL_DEFAULTS, name: 'noise (mV)', mode: 'random', dist: 'normal', a: 0, b: 0.06, seed: 3 });
+  link(b, ts, noise, 'like');
+  const meas = add(b, 'mathcol', 'measured', 840, 520, { ...MATHCOL_DEFAULTS, formula: 'exp(-A/3)*cos(2*pi*A/1.6) + B', name: 'Measured (mV)' });
+  link(b, ts, meas, 'in-0');
+  link(b, noise, meas, 'in-1');
+  // one Plot, three curves: the measured points have their own X (41 points), the envelope shares the X of the model
+  const p = add(
+    b,
+    'plot1d',
+    'plot-osc',
+    1260,
+    0,
+    plot(
+      {
+        label: 'model',
+        style: curve(1, { lineWidth: 1 }),
+        rows: [
+          { label: 'envelope e^{−t/τ}', style: curve(0, { lineWidth: 0.75, dash: 'dash' }) },
+          { label: 'measured', style: curve(2, { mode: 'scatter', symbol: 'circle', symbolFill: 'open', symbolSize: 4, symbolEdge: 0.8 }) },
+        ],
+      },
+      {
+        axes: { x: { ...AXES_STYLE_DEFAULTS.x, min: 0, max: 10 }, sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Time \\italic{t} (ns)' }), left: side({ title: 'Signal (mV)' }) } },
+        legend: { x: 96, y: 4, anchor: 'tr', frame: 'line' },
+        page: { name: 'damped_oscillation' },
+      },
+    ),
+  );
+  link(b, t, p, 'x');
+  link(b, model, p, 'y');
+  link(b, env, p, 'y-1');
+  link(b, ts, p, 'x-2');
+  link(b, meas, p, 'y-2');
+  return project(b, 'Generated data: a damped oscillation and noisy samples');
+}
+
+// Two panels: points coloured by their y value with a colour bar, and the same data cleaned by Math column rules; a Merge
+// puts the two Plots side by side.
+function panelsExample(): Project {
+  const b = builder();
+  const x = add(b, 'gencol', 'gen-x', 0, 0, { ...GENCOL_DEFAULTS, name: 'Temperature (°C)', mode: 'linspace', count: 60, start: 20, stop: 80 });
+  const noise = add(b, 'gencol', 'gen-n', 0, 420, { ...GENCOL_DEFAULTS, name: 'noise', mode: 'random', dist: 'normal', a: 0, b: 0.03, seed: 11 });
+  link(b, x, noise, 'like');
+  // a melting curve with noise and two spikes (rows 12 and 37)
+  const y = add(b, 'mathcol', 'signal', 420, 0, { ...MATHCOL_DEFAULTS, formula: '1/(1 + exp(-(A - 50)/6)) + B + if(i == 12 or i == 37, 0.6, 0)', name: 'Fraction unfolded' });
+  link(b, x, y, 'in-0');
+  link(b, noise, y, 'in-1');
+  // the two spikes removed: those rows become empty, the others stay
+  const clean = add(b, 'mathcol', 'clean', 840, 0, { ...MATHCOL_DEFAULTS, name: 'Fraction unfolded (cleaned)', formula: 'A', rules: [{ mode: 'rows', rows: '12, 37', formula: 'NaN' }] });
+  link(b, y, clean, 'in-0');
+  const common = { x: { ...AXES_STYLE_DEFAULTS.x, min: 20, max: 80 }, y: { ...AXES_STYLE_DEFAULTS.y, range: 'padded' as const } };
+  const sides = { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Temperature (\\deg C)' }), left: side({ title: 'Fraction unfolded' }) };
+  const pa = add(
+    b,
+    'plot1d',
+    'plot-a',
+    1300,
+    0,
+    plot(
+      { label: 'measured', style: curve(0, { mode: 'scatter', symbol: 'circle', symbolSize: 4.5, symbolEdge: 0.3, edgeColor: '#333333', colorBy: 'y', cmap: 'viridis' }) },
+      { axes: { ...common, sides }, notes: [note('cbar', 'colorbar', { ...COLORBAR_DEFAULTS, x: 103, y: 0, length: 100, thickness: 5, title: 'f' })], page: { name: 'melting_a' } },
+    ),
+  );
+  link(b, x, pa, 'x');
+  link(b, y, pa, 'y');
+  const pb = add(
+    b,
+    'plot1d',
+    'plot-b',
+    1300,
+    1300,
+    plot(
+      { label: 'cleaned', style: curve(1, { mode: 'linesymbol', connect: 'spline', symbol: 'square', symbolSize: 3, symbolFill: 'white', symbolEdge: 0.7 }) },
+      {
+        axes: { ...common, sides },
+        notes: [
+          note('band', 'shape', { ...SHAPE_DEFAULTS, kind: 'xband', coords: 'data', x1: 44, x2: 56, color: '#E69F00', fillOpacity: 0.18, z: -1 }),
+          note('tm', 'text', { ...TEXT_SPEC_DEFAULTS, text: '\\italic{T}_{m}', coords: 'data', x: 50, y: 0.05, anchor: 'bc' }),
+        ],
+        page: { name: 'melting_b' },
+      },
+    ),
+  );
+  link(b, x, pb, 'x');
+  link(b, clean, pb, 'y');
+  // the two Plots side by side, one Y range, the numbers of the inner axis left out
+  const cv = add(b, 'canvas', 'canvas-2', 2000, 0, { ...CANVAS_DEFAULTS, width: 180, height: 70, panels: '(a)', name: 'melting_two_panels', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 2, hgap: 2, shareY: 'row', inner: false } });
+  link(b, pa, cv, 'figures', 'figure');
+  link(b, pb, cv, 'figures', 'figure');
+  return project(b, 'Two panels: colour by value, colour bar, spikes removed');
+}
+
+// Three quantities of one run on three Y axes, and an X axis with a break over the hours without data.
+// A cyclic voltammogram as a potentiostat exports it: one table, the potential going from −0.2 V to 0.8 V and back, three
+// cycles; the current: the double layer (± a constant) plus an oxidation peak going up and a reduction peak coming down,
+// a little smaller every cycle.
+function cvFile(): string {
+  const r = rng(11);
+  const lines = ['Potential (V)\tCurrent (mA)'];
+  const peak = (e: number, e0: number, w: number) => Math.exp(-(((e - e0) / w) ** 2));
+  for (let c = 0; c < 3; c++) {
+    const decay = 1 - 0.07 * c;
+    for (const [a, b] of [
+      [-0.2, 0.8],
+      [0.8, -0.2],
+    ]) {
+      const up = b > a;
+      for (let k = 0; k < 200; k++) {
+        const e = a + ((b - a) * k) / 200;
+        const i = (up ? 0.12 : -0.12) + (up ? 0.9 * decay * peak(e, 0.36, 0.07) : -0.8 * decay * peak(e, 0.29, 0.07)) + 0.004 * gauss(r);
+        lines.push(`${e.toFixed(4)}\t${i.toFixed(5)}`);
+      }
+    }
+  }
+  lines.push(`${(-0.2).toFixed(4)}\t${(0.12).toFixed(5)}`);
+  return lines.join('\n');
+}
+
+// A Raman-like spectrum: a peak at 1350, and at 1580 a Lorentzian with a weaker Gaussian at 1620 in its side (a
+// shoulder), over a sloping baseline, with noise.
+function overlapFile(): string {
+  const r = rng(11);
+  const G = (x: number, c: number, w: number) => Math.exp((-4 * Math.LN2 * (x - c) ** 2) / (w * w));
+  const L = (x: number, c: number, w: number) => 1 / (1 + ((2 * (x - c)) / w) ** 2);
+  const lines = ['Raman shift (cm⁻¹);Intensity (a.u.)'];
+  for (let x = 1000; x <= 1800; x += 2) {
+    const y = 0.15 + 0.0002 * (x - 1000) + G(x, 1350, 60) + 0.8 * L(x, 1580, 40) + 0.45 * G(x, 1625, 45) + 0.012 * gauss(r);
+    lines.push(`${x};${y.toFixed(4)}`);
+  }
+  return lines.join('\n');
+}
+
+function overlapExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'ov-file', 0, 0, { ...IMPORT_DEFAULTS, name: 'spectrum', fileName: 'raman.txt', text: overlapFile(), textId: 'ov-1' });
+  // the baseline fitted with the peaks and subtracted; the peak at 1625 hides in the side of the one at 1580: added to the
+  // list by hand (+ Peak in the shoulder), every peak with its shape
+  const pk = add(b, 'peaks', 'ov-peaks', 640, 0, {
+    ...PEAK_DEFAULTS,
+    baseline: 'linear',
+    subtract: true,
+    peaks: [
+      { shape: 'gauss', x: 1350 },
+      { shape: 'lorentz', x: 1580 },
+      { shape: 'gauss', x: 1625 },
+    ],
+  });
+  link(b, imp, pk, 'in');
+  const X = 'Raman shift (cm⁻¹)';
+  const peakRow = (k: number) => ({ label: `peak ${k}`, style: curve(1, { color: REGION_COLORS[k - 1], lineWidth: 1.2, fill: 'zero' as const, fillOpacity: 0.25 }), cols: { x: X, y: `peak ${k}` } });
+  const pl = add(b, 'plot1d', 'ov-plot', 1300, 0, {
+    ...plot(
+      {
+        label: 'data − baseline',
+        style: curve(1, { mode: 'scatter', color: '#7f7f7f', symbol: 'circle', symbolSize: 2.5 }),
+        cols: { x: X, y: 'Intensity (a.u.) − baseline' },
+        rows: [peakRow(1), peakRow(2), peakRow(3), { label: 'envelope (sum)', style: curve(1, { color: '#111111', lineWidth: 1.4 }), cols: { x: X, y: 'envelope' } }],
+      },
+      { legend: { x: 96, y: 4, anchor: 'tr' }, axes: { x: { ...AXES_STYLE_DEFAULTS.x, min: 1000, max: 1800 }, y: { ...AXES_STYLE_DEFAULTS.y, min: -0.1, max: 1.7 } }, page: { name: 'peaks' } },
+    ),
+  });
+  link(b, pk, pl, 'dataset', 'out');
+  // the table of the peaks in a workbook
+  const wb = add(b, 'book', 'ov-table', 1300, 900, { ...WORKBOOK_DEFAULTS, name: 'peaks', sheets: [], into: ['peaks'] });
+  link(b, pk, wb, 'in-0', 'table');
+  add(b, 'note', 'ov-note', -560, 0, {
+    text: 'Peak deconvolution: overlapping peaks separated by fitting them together as a sum.\n\nPeak analyzer: a linear baseline fitted with the peaks and subtracted; peak 1 (Gaussian) at 1350, peak 2 (Lorentzian) at 1580 and peak 3 (Gaussian) hidden in its side at 1625 — added to the list by hand (+ Peak, a click in the shoulder) or found with “shoulders”.\n\nOutputs: the data (data − baseline, every peak, the envelope) → a Plot with the peaks filled in their colours; the table of the peaks (center, height, FWHM, area, area %) → a Workbook.',
+  });
+  return project(b, 'Overlapping peaks: peak deconvolution');
+}
+
+// A drug study in the three layouts the statistics nodes read: one factor (each dose a column), two factors (indexed:
+// a value, the dose and the sex of every animal), repeated measures (a row per subject, a column per time).
+function drugFiles(): { columns: string; indexed: string; subjects: string } {
+  const r = rng(23);
+  const doses = ['Control', '10 mg', '20 mg', '40 mg'];
+  const mu = [5.0, 5.6, 6.8, 7.9];
+  const cols = doses.map((_, k) => Array.from({ length: 8 }, () => (mu[k] + 0.8 * gauss(r)).toFixed(2)));
+  const columns = [doses.map((d) => `Response, ${d}`).join(';').replace(/Response, /g, ''), ...Array.from({ length: 8 }, (_, i) => cols.map((c) => c[i]).join(';'))].join('\n');
+  const lines = ['Response;Dose;Sex'];
+  for (const [k, d] of ['Control', '20 mg', '40 mg'].entries())
+    for (const sex of ['F', 'M'])
+      for (let i = 0; i < 6; i++) lines.push(`${(5 + 1.3 * k + (sex === 'M' ? 0.6 : 0) + (sex === 'M' && k === 2 ? 0.7 : 0) + 0.7 * gauss(r)).toFixed(2)};${d};${sex}`);
+  const subj = ['Subject;Before;1 h;24 h'];
+  for (let i = 1; i <= 10; i++) {
+    const base = 120 + 12 * gauss(r);
+    subj.push(`S${i};${base.toFixed(1)};${(base - 9 + 5 * gauss(r)).toFixed(1)};${(base - 4 + 5 * gauss(r)).toFixed(1)}`);
+  }
+  return { columns, indexed: lines.join('\n'), subjects: subj.join('\n') };
+}
+
+function drugExample(): Project {
+  const b = builder();
+  const f = drugFiles();
+  // 1. one factor: each dose a column
+  const one = add(b, 'import', 'dr-one', 0, 0, { ...IMPORT_DEFAULTS, name: 'one factor', fileName: 'response_by_dose.txt', text: f.columns, textId: 'dr-1' });
+  const norm = add(b, 'normality', 'dr-norm', 680, -700, { ...NORM_DEFAULTS });
+  link(b, one, norm, 'in');
+  const an1 = add(b, 'anova', 'dr-anova1', 680, 0, { ...ANOVA_DEFAULTS, post: 'tukey' });
+  link(b, one, an1, 'in');
+  const tt = add(b, 'ttest', 'dr-ttest', 680, 900, { ...TTEST_DEFAULTS, cols: 'Control, 40 mg' });
+  link(b, one, tt, 'in');
+  const kw = add(b, 'nonparam', 'dr-kw', 680, 1600, { ...NONPAR_DEFAULTS, test: 'kruskal', post: 'holm' });
+  link(b, one, kw, 'in');
+  // the means ± SE of the doses
+  const pl = add(b, 'plot1d', 'dr-plot', 1360, 0, {
+    ...plot(
+      { label: 'mean ± SE (n = 8)', style: curve(1, { mode: 'linesymbol', symbol: 'square', symbolSize: 4.5, lineWidth: 0.8, errCap: 3 }), cols: { x: 'group', y: 'mean', yerr: 'SE' } },
+      {
+        axes: {
+          x: { ...AXES_STYLE_DEFAULTS.x, min: 0.5, max: 4.5, ticksBy: 'values', custom: '1 = Control, 2 = 10 mg, 3 = 20 mg, 4 = 40 mg', minor: 0 },
+          sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Dose' }), left: side({ title: 'Response (a.u.)' }) },
+        },
+        page: { name: 'dose_response' },
+      },
+    ),
+  });
+  link(b, an1, pl, 'dataset', 'groups');
+  // 2. two factors: indexed
+  const two = add(b, 'import', 'dr-two', 0, 2400, { ...IMPORT_DEFAULTS, name: 'two factors', fileName: 'response_dose_sex.txt', text: f.indexed, textId: 'dr-2' });
+  const an2 = add(b, 'anova', 'dr-anova2', 680, 2400, { ...ANOVA_DEFAULTS, design: 'two', layout: 'indexed', value: 'Response', factor: 'Dose', factor2: 'Sex', post: 'tukey' });
+  link(b, two, an2, 'in');
+  // 3. repeated measures: a row per subject
+  const rep3 = add(b, 'import', 'dr-rep', 0, 3600, { ...IMPORT_DEFAULTS, name: 'repeated', fileName: 'blood_pressure.txt', text: f.subjects, textId: 'dr-3' });
+  const an3 = add(b, 'anova', 'dr-anova3', 680, 3600, { ...ANOVA_DEFAULTS, design: 'repeated', layout: 'subjects', cols: 'Before, 1 h, 24 h', post: 'holm' });
+  link(b, rep3, an3, 'in');
+  const fr = add(b, 'nonparam', 'dr-friedman', 680, 4500, { ...NONPAR_DEFAULTS, test: 'friedman', layout: 'subjects', cols: 'Before, 1 h, 24 h' });
+  link(b, rep3, fr, 'in');
+  const co = add(b, 'correl', 'dr-corr', 1360, 3600, { ...CORR_DEFAULTS, cols: 'Before, 1 h, 24 h' });
+  link(b, rep3, co, 'in');
+  add(b, 'note', 'dr-note', -560, 0, {
+    text: 'How the data are laid out for the statistics nodes.\n\n1. One factor — each group a column (Control | 10 mg | 20 mg | 40 mg): Normality, one-way ANOVA with Tukey, a t-test of two of the columns, Kruskal–Wallis; the groups (mean ± SE) of the ANOVA → a Plot.\n\n2. Two factors — indexed: every row one animal, its Response, its Dose and its Sex (text): two-way ANOVA (Dose, Sex, Dose × Sex).\n\n3. Repeated measures — a row per subject, a column per time (Before | 1 h | 24 h): repeated-measures ANOVA (Mauchly, Greenhouse–Geisser), Friedman, correlations.',
+  });
+  return project(b, 'Drug study: ANOVA, t-test, nonparametric, correlation');
+}
+
+// Signals: a noisy spectrum (two peaks), a sampled signal (50 Hz and 120 Hz with noise), a spectrum blurred by the
+// instrument, and two curves measured on different X.
+function signalFiles() {
+  const r = rng(31);
+  const L = (x: number, c: number, w: number) => 1 / (1 + ((2 * (x - c)) / w) ** 2);
+  const G = (x: number, c: number, w: number) => Math.exp((-4 * Math.LN2 * (x - c) ** 2) / (w * w));
+  const noisy = ['Shift (cm⁻¹);Counts'];
+  for (let i = 0; i <= 400; i++) {
+    const x = 400 + i;
+    noisy.push(`${x};${(120 + 900 * L(x, 520, 14) + 500 * L(x, 640, 30) + 35 * gauss(r)).toFixed(1)}`);
+  }
+  const timed = ['Time (s);Voltage (V)'];
+  for (let i = 0; i < 1000; i++) {
+    const t = i / 1000;
+    timed.push(`${t};${(Math.sin(2 * Math.PI * 50 * t) + 0.5 * Math.sin(2 * Math.PI * 120 * t) + 0.4 * gauss(r)).toFixed(4)}`);
+  }
+  // two narrow peaks blurred by an instrument of FWHM 1.2 (the convolution done here), with a little noise
+  const xs = Array.from({ length: 301 }, (_, i) => i * 0.05);
+  const truth = xs.map((x) => G(x, 6.8, 0.3) + 0.7 * G(x, 8, 0.3));
+  const k = Array.from({ length: 61 }, (_, i) => G((i - 30) * 0.05, 0, 1.2));
+  const ks = k.reduce((a, b) => a + b, 0);
+  const blurred = xs.map((_, i) => k.reduce((a, w, j) => a + (w / ks) * (truth[i + 30 - j] ?? 0), 0) + 0.02 + 0.003 * gauss(r));
+  const blur = ['Energy (eV);Measured', ...xs.map((x, i) => `${x.toFixed(2)};${blurred[i].toFixed(5)}`)];
+  // two curves on their own X (every 0.37 and every 0.8)
+  const two = ['xa;ya;xb;yb'];
+  for (let i = 0; i < 28; i++) two.push(`${(i * 0.37).toFixed(2)};${(Math.sin(i * 0.37) + 0.02 * gauss(r)).toFixed(4)};${i < 13 ? (i * 0.8).toFixed(2) : ''};${i < 13 ? (0.8 * Math.cos(i * 0.8)).toFixed(4) : ''}`);
+  return { noisy: noisy.join('\n'), timed: timed.join('\n'), blur: blur.join('\n'), two: two.join('\n') };
+}
+
+function signalExample(): Project {
+  const b = builder();
+  const f = signalFiles();
+  const line = (k: number) => curve(k, { lineWidth: 1.2 });
+  const dots = (k: number) => curve(k, { mode: 'scatter', symbol: 'circle', symbolSize: 2, color: '#9a9a9a' });
+  // 1. a noisy spectrum: smoothed (Savitzky–Golay), then normalized (maximum = 1)
+  const i1 = add(b, 'import', 'sg-noisy', 0, 0, { ...IMPORT_DEFAULTS, name: 'noisy spectrum', fileName: 'raman_noisy.txt', text: f.noisy, textId: 'sg-1' });
+  const sm = add(b, 'smooth', 'sg-smooth', 680, 0, { ...SMOOTH_DEFAULTS, method: 'savgol', points: 21, order: 3 });
+  link(b, i1, sm, 'in');
+  const nm = add(b, 'normalize', 'sg-norm', 1360, 0, { ...NORMALIZE_DEFAULTS, method: 'max', ys: 'Counts (smoothed)' });
+  link(b, sm, nm, 'in');
+  const p1 = add(b, 'plot1d', 'sg-plot1', 2040, 0, {
+    ...plot({ label: 'data', style: dots(0), cols: { x: 'Shift (cm⁻¹)', y: 'Counts' }, rows: [{ label: 'Savitzky–Golay (21 points, degree 3)', style: line(1), cols: { x: 'Shift (cm⁻¹)', y: 'Counts (smoothed)' } }] }, { legend: { x: 96, y: 4, anchor: 'tr' }, page: { name: 'smoothed' } }),
+  });
+  link(b, sm, p1, 'dataset');
+  // 2. a sampled signal: its spectrum, and a low pass at 80 Hz
+  const i2 = add(b, 'import', 'sg-timed', 0, 1500, { ...IMPORT_DEFAULTS, name: 'signal', fileName: 'oscilloscope.txt', text: f.timed, textId: 'sg-2' });
+  const sp = add(b, 'fft', 'sg-fft', 680, 1500, { ...FFT_DEFAULTS, mode: 'spectrum', window: 'hann' });
+  link(b, i2, sp, 'in');
+  const p2 = add(b, 'plot1d', 'sg-plot2', 1360, 1500, { ...plot({ label: 'amplitude', style: line(2), cols: { x: 'Frequency (1/s)', y: 'Voltage (V) amplitude' } }, { axes: { x: { ...AXES_STYLE_DEFAULTS.x, min: 0, max: 200 } }, page: { name: 'spectrum' } }) });
+  link(b, sp, p2, 'dataset');
+  const lp = add(b, 'fft', 'sg-lowpass', 680, 2400, { ...FFT_DEFAULTS, mode: 'filter', filter: 'low', f1: 80, order: 6 });
+  link(b, i2, lp, 'in');
+  // 3. a spectrum blurred by the instrument: deconvolved (Richardson–Lucy, a Gaussian response of FWHM 1.2)
+  const i3 = add(b, 'import', 'sg-blur', 0, 3300, { ...IMPORT_DEFAULTS, name: 'blurred', fileName: 'blurred.txt', text: f.blur, textId: 'sg-3' });
+  const dc = add(b, 'convolve', 'sg-deconv', 680, 3300, { ...CONV_DEFAULTS, op: 'rl', shape: 'gauss', fwhm: 1.2, iterations: 60 });
+  link(b, i3, dc, 'in');
+  const p3 = add(b, 'plot1d', 'sg-plot3', 1360, 3300, {
+    ...plot({ label: 'measured (blurred)', style: line(0), cols: { x: 'Energy (eV)', y: 'Measured' }, rows: [{ label: 'deconvolved (Richardson–Lucy)', style: line(1), cols: { x: 'Energy (eV)', y: 'Measured (deconvolved)' } }] }, { legend: { x: 4, y: 4, anchor: 'tl' }, page: { name: 'deconvolved' } }),
+  });
+  link(b, i3, p3, 'dataset');
+  link(b, dc, p3, 'dataset');
+  // 4. two curves on their own X, read on a common X (a spline, every 0.1 from 0 to 9.6)
+  const i4 = add(b, 'import', 'sg-two', 0, 4600, { ...IMPORT_DEFAULTS, name: 'two grids', fileName: 'two_grids.txt', text: f.two, textId: 'sg-4', edits: { cols: { 0: { role: 'x' }, 1: { role: 'y' }, 2: { role: 'x' }, 3: { role: 'y' } } } });
+  const ip = add(b, 'interp', 'sg-interp', 680, 4600, { ...INTERP_DEFAULTS, method: 'spline', grid: 'step', step: 0.1, from: 0, to: 9.6, extrap: 'none' });
+  link(b, i4, ip, 'in');
+  add(b, 'note', 'sg-note', -560, 0, {
+    text: 'Signal processing.\n\n1. A noisy spectrum: Smooth (Savitzky–Golay keeps the height of the peaks), then Normalize (maximum = 1).\n\n2. A sampled signal: FFT spectrum (peaks at 50 Hz and 120 Hz), and an FFT low pass at 80 Hz (only the 50 Hz left).\n\n3. A spectrum blurred by the instrument: Convolution ▸ deconvolve (Richardson–Lucy) separates the two peaks again.\n\n4. Two curves measured on different X: Interpolate reads both on a common X (then Curve math can subtract them).',
+  });
+  return project(b, 'Signal processing: smooth, FFT, deconvolution, interpolation');
+}
+
+function cvExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'cv-file', 0, 0, { ...IMPORT_DEFAULTS, name: 'CV', fileName: 'cv_3cycles.txt', text: cvFile(), textId: 'cv-1' });
+  // the cycles side by side (one potential, a current column per cycle), drawn coloured by the cycle
+  const cycles = add(b, 'unstack', 'cv-cycles', 640, 0, { ...UNSTACK_DEFAULTS, by: 'cycles' });
+  link(b, imp, cycles, 'in');
+  const cyc = (k: number) => `Current (mA) · cycle ${k}`;
+  const pl = add(b, 'plot1d', 'cv-plot', 1240, 0, {
+    ...plot(
+      { label: '', style: curve(1, { lineWidth: 1 }), cols: { x: 'Potential (V)', y: cyc(1) }, rows: [2, 3].map((k) => ({ label: '', style: curve(1, { lineWidth: 1 }), cols: { x: 'Potential (V)', y: cyc(k) } })) },
+      { legend: { x: 4, y: 4, anchor: 'tl' }, page: { name: 'cv' } },
+    ),
+    curveColors: { map: 'viridis' },
+  });
+  link(b, cycles, pl, 'dataset');
+  // the pieces where the potential goes one way: going up (1, 3, 5) and coming back (2, 4, 6), each with its own X
+  const segs = add(b, 'unstack', 'cv-segments', 640, 1100, { ...UNSTACK_DEFAULTS, by: 'direction', xs: 'each' });
+  link(b, imp, segs, 'in');
+  // the area between going up and coming back in cycle 1 (segments 1 and 2), absolute, between 0.1 and 0.6 V
+  const calc = add(b, 'calculus', 'cv-area', 1240, 1100, { ...CALCULUS_DEFAULTS, op: 'int', ys: 'Current (mA) · segment 1', baseline: 'curve', baseFrom: 'column', baseColumn: 'Current (mA) · segment 2', area: 'abs', regions: [{ lo: 0.1, hi: 0.6 }] });
+  link(b, segs, calc, 'in');
+  // the peaks and the current at 0.5 V of every segment
+  const pk = add(b, 'pick', 'cv-pick', 1900, 1100, { ...PICK_DEFAULTS, rules: [{ kind: 'max', value: '' }, { kind: 'min', value: '' }, { kind: 'x', value: '0.5' }] });
+  link(b, segs, pk, 'in');
+  add(b, 'note', 'cv-note', -560, 0, {
+    text: 'One table, three cycles (the potential goes up and comes back).\n\nSplit into columns ▸ cycles: one potential and a current column per cycle → a Plot coloured by the cycle.\n\nSplit into columns ▸ where X changes direction: the pieces going up (segments 1, 3, 5) and coming back (2, 4, 6), each with its potential.\n\nIntegrate: segment 1 with segment 2 as its baseline — the area between going up and coming back in cycle 1, absolute (nothing subtracted where they cross), between 0.1 and 0.6 V (reg1, hatched).\n\nPick points: the maximum, the minimum and the current at 0.5 V of every segment.',
+  });
+  return project(b, 'Cyclic voltammogram: area between the branches');
+}
+
+function multiAxisExample(): Project {
+  const b = builder();
+  const t = add(b, 'gencol', 't', 0, 0, { ...GENCOL_DEFAULTS, name: 'Time (h)', mode: 'formula', formula: 'if(i <= 60, (i - 1)/6, 40 + (i - 61)/6)', count: 120 });
+  const sig = add(b, 'mathcol', 'sig', 420, 0, { ...MATHCOL_DEFAULTS, formula: '100*(1 - exp(-A/4)) + 5*sin(A)', name: 'Signal (mV)' });
+  link(b, t, sig, 'in-0');
+  const temp = add(b, 'mathcol', 'temp', 420, 300, { ...MATHCOL_DEFAULTS, formula: '25 + 10*exp(-((A - 5)/3)^2) + 0.05*A', name: 'Temperature (°C)' });
+  link(b, t, temp, 'in-0');
+  const pres = add(b, 'mathcol', 'pres', 420, 600, { ...MATHCOL_DEFAULTS, formula: '1.0 + 0.02*A + 0.05*cos(A/2)', name: 'Pressure (bar)' });
+  link(b, t, pres, 'in-0');
+  const coloured = (c: string) => side({ color: c, labelText: { color: c }, titleText: { color: c } });
+  const p = add(
+    b,
+    'plot1d',
+    'plot-3',
+    900,
+    0,
+    plot(
+      {
+        label: 'signal',
+        style: curve(0, { lineWidth: 1 }),
+        rows: [
+          { label: 'temperature', style: curve(2, { lineWidth: 1, axisY: 'right' }) },
+          { label: 'pressure', style: curve(1, { lineWidth: 1, dash: 'dash', axisY: 'y3' }) },
+        ],
+      },
+      {
+        axes: {
+          x: { ...AXES_STYLE_DEFAULTS.x, breaks: '11-39', ticksBy: 'increment', step: 2, minor: 1 },
+          right: { mode: 'own', scale: AXES_STYLE_DEFAULTS.y, fn: '' },
+          sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Time (h)' }), left: side({ title: 'Signal (mV)' }), right: { ...coloured(PALETTE[2]), labels: true, showTitle: true }, top: side({ labels: false, showTitle: false }) },
+          extra: [{ id: 'y3', side: 'right', scale: AXES_STYLE_DEFAULTS.y, style: { ...coloured(PALETTE[1]), offset: 34, labels: true, showTitle: true } }],
+        },
+        legend: { x: 96, y: 60, anchor: 'cr', frame: 'line', background: '#ffffff' },
+        page: { width: 110, height: 70, name: 'three_axes' },
+      },
+    ),
+  );
+  link(b, t, p, 'x');
+  link(b, sig, p, 'y');
+  link(b, temp, p, 'y-1');
+  link(b, pres, p, 'y-2');
+  return project(b, 'Three Y axes and a broken X axis');
+}
+
+// A workbook of four runs (a spreadsheet file with a sheet per run): time, temperature, signal and its error in each.
+function runsWorkbook(): ImportSheet[] {
+  const r = rng(11);
+  return [1, 2, 3, 4].map((k) => {
+    const lines = ['Time\tTemperature\tSignal\tσ', 's\t°C\tmV\tmV'];
+    for (let t = 0; t <= 60; t += 2) {
+      const y = (1 - Math.exp(-t / (6 + 4 * k))) * (1 + 0.15 * k);
+      lines.push([t, (21 + 0.4 * k + 0.05 * gauss(r)).toFixed(2), (y + 0.02 * gauss(r)).toFixed(4), (0.02 + 0.01 * r()).toFixed(4)].join('\t'));
+    }
+    return { name: `Run ${k}`, text: lines.join('\n'), excel: true };
+  });
+}
+
+function workbookExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'runs', 0, 0, { ...IMPORT_DEFAULTS, name: 'Runs', fileName: 'runs.xlsx', textId: 'runs-1', sheets: runsWorkbook(), sheet: 0, csv: { ...IMPORT_DEFAULTS.csv, nameLine: 1, unitLine: 2 } });
+  // every sheet: Time is X, Signal Y, σ its error; each Y named by its sheet (the legend shows the runs)
+  const ax = add(b, 'autoextract', 'auto', 640, 0, {
+    rules: [
+      { sheets: '*', columns: 'Time', role: 'x' },
+      { sheets: '*', columns: 'Signal', role: 'y' },
+      { sheets: '*', columns: 'D', role: 'yerr' },
+    ],
+    names: 'sheet',
+  });
+  link(b, imp, ax, 'in', 'book');
+  const rows = [1, 2, 3, 4].map((k) => ({ label: '', style: curve(k - 1, { mode: 'linesymbol', symbolSize: 3.5, errCap: 2 }), cols: { x: `Run ${k}: Time (s)`, y: `Run ${k}`, yerr: `Run ${k}: σ (mV)` } }));
+  const [head, ...rest] = rows;
+  const pl = add(b, 'plot1d', 'runs-plot', 1180, 0, plot({ label: '', style: head.style, cols: head.cols, rows: rest }, { legend: { x: 96, y: 96, anchor: 'br' }, page: { name: 'runs' } }));
+  link(b, ax, pl, 'dataset');
+  // one column of one sheet: Extract column chooses the sheet
+  const ex = add(b, 'extract', 'run3-temp', 640, 620, { ...EXTRACT_DEFAULTS, sheet: 'Run 3', column: 'Temperature (°C)', index: 1 });
+  link(b, imp, ex, 'in', 'book');
+  const st = add(b, 'stats', 'run3-stats', 1180, 900, {});
+  link(b, ex, st, 'in');
+  return project(b, 'Four runs in a workbook: Auto-extract');
+}
+
+// n and k of gold in one file, the k block written under the n block: Split into columns lays
+// them side by side (wl, n, k), one Plot draws n on the left axis and k on its own right axis.
+function nkExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'nk-file', 0, 0, { ...IMPORT_DEFAULTS, name: 'Au (Johnson & Christy)', fileName: 'Johnson.csv', text: JOHNSON_AU, textId: 'johnson-1' });
+  const un = add(b, 'unstack', 'nk-split', 640, 0, { ...UNSTACK_DEFAULTS });
+  link(b, imp, un, 'in');
+  const coloured = (c: string) => side({ color: c, labelText: { color: c }, titleText: { color: c } });
+  const p = add(
+    b,
+    'plot1d',
+    'nk-plot',
+    1140,
+    0,
+    plot(
+      {
+        label: 'n',
+        style: curve(1, { mode: 'linesymbol', symbol: 'circle', symbolSize: 3.5, lineWidth: 1 }),
+        cols: { x: 'wl', y: 'n' },
+        rows: [{ label: 'k', style: curve(2, { mode: 'linesymbol', symbol: 'square', symbolSize: 3.5, lineWidth: 1, axisY: 'right' }), cols: { x: 'wl', y: 'k' } }],
+      },
+      {
+        axes: {
+          right: { mode: 'own', scale: AXES_STYLE_DEFAULTS.y, fn: '' },
+          sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Wavelength (µm)' }), left: { ...coloured(PALETTE[1]), title: 'n' }, right: { ...coloured(PALETTE[2]), title: 'k', labels: true, showTitle: true }, top: side({ labels: false, showTitle: false }) },
+        },
+        legend: { x: 50, y: 6, anchor: 'tc', arrange: 'row' },
+        page: { width: 85, height: 65, name: 'gold_nk' },
+      },
+    ),
+  );
+  link(b, un, p, 'dataset');
+  add(b, 'note', 'nk-note', -560, 0, {
+    text: 'The file holds two blocks: wl, n, then an empty line and wl, k written again under it. Split into columns (Blocks: auto) finds the line where wl is not a number, names the second block by its header (k) and keeps one wl (X out ▸ every block would keep both). Its “block values” output gives 1, 2 here; on a sweep it gives the swept value of every block.',
+  });
+  return project(b, 'Gold n, k: two blocks in one file');
+}
+
+// Strong coupling, computed by transfer matrices: R(λ) of a DBR microcavity with an excitonic layer for 23 cavity thicknesses
+// (one table: the sweep). Fit: two Lorentzian dips per run (the polariton branches, one each side of the exciton) →
+// their positions vs the thickness → a second Fit of both branches together (anticrossing) gives the splitting Ω.
+function strongCouplingTable(): string {
+  const R = SC_R.split(' ');
+  const lines = ['cavity d (nm),Wavelength (nm),R'];
+  let k = 0;
+  for (let d = SC_D.from; d <= SC_D.to; d += SC_D.step) for (let l = SC_LAMBDA.from; l <= SC_LAMBDA.to; l += SC_LAMBDA.step) lines.push(`${d},${l},${R[k++]}`);
+  return lines.join('\n');
+}
+
+function strongCouplingExample(): Project {
+  const b = builder();
+  const lim = (name: string, min: number, max: number): FitParamSpec => ({ name, value: NaN, fixed: false, min, max, shared: false });
+  const imp = add(b, 'import', 'sc-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'strong coupling', fileName: 'strong_coupling_spr_forge.csv', text: strongCouplingTable(), textId: 'sc-1', edits: { cols: { 0: { role: 'none' }, 1: { role: 'x' }, 2: { role: 'y' } } } });
+  // the sweep in one table cut into columns: λ and R for every thickness (each column knows its thickness)
+  const split = add(b, 'unstack', 'sc-split', 640, 0, { ...UNSTACK_DEFAULTS, x: 'Wavelength (nm)', ys: 'R', by: 'column', column: 'cavity d (nm)' });
+  link(b, imp, split, 'in');
+  // every column: a linear baseline and two dips, the lower branch below the exciton (652.5 nm), the upper one above it
+  const fit = add(b, 'fit', 'sc-fit', 1240, 0, {
+    ...FIT_DEFAULTS,
+    model: { ...FIT_DEFAULTS.model, kind: 'peaks', shape: 'lorentz', count: 2, baseline: 'linear' },
+    params: [lim('A1', NaN, 0), lim('A2', NaN, 0), lim('xc1', 595, 652.5), lim('xc2', 652.5, 725), lim('w1', 0.5, 30), lim('w2', 0.5, 30)],
+    ranges: [{ lo: 595, hi: 728 }],
+    band: 'none',
+  });
+  link(b, split, fit, 'in');
+  // the branches vs the thickness: both fitted at once with the coupled-oscillator dispersion
+  const disp = add(b, 'fit', 'sc-disp', 1900, 0, { ...FIT_DEFAULTS, x: 'cavity d (nm)', ys: ['xc1', 'xc2'], model: { ...FIT_DEFAULTS.model, kind: 'library', model: 'anticross' } });
+  link(b, fit, disp, 'in', 'params');
+  // (a) every second spectrum with its fit, coloured by the thickness; (b) the branches and the anticrossing
+  const ds: number[] = [];
+  for (let d = SC_D.from; d <= SC_D.to; d += SC_D.step) ds.push(d);
+  const shown = ds.filter((_, k) => k % 2 === 0);
+  const runName = (d: number) => `R · cavity d = ${d} nm`;
+  const spectraRows = shown.flatMap((d) => [
+    { label: '', style: curve(0, { lineWidth: 0.8 }), cols: { x: 'Wavelength (nm)', y: runName(d) } },
+    { label: '', style: curve(0, { lineWidth: 0.5, dash: 'dash' as const }), cols: { x: `Wavelength (nm) (${runName(d)})`, y: `fit (${runName(d)})` } },
+  ]);
+  const [first, ...rest] = spectraRows;
+  const spectra = add(
+    b,
+    'plot1d',
+    'sc-spectra',
+    1240,
+    1150,
+    {
+      ...plot(
+        { ...first, rows: rest },
+        {
+          axes: { sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'λ (nm)' }), left: side({ title: 'R' }) }, x: { ...AXES_STYLE_DEFAULTS.x, min: 595, max: 728 } },
+          notes: [note('sc-cbar', 'colorbar', { ...COLORBAR_DEFAULTS, x: 103, y: 0, length: 100, thickness: 5, title: '' })],
+          page: { width: 90, height: 75, name: 'sc_spectra' },
+        },
+      ),
+      curveColors: { map: 'viridis' },
+    },
+  );
+  link(b, split, spectra, 'dataset');
+  link(b, fit, spectra, 'dataset', 'fit');
+  const branches = add(
+    b,
+    'plot1d',
+    'sc-branches',
+    1900,
+    1150,
+    plot(
+      {
+        label: 'lower branch',
+        style: curve(1, { mode: 'scatter', symbol: 'circle', symbolSize: 3.5 }),
+        cols: { x: 'cavity d (nm)', y: 'xc1', yerr: 'xc1 error' },
+        rows: [
+          { label: 'upper branch', style: curve(2, { mode: 'scatter', symbol: 'square', symbolSize: 3.5 }), cols: { x: 'cavity d (nm)', y: 'xc2', yerr: 'xc2 error' } },
+          { label: 'coupled oscillators', style: curve(0, { lineWidth: 1 }), cols: { x: 'cavity d (nm) (xc1)', y: 'fit (xc1)' } },
+          { label: '', style: curve(0, { lineWidth: 1 }), cols: { x: 'cavity d (nm) (xc2)', y: 'fit (xc2)' } },
+        ],
+      },
+      {
+        axes: { sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'cavity thickness (nm)' }), left: side({ title: 'dip position (nm)' }) } },
+        // the two branches of the fit: one entry
+        legend: {
+          ...LEGEND_STYLE_DEFAULTS,
+          x: 4,
+          y: 4,
+          anchor: 'tl',
+          entries: [
+            { key: 'sc-branches:0', show: true, label: '' },
+            { key: 'sc-branches:1', show: true, label: '' },
+            { key: 'sc-branches:2', show: true, label: '' },
+            { key: 'sc-branches:3', show: false, label: '' },
+          ],
+        },
+        page: { width: 90, height: 75, name: 'sc_branches' },
+      },
+    ),
+  );
+  link(b, fit, branches, 'dataset', 'params');
+  link(b, disp, branches, 'dataset', 'fit');
+  const cv = add(b, 'canvas', 'sc-canvas', 2600, 0, { ...CANVAS_DEFAULTS, width: 180, height: 75, panels: '(a)', name: 'strong_coupling', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 2, hgap: 2 } });
+  link(b, spectra, cv, 'figures', 'figure');
+  link(b, branches, cv, 'figures', 'figure');
+  add(b, 'note', 'sc-note', -560, 0, {
+    ...NOTE_DEFAULTS,
+    text: 'Data: computed by transfer matrices — R(λ) of a TiO₂/SiO₂ microcavity with an excitonic layer (652.5 nm), for cavity thicknesses 150–260 nm, all in one table.\n\nSplit into columns (by “cavity d”): λ and one R column per thickness — each column knows its thickness.\n\nFit 1 (every R column): two Lorentzian dips over a linear baseline, the first below the exciton, the second above it (limits of xc1, xc2); its parameters table has a row per thickness.\n\nFit 2 (that table): xc1 and xc2 vs the thickness, both branches at once with the coupled-oscillator dispersion → Ω, the splitting at zero detuning.\n\nThe Plots take the data and the fit curves (datasets) and draw them like any data; the spectra are coloured by the thickness. The Merge puts the two Plots side by side.',
+  });
+  return project(b, 'Strong coupling: fit of every run, then the anticrossing');
+}
+
+// ---- Charts: bars and a histogram with its fits ----
+const roles = (r: Record<number, 'x' | 'y' | 'yerr' | 'label'>) => ({ cols: Object.fromEntries(Object.entries(r).map(([k, v]) => [k, { role: v }])) });
+const titled = (bottom: string, left: string, patch: Partial<AxesStyle> = {}) => axes({ ...patch, sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: bottom }), left: side({ title: left }) } });
+
+// grouped bars with labels: the mean measures of the Palmer penguins
+function groupedBarsExample(): Project {
+  const b = builder();
+  const text = 'Species;Bill depth (mm);Bill length (mm);Flipper length (mm)\nAdelie;18.35;38.79;189.95\nChinstrap;18.43;48.83;195.82\nGentoo;14.98;47.50;217.19';
+  const imp = add(b, 'import', 'gb-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'penguins', fileName: 'penguin_means.txt', text, textId: 'gb-1', edits: roles({ 0: 'x', 1: 'y', 2: 'y', 3: 'y' }) });
+  const bc = add(b, 'barchart', 'gb-chart', 640, 0, {
+    ...BARCHART_DEFAULTS,
+    arrange: 'grouped',
+    gap: 0.05,
+    labels: 'top',
+    decimals: 1,
+    edgeWidth: 0,
+    axes: titled('', 'Length (mm)', { y: { ...AXES_STYLE_DEFAULTS.y, min: 0, max: 300 } }),
+    legend: { show: true, x: 3, y: 3, anchor: 'tl' },
+    page: { ...PLOT_PAGE_DEFAULTS, name: 'penguins_grouped' },
+  });
+  link(b, imp, bc, 'dataset');
+  return project(b, 'Grouped bars with their values');
+}
+
+// stacked and 100 % stacked columns, side by side in a Merge
+function stackedBarsExample(): Project {
+  const b = builder();
+  const text = 'Species;Below 3.5 kg;Above 3.5 kg\nAdelie;70;82\nChinstrap;31;37\nGentoo;58;66';
+  const imp = add(b, 'import', 'sb-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'body mass', fileName: 'penguin_mass.txt', text, textId: 'sb-1', edits: roles({ 0: 'x', 1: 'y', 2: 'y' }) });
+  const common = { ...BARCHART_DEFAULTS, labels: 'center' as const, edgeWidth: 0.5, width: 0.6, legend: { show: true, x: 96, y: 4, anchor: 'tr' as const } };
+  const s1 = add(b, 'barchart', 'sb-count', 640, 0, { ...common, arrange: 'stacked', axes: titled('', 'Penguins', { y: { ...AXES_STYLE_DEFAULTS.y, min: 0, max: 180 } }), page: { ...PLOT_PAGE_DEFAULTS, name: 'stacked' } });
+  const s2 = add(b, 'barchart', 'sb-pct', 640, 1500, { ...common, arrange: 'percent', decimals: 0, barLook: { hatch: '/', hatchColor: '#ffffff', hatchSpacing: 5, hatchWidth: 0.8 }, axes: titled('', 'Share (%)', { y: { ...AXES_STYLE_DEFAULTS.y, min: 0, max: 100 } }), page: { ...PLOT_PAGE_DEFAULTS, name: '100_percent' } });
+  link(b, imp, s1, 'dataset');
+  link(b, imp, s2, 'dataset');
+  const cv = add(b, 'canvas', 'sb-canvas', 1400, 0, { ...CANVAS_DEFAULTS, width: 170, height: 70, panels: '(a)', name: 'stacked_bars', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 2, hgap: 3, legend: 'bottom' } });
+  link(b, s1, cv, 'figures', 'figure');
+  link(b, s2, cv, 'figures', 'figure');
+  return project(b, 'Stacked and 100 % stacked bars');
+}
+
+// horizontal bars with errors: a score each, its error, the values written
+function horizontalBarsExample(): Project {
+  const b = builder();
+  const text = 'Person;Performance;Error\nTom;11.2;1.1\nDick;7.3;0.6\nHarry;13.1;1.4\nSlim;4.6;0.5\nJim;9.8;0.9';
+  const imp = add(b, 'import', 'hb-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'performance', fileName: 'performance.txt', text, textId: 'hb-1', edits: roles({ 0: 'x', 1: 'y', 2: 'yerr' }) });
+  const bc = add(b, 'barchart', 'hb-chart', 640, 0, {
+    ...BARCHART_DEFAULTS,
+    horizontal: true,
+    width: 0.6,
+    edgeWidth: 0,
+    labels: 'top',
+    decimals: 1,
+    errCap: 3,
+    barLook: { gradient: true, radius: 2 },
+    colors: ['#0072B2'],
+    axes: titled('Performance', '', { x: { ...AXES_STYLE_DEFAULTS.x, min: 0, max: 17 }, y: { ...AXES_STYLE_DEFAULTS.y, reverse: true } }),
+    legend: { show: false },
+    page: { ...PLOT_PAGE_DEFAULTS, name: 'performance' },
+  });
+  link(b, imp, bc, 'dataset');
+  return project(b, 'Horizontal bars with errors');
+}
+
+// grouped columns from indexed data with error bars: raw replicates, mean ± SD per treatment and day, the values over
+// the bars
+function rawBarsExample(): Project {
+  const b = builder();
+  const r = rng(21);
+  const lines = ['Treatment;Day;Viability (%)'];
+  for (const [g, mu] of [['control', 92], ['drug A', 74], ['drug B', 58]] as const)
+    for (const [day, dm] of [['day 1', 0], ['day 7', -12]] as const) for (let k = 0; k < 6; k++) lines.push(`${g};${day};${(mu + dm + 4 * gauss(r)).toFixed(1)}`);
+  const imp = add(b, 'import', 'rb-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'viability', fileName: 'viability.txt', text: lines.join('\n'), textId: 'rb-1' });
+  const bc = add(b, 'barchart', 'rb-chart', 640, 0, {
+    ...BARCHART_DEFAULTS,
+    mode: 'raw',
+    value: 'Viability (%)',
+    group: 'Treatment',
+    sub: 'Day',
+    stat: 'mean',
+    err: 'sd',
+    points: true,
+    gap: 0.08,
+    opacity: 0.85,
+    colors: ['#56B4E9', '#E69F00'],
+    errCap: 4,
+    axes: titled('', 'Viability (%)', { y: { ...AXES_STYLE_DEFAULTS.y, min: 0, max: 110 } }),
+    legend: { show: true, x: 96, y: 4, anchor: 'tr' },
+    page: { ...PLOT_PAGE_DEFAULTS, name: 'viability' },
+  });
+  link(b, imp, bc, 'dataset');
+  return project(b, 'Bars from raw values: mean ± SD with the points');
+}
+
+// floating columns: a monthly range from the first column to the second (example values)
+function floatingBarsExample(): Project {
+  const b = builder();
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const lo = [-5.5, -4, 0, 5, 10, 14, 16, 15, 11, 5, 1, -3];
+  const hi = [1.5, 4.5, 11, 18, 24, 28, 30, 30, 25, 18, 10, 4];
+  const text = ['Month;Minimum (°C);Maximum (°C)', ...months.map((m, i) => `${m};${lo[i]};${hi[i]}`)].join('\n');
+  const imp = add(b, 'import', 'fb-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'temperatures', fileName: 'monthly_range.txt', text, textId: 'fb-1', edits: roles({ 0: 'x', 1: 'y', 2: 'y' }) });
+  const bc = add(b, 'barchart', 'fb-chart', 640, 0, {
+    ...BARCHART_DEFAULTS,
+    arrange: 'floating',
+    width: 0.6,
+    colors: ['#D55E00'],
+    opacity: 0.8,
+    barLook: { radius: 2, shadow: true },
+    axes: titled('', 'Temperature (°C)', { y: { ...AXES_STYLE_DEFAULTS.y, min: -10, max: 35 } }),
+    legend: { show: false },
+    page: { ...PLOT_PAGE_DEFAULTS, name: 'temperature_range' },
+  });
+  link(b, imp, bc, 'dataset');
+  return project(b, 'Floating columns: a range per month');
+}
+
+// a histogram of a two-mode sample with its fits: two normals from the data (maximum likelihood), two Gaussians fitted
+// to the bars, a kernel density
+function histogramExample(): Project {
+  const b = builder();
+  const r = rng(5);
+  const v = [...Array.from({ length: 200 }, () => 18 + 2.4 * gauss(r)), ...Array.from({ length: 150 }, () => 31 + 3.5 * gauss(r))];
+  const imp = add(b, 'import', 'hi-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'particles', fileName: 'particle_sizes.txt', text: ['Diameter (nm)', ...v.map((x) => x.toFixed(2))].join('\n'), textId: 'hi-1', edits: roles({ 0: 'y' }) });
+  const h = add(b, 'histogram', 'hi-chart', 640, 0, {
+    ...HISTOGRAM_DEFAULTS,
+    bins: { ...HISTOGRAM_DEFAULTS.bins, mode: 'width', width: 1.5 },
+    opacity: 0.5,
+    colors: ['#56B4E9'],
+    barLook: { hatch: '/', hatchColor: '#0072B2', hatchSpacing: 5, hatchWidth: 0.5 },
+    fits: [
+      { kind: 'binormal', method: 'data', color: '#D55E00', width: 1.8 },
+      { kind: 'binormal', method: 'bars', color: '#009E73', dash: 'dash' },
+      { kind: 'kernel', method: 'data', color: '#555555', dash: 'dot' },
+    ],
+    page: { ...PLOT_PAGE_DEFAULTS, name: 'particle_sizes' },
+  });
+  link(b, imp, h, 'dataset');
+  return project(b, 'Histogram with two-mode fits');
+}
+
+// ---- Charts: boxes and violins ----
+// four groups of values, one with outliers: a column each
+function boxColumns(seed: number): string {
+  const r = rng(seed);
+  const groups = [Array.from({ length: 40 }, () => 52 + 6 * gauss(r)), Array.from({ length: 40 }, () => 60 + 4 * gauss(r)), [...Array.from({ length: 37 }, () => 48 + 5 * gauss(r)), 75, 78, 22], Array.from({ length: 40 }, () => 40 + 9 * Math.abs(gauss(r)))];
+  return ['Sample A;Sample B;Sample C;Sample D', ...Array.from({ length: 40 }, (_, i) => groups.map((g) => g[i].toFixed(2)).join(';'))].join('\n');
+}
+
+// notched boxes with the mean and the outliers; the same horizontal, whiskers 5 – 95
+function boxPlotsExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'bx-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'samples', fileName: 'samples.txt', text: boxColumns(31), textId: 'bx-1', edits: roles({ 0: 'y', 1: 'y', 2: 'y', 3: 'y' }) });
+  const v = add(b, 'boxviolin', 'bx-notch', 640, 0, { ...BOXVIOLIN_DEFAULTS, notch: true, mean: true, colorBy: 'category', axes: titled('', 'Value'), legend: { show: false }, page: { ...PLOT_PAGE_DEFAULTS, name: 'notched' } });
+  const h = add(b, 'boxviolin', 'bx-horiz', 640, 1500, { ...BOXVIOLIN_DEFAULTS, horizontal: true, whisker: 'p5', colorBy: 'category', opacity: 0.6, barLook: { hatch: '/', hatchSpacing: 4 }, axes: titled('Value', ''), legend: { show: false }, page: { ...PLOT_PAGE_DEFAULTS, name: 'horizontal' } });
+  link(b, imp, v, 'dataset');
+  link(b, imp, h, 'dataset');
+  const cv = add(b, 'canvas', 'bx-canvas', 1400, 0, { ...CANVAS_DEFAULTS, width: 170, height: 70, panels: '(a)', name: 'box_plots', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 2, hgap: 3 } });
+  link(b, v, cv, 'figures', 'figure');
+  link(b, h, cv, 'figures', 'figure');
+  return project(b, 'Box plots: notched, horizontal');
+}
+
+// box plot vs violin plot: the same groups as boxes and as violins (quartile lines)
+function boxVsViolinExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'bv-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'samples', fileName: 'samples.txt', text: boxColumns(47), textId: 'bv-1', edits: roles({ 0: 'y', 1: 'y', 2: 'y', 3: 'y' }) });
+  const bx = add(b, 'boxviolin', 'bv-box', 640, 0, { ...BOXVIOLIN_DEFAULTS, colorBy: 'category', axes: titled('', 'Value'), legend: { show: false }, page: { ...PLOT_PAGE_DEFAULTS, name: 'box' } });
+  const vi = add(b, 'boxviolin', 'bv-violin', 640, 1500, { ...BOXVIOLIN_DEFAULTS, kind: 'violin', inner: 'quartiles', colorBy: 'category', width: 0.8, axes: titled('', 'Value'), legend: { show: false }, page: { ...PLOT_PAGE_DEFAULTS, name: 'violin' } });
+  link(b, imp, bx, 'dataset');
+  link(b, imp, vi, 'dataset');
+  const cv = add(b, 'canvas', 'bv-canvas', 1400, 0, { ...CANVAS_DEFAULTS, width: 170, height: 70, panels: '(a)', name: 'box_vs_violin', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 2, hgap: 3, shareY: 'all' } });
+  link(b, bx, cv, 'figures', 'figure');
+  link(b, vi, cv, 'figures', 'figure');
+  return project(b, 'Box plot vs violin plot');
+}
+
+// raw values by treatment and day (indexed data)
+function indexedValues(seed: number): string {
+  const r = rng(seed);
+  const lines = ['Treatment;Day;Response'];
+  for (const [g, mu] of [['control', 20], ['low dose', 26], ['high dose', 34]] as const)
+    for (const [day, dm, sd] of [['day 1', 0, 3], ['day 7', 6, 4.5]] as const) for (let k = 0; k < 30; k++) lines.push(`${g};${day};${(mu + dm + sd * gauss(r)).toFixed(2)}`);
+  return lines.join('\n');
+}
+
+// grouped boxes from indexed data: the boxes of every treatment by day, the values beside as a swarm
+function groupedBoxExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'gx-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'response', fileName: 'response.txt', text: indexedValues(53), textId: 'gx-1' });
+  const bx = add(b, 'boxviolin', 'gx-chart', 640, 0, {
+    ...BOXVIOLIN_DEFAULTS,
+    mode: 'raw',
+    value: 'Response',
+    group: 'Treatment',
+    sub: 'Day',
+    points: 'swarm',
+    width: 0.8,
+    gap: 0.15,
+    mean: true,
+    opacity: 0.55,
+    colors: ['#56B4E9', '#E69F00'],
+    axes: titled('', 'Response'),
+    legend: { show: true, x: 4, y: 4, anchor: 'tl' },
+    page: { ...PLOT_PAGE_DEFAULTS, name: 'grouped_boxes' },
+  });
+  link(b, imp, bx, 'dataset');
+  return project(b, 'Grouped boxes from indexed data, with the values');
+}
+
+// half violins with boxes, and rainclouds: the same values twice
+function rainExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'rc-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'response', fileName: 'response.txt', text: indexedValues(59), textId: 'rc-1' });
+  const common = { ...BOXVIOLIN_DEFAULTS, mode: 'raw' as const, value: 'Response', group: 'Treatment', colorBy: 'category' as const, width: 0.85, legend: { show: false }, outliers: false };
+  const half = add(b, 'boxviolin', 'rc-half', 640, 0, { ...common, kind: 'half', barLook: { gradient: true }, axes: titled('', 'Response'), page: { ...PLOT_PAGE_DEFAULTS, name: 'half_violin' } });
+  const rain = add(b, 'boxviolin', 'rc-rain', 640, 1500, { ...common, kind: 'raincloud', points: 'jitter', horizontal: true, opacity: 0.7, axes: titled('Response', ''), page: { ...PLOT_PAGE_DEFAULTS, name: 'raincloud' } });
+  link(b, imp, half, 'dataset');
+  link(b, imp, rain, 'dataset');
+  const cv = add(b, 'canvas', 'rc-canvas', 1400, 0, { ...CANVAS_DEFAULTS, width: 170, height: 75, panels: '(a)', name: 'half_and_raincloud', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 2, hgap: 3 } });
+  link(b, half, cv, 'figures', 'figure');
+  link(b, rain, cv, 'figures', 'figure');
+  return project(b, 'Half violins and raincloud');
+}
+
+// a split violin: the two days of every treatment, a half each, their quartiles
+function splitViolinExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'sv-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'response', fileName: 'response.txt', text: indexedValues(61), textId: 'sv-1' });
+  const vi = add(b, 'boxviolin', 'sv-chart', 640, 0, {
+    ...BOXVIOLIN_DEFAULTS,
+    mode: 'raw',
+    value: 'Response',
+    group: 'Treatment',
+    sub: 'Day',
+    kind: 'violin',
+    split: true,
+    width: 0.85,
+    cut: 'extend',
+    colors: ['#009E73', '#CC79A7'],
+    opacity: 0.7,
+    axes: titled('', 'Response'),
+    legend: { show: true, x: 4, y: 4, anchor: 'tl' },
+    page: { ...PLOT_PAGE_DEFAULTS, name: 'split_violins' },
+  });
+  link(b, imp, vi, 'dataset');
+  return project(b, 'Split violins: two subgroups');
+}
+
+// ---- Charts: probability plots (Q-Q, normal probability, ECDF, Weibull) ----
+// tensile strengths of one batch (a normal sample)
+function strengthFile(seed: number): string {
+  const r = rng(seed);
+  return ['Strength (MPa)', ...Array.from({ length: 50 }, () => (412 + 18 * gauss(r)).toFixed(1))].join('\n');
+}
+// Q-Q and normal probability plots: the quantiles with the quartile line and its 95 % band; the
+// values on a normal probability axis with the fitted line and its band; in a Merge
+function qqProbabilityExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'pq-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'strength', fileName: 'strength.txt', text: strengthFile(71), textId: 'pq-1', edits: roles({ 0: 'y' }) });
+  const qq = add(b, 'probplot', 'pq-qq', 640, 0, { ...PROBPLOT_DEFAULTS, band: 'pointwise', page: { ...PLOT_PAGE_DEFAULTS, name: 'qq_plot' } });
+  const pr = add(b, 'probplot', 'pq-prob', 640, 1500, { ...PROBPLOT_DEFAULTS, kind: 'prob', line: 'dist', band: 'pointwise', symbol: 'square', symbolSize: 4, page: { ...PLOT_PAGE_DEFAULTS, name: 'probability_plot' } });
+  link(b, imp, qq, 'dataset');
+  link(b, imp, pr, 'dataset');
+  const cv = add(b, 'canvas', 'pq-canvas', 1400, 0, { ...CANVAS_DEFAULTS, width: 170, height: 75, panels: '(a)', name: 'qq_and_probability', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 2, hgap: 3 } });
+  link(b, qq, cv, 'figures', 'figure');
+  link(b, pr, cv, 'figures', 'figure');
+  return project(b, 'Q-Q and normal probability plots');
+}
+
+// the reaction times of two groups (indexed: value + group), the second skewed (lognormal)
+function reactionFile(seed: number): string {
+  const r = rng(seed);
+  const lines = ['Group;Reaction time (ms)'];
+  for (let k = 0; k < 40; k++) lines.push(`rested;${(250 + 30 * gauss(r)).toFixed(0)}`);
+  for (let k = 0; k < 40; k++) lines.push(`sleep deprived;${(300 * Math.exp(0.22 * gauss(r))).toFixed(0)}`);
+  return lines.join('\n');
+}
+// empirical cumulative distribution functions: the ECDF of two groups with their simultaneous (DKW)
+// bands, and 1 − F (the complementary ECDF) with the fitted lognormal CDFs
+function ecdfExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'ec-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'reaction', fileName: 'reaction.txt', text: reactionFile(73), textId: 'ec-1' });
+  const common = { ...PROBPLOT_DEFAULTS, kind: 'ecdf' as const, mode: 'raw' as const, value: 'Reaction time (ms)', group: 'Group', colors: ['#0072B2', '#D55E00'], lineWidth: 1.2 };
+  const e = add(b, 'probplot', 'ec-ecdf', 640, 0, { ...common, line: 'none', band: 'dkw', bandDash: 'dot', legend: { show: true, x: 96, y: 96, anchor: 'br' }, page: { ...PLOT_PAGE_DEFAULTS, name: 'ecdf' } });
+  const c = add(b, 'probplot', 'ec-ccdf', 640, 1500, { ...common, dist: 'lognormal', line: 'dist', complementary: true, lineDash: 'dash', legend: { show: true, x: 96, y: 4, anchor: 'tr' }, page: { ...PLOT_PAGE_DEFAULTS, name: 'complementary_ecdf' } });
+  link(b, imp, e, 'dataset');
+  link(b, imp, c, 'dataset');
+  const cv = add(b, 'canvas', 'ec-canvas', 1400, 0, { ...CANVAS_DEFAULTS, width: 170, height: 75, panels: '(a)', name: 'ecdf', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 2, hgap: 3 } });
+  link(b, e, cv, 'figures', 'figure');
+  link(b, c, cv, 'figures', 'figure');
+  return project(b, 'ECDF of two groups, bands and 1 − F');
+}
+
+// the hours to failure of two batches of a component (Weibull samples, k = 1.8 and 3.2)
+function failureFile(seed: number): string {
+  const r = rng(seed);
+  const lines = ['Batch;Hours to failure'];
+  for (const [name, k, lam] of [['batch A', 1.8, 1200], ['batch B', 3.2, 2100]] as const) for (let i = 0; i < 25; i++) lines.push(`${name};${(lam * (-Math.log(1 - r())) ** (1 / k)).toFixed(0)}`);
+  return lines.join('\n');
+}
+// a Weibull probability plot (reliability): the two batches on a Weibull axis (log hours), the
+// fitted Weibull lines; a P-P plot with the DKW band
+function weibullExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'wb-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'failures', fileName: 'failures.txt', text: failureFile(79), textId: 'wb-1' });
+  const common = { ...PROBPLOT_DEFAULTS, mode: 'raw' as const, value: 'Hours to failure', group: 'Batch', dist: 'weibull' as const, colors: ['#009E73', '#CC79A7'], symbolFill: 'filled' as const, symbolSize: 4 };
+  const w = add(b, 'probplot', 'wb-prob', 640, 0, { ...common, kind: 'prob', line: 'dist', page: { ...PLOT_PAGE_DEFAULTS, name: 'weibull_plot' } });
+  const pp = add(b, 'probplot', 'wb-pp', 640, 1500, { ...common, kind: 'pp', line: 'identity', band: 'dkw', legend: { show: true, x: 96, y: 96, anchor: 'br' }, page: { ...PLOT_PAGE_DEFAULTS, name: 'pp_plot' } });
+  link(b, imp, w, 'dataset');
+  link(b, imp, pp, 'dataset');
+  const cv = add(b, 'canvas', 'wb-canvas', 1400, 0, { ...CANVAS_DEFAULTS, width: 170, height: 75, panels: '(a)', name: 'weibull', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 2, hgap: 3 } });
+  link(b, w, cv, 'figures', 'figure');
+  link(b, pp, cv, 'figures', 'figure');
+  return project(b, 'Weibull probability plot of failure times');
+}
+
+// ---- Charts: Bland–Altman (after Bland & Altman 1986) ----
+// systolic pressure of the same patients by two devices at two sites; device B reads higher in the high range
+function pressureFile(seed: number): string {
+  const r = rng(seed);
+  const lines = ['Site;Device A (mmHg);Device B (mmHg)'];
+  for (let k = 0; k < 60; k++) {
+    const t = 95 + 90 * r();
+    lines.push(`${k < 30 ? 'clinic' : 'home'};${(t + 4 * gauss(r)).toFixed(0)};${(t * 1.05 - 4 + 5 * gauss(r)).toFixed(0)}`);
+  }
+  return lines.join('\n');
+}
+// the differences with the exact intervals of the limits (bands) and the regression on X, the points by site; the
+// differences in % with limits from a regression (Bland & Altman 1999); in a Merge
+function blandAltmanExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'ba-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'pressure', fileName: 'pressure.txt', text: pressureFile(83), textId: 'ba-1' });
+  const common = { ...BLANDALTMAN_DEFAULTS, a: 'Device A (mmHg)', b: 'Device B (mmHg)' };
+  const diff = add(b, 'blandaltman', 'ba-diff', 640, 0, { ...common, group: 'Site', ci: 'exact', regLine: true, colors: ['#0072B2', '#E69F00'], legend: { show: true, x: 4, y: 96, anchor: 'bl' }, page: { ...PLOT_PAGE_DEFAULTS, name: 'bland_altman' } });
+  const pct = add(b, 'blandaltman', 'ba-pct', 640, 1500, { ...common, y: 'pct', loa: 'regression', symbolFill: 'filled', symbolSize: 4, page: { ...PLOT_PAGE_DEFAULTS, name: 'bland_altman_percent' } });
+  link(b, imp, diff, 'dataset');
+  link(b, imp, pct, 'dataset');
+  const cv = add(b, 'canvas', 'ba-canvas', 1400, 0, { ...CANVAS_DEFAULTS, width: 170, height: 75, panels: '(a)', name: 'bland_altman', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 2, hgap: 3 } });
+  link(b, diff, cv, 'figures', 'figure');
+  link(b, pct, cv, 'figures', 'figure');
+  return project(b, 'Bland–Altman: two devices');
+}
+
+// ---- Charts: pies, doughnuts, nested rings ----
+// the energy sources of a grid in two years (TWh, example values)
+const ENERGY = ['Source;2014 (TWh);2024 (TWh)', 'Coal;120;48', 'Gas;95;88', 'Nuclear;70;66', 'Hydro;40;43', 'Wind;22;71', 'Solar;6;52', 'Biomass;9;12'].join('\n');
+// a pie with two slices moved out, the names outside and the percents inside, a doughnut with the total in the hole, the two years as rings;
+// one legend below the three (the Merge's)
+function pieExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'pie-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'energy', fileName: 'energy.txt', text: ENERGY, textId: 'pie-1' });
+  const pie = add(b, 'pie', 'pie-pie', 640, 0, { ...PIE_DEFAULTS, kind: 'pie', ys: '2024 (TWh)', labels: 'nameOutPercentIn', decimals: 0, hideBelow: 5, size: 100, looks: [null, null, null, null, { explode: 8 }, { explode: 8 }], page: { ...PLOT_PAGE_DEFAULTS, name: 'pie' } });
+  const donut = add(b, 'pie', 'pie-donut', 640, 1500, { ...PIE_DEFAULTS, kind: 'doughnut', ys: '2024 (TWh)', hole: 0.55, sort: 'desc', labels: 'percent', labelPos: 'inside', decimals: 0, hideBelow: 5, center: 'total', page: { ...PLOT_PAGE_DEFAULTS, name: 'doughnut' } });
+  const rings = add(b, 'pie', 'pie-rings', 640, 3000, { ...PIE_DEFAULTS, kind: 'rings', ys: '2024 (TWh), 2014 (TWh)', hole: 0.34, ringGap: 3, labels: 'none', center: 'text', centerText: '2024 out\n2014 in', page: { ...PLOT_PAGE_DEFAULTS, name: 'nested' } });
+  for (const n of [pie, donut, rings]) link(b, imp, n, 'dataset');
+  const cv = add(b, 'canvas', 'pie-canvas', 1400, 0, { ...CANVAS_DEFAULTS, width: 180, height: 72, panels: '(a)', name: 'pies', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 3, hgap: 2, legend: 'bottom' } });
+  for (const n of [pie, donut, rings]) link(b, n, cv, 'figures', 'figure');
+  return project(b, 'Pie, doughnut and nested rings');
+}
+
+// ---- Charts: significance brackets ----
+// the response of four treatments (raw values): mean ± SD bars with every pair by Welch t (Holm), boxes with each
+// treatment against the control by Tukey; in a Merge
+function significanceExample(): Project {
+  const b = builder();
+  const r = rng(89);
+  const lines = ['Treatment;Response'];
+  for (const [g, mu] of [['control', 20], ['low', 23], ['mid', 27], ['high', 34]] as const) for (let k = 0; k < 10; k++) lines.push(`${g};${(mu + 4 * gauss(r)).toFixed(2)}`);
+  const imp = add(b, 'import', 'sg-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'response', fileName: 'response.txt', text: lines.join('\n'), textId: 'sg-1' });
+  const bars = add(b, 'barchart', 'sg-bars', 640, 0, { ...BARCHART_DEFAULTS, mode: 'raw', value: 'Response', group: 'Treatment', points: true, colorBy: 'category', opacity: 0.75, legend: { show: false }, sig: { on: true, test: 'welch', adjust: 'holm', pairs: 'adjacent' }, axes: titled('', 'Response'), page: { ...PLOT_PAGE_DEFAULTS, name: 'bars_significance' } });
+  const box = add(b, 'boxviolin', 'sg-box', 640, 1500, { ...BOXVIOLIN_DEFAULTS, mode: 'raw', value: 'Response', group: 'Treatment', colorBy: 'category', points: 'swarm', opacity: 0.5, legend: { show: false }, sig: { on: true, test: 'tukey', pairs: 'control', show: 'both', ns: true }, axes: titled('', 'Response'), page: { ...PLOT_PAGE_DEFAULTS, name: 'boxes_significance' } });
+  link(b, imp, bars, 'dataset');
+  link(b, imp, box, 'dataset');
+  const cv = add(b, 'canvas', 'sg-canvas', 1400, 0, { ...CANVAS_DEFAULTS, width: 170, height: 80, panels: '(a)', name: 'significance', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 2, hgap: 4 } });
+  link(b, bars, cv, 'figures', 'figure');
+  link(b, box, cv, 'figures', 'figure');
+  return project(b, 'Significance brackets on bars and boxes');
+}
+
+// ---- Charts: contour / heatmap ----
+// a reflectance map R(λ, θ) as a matrix: the angle in the first column, a column per wavelength; a dip (a resonance)
+// moving to longer wavelengths with the angle
+function reflectanceMatrix(): string {
+  const wl = Array.from({ length: 31 }, (_, i) => 500 + 10 * i);
+  const lines = [['Angle (°)', ...wl.map((w) => `R ${w} nm`)].join(';')];
+  for (let a = 0; a <= 60; a += 2) {
+    const c = 560 + 0.06 * a * a;
+    lines.push([a, ...wl.map((w) => (1 - (0.85 * 30 ** 2) / ((w - c) ** 2 + 30 ** 2)).toFixed(4))].join(';'));
+  }
+  return lines.join('\n');
+}
+// scattered measurements of a surface (random points of a smooth function)
+function scatteredSurface(seed: number): string {
+  const r = rng(seed);
+  const lines = ['x;y;z'];
+  for (let k = 0; k < 250; k++) {
+    const [x, y] = [-3 + 6 * r(), -2 + 4 * r()];
+    lines.push(`${x.toFixed(4)};${y.toFixed(4)};${((1 - x / 2 + x ** 5 + y ** 3) * Math.exp(-(x * x) - y * y)).toFixed(5)}`);
+  }
+  return lines.join('\n');
+}
+// the map smooth with its contour lines and a row cut at 30°; the cut as a curve; scattered points as filled levels
+function contourExample(): Project {
+  const b = builder();
+  const mat = add(b, 'import', 'ct-matrix', 0, 0, { ...IMPORT_DEFAULTS, name: 'reflectance', fileName: 'reflectance_map.txt', text: reflectanceMatrix(), textId: 'ct-1' });
+  const map = add(b, 'contour', 'ct-map', 640, 0, { ...CONTOUR_DEFAULTS, layout: 'matrix', xTitle: 'Wavelength (nm)', draw: 'heatLines', smooth: true, cmap: 'inferno', levels: 'list', list: '0.2, 0.4, 0.6, 0.8', lineColor: '#ffffff', lineLabels: true, lineWidth: 0.5, zTitle: 'Reflectance', profileY: 30, profileShow: true, axes: titled('Wavelength (nm)', 'Angle (°)'), page: { ...PLOT_PAGE_DEFAULTS, name: 'reflectance_map' } });
+  link(b, mat, map, 'dataset');
+  const cut = add(b, 'plot1d', 'ct-cut', 1400, 0, { ...plot({ label: 'θ = 30°', style: curve(2, { lineWidth: 1.2 }), cols: { x: 'Wavelength (nm)', y: 'Reflectance' } }, { page: { name: 'cut_30deg' } }) });
+  link(b, map, cut, 'dataset', 'row');
+  const sc = add(b, 'import', 'ct-scatter', 0, 1500, { ...IMPORT_DEFAULTS, name: 'surface', fileName: 'surface_points.txt', text: scatteredSurface(97), textId: 'ct-2', edits: roles({ 0: 'x', 1: 'y', 2: 'y' }) });
+  const tri = add(b, 'contour', 'ct-tri', 640, 1500, { ...CONTOUR_DEFAULTS, draw: 'filledLines', cmap: 'rdbu', reverse: true, nLevels: 12, lineWidth: 0.4, page: { ...PLOT_PAGE_DEFAULTS, name: 'scattered_filled' } });
+  link(b, sc, tri, 'dataset');
+  const cv = add(b, 'canvas', 'ct-canvas', 2100, 0, { ...CANVAS_DEFAULTS, width: 180, height: 60, panels: '(a)', name: 'contours', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 3, hgap: 4 } });
+  for (const n of [map, cut, tri]) link(b, n, cv, 'figures', 'figure');
+  return project(b, 'Contour and heatmap: a reflectance map, scattered points');
+}
+
+// ---- Analysis: matrices ----
+// a symmetric positive definite A and a vector b typed in: A⁻¹ (and A⁻¹·A = I), det A, the eigenvalues and vectors,
+// the SVD, the solution of A·x = b; A⁻¹ and the eigenvectors drawn with their values in the cells; the reflectance map
+// of the Contour example read as a matrix (its X and Y kept) and drawn as a map
+function matrixExample(): Project {
+  const b = builder();
+  const A = add(b, 'matrix', 'mx-a', 0, 0, { ...MATRIX_DEFAULTS, name: 'A', text: '4\t1\t2\t0.5\n1\t3\t0\t1\n2\t0\t5\t1.5\n0.5\t1\t1.5\t2' });
+  const v = add(b, 'matrix', 'mx-b', 0, 700, { ...MATRIX_DEFAULTS, name: 'b', text: '1\n2\n3\n4' });
+  const comp = add(b, 'matcomp', 'mx-comp', 640, 0, {
+    steps: [
+      { id: 's1', name: 'Ainv', op: 'inverse', a: 'A' },
+      { id: 's2', name: 'check', op: 'matmul', a: '@s1', b: 'A' },
+      { id: 's3', name: 'detA', op: 'det', a: 'A' },
+      { id: 's4', name: 'eig', op: 'eig', a: 'A' },
+      { id: 's5', name: 'svd', op: 'svd', a: 'A' },
+      { id: 's6', name: 'x', op: 'solve', a: 'A', b: 'B' },
+    ],
+  });
+  link(b, A, comp, 'in-0');
+  link(b, v, comp, 'in-1');
+  const cells = { ...MATRIX_CONTOUR_DEFAULTS, cellValues: true, cellDecimals: 3 };
+  const inv = add(b, 'contour', 'mx-inv', 1400, 0, { ...cells, cmap: 'rdbu', reverse: true, zTitle: 'A^{−1}', page: { ...PLOT_PAGE_DEFAULTS, width: 70, height: 60, name: 'inverse' } });
+  link(b, comp, inv, 'matrix', 's-s1');
+  const vec = add(b, 'contour', 'mx-vec', 1400, 1500, { ...cells, cmap: 'coolwarm', zMin: -1, zMax: 1, zTitle: 'eigenvectors', page: { ...PLOT_PAGE_DEFAULTS, width: 70, height: 60, name: 'eigenvectors' } });
+  link(b, comp, vec, 'matrix', 's-s4-vectors');
+  // a map as a matrix: the rows' Y (the angle) and the columns' X (the wavelength in their names) kept
+  const imp = add(b, 'import', 'mx-map', 0, 1500, { ...IMPORT_DEFAULTS, name: 'reflectance', fileName: 'reflectance_map.txt', text: reflectanceMatrix(), textId: 'mx-1' });
+  const R = add(b, 'matrix', 'mx-r', 640, 1500, { ...MATRIX_DEFAULTS, source: 'dataset', name: 'R' });
+  link(b, imp, R, 'in');
+  const tight = { x: { ...AXIS_DEFAULTS, range: 'tight' as const }, y: { ...AXIS_DEFAULTS, range: 'tight' as const } };
+  const map = add(b, 'contour', 'mx-plot-map', 1400, 3000, { ...MATRIX_CONTOUR_DEFAULTS, axesFrom: 'coords', rowOne: 'bottom', square: false, smooth: true, cmap: 'inferno', zTitle: 'Reflectance', axes: titled('Wavelength (nm)', 'Angle (°)', tight), page: { ...PLOT_PAGE_DEFAULTS, width: 80, height: 60, name: 'map' } });
+  link(b, R, map, 'matrix');
+  const cv = add(b, 'canvas', 'mx-canvas', 2200, 0, { ...CANVAS_DEFAULTS, width: 180, height: 60, panels: '(a)', name: 'matrices', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 3, hgap: 6 } });
+  for (const n of [inv, vec, map]) link(b, n, cv, 'figures', 'figure');
+  return project(b, 'Matrices: inverse, eigenvalues, SVD, a map as a matrix');
+}
+
+// ---- Charts: polar, wind rose and radar ----
+// a half-wave dipole's gain (dB) every 2°; a month of wind directions and speeds; three materials scored on six
+// properties
+function polarExample(): Project {
+  const b = builder();
+  const dip = ['Angle (°);Gain (dB)', ...Array.from({ length: 91 }, (_, k) => {
+    const th = (2 * k * Math.PI) / 180;
+    const g = Math.sin(th) < 1e-6 ? 1e-6 : (Math.cos((Math.PI / 2) * Math.cos(th)) / Math.sin(th)) ** 2;
+    return `${2 * k};${Math.max(-40, 10 * Math.log10(Math.max(g, 1e-6))).toFixed(3)}`;
+  })].join('\n');
+  const wind = ['Direction (°);Hours'].concat([0, 22.5, 45, 67.5, 90, 112.5, 135, 157.5, 180, 202.5, 225, 247.5, 270, 292.5, 315, 337.5].map((a, k) => `${a};${[42, 30, 18, 12, 9, 11, 16, 25, 33, 48, 70, 88, 76, 61, 52, 47][k]}`)).join('\n');
+  const radar = ['Property;Steel;Aluminium;CFRP', 'Strength;8;4;9', 'Stiffness;9;5;7', 'Lightness;2;7;9', 'Cost;8;6;2', 'Corrosion;3;7;8', 'Fatigue;7;4;8'].join('\n');
+  const i1 = add(b, 'import', 'po-dipole', 0, 0, { ...IMPORT_DEFAULTS, name: 'dipole', fileName: 'dipole_gain.txt', text: dip, textId: 'po-1' });
+  const i2 = add(b, 'import', 'po-wind', 0, 1500, { ...IMPORT_DEFAULTS, name: 'wind', fileName: 'wind.txt', text: wind, textId: 'po-2' });
+  const i3 = add(b, 'import', 'po-radar', 0, 3000, { ...IMPORT_DEFAULTS, name: 'materials', fileName: 'materials.txt', text: radar, textId: 'po-3' });
+  const p1 = add(b, 'polar', 'po-p1', 640, 0, { ...POLAR_DEFAULTS, zero: 'N', clockwise: true, from: 0, to: 180, rMin: -30, rMax: 0, thetaStep: 30, fill: true, opacity: 0.2, colors: ['#0072B2'], legend: { show: false }, page: { ...PLOT_PAGE_DEFAULTS, name: 'dipole' } });
+  const p2 = add(b, 'polar', 'po-p2', 640, 1500, { ...POLAR_DEFAULTS, mode: 'bars', zero: 'N', clockwise: true, thetaStep: 45, thetaLabels: 'compass', colors: ['#D55E00'], legend: { show: false }, page: { ...PLOT_PAGE_DEFAULTS, name: 'wind_rose' } });
+  const p3 = add(b, 'polar', 'po-p3', 640, 3000, { ...POLAR_DEFAULTS, kind: 'radar', mode: 'linesymbol', fill: true, rMin: 0, rMax: 10, legend: { show: false }, page: { ...PLOT_PAGE_DEFAULTS, name: 'radar' } });
+  link(b, i1, p1, 'dataset');
+  link(b, i2, p2, 'dataset');
+  link(b, i3, p3, 'dataset');
+  const cv = add(b, 'canvas', 'po-canvas', 1400, 0, { ...CANVAS_DEFAULTS, width: 180, height: 65, panels: '(a)', name: 'polar', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 3, hgap: 3, legend: 'bottom' } });
+  for (const n of [p1, p2, p3]) link(b, n, cv, 'figures', 'figure');
+  return project(b, 'Polar: antenna pattern, wind rose, radar');
+}
+
+// ---- Charts: scatter matrix ----
+// four measures of flowers of three species (example values in the manner of Fisher's iris data)
+function flowersFile(seed: number): string {
+  const r = rng(seed);
+  const lines = ['Species;Sepal length (cm);Sepal width (cm);Petal length (cm);Petal width (cm)'];
+  for (const [sp, sl, sw, pl, pw] of [['setosa', 5.0, 3.4, 1.5, 0.25], ['versicolor', 5.9, 2.8, 4.3, 1.3], ['virginica', 6.6, 3.0, 5.5, 2.0]] as const)
+    for (let k = 0; k < 30; k++) {
+      const size = gauss(r);
+      lines.push([sp, (sl + 0.35 * size + 0.15 * gauss(r)).toFixed(1), (sw + 0.2 * size * (sp === 'setosa' ? 1.2 : 0.6) + 0.2 * gauss(r)).toFixed(1), (pl + 0.3 * size * (sp === 'setosa' ? 0.2 : 1) + 0.15 * gauss(r)).toFixed(1), Math.max(0.1, pw + 0.12 * size * (sp === 'setosa' ? 0.3 : 1) + 0.08 * gauss(r)).toFixed(1)].join(';'));
+    }
+  return lines.join('\n');
+}
+function scatterMatrixExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'sm-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'flowers', fileName: 'flowers.txt', text: flowersFile(101), textId: 'sm-1' });
+  const m = add(b, 'scattermatrix', 'sm-matrix', 640, 0, { ...SCATTERMATRIX_DEFAULTS, group: 'Species', diag: 'kde', upper: 'corr', colors: ['#0072B2', '#E69F00', '#009E73'], page: { ...PLOT_PAGE_DEFAULTS, width: 160, height: 150, name: 'scatter_matrix' } });
+  link(b, imp, m, 'dataset');
+  return project(b, 'Scatter matrix of four measures, three species');
+}
+
+// ---- Charts: waterfall (bridge) chart ----
+// a year's result of a small laboratory, from the grants to what is left (k€, example values)
+function waterfallExample(): Project {
+  const b = builder();
+  const text = ['Item;Change (k€)', 'Grants;420', 'Services;85', 'Salaries;-260', 'Equipment;-95', 'Consumables;-48', 'Travel;-22', 'Overheads;-40'].join('\n');
+  const imp = add(b, 'import', 'wf-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'budget', fileName: 'budget.txt', text, textId: 'wf-1' });
+  const wf = add(b, 'barchart', 'wf-chart', 640, 0, { ...BARCHART_DEFAULTS, arrange: 'waterfall', labels: 'top', decimals: 0, width: 0.7, edgeWidth: 0, legend: { show: true, x: 96, y: 4, anchor: 'tr' }, barLook: { radius: 1.5 }, axes: titled('', 'k€'), page: { ...PLOT_PAGE_DEFAULTS, width: 160, name: 'waterfall' } });
+  link(b, imp, wf, 'dataset');
+  return project(b, 'Waterfall: from the grants to the balance');
+}
+
+// ---- Charts: ternary (the soil texture triangle) ----
+// the sand, silt and clay of soil samples from three sites; an alloy's composition along a diffusion couple
+function ternaryExample(): Project {
+  const b = builder();
+  const r = rng(103);
+  const soil = ['Site;Sand (%);Silt (%);Clay (%)'];
+  for (const [site, sa, si] of [['river', 65, 25], ['plateau', 25, 50], ['valley', 35, 30]] as const)
+    for (let k = 0; k < 15; k++) {
+      const s = Math.max(1, sa + 7 * gauss(r));
+      const t = Math.max(1, si + 6 * gauss(r));
+      soil.push(`${site};${s.toFixed(1)};${t.toFixed(1)};${Math.max(1, 100 - s - t).toFixed(1)}`);
+    }
+  const path = ['Distance (µm);Fe;Ni;Cr', ...Array.from({ length: 11 }, (_, k) => {
+    const f = k / 10;
+    return `${10 * k};${(0.7 - 0.45 * f).toFixed(3)};${(0.1 + 0.55 * f * f).toFixed(3)};${(0.2 - 0.1 * f + 0.1 * Math.sin(Math.PI * f)).toFixed(3)}`;
+  })];
+  const i1 = add(b, 'import', 'tn-soil', 0, 0, { ...IMPORT_DEFAULTS, name: 'soil', fileName: 'soil.txt', text: soil.join('\n'), textId: 'tn-1' });
+  const i2 = add(b, 'import', 'tn-path', 0, 1500, { ...IMPORT_DEFAULTS, name: 'diffusion', fileName: 'couple.txt', text: path.join('\n'), textId: 'tn-2' });
+  const t1 = add(b, 'ternary', 'tn-t1', 640, 0, { ...TERNARY_DEFAULTS, a: 'Clay (%)', b: 'Sand (%)', c: 'Silt (%)', group: 'Site', scale: 'percent', colors: ['#0072B2', '#E69F00', '#009E73'], legend: { show: true, x: 100, y: 0, anchor: 'tr' }, page: { ...PLOT_PAGE_DEFAULTS, width: 85, height: 75, name: 'soil_texture' } });
+  const t2 = add(b, 'ternary', 'tn-t2', 640, 1500, { ...TERNARY_DEFAULTS, a: 'Fe', b: 'Ni', c: 'Cr', mode: 'linesymbol', step: 0.2, symbolFill: 'white', colors: ['#CC79A7'], legend: { show: false }, page: { ...PLOT_PAGE_DEFAULTS, width: 85, height: 75, name: 'diffusion_path' } });
+  link(b, i1, t1, 'dataset');
+  link(b, i2, t2, 'dataset');
+  const cv = add(b, 'canvas', 'tn-canvas', 1400, 0, { ...CANVAS_DEFAULTS, width: 170, height: 75, panels: '(a)', name: 'ternary', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 2, hgap: 4 } });
+  link(b, t1, cv, 'figures', 'figure');
+  link(b, t2, cv, 'figures', 'figure');
+  return project(b, 'Ternary: soil texture, a diffusion path');
+}
+
+// ---- Charts: waterfall of curves and ridgeline plots ----
+// (a) the reflectance of a microcavity for 23 thicknesses (the strong-coupling data): one behind the other, the curves in
+// front hiding those behind, coloured by the thickness with a colour bar, the thickness written at each; (b) the
+// photoluminescence of a sample from 10 to 300 K, each spectrum to its maximum, filled in its colour (a ridgeline)
+function curvesWaterfallExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'wf-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'strong coupling', fileName: 'strong_coupling_spr_forge.csv', text: strongCouplingTable(), textId: 'wf-1', edits: { cols: { 0: { role: 'none' }, 1: { role: 'x' }, 2: { role: 'y' } } } });
+  const split = add(b, 'unstack', 'wf-split', 640, 0, { ...UNSTACK_DEFAULTS, x: 'Wavelength (nm)', ys: 'R', by: 'column', column: 'cavity d (nm)' });
+  link(b, imp, split, 'in');
+  const w1 = add(b, 'waterfall', 'wf-r', 1240, 0, { ...WATERFALL_DEFAULTS, dx: 0, dy: 9, colorMap: 'plasma', reverse: true, zTitle: 'Cavity d (nm)', labels: 'right', labelText: '{z}', labelSize: 5, lineWidth: 0.8, axes: titled('Wavelength (nm)', 'Reflectance (shifted)'), page: { ...PLOT_PAGE_DEFAULTS, width: 85, height: 110, name: 'reflectance_waterfall' } });
+  link(b, split, w1, 'dataset');
+  // PL spectra: a band that moves to the red and widens with the temperature, a second one that fades
+  const r = rng(211);
+  const temps = [10, 50, 100, 150, 200, 250, 300];
+  const pl = [['Energy (eV)', ...temps.map((t) => `PL ${t} K`)].join(';')];
+  for (let k = 0; k <= 200; k++) {
+    const e = 1.3 + (0.5 * k) / 200;
+    pl.push([e.toFixed(4), ...temps.map((t) => {
+      const c = 1.6 - 0.00045 * t;
+      const w = 0.02 + 0.00012 * t;
+      const v = Math.exp(-(((e - c) / w) ** 2) / 2) + 0.6 * Math.exp(-t / 90) * Math.exp(-(((e - c + 0.09) / 0.025) ** 2) / 2) + 0.01 * gauss(r);
+      return v.toFixed(4);
+    })].join(';'));
+  }
+  const i2 = add(b, 'import', 'wf-pl', 0, 1500, { ...IMPORT_DEFAULTS, name: 'photoluminescence', fileName: 'pl_temperature.txt', text: pl.join('\n'), textId: 'wf-2' });
+  const w2 = add(b, 'waterfall', 'wf-ridge', 1240, 1500, { ...WATERFALL_DEFAULTS, dx: 0, dy: 70, normalize: 'max', front: 'last', fill: 'color', fillOpacity: 0.55, colorMap: 'coolwarm', colorbar: false, labels: 'leftIn', labelText: '{z} K', labelColor: '#333333', lineWidth: 0.8, axes: axes({ sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Energy (eV)' }), left: side({ title: '', showTitle: false, labels: false, ticks: 'none' }) } }), page: { ...PLOT_PAGE_DEFAULTS, width: 85, height: 110, name: 'pl_ridgeline' } });
+  link(b, i2, w2, 'dataset');
+  const cv = add(b, 'canvas', 'wf-canvas', 1900, 0, { ...CANVAS_DEFAULTS, width: 170, height: 110, panels: '(a)', name: 'waterfall', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 2, hgap: 4 } });
+  link(b, w1, cv, 'figures', 'figure');
+  link(b, w2, cv, 'figures', 'figure');
+  return project(b, 'Waterfall: reflectance vs thickness, a PL ridgeline');
+}
+
+// ---- Charts: 3D ----
+// (a) two Gaussian peaks and a dip as a surface, its contour lines on the floor; (b) a year's monthly rainfall at four
+// stations as 3D bars (a matrix); (c) three clusters of points (symbols, lines down to the floor); (d) the microcavity's
+// reflectance for every thickness in depth (a 3D waterfall with walls)
+function plot3dExample(): Project {
+  const b = builder();
+  const r = rng(307);
+  const surf = ['x;y;z'];
+  for (let j = 0; j <= 40; j++)
+    for (let i = 0; i <= 40; i++) {
+      const [x, y] = [-3 + (6 * i) / 40, -3 + (6 * j) / 40];
+      surf.push(`${x.toFixed(3)};${y.toFixed(3)};${(Math.exp(-((x - 1) ** 2 + (y - 0.5) ** 2)) + 0.7 * Math.exp(-((x + 1.2) ** 2 + (y + 1) ** 2) / 0.6) - 0.4 * Math.exp(-((x + 0.5) ** 2 + (y - 1.8) ** 2) / 0.4)).toFixed(4)}`);
+    }
+  const i1 = add(b, 'import', 'p3-surf', 0, 0, { ...IMPORT_DEFAULTS, name: 'peaks', fileName: 'peaks.txt', text: surf.join('\n'), textId: 'p3-1' });
+  const s = add(b, 'plot3d', 'p3-s', 640, 0, { ...PLOT3D_DEFAULTS, kind: 'surface', cmap: 'viridis', mesh: 4, meshColor: '#2b2b2b', meshWidth: 0.25, floor: 'contour', floorLevels: 10, titleZ: 'z', page: { ...PLOT_PAGE_DEFAULTS, width: 85, height: 70, name: 'surface' } });
+  link(b, i1, s, 'dataset');
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const rain = ['Station;' + months.map((_, k) => `${k + 1} month`).join(';')];
+  [1, 2, 3, 4].forEach((st) => rain.push(`${st};${months.map((_, k) => Math.max(5, 60 + 40 * Math.sin(((k - 2 + st) / 12) * 2 * Math.PI) + 15 * st + 10 * gauss(r)).toFixed(0)).join(';')}`));
+  const i2 = add(b, 'import', 'p3-rain', 0, 1500, { ...IMPORT_DEFAULTS, name: 'rainfall', fileName: 'rainfall.txt', text: rain.join('\n'), textId: 'p3-2' });
+  const bars = add(b, 'plot3d', 'p3-b', 640, 1500, { ...PLOT3D_DEFAULTS, kind: 'bars', layout: 'matrix', yCol: 'Station', xTitle: 'Month', cmap: 'plasma', barWidth: 0.7, barEdge: '#333333', titleZ: 'Rain (mm)', azim: -55, elev: 28, aspectX: 1.6, page: { ...PLOT_PAGE_DEFAULTS, width: 85, height: 70, name: 'bars3d' } });
+  link(b, i2, bars, 'dataset');
+  const pts = ['Cluster;x;y;z'];
+  for (const [name, cx, cy, cz] of [['A', 0, 0, 0], ['B', 3, 1, 2], ['C', 1, 3, 4]] as const)
+    for (let k = 0; k < 30; k++) pts.push(`${name};${(cx + 0.6 * gauss(r)).toFixed(3)};${(cy + 0.6 * gauss(r)).toFixed(3)};${(cz + 0.6 * gauss(r)).toFixed(3)}`);
+  const i3 = add(b, 'import', 'p3-pts', 0, 3000, { ...IMPORT_DEFAULTS, name: 'clusters', fileName: 'clusters.txt', text: pts.join('\n'), textId: 'p3-3' });
+  const sc = add(b, 'plot3d', 'p3-c', 640, 3000, { ...PLOT3D_DEFAULTS, kind: 'scatter', x: 'x', y: 'y', z: 'z', group: 'Cluster', colorBy: 'group', colors: ['#0072B2', '#E69F00', '#009E73'], drop: true, symbolSize: 4, page: { ...PLOT_PAGE_DEFAULTS, width: 85, height: 70, name: 'scatter3d' } });
+  link(b, i3, sc, 'dataset');
+  const i4 = add(b, 'import', 'p3-sc', 0, 4500, { ...IMPORT_DEFAULTS, name: 'strong coupling', fileName: 'strong_coupling_spr_forge.csv', text: strongCouplingTable(), textId: 'p3-4', edits: { cols: { 0: { role: 'none' }, 1: { role: 'x' }, 2: { role: 'y' } } } });
+  const split = add(b, 'unstack', 'p3-split', 640, 4500, { ...UNSTACK_DEFAULTS, x: 'Wavelength (nm)', ys: 'R', by: 'column', column: 'cavity d (nm)' });
+  link(b, i4, split, 'in');
+  const wf = add(b, 'plot3d', 'p3-w', 1240, 4500, { ...PLOT3D_DEFAULTS, kind: 'waterfall', cmap: 'plasma', reverse: true, lineWidth: 0.8, wallOpacity: 0.08, titleY: 'Cavity d (nm)', titleZ: 'R', azim: -70, elev: 25, aspectY: 1.4, colorbar: false, page: { ...PLOT_PAGE_DEFAULTS, width: 85, height: 70, name: 'waterfall3d' } });
+  link(b, split, wf, 'dataset');
+  const cv = add(b, 'canvas', 'p3-canvas', 1900, 0, { ...CANVAS_DEFAULTS, width: 170, height: 140, panels: '(a)', name: 'plots3d', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 2, cols: 2, hgap: 3, vgap: 3 } });
+  for (const p of [s, bars, sc, wf]) link(b, p, cv, 'figures', 'figure');
+  return project(b, '3D: a surface, bars, clusters, a waterfall');
+}
+
+// ---- Charts: 3D stacked maps (reciprocal space maps of five GaN samples, two reflections) ----
+// Every sample's map on a 50 × 50 grid in Qx, Qz (example values): a tilted main spot and a weaker one beside it over a
+// noisy background; the counts below 8 left out, the colours on a log scale, one colour bar in the Merge for both.
+function rsmFile(seed: number, qx: [number, number], qz: [number, number], spots: (k: number) => { x: number; z: number; sx: number; sz: number; tilt: number; a: number }[]): string {
+  const r = rng(seed);
+  const lines = ['Sample;Qx (1/Å);Qz (1/Å);Intensity (counts)'];
+  for (let k = 0; k < 5; k++)
+    for (let j = 0; j < 50; j++)
+      for (let i = 0; i < 50; i++) {
+        const x = qx[0] + ((qx[1] - qx[0]) * i) / 49;
+        const z = qz[0] + ((qz[1] - qz[0]) * j) / 49;
+        let v = 2;
+        for (const s of spots(k)) {
+          const [u, w] = [(x - s.x) * Math.cos(s.tilt) + (z - s.z) * Math.sin(s.tilt), -(x - s.x) * Math.sin(s.tilt) + (z - s.z) * Math.cos(s.tilt)];
+          v += s.a * Math.exp(-((u / s.sx) ** 2 + (w / s.sz) ** 2) / 2);
+        }
+        v = Math.max(0, v * (1 + 0.35 * gauss(r)) + 1.5 * gauss(r));
+        lines.push(`S${k + 1};${x.toFixed(5)};${z.toFixed(5)};${v.toFixed(1)}`);
+      }
+  return lines.join('\n');
+}
+function rsmExample(): Project {
+  const b = builder();
+  const i1 = add(b, 'import', 'rsm-0002', 0, 0, { ...IMPORT_DEFAULTS, name: 'GaN 0002', fileName: 'rsm_0002.txt', textId: 'rsm-1', edits: roles({ 0: 'label', 1: 'x', 2: 'y', 3: 'y' }), text: rsmFile(311, [-0.02, 0.02], [0.37, 0.41], (k) => [{ x: 0, z: 0.383 + 0.0012 * k, sx: 0.0035 + 0.0012 * k, sz: 0.0012, tilt: -0.5 + 0.12 * k, a: 3000 / (1 + 0.4 * k) }, { x: 0.011, z: 0.389 + 0.001 * k, sx: 0.0012, sz: 0.0008, tilt: 0, a: 400 }]) });
+  const i2 = add(b, 'import', 'rsm-1124', 0, 1500, { ...IMPORT_DEFAULTS, name: 'GaN 11-24', fileName: 'rsm_1124.txt', textId: 'rsm-2', edits: roles({ 0: 'label', 1: 'x', 2: 'y', 3: 'y' }), text: rsmFile(313, [0.62, 0.66], [0.75, 0.79], (k) => [{ x: 0.645, z: 0.758 + 0.003 * k, sx: 0.003, sz: 0.0016, tilt: 0.6, a: 60 / (1 + 0.8 * k) }]) });
+  const look = { ...PLOT3D_DEFAULTS, kind: 'layers' as const, bins: 50, cmap: 'turbo' as const, logColor: true, hide: { below: 8 }, layerAxis: 'none' as const, colorbar: false, panes: '', gridColor: '#bdbdbd', gridWalls: 'floor' as const, gridMinor: true, edges: 'all' as const, azim: -50, elev: 22, aspectZ: 1.6, titleX: 'Q_{x} (Å^{−1})', titleY: 'Q_{z} (Å^{−1})', ticks: 4 };
+  const title = (t: string) => note('title', 'text', { ...TEXT_SPEC_DEFAULTS, text: t, x: 50, y: 1, anchor: 'tc', style: { size: 11 } });
+  const p1 = add(b, 'plot3d', 'rsm-p1', 640, 0, { ...look, marks: [{ id: 'axis', type: 'vline', x1: 0, y1: 0.385, z1: NaN, z2: NaN, x2: NaN, y2: NaN, color: '#000000', width: 0.8, dash: 'dash' }, { id: 'box', type: 'rect', x1: -0.01, x2: 0.01, y1: 0.379, y2: 0.386, z1: NaN, z2: NaN, color: '#e41a1c', width: 0.8, dash: 'dash' }], annotations: [title('GaN 0002')], page: { ...PLOT_PAGE_DEFAULTS, width: 80, height: 110, name: 'rsm_0002' } });
+  const p2 = add(b, 'plot3d', 'rsm-p2', 640, 1500, { ...look, marks: [{ id: 'axis', type: 'vline', x1: 0.645, y1: 0.765, z1: NaN, z2: NaN, x2: NaN, y2: NaN, color: '#000000', width: 0.8, dash: 'dash' }], annotations: [title('GaN 11\\overline{2}4')], page: { ...PLOT_PAGE_DEFAULTS, width: 80, height: 110, name: 'rsm_1124' } });
+  link(b, i1, p1, 'dataset');
+  link(b, i2, p2, 'dataset');
+  const cv = add(b, 'canvas', 'rsm-canvas', 1300, 0, { ...CANVAS_DEFAULTS, width: 180, height: 110, panels: 'none', name: 'rsm_stack', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 3, colRatios: '1:1:0.16', oneColorScale: true }, annotations: [note('bar', 'colorbar', { ...COLORBAR_DEFAULTS, x: 92, y: 18, length: 64, thickness: 7, title: 'Intensity (counts)' })] });
+  link(b, p1, cv, 'figures', 'figure');
+  link(b, p2, cv, 'figures', 'figure');
+  return project(b, '3D stacked maps: RSMs of five samples');
+}
+
+
+// ---- Spectroscopy, kinetics, signals and statistics (the analysis of 2026-10) ----
+const spec = (name: string, value = NaN, fixed = false): FitParamSpec => ({ name, value, fixed, min: NaN, max: NaN, shared: false });
+const dots = (k: number, size = 2.5): CurveStyle => curve(k, { mode: 'scatter', symbol: 'circle', symbolSize: size });
+const lineK = (k: number, patch: Partial<CurveStyle> = {}): CurveStyle => curve(k, { lineWidth: 1.2, ...patch });
+
+// a Ni 2p photoelectron spectrum: the 2p3/2 and 2p1/2 lines (17.3 eV apart, half the area) on a Shirley background
+function xpsFile(): string {
+  const r = rng(21);
+  const V = (x: number, c: number, w: number) => 0.6 / (1 + ((2 * (x - c)) / w) ** 2) + 0.4 * Math.exp((-4 * Math.LN2 * (x - c) ** 2) / (w * w));
+  const xs: number[] = [];
+  for (let x = 845; x <= 880.001; x += 0.1) xs.push(+x.toFixed(2));
+  const peak = xs.map((x) => 3000 * V(x, 852.6, 1.6) + 1500 * V(x, 869.9, 1.6));
+  // the step under them: proportional to the area of the lines at lower energy
+  let acc = 0;
+  const step = peak.map((p) => (acc += p));
+  const lines = ['Binding energy (eV);Intensity (counts/s)'];
+  xs.forEach((x, i) => lines.push(x + ';' + (400 + (500 * step[i]) / acc + peak[i] + 25 * gauss(r)).toFixed(1)));
+  return lines.join('\n');
+}
+function xpsExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'xps-file', 0, 0, { ...IMPORT_DEFAULTS, name: 'Ni 2p', fileName: 'ni2p.txt', text: xpsFile(), textId: 'xps-1' });
+  const pk = add(b, 'peaks', 'xps-peaks', 640, 0, { ...PEAK_DEFAULTS, baseline: 'shirley', fit: true, subtract: false, peaks: [{ shape: 'voigtx', x: 852.5, doublet: { dx: 17.3, ratio: 0.5 } }] });
+  link(b, imp, pk, 'in');
+  const X = 'Binding energy (eV)';
+  const pl = add(b, 'plot1d', 'xps-plot', 1300, 0, {
+    ...plot(
+      {
+        label: 'data',
+        style: dots(7, 2),
+        cols: { x: X, y: 'Intensity (counts/s)' },
+        rows: [
+          { label: 'Shirley background', style: lineK(7, { dash: 'dash' }), cols: { x: X, y: 'baseline' } },
+          { label: '2p3/2', style: lineK(1, { fill: 'curve', fillCurve: 1, fillOpacity: 0.3 }), cols: { x: X, y: 'peak 1' } },
+          { label: '2p1/2 (its doublet)', style: lineK(2, { fill: 'curve', fillCurve: 1, fillOpacity: 0.3 }), cols: { x: X, y: 'peak 2' } },
+          { label: 'envelope', style: lineK(0, { color: '#111111' }), cols: { x: X, y: 'envelope' } },
+        ],
+      },
+      { legend: { x: 96, y: 4, anchor: 'tr' }, page: { name: 'ni2p' } },
+    ),
+  });
+  link(b, pk, pl, 'dataset', 'out');
+  add(b, 'note', 'xps-note', -560, 0, {
+    ...NOTE_DEFAULTS,
+    text: 'Photoelectron spectrum of Ni 2p (example values).\n\nPeak analyzer: the Shirley background (found again until it stays: it rises under each line in proportion to its area), one peak of the exact Voigt shape with 2× on — a spin–orbit doublet: its partner 17.3 eV higher, half the area, the same widths, linked to it in the fit.\n\nThe table of the peaks gives both lines (the second marked as the doublet of the first); the Plot draws the data, the background, the two lines filled down to it, and their sum.',
+  });
+  return project(b, 'XPS: Shirley background and a spin–orbit doublet');
+}
+
+// Raman lines on a strong fluorescence background
+function ramanFile(): string {
+  const r = rng(33);
+  const L = (x: number, c: number, w: number) => 1 / (1 + ((2 * (x - c)) / w) ** 2);
+  const lines = ['Raman shift (cm⁻¹);Intensity (counts)'];
+  for (let x = 400; x <= 1800; x += 2) {
+    const bg = 4000 + 3000 * Math.exp(-(((x - 1300) / 700) ** 2)) + 0.4 * (x - 400);
+    const y = bg + 2500 * L(x, 1001, 8) + 700 * L(x, 1031, 9) + 900 * L(x, 1155, 12) + 1200 * L(x, 1450, 18) + 60 * gauss(r);
+    lines.push(x + ';' + y.toFixed(1));
+  }
+  return lines.join('\n');
+}
+function ramanBaselineExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'rb-file', 0, 0, { ...IMPORT_DEFAULTS, name: 'Raman', fileName: 'raman_fluorescence.txt', text: ramanFile(), textId: 'rb-1' });
+  const pk = add(b, 'peaks', 'rb-peaks', 640, 0, { ...PEAK_DEFAULTS, baseline: 'airpls', baseOpt: { lambda: 6 }, fit: true, subtract: false, peaks: [1001, 1031, 1155, 1450].map((x) => ({ shape: 'lorentz' as const, x })) });
+  link(b, imp, pk, 'in');
+  const area = add(b, 'calculus', 'rb-area', 640, 900, { ...CALCULUS_DEFAULTS, op: 'int', baseline: 'asls', baseOpt: { lambda: 4, p: 0.01 }, regions: [{ lo: 960, hi: 1060 }, { lo: 1380, hi: 1520 }] });
+  link(b, imp, area, 'in');
+  const width = add(b, 'peakwidth', 'rb-width', 1300, 900, { ...PEAKWIDTH_DEFAULTS, kind: 'peak', base: 'snip', baseOpt: { width: 15 }, regions: [{ lo: 960, hi: 1060 }, { lo: 1100, hi: 1220 }] });
+  link(b, imp, width, 'in');
+  const X = 'Raman shift (cm⁻¹)';
+  const pl = add(b, 'plot1d', 'rb-plot', 1300, 0, {
+    ...plot(
+      {
+        label: 'measured',
+        style: dots(7, 1.6),
+        cols: { x: X, y: 'Intensity (counts)' },
+        rows: [
+          { label: 'baseline (airPLS)', style: lineK(3, { dash: 'dash' }), cols: { x: X, y: 'baseline' } },
+          { label: 'fit: baseline + 4 Lorentzians', style: lineK(1), cols: { x: X, y: 'envelope' } },
+        ],
+      },
+      { legend: { x: 4, y: 4, anchor: 'tl' }, page: { name: 'raman_baseline' } },
+    ),
+  });
+  link(b, pk, pl, 'dataset', 'out');
+  add(b, 'note', 'rb-note', -560, 0, {
+    ...NOTE_DEFAULTS,
+    text: 'A Raman spectrum on a fluorescence background ten times its lines (example values).\n\nThe same list of baselines in three nodes, each found from the data, the lines left above it:\n• Peak analyzer — airPLS (smoothness 10^6), the four lines of the list fitted (the weak one at 1031 cm⁻¹ beside the strong one at 1001);\n• Integrate — asymmetric least squares in every range (smoothness 10^4, asymmetry 0.01): the areas of the 1001 cm⁻¹ line and of the 1450 band;\n• Peak width — SNIP (a window of 15 points): the FWHM of two lines.',
+  });
+  return project(b, 'Raman on a fluorescence background: baselines from the data');
+}
+
+// standards and two unknowns read off a straight-line calibration
+function calibrationExample(): Project {
+  const b = builder();
+  const r = rng(5);
+  const cs = [0, 0.5, 1, 2, 4, 6, 8, 10];
+  const rows = ['c (mg/L);A;±A'];
+  for (const c of cs) {
+    const a = 0.012 + 0.0832 * c + 0.004 * gauss(r);
+    rows.push(c + ';' + a.toFixed(4) + ';0.004');
+  }
+  const imp = add(b, 'import', 'cal-file', 0, 0, { ...IMPORT_DEFAULTS, name: 'standards', fileName: 'standards.txt', text: rows.join('\n'), textId: 'cal-1', edits: { cols: { 0: { role: 'x' }, 1: { role: 'y' }, 2: { role: 'yerr' } } } });
+  const fit = add(b, 'fit', 'cal-fit', 640, 0, { ...FIT_DEFAULTS, model: { ...FIT_DEFAULTS.model, kind: 'library', model: 'linear' }, band: 'prediction', inverse: '0.212, 0.478', replicates: 3, lod: true, derived: 'sensitivity = b' });
+  link(b, imp, fit, 'in');
+  const pl = add(b, 'plot1d', 'cal-plot', 1300, 0, {
+    ...plot(
+      {
+        label: 'standards',
+        style: curve(0, { mode: 'scatter', symbol: 'circle', symbolSize: 3.5 }),
+        cols: { x: 'c (mg/L)', y: 'A', yerr: '±A' },
+        rows: [{ label: 'fit, 95 % prediction band', style: lineK(1), cols: { x: 'c (mg/L) (2)', y: 'fit of A', yerr: 'prediction band' } }],
+      },
+      { legend: { x: 4, y: 4, anchor: 'tl' }, page: { name: 'calibration' } },
+    ),
+  });
+  link(b, imp, pl, 'dataset');
+  link(b, fit, pl, 'dataset', 'fit');
+  const wb = add(b, 'book', 'cal-use', 1300, 900, { ...WORKBOOK_DEFAULTS, name: 'unknowns', sheets: [], into: ['use of the fit'] });
+  link(b, fit, wb, 'in-0', 'use');
+  add(b, 'note', 'cal-note', -560, 0, {
+    ...NOTE_DEFAULTS,
+    text: 'A calibration (example values): the absorbance of eight standards with its error (±A).\n\nFit ▸ Linear, weighted by 1/σ²; Use the fit:\n• X from Y — the concentrations of two unknowns (A = 0.212 and 0.478, each the mean of 3 measurements) with their 95 % intervals;\n• the limits of detection and quantification (3.3·s / slope, 10·s / slope);\n• a derived value: the sensitivity, with its error.\nThe results go to a Workbook (the “use of the fit” output); the Plot draws the standards, the line and its prediction band.',
+  });
+  return project(b, 'Calibration: unknowns, LOD and LOQ');
+}
+
+// a reaction A → B → C (the intermediate B measured) and a fluorescence decay measured through the instrument
+function kineticsExample(): Project {
+  const b = builder();
+  const r = rng(8);
+  const [k1, k2, A0] = [0.7, 0.2, 2];
+  const kin = ['Time (s);B (mM)'];
+  for (let i = 0; i <= 60; i++) {
+    const t = i * 0.4;
+    kin.push(t.toFixed(1) + ';' + (((A0 * k1) / (k2 - k1)) * (Math.exp(-k1 * t) - Math.exp(-k2 * t)) + 0.01 * gauss(r)).toFixed(4));
+  }
+  const imp = add(b, 'import', 'kin-file', 0, 0, { ...IMPORT_DEFAULTS, name: 'intermediate', fileName: 'kinetics.txt', text: kin.join('\n'), textId: 'kin-1' });
+  const fit = add(b, 'fit', 'kin-fit', 640, 0, { ...FIT_DEFAULTS, model: { ...FIT_DEFAULTS.model, kind: 'ode', ode: 'dA/dt = -k1*A; dB/dt = k1*A - k2*B; A(0) = A0; B(0) = 0; y = B' }, params: [spec('k1', 1), spec('k2', 0.1)] });
+  link(b, imp, fit, 'in');
+  const p1 = add(b, 'plot1d', 'kin-plot', 1300, 0, {
+    ...plot(
+      { label: 'B measured', style: dots(0, 3), cols: { x: 'Time (s)', y: 'B (mM)' }, rows: [{ label: 'the rate equations fitted', style: lineK(1), cols: { x: 'Time (s) (2)', y: 'fit of B (mM)', yerr: 'confidence band' } }] },
+      { legend: { x: 96, y: 4, anchor: 'tr' }, page: { name: 'kinetics' } },
+    ),
+  });
+  link(b, imp, p1, 'dataset');
+  link(b, fit, p1, 'dataset', 'fit');
+  // the decay: a Gaussian response of the instrument (0.12 ns) convolved with exp(−t/2.4 ns), counts with Poisson noise
+  const s = 0.12;
+  const tau = 2.4;
+  const tc = ['Time (ns);Counts;IRF'];
+  for (let i = 0; i < 500; i++) {
+    const t = i * 0.04;
+    const m = 5 + (5000 / 2) * Math.exp((s * s) / (2 * tau * tau) - (t - 2) / tau) * erfcEx(((s * s) / tau - (t - 2)) / (s * Math.SQRT2));
+    const irf = 1000 * Math.exp(-((t - 2) ** 2) / (2 * s * s));
+    tc.push(t.toFixed(2) + ';' + Math.max(1, Math.round(m + Math.sqrt(m) * gauss(r))) + ';' + irf.toFixed(2));
+  }
+  const imp2 = add(b, 'import', 'tc-file', 0, 1000, { ...IMPORT_DEFAULTS, name: 'decay', fileName: 'tcspc.txt', text: tc.join('\n'), textId: 'tc-1' });
+  const fit2 = add(b, 'fit', 'tc-fit', 640, 1000, { ...FIT_DEFAULTS, ys: ['Counts'], weight: 'statistical', model: { ...FIT_DEFAULTS.model, kind: 'library', model: 'expdec1' }, reconv: true, irfColumn: 'IRF', params: [spec('y0', 0, true), spec('A', 3000), spec('t', 1), spec('shift', 0)], band: 'none' });
+  link(b, imp2, fit2, 'in');
+  const p2 = add(b, 'plot1d', 'tc-plot', 1300, 1000, {
+    ...plot(
+      {
+        label: 'counts',
+        style: dots(7, 1.6),
+        cols: { x: 'Time (ns)', y: 'Counts' },
+        rows: [
+          { label: 'instrument response', style: lineK(2, { dash: 'dash' }), cols: { x: 'Time (ns)', y: 'IRF' } },
+          { label: 'IRF ⊗ exponential, fitted', style: lineK(1), cols: { x: 'Time (ns) (2)', y: 'fit of Counts' } },
+        ],
+      },
+      { axes: { y: { ...AXES_STYLE_DEFAULTS.y, scale: 'log' } }, legend: { x: 96, y: 4, anchor: 'tr' }, page: { name: 'lifetime' } },
+    ),
+  });
+  link(b, imp2, p2, 'dataset');
+  link(b, fit2, p2, 'dataset', 'fit');
+  add(b, 'note', 'kin-note', -560, 0, {
+    ...NOTE_DEFAULTS,
+    text: 'Two fits beyond a formula (example values).\n\n1. A → B → C: Fit ▸ Equations — dA/dt = −k1·A; dB/dt = k1·A − k2·B; A(0) = A0; B(0) = 0; y = B — solved numerically at every step of the fit: k1, k2 and A0 found from B alone.\n\n2. A fluorescence decay counted through a slow instrument: Fit ▸ Exponential decay with “Reconvolution” on — the model convolved with the measured response (the IRF column), its shift and a background fitted, the offset of the model fixed at 0, statistical weights (counts). The lifetime t is the one of the sample, not of the instrument.',
+  });
+  return project(b, 'Kinetics and lifetimes: rate equations, reconvolution');
+}
+const erfcEx = (x: number) => {
+  // erfc by its continued fraction / series (good to 1e-7 here)
+  const z = Math.abs(x);
+  const t = 1 / (1 + 0.5 * z);
+  const y = t * Math.exp(-z * z - 1.26551223 + t * (1.00002368 + t * (0.37409196 + t * (0.09678418 + t * (-0.18628806 + t * (0.27886807 + t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))));
+  return x >= 0 ? y : 2 - y;
+};
+
+// the impedance of a cell: R0 in series with R1 ∥ a constant-phase element, measured from 0.1 Hz to 100 kHz
+function impedanceExample(): Project {
+  const b = builder();
+  const r = rng(13);
+  const rows = ['ω (rad/s);Re Z (Ω);−Im Z (Ω)'];
+  for (let k = 0; k <= 60; k++) {
+    const w = 2 * Math.PI * 10 ** (-1 + (6 * k) / 60);
+    // R0 + R1/(1 + R1·Q·(jω)^n)
+    const [R0, R1, Q, n] = [12, 150, 2e-5, 0.85];
+    const ph = (n * Math.PI) / 2;
+    const m = R1 * Q * w ** n;
+    const [dr, di] = [1 + m * Math.cos(ph), m * Math.sin(ph)];
+    const d = dr * dr + di * di;
+    const re = R0 + (R1 * dr) / d;
+    const im = (-R1 * di) / d;
+    rows.push(w.toPrecision(6) + ';' + (re * (1 + 0.005 * gauss(r))).toFixed(3) + ';' + (-im * (1 + 0.005 * gauss(r))).toFixed(3));
+  }
+  const imp = add(b, 'import', 'eis-file', 0, 0, { ...IMPORT_DEFAULTS, name: 'EIS', fileName: 'eis.txt', text: rows.join('\n'), textId: 'eis-1' });
+  const fit = add(b, 'fit', 'eis-fit', 640, 0, {
+    ...FIT_DEFAULTS,
+    x: 'ω (rad/s)',
+    ys: ['Re Z (Ω)', '−Im Z (Ω)'],
+    model: { ...FIT_DEFAULTS.model, kind: 'complex', cformula: 'cpe(w, Q, n) = 1/(Q*(j*w)^n); par(a, b) = a*b/(a + b); conj(R0 + par(R1, cpe(x, Q, n)))' },
+    params: [spec('R0', 10), spec('R1', 100), spec('Q', 1e-5), spec('n', 0.9)],
+    band: 'none',
+  });
+  link(b, imp, fit, 'in');
+  const ny = add(b, 'plot1d', 'eis-nyquist', 1300, 0, {
+    ...plot(
+      { label: 'measured', style: dots(0, 3), cols: { x: 'Re Z (Ω)', y: '−Im Z (Ω)' }, rows: [{ label: 'R0 + R1 ∥ CPE, fitted', style: lineK(1), cols: { x: 'fit (Re Z (Ω))', y: 'fit (−Im Z (Ω))' } }] },
+      { axes: { aspect: 1 }, legend: { x: 96, y: 4, anchor: 'tr' }, page: { name: 'nyquist' } },
+    ),
+  });
+  link(b, imp, ny, 'dataset');
+  link(b, fit, ny, 'dataset', 'fit');
+  add(b, 'note', 'eis-note', -560, 0, {
+    ...NOTE_DEFAULTS,
+    text: 'Electrochemical impedance (example values): Re Z and −Im Z from 0.1 Hz to 100 kHz.\n\nFit ▸ Complex: one formula in complex numbers of x = ω (j the imaginary unit), with functions of your own before it — cpe(w, Q, n) = 1/(Q·(jω)^n); par(a, b) = a·b/(a + b); conj(R0 + par(R1, cpe(x, Q, n))) — fitted to both parts at once (Y 1 the real part, Y 2 the imaginary part: −Im Z, hence the conj).\n\nThe Nyquist plot: −Im Z against Re Z with Axes ▸ Aspect = 1 (an ohm as long on both axes), the fit drawn from its two curves.',
+  });
+  return project(b, 'Impedance: an equivalent circuit fitted, a Nyquist plot');
+}
+
+// a sampled signal: two tones and noise; its PSD, a Butterworth low pass, the Allan deviation of a drifting sensor
+function signalsFile(): string {
+  const r = rng(17);
+  const lines = ['Time (s);Signal (V);Sensor (mV)'];
+  let drift = 0;
+  for (let i = 0; i < 2000; i++) {
+    const t = i / 200;
+    drift += 0.02 * gauss(r);
+    lines.push(t.toFixed(3) + ';' + (Math.sin(2 * Math.PI * 7 * t) + 0.5 * Math.sin(2 * Math.PI * 43 * t + 0.4) + 0.4 * gauss(r)).toFixed(5) + ';' + (100 + gauss(r) + drift).toFixed(4));
+  }
+  return lines.join('\n');
+}
+function spectralExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'sp-file', 0, 0, { ...IMPORT_DEFAULTS, name: 'signals', fileName: 'signals.txt', text: signalsFile(), textId: 'sp-1' });
+  const psd = add(b, 'fft', 'sp-psd', 640, 0, { ...FFT_DEFAULTS, ys: 'Signal (V)', mode: 'psd', seg: 256, psdDb: true });
+  link(b, imp, psd, 'in');
+  const lp = add(b, 'fft', 'sp-lp', 640, 800, { ...FFT_DEFAULTS, ys: 'Signal (V)', mode: 'filter', design: 'butter', order: 4, f1: 15 });
+  link(b, imp, lp, 'in');
+  const al = add(b, 'fft', 'sp-allan', 640, 1600, { ...FFT_DEFAULTS, ys: 'Sensor (mV)', mode: 'allan', allanSpacing: 'octave' });
+  link(b, imp, al, 'in');
+  const p1 = add(b, 'plot1d', 'sp-plot-psd', 1300, 0, plot({ label: 'PSD (Welch, 256 points, Hann)', style: lineK(0), cols: { x: 'Frequency (1/s)', y: 'Signal (V) PSD (dB)' } }, { page: { name: 'psd' } }));
+  link(b, psd, p1, 'dataset');
+  const p2 = add(b, 'plot1d', 'sp-plot-lp', 1300, 800, {
+    ...plot(
+      { label: 'signal', style: lineK(7, { lineWidth: 0.6 }), cols: { x: 'Time (s)', y: 'Signal (V)' }, rows: [{ label: 'Butterworth low pass, 15 Hz, order 4, zero phase', style: lineK(1), cols: { x: 'Time (s)', y: 'Signal (V) (filtered)' } }] },
+      { axes: { x: { ...AXES_STYLE_DEFAULTS.x, min: 0, max: 1.5 } }, legend: { x: 96, y: 4, anchor: 'tr' }, page: { name: 'low_pass' } },
+    ),
+  });
+  link(b, imp, p2, 'dataset');
+  link(b, lp, p2, 'dataset');
+  const p3 = add(b, 'plot1d', 'sp-plot-allan', 1300, 1600, {
+    ...plot({ label: 'Allan deviation', style: curve(2, { mode: 'linesymbol', symbol: 'circle', symbolSize: 3 }), cols: { x: 'τ (s)', y: 'Allan deviation (Sensor (mV))' } }, { axes: { x: { ...AXES_STYLE_DEFAULTS.x, scale: 'log' }, y: { ...AXES_STYLE_DEFAULTS.y, scale: 'log' } }, page: { name: 'allan' } }),
+  });
+  link(b, al, p3, 'dataset');
+  add(b, 'note', 'sp-note', -560, 0, {
+    ...NOTE_DEFAULTS,
+    text: 'Signals sampled at 200 Hz (example values): two tones (7 and 43 Hz) in noise, and a sensor that drifts slowly.\n\nFFT node, three modes:\n• power spectral density (Welch: segments of 256 points, half overlapping, Hann, in dB) — the two lines above the noise floor;\n• filter ▸ Butterworth (IIR), low pass at 15 Hz, order 4, forward and backward (no phase shift);\n• Allan deviation of the sensor against the averaging time τ: falling as τ^−½ while the noise dominates, rising when the drift takes over — the best averaging time at its minimum.',
+  });
+  return project(b, 'Signals: PSD, a Butterworth filter, the Allan deviation');
+}
+
+// a study of 60 samples: a response explained by three measures, a yes / no outcome, their principal components
+function studyFile(): string {
+  const r = rng(29);
+  const lines = ['x1;x2;x3;y;outcome;batch'];
+  for (let i = 0; i < 60; i++) {
+    const x1 = 5 + 2 * gauss(r);
+    const x2 = 0.6 * x1 + 1.5 * gauss(r);
+    const x3 = 10 * r();
+    const y = 2 + 1.5 * x1 - 0.8 * x2 + 0.3 * x3 + 1.2 * gauss(r);
+    const p = 1 / (1 + Math.exp(-(-3 + 0.7 * x1 - 0.25 * x3)));
+    lines.push([x1, x2, x3, y].map((v) => v.toFixed(3)).join(';') + ';' + (r() < p ? 'yes' : 'no') + ';' + (i < 30 ? 'A' : 'B'));
+  }
+  return lines.join('\n');
+}
+function regressionExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'st-file', 0, 0, { ...IMPORT_DEFAULTS, name: 'study', fileName: 'study.txt', text: studyFile(), textId: 'st-1', edits: { cols: { 0: { role: 'none' }, 1: { role: 'none' }, 2: { role: 'none' }, 3: { role: 'none' } } } });
+  const lin = add(b, 'fit', 'st-linear', 640, 0, { ...FIT_DEFAULTS, regression: 'linear', ys: ['y'], predictors: 'x1, x2, x3' });
+  link(b, imp, lin, 'in');
+  const lg = add(b, 'fit', 'st-logistic', 640, 800, { ...FIT_DEFAULTS, regression: 'logistic', ys: ['outcome'], predictors: 'x1, x3' });
+  link(b, imp, lg, 'in');
+  const co = add(b, 'correl', 'st-corr', 640, 1600, { ...CORR_DEFAULTS, cols: 'x1, x2, x3, y', pca: true, order: 'cluster' });
+  link(b, imp, co, 'in');
+  const tt = add(b, 'ttest', 'st-ttest', 640, 2300, { ...TTEST_DEFAULTS, layout: 'indexed', value: 'y', factor: 'batch', power: true });
+  link(b, imp, tt, 'in');
+  const sc = add(b, 'stats', 'st-control', 640, 3000, { ...STATS_DEFAULTS, cols: 'y', control: 'imr' });
+  link(b, imp, sc, 'in');
+  const p1 = add(b, 'plot1d', 'st-plot-fit', 1300, 0, plot({ label: 'observed against fitted', style: dots(0, 3), cols: { x: 'fitted y', y: 'y' } }, { page: { name: 'regression' } }));
+  link(b, lin, p1, 'dataset', 'fit');
+  const p2 = add(b, 'plot1d', 'st-plot-scores', 1300, 1600, plot({ label: 'scores', style: dots(2, 3), cols: { x: 'PC1', y: 'PC2' } }, { page: { name: 'pca_scores' } }));
+  link(b, co, p2, 'dataset', 'scores');
+  const p3 = add(b, 'plot1d', 'st-plot-control', 1300, 3000, {
+    ...plot(
+      {
+        label: 'y',
+        style: curve(0, { mode: 'linesymbol', symbol: 'circle', symbolSize: 2.5 }),
+        cols: { x: 'point', y: 'y' },
+        rows: [
+          { label: 'CL', style: lineK(7), cols: { x: 'point', y: 'CL' } },
+          { label: 'UCL', style: lineK(3, { dash: 'dash' }), cols: { x: 'point', y: 'UCL' } },
+          { label: 'LCL', style: lineK(3, { dash: 'dash' }), cols: { x: 'point', y: 'LCL' } },
+        ],
+      },
+      { page: { name: 'control_chart' } },
+    ),
+  });
+  link(b, sc, p3, 'dataset', 'control');
+  add(b, 'note', 'st-note', -560, 0, {
+    ...NOTE_DEFAULTS,
+    text: 'A study of 60 samples (example values).\n\n• Fit ▸ linear regression of y on x1, x2, x3: the coefficients ± SE, t, p, CI and the variance inflation (x1 and x2 are related); R², F, AIC.\n• Fit ▸ logistic regression of the yes / no outcome on x1 and x3: the odds ratios, McFadden’s R², the LR test.\n• Correlation with the matrix in clustered order and the principal components (their scores drawn).\n• t-test of y between the batches with its power and the size needed for 80 %.\n• Descriptive statistics ▸ control chart of y (individuals and moving ranges).',
+  });
+  return project(b, 'Regression, PCA, power and a control chart');
+}
+
+export const EXAMPLES: { group: string; name: string; desc: string; make: () => Project }[] = [
+  { group: 'Getting started', name: 'UV-Vis spectrum: mean ± SD of three measurements', desc: 'Import (skipped lines, units line, decimal commas), Statistics on rows (mean ± SD of the replicates), Statistics on columns over a range of X, error bars, an arrow on the peak, an eV axis on top.', make: spectrumExample },
+  { group: 'Getting started', name: 'Generated data: a damped oscillation and noisy samples', desc: 'Generate column (linspace, random), Math column, one Plot with three curves (one with its own X), legend.', make: generatedExample },
+  { group: 'Figures', name: 'Two panels: colour by value, colour bar, spikes removed', desc: 'Points coloured by their value with a colour bar, two spikes emptied by a Math column rule (rows 12, 37 → NaN), a shaded band; a Merge puts the two Plots side by side with a shared Y axis and panel labels (a), (b).', make: panelsExample },
+  { group: 'Getting started', name: 'Gold n, k: two blocks in one file (Split into columns)', desc: 'A file of optical constants with wl, n and then wl, k written under it: Split into columns lays the blocks side by side (wl, n, k) and one Plot draws n on the left axis, k on its own right axis.', make: nkExample },
+  { group: 'Getting started', name: 'Four runs in a workbook: Auto-extract', desc: 'A spreadsheet workbook (a sheet per run), Auto-extract rules (Time = X, Signal = Y, column D = ±Y in every sheet, each Y named by its sheet), one Plot from the designations; Extract column from one sheet.', make: workbookExample },
+  { group: 'Statistics', name: 'Drug study: ANOVA, t-test, nonparametric, correlation', desc: 'The three layouts of the data for the statistics nodes — each group a column, indexed (value + factors), a row per subject — with Normality & outliers, one-way ANOVA + Tukey (the means ± SE in a Plot), a t-test, Kruskal–Wallis + Dunn, two-way ANOVA (Dose × Sex), repeated-measures ANOVA, Friedman and correlations.', make: drugExample },
+  { group: 'Analysis', name: 'Signal processing: smooth, FFT, deconvolution, interpolation', desc: 'A noisy spectrum smoothed (Savitzky–Golay) and normalized; the FFT spectrum of a sampled signal and an FFT low pass; a spectrum blurred by the instrument deconvolved (Richardson–Lucy); two curves on different X read on a common X (spline).', make: signalExample },
+  { group: 'Analysis', name: 'Overlapping peaks: peak deconvolution', desc: 'A spectrum with a peak hidden in the side of another: Peak analyzer fits a baseline and three peaks (each its shape) together, separating them; the data, every peak and their sum (the envelope) go to a Plot, the table of the peaks (center, height, FWHM, area %) to a Workbook.', make: overlapExample },
+  { group: 'Analysis', name: 'Cyclic voltammogram: area between the branches', desc: 'A potentiostat file with three cycles in one table: Split into columns makes a current column per cycle (a Plot coloured by the cycle) and cuts the pieces going up and coming back; Integrate takes the area between them, absolute, over a region (hatched); Pick points reads the peaks and the current at 0.5 V.', make: cvExample },
+  { group: 'Analysis', name: 'Strong coupling: fit of every run, then the anticrossing', desc: 'R(λ) of a microcavity with an exciton for 23 cavity thicknesses (computed by transfer matrices, one table): a Fit of every run (two Lorentzian dips), then a Fit of both polariton branches together (coupled-oscillator dispersion) giving the splitting Ω; the fits drawn by Plots like any data.', make: strongCouplingExample },
+  { group: 'Analysis', name: 'Matrices: inverse, eigenvalues, SVD, a map as a matrix', desc: 'A matrix A and a vector b typed in; Matrix computation in steps — A⁻¹, A⁻¹·A (= I), det A, the eigenvalues and vectors, the SVD, the solution of A·x = b —, every result on its own port; Contour / heatmap draws A⁻¹ and the eigenvectors with their values in the cells, and a reflectance map read as a matrix (the angle and the wavelengths kept as its Y and X).', make: matrixExample },
+  { group: 'Charts', name: 'Grouped bars with their values', desc: 'The mean bill and flipper measures of three penguin species, a series per measure side by side, the values written above the bars.', make: groupedBarsExample },
+  { group: 'Charts', name: 'Stacked and 100 % stacked bars', desc: 'Counts stacked, then their shares (hatched), the values in the middle of the segments; the two charts in a Merge with one legend below them.', make: stackedBarsExample },
+  { group: 'Charts', name: 'Horizontal bars with errors', desc: 'A score per person with its error bar, the values beyond the bars, a gradient and rounded corners.', make: horizontalBarsExample },
+  { group: 'Charts', name: 'Bars from raw values: mean ± SD with the points', desc: 'Replicate measurements by treatment and day, every bar the mean ± SD of its values, the values drawn over the bars.', make: rawBarsExample },
+  { group: 'Charts', name: 'Floating columns: a range per month', desc: 'Every bar from the minimum to the maximum of its month (example values), rounded corners and a shadow.', make: floatingBarsExample },
+  { group: 'Charts', name: 'Waterfall: from the grants to the balance', desc: 'A waterfall (bridge) chart of a laboratory’s year — income up, expenses down from the running total, the balance as the last bar, dashed connectors, every change written on its bar; increases, decreases and the total in colours of their own (Bar chart ▸ Arrangement ▸ waterfall).', make: waterfallExample },
+  { group: 'Charts', name: 'Histogram with two-mode fits', desc: 'A two-mode sample of particle sizes: bins of 1.5 nm, hatched; two normals from the data (maximum likelihood), two Gaussians fitted to the bars and a kernel density, their parameters in the node.', make: histogramExample },
+  { group: 'Charts', name: 'Box plots: notched, horizontal', desc: 'Four samples (one with outliers) as notched boxes with the mean; the same horizontal with whiskers at the 5th and 95th percentiles, hatched; in a Merge.', make: boxPlotsExample },
+  { group: 'Charts', name: 'Box plot vs violin plot', desc: 'The same four samples as boxes and as violins with their quartile lines, one Y axis in a Merge.', make: boxVsViolinExample },
+  { group: 'Charts', name: 'Grouped boxes from indexed data, with the values', desc: 'Indexed data (a value, a treatment and a day per row): the response of every treatment by day, boxes side by side with their means, every value beside them as a swarm.', make: groupedBoxExample },
+  { group: 'Charts', name: 'Half violins and raincloud', desc: 'The same values as half violins (gradient) with their boxes, and as horizontal rainclouds with the values below.', make: rainExample },
+  { group: 'Charts', name: 'Split violins: two subgroups', desc: 'A split violin per treatment: day 1 on the left, day 7 on the right, each with its quartile lines.', make: splitViolinExample },
+  { group: 'Charts', name: 'Significance brackets on bars and boxes', desc: 'Four treatments, mean ± SD bars with the values and brackets between neighbours (Welch t, Holm), boxes with every treatment against the control (Tukey HSD, stars and p, ns shown); the brackets stacked so they do not cross.', make: significanceExample },
+  { group: 'Charts', name: 'Q-Q and normal probability plots', desc: '50 tensile strengths against the normal distribution — the quantiles with the line through the quartiles and its 95 % pointwise band, then the values on a normal probability axis (in %) with the fitted line and its band; r, Anderson–Darling and its p in the nodes.', make: qqProbabilityExample },
+  { group: 'Charts', name: 'ECDF of two groups, bands and 1 − F', desc: 'The reaction times of two groups (indexed data) as ECDF steps with their simultaneous 95 % bands (DKW), and as 1 − F with the fitted lognormal CDFs.', make: ecdfExample },
+  { group: 'Charts', name: 'Weibull probability plot of failure times', desc: 'A Weibull plot as in reliability work: the hours to failure of two batches on a Weibull probability axis with the hours on a log axis, the fitted Weibull lines (shape and scale in the node); a P-P plot with the 95 % DKW band.', make: weibullExample },
+  { group: 'Charts', name: 'Bland–Altman: two devices', desc: 'After Bland & Altman 1986: the systolic pressure of 60 patients by two devices — the differences against the means, the bias and the limits of agreement with their exact 95 % intervals (shaded), the regression on the mean (device B reads higher in the high range), the points by site; then the differences in % with limits from a regression (Bland & Altman 1999).', make: blandAltmanExample },
+  { group: 'Charts', name: 'Pie, doughnut and nested rings', desc: 'The energy sources of a grid — a pie with wind and solar moved out, the names outside on leader lines and the percents inside, a doughnut sorted largest first with the total in the hole, and the two years as nested rings.', make: pieExample },
+  { group: 'Charts', name: 'Contour and heatmap: a reflectance map, scattered points', desc: 'A reflectance map R(λ, θ) given as a matrix (the angle, then a column per wavelength) — smooth, with labelled contour lines and a cut at 30° drawn by a Plot —, and 250 scattered points of a surface interpolated on their triangles and drawn as filled levels with their lines.', make: contourExample },
+  { group: 'Charts', name: 'Polar: antenna pattern, wind rose, radar', desc: 'The gain of a half-wave dipole in dB on a half circle (0° at the top, clockwise, −30 dB at the centre), a month of wind as polar bars with compass labels, and three materials scored on six properties as filled radar polygons.', make: polarExample },
+  { group: 'Charts', name: 'Scatter matrix of four measures, three species', desc: 'Four measures of 90 flowers (in the manner of Fisher’s iris data) — every pair as points coloured by species below the diagonal, the kernel densities on it, the Pearson correlations (with stars) above; X shared down the columns, Y along the rows.', make: scatterMatrixExample },
+  { group: 'Charts', name: 'Ternary: soil texture, a diffusion path', desc: 'The soil texture triangle: the clay, sand and silt of 45 samples from three sites (percents, coloured by site), and the Fe–Ni–Cr composition along a diffusion couple as a line with symbols (fractions, a grid every 0.2).', make: ternaryExample },
+  { group: 'Charts', name: 'Waterfall: reflectance vs thickness, a PL ridgeline', desc: 'The reflectance of a microcavity for 23 thicknesses (Split into columns gives every curve its thickness) one behind the other, the front curves hiding those behind, coloured by the thickness with a colour bar and the thickness written at each; and a ridgeline of photoluminescence spectra from 10 to 300 K, each to its maximum, filled in its colour.', make: curvesWaterfallExample },
+  { group: 'Charts', name: '3D: a surface, bars, clusters, a waterfall', desc: 'A surface of two peaks and a dip (a mesh every 4 cells, its contour lines on the floor), a year’s rainfall at four stations as 3D bars (a matrix), three clusters of points with lines down to the floor, and the microcavity’s reflectance for 23 thicknesses in depth (a 3D waterfall with walls) — in one Merge.', make: plot3dExample },
+  { group: 'Charts', name: '3D stacked maps: RSMs of five samples', desc: 'Reciprocal space maps (Qx, Qz, intensity; example values) of five samples, one table per reflection with a column naming the sample: 3D plot ▸ stacked maps finds the samples by their labels (S1 … S5; Layers ▸ my list chooses every layer by hand) and puts every sample’s map flat at its own height — the counts below 8 left out, the colours on a log scale —, a dashed vertical line through the stack and a rectangle on the floor; the two reflections side by side in a Merge with one colour scale and one colour bar. ⟲ Rotate turns a view with the mouse.', make: rsmExample },
+  { group: 'Analysis', name: 'XPS: Shirley background and a spin–orbit doublet', desc: 'A Ni 2p spectrum: Peak analyzer with the Shirley background and one exact Voigt line made a doublet (2×: 17.3 eV, half the area, the same widths — linked in the fit); the lines filled down to the background.', make: xpsExample },
+  { group: 'Analysis', name: 'Raman on a fluorescence background: baselines from the data', desc: 'One list of baselines in three nodes, found from the data: airPLS under four fitted lines (Peak analyzer), asymmetric least squares under the integrated ranges (Integrate), SNIP under the measured widths (Peak width).', make: ramanBaselineExample },
+  { group: 'Analysis', name: 'Calibration: unknowns, LOD and LOQ', desc: 'A weighted straight-line calibration; Use the fit: two unknowns read backwards with their 95 % intervals (3 replicates each), the limits of detection and quantification, the sensitivity with its error — to a Workbook; the line with its prediction band.', make: calibrationExample },
+  { group: 'Analysis', name: 'Kinetics and lifetimes: rate equations, reconvolution', desc: 'Fit ▸ Equations: A → B → C fitted from the intermediate B (dA/dt, dB/dt solved numerically); a fluorescence decay fitted through the instrument response (reconvolution with the IRF, its shift and background), on a log axis.', make: kineticsExample },
+  { group: 'Analysis', name: 'Impedance: an equivalent circuit fitted, a Nyquist plot', desc: 'Fit ▸ Complex: R0 + R1 ∥ CPE written with functions of your own, fitted to Re Z and −Im Z at once; the Nyquist plot with equal scales (Aspect = 1).', make: impedanceExample },
+  { group: 'Analysis', name: 'Signals: PSD, a Butterworth filter, the Allan deviation', desc: 'The FFT node in three modes: the power spectral density (Welch, dB), a zero-phase Butterworth low pass, the Allan deviation of a drifting sensor on log–log axes.', make: spectralExample },
+  { group: 'Statistics', name: 'Regression, PCA, power and a control chart', desc: 'Fit ▸ linear and logistic regression on several predictors, Correlation with a clustered matrix and principal components (scores plotted), a t-test with its power, a control chart from Descriptive statistics.', make: regressionExample },
+  { group: 'Figures', name: 'Three Y axes and a broken X axis', desc: 'Signal, temperature and pressure of one run, each on its own Y axis (left, right, a third one moved out); the X axis broken over the hours without data.', make: multiAxisExample },
+];

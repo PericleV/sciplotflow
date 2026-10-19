@@ -1,0 +1,1521 @@
+{
+ "dunnett": {
+  "control": [
+   11.555,
+   10.169,
+   5.63,
+   10.556,
+   8.96,
+   11.258,
+   7.914,
+   10.245
+  ],
+  "treat": [
+   [
+    10.813,
+    10.917,
+    12.117,
+    13.393,
+    12.818,
+    12.355,
+    12.829
+   ],
+   [
+    13.207,
+    15.575,
+    13.188,
+    10.437,
+    10.401,
+    13.661,
+    12.891,
+    10.481
+   ],
+   [
+    8.889,
+    9.522,
+    8.187,
+    9.97,
+    11.224,
+    10.931
+   ]
+  ],
+  "t": [
+   3.1773112837445248,
+   3.6656976219336945,
+   0.289658745876543
+  ],
+  "p": [
+   0.010782456637379423,
+   0.0032967663397668323,
+   0.9839820086478148
+  ],
+  "lo": [
+   0.5573323398876018,
+   0.93070099408886,
+   -1.9235898318078357
+  ],
+  "hi": [
+   4.725774802969539,
+   4.9577990059111405,
+   2.4261731651411695
+  ],
+  "lam": [
+   0.6831300510639732,
+   0.7071067811865476,
+   0.6546536707079771
+  ],
+  "df": 25,
+  "cdf": [
+   [
+    1.5,
+    0.6685582143072709
+   ],
+   [
+    2.3,
+    0.9225769284170336
+   ],
+   [
+    2.6,
+    0.9591094085725351
+   ]
+  ]
+ },
+ "mixedDesign": {
+  "data": [
+   {
+    "subject": "s0",
+    "group": "ctrl",
+    "time": "t0",
+    "y": 11.261
+   },
+   {
+    "subject": "s0",
+    "group": "ctrl",
+    "time": "t1",
+    "y": 11.656
+   },
+   {
+    "subject": "s0",
+    "group": "ctrl",
+    "time": "t2",
+    "y": 12.622
+   },
+   {
+    "subject": "s0",
+    "group": "ctrl",
+    "time": "t3",
+    "y": 9.437
+   },
+   {
+    "subject": "s1",
+    "group": "ctrl",
+    "time": "t0",
+    "y": 10.079
+   },
+   {
+    "subject": "s1",
+    "group": "ctrl",
+    "time": "t1",
+    "y": 11.846
+   },
+   {
+    "subject": "s1",
+    "group": "ctrl",
+    "time": "t2",
+    "y": 14.039
+   },
+   {
+    "subject": "s1",
+    "group": "ctrl",
+    "time": "t3",
+    "y": 12.12
+   },
+   {
+    "subject": "s2",
+    "group": "ctrl",
+    "time": "t0",
+    "y": 9.452
+   },
+   {
+    "subject": "s2",
+    "group": "ctrl",
+    "time": "t1",
+    "y": 10.976
+   },
+   {
+    "subject": "s2",
+    "group": "ctrl",
+    "time": "t2",
+    "y": 12.714
+   },
+   {
+    "subject": "s2",
+    "group": "ctrl",
+    "time": "t3",
+    "y": 11.041
+   },
+   {
+    "subject": "s3",
+    "group": "ctrl",
+    "time": "t0",
+    "y": 7.747
+   },
+   {
+    "subject": "s3",
+    "group": "ctrl",
+    "time": "t1",
+    "y": 8.203
+   },
+   {
+    "subject": "s3",
+    "group": "ctrl",
+    "time": "t2",
+    "y": 11.56
+   },
+   {
+    "subject": "s3",
+    "group": "ctrl",
+    "time": "t3",
+    "y": 10.537
+   },
+   {
+    "subject": "s4",
+    "group": "ctrl",
+    "time": "t0",
+    "y": 8.444
+   },
+   {
+    "subject": "s4",
+    "group": "ctrl",
+    "time": "t1",
+    "y": 7.49
+   },
+   {
+    "subject": "s4",
+    "group": "ctrl",
+    "time": "t2",
+    "y": 8.678
+   },
+   {
+    "subject": "s4",
+    "group": "ctrl",
+    "time": "t3",
+    "y": 11.065
+   },
+   {
+    "subject": "s5",
+    "group": "ctrl",
+    "time": "t0",
+    "y": 9.582
+   },
+   {
+    "subject": "s5",
+    "group": "ctrl",
+    "time": "t1",
+    "y": 9.996
+   },
+   {
+    "subject": "s5",
+    "group": "ctrl",
+    "time": "t2",
+    "y": 11.424
+   },
+   {
+    "subject": "s5",
+    "group": "ctrl",
+    "time": "t3",
+    "y": 9.325
+   },
+   {
+    "subject": "s6",
+    "group": "ctrl",
+    "time": "t0",
+    "y": 7.49
+   },
+   {
+    "subject": "s6",
+    "group": "ctrl",
+    "time": "t1",
+    "y": 8.925
+   },
+   {
+    "subject": "s6",
+    "group": "ctrl",
+    "time": "t2",
+    "y": 7.727
+   },
+   {
+    "subject": "s6",
+    "group": "ctrl",
+    "time": "t3",
+    "y": 8.786
+   },
+   {
+    "subject": "s7",
+    "group": "drug",
+    "time": "t0",
+    "y": 11.056
+   },
+   {
+    "subject": "s7",
+    "group": "drug",
+    "time": "t1",
+    "y": 12.208
+   },
+   {
+    "subject": "s7",
+    "group": "drug",
+    "time": "t2",
+    "y": 13.378
+   },
+   {
+    "subject": "s7",
+    "group": "drug",
+    "time": "t3",
+    "y": 11.492
+   },
+   {
+    "subject": "s8",
+    "group": "drug",
+    "time": "t0",
+    "y": 8.539
+   },
+   {
+    "subject": "s8",
+    "group": "drug",
+    "time": "t1",
+    "y": 9.722
+   },
+   {
+    "subject": "s8",
+    "group": "drug",
+    "time": "t2",
+    "y": 9.789
+   },
+   {
+    "subject": "s8",
+    "group": "drug",
+    "time": "t3",
+    "y": 14.245
+   },
+   {
+    "subject": "s9",
+    "group": "drug",
+    "time": "t0",
+    "y": 8.901
+   },
+   {
+    "subject": "s9",
+    "group": "drug",
+    "time": "t1",
+    "y": 11.054
+   },
+   {
+    "subject": "s9",
+    "group": "drug",
+    "time": "t2",
+    "y": 12.744
+   },
+   {
+    "subject": "s9",
+    "group": "drug",
+    "time": "t3",
+    "y": 13.591
+   },
+   {
+    "subject": "s10",
+    "group": "drug",
+    "time": "t0",
+    "y": 10.705
+   },
+   {
+    "subject": "s10",
+    "group": "drug",
+    "time": "t1",
+    "y": 12.811
+   },
+   {
+    "subject": "s10",
+    "group": "drug",
+    "time": "t2",
+    "y": 11.052
+   },
+   {
+    "subject": "s10",
+    "group": "drug",
+    "time": "t3",
+    "y": 13.657
+   },
+   {
+    "subject": "s11",
+    "group": "drug",
+    "time": "t0",
+    "y": 10.929
+   },
+   {
+    "subject": "s11",
+    "group": "drug",
+    "time": "t1",
+    "y": 10.989
+   },
+   {
+    "subject": "s11",
+    "group": "drug",
+    "time": "t2",
+    "y": 11.444
+   },
+   {
+    "subject": "s11",
+    "group": "drug",
+    "time": "t3",
+    "y": 16.971
+   },
+   {
+    "subject": "s12",
+    "group": "drug",
+    "time": "t0",
+    "y": 9.704
+   },
+   {
+    "subject": "s12",
+    "group": "drug",
+    "time": "t1",
+    "y": 12.249
+   },
+   {
+    "subject": "s12",
+    "group": "drug",
+    "time": "t2",
+    "y": 13.386
+   },
+   {
+    "subject": "s12",
+    "group": "drug",
+    "time": "t3",
+    "y": 11.65
+   },
+   {
+    "subject": "s13",
+    "group": "drug",
+    "time": "t0",
+    "y": 8.487
+   },
+   {
+    "subject": "s13",
+    "group": "drug",
+    "time": "t1",
+    "y": 9.327
+   },
+   {
+    "subject": "s13",
+    "group": "drug",
+    "time": "t2",
+    "y": 9.114
+   },
+   {
+    "subject": "s13",
+    "group": "drug",
+    "time": "t3",
+    "y": 13.024
+   },
+   {
+    "subject": "s14",
+    "group": "drug",
+    "time": "t0",
+    "y": 10.025
+   },
+   {
+    "subject": "s14",
+    "group": "drug",
+    "time": "t1",
+    "y": 11.18
+   },
+   {
+    "subject": "s14",
+    "group": "drug",
+    "time": "t2",
+    "y": 15.516
+   },
+   {
+    "subject": "s14",
+    "group": "drug",
+    "time": "t3",
+    "y": 17.329
+   },
+   {
+    "subject": "s15",
+    "group": "drug",
+    "time": "t0",
+    "y": 12.691
+   },
+   {
+    "subject": "s15",
+    "group": "drug",
+    "time": "t1",
+    "y": 12.888
+   },
+   {
+    "subject": "s15",
+    "group": "drug",
+    "time": "t2",
+    "y": 14.236
+   },
+   {
+    "subject": "s15",
+    "group": "drug",
+    "time": "t3",
+    "y": 15.16
+   }
+  ],
+  "table": [
+   {
+    "Source": "group",
+    "SS": 52.640688047867044,
+    "DF1": 1,
+    "DF2": 14,
+    "MS": 52.640688047867044,
+    "F": 7.974787823774841,
+    "p_unc": 0.013526609459997532,
+    "p_GG_corr": null,
+    "np2": 0.36290624909455566,
+    "eps": null,
+    "sphericity": null,
+    "W_spher": null,
+    "p_spher": null
+   },
+   {
+    "Source": "time",
+    "SS": 72.09344604687497,
+    "DF1": 3,
+    "DF2": 42,
+    "MS": 24.031148682291658,
+    "F": 13.739270423196928,
+    "p_unc": 2.1981845029506834e-06,
+    "p_GG_corr": 6.518252239900204e-05,
+    "np2": 0.4953003526620325,
+    "eps": 0.6729161210904858,
+    "sphericity": false,
+    "W_spher": 0.31037679336566626,
+    "p_spher": 0.011109195634489527
+   },
+   {
+    "Source": "Interaction",
+    "SS": 20.978179258680598,
+    "DF1": 3,
+    "DF2": 42,
+    "MS": 6.992726419560199,
+    "F": 3.997934536711014,
+    "p_unc": 0.01363757743503885,
+    "p_GG_corr": 0.029259706643686673,
+    "np2": 0.22213296356625187,
+    "eps": 0.6729161210904858,
+    "sphericity": false,
+    "W_spher": 0.31037679336566626,
+    "p_spher": 0.011109195634489527
+   }
+  ],
+  "ggPooled": 0.672916121090486,
+  "type3": {
+   "B": 64.52590663368053,
+   "AB": 20.97817925868054,
+   "error": 73.46156044444444
+  },
+  "balanced": [
+   {
+    "Source": "group",
+    "SS": 25.780286000000043,
+    "DF1": 1,
+    "DF2": 12,
+    "MS": 25.780286000000043,
+    "F": 4.808903765352627,
+    "p_unc": 0.04875188201482586,
+    "p_GG_corr": null,
+    "np2": 0.286092646640347,
+    "eps": null,
+    "sphericity": null,
+    "W_spher": null,
+    "p_spher": null
+   },
+   {
+    "Source": "time",
+    "SS": 49.08964300000002,
+    "DF1": 3,
+    "DF2": 36,
+    "MS": 16.36321433333334,
+    "F": 9.882554056338424,
+    "p_unc": 6.809922015259491e-05,
+    "p_GG_corr": 0.0014242169991672115,
+    "np2": 0.45161794326635635,
+    "eps": 0.5762184345573957,
+    "sphericity": false,
+    "W_spher": 0.24091605798739923,
+    "p_spher": 0.009609261123005112
+   },
+   {
+    "Source": "Interaction",
+    "SS": 17.56434185714278,
+    "DF1": 3,
+    "DF2": 36,
+    "MS": 5.854780619047593,
+    "F": 3.535991448689514,
+    "p_unc": 0.024176069300327174,
+    "p_GG_corr": 0.05351780189962079,
+    "np2": 0.22759998680275925,
+    "eps": 0.5762184345573957,
+    "sphericity": false,
+    "W_spher": 0.24091605798739923,
+    "p_spher": 0.009609261123005112
+   }
+  ]
+ },
+ "bothWithin": {
+  "data": [
+   {
+    "subject": "p0",
+    "A": "a0",
+    "B": "b0",
+    "y": 3.195
+   },
+   {
+    "subject": "p0",
+    "A": "a0",
+    "B": "b1",
+    "y": 4.625
+   },
+   {
+    "subject": "p0",
+    "A": "a0",
+    "B": "b2",
+    "y": 4.397
+   },
+   {
+    "subject": "p0",
+    "A": "a1",
+    "B": "b0",
+    "y": 3.795
+   },
+   {
+    "subject": "p0",
+    "A": "a1",
+    "B": "b1",
+    "y": 5.883
+   },
+   {
+    "subject": "p0",
+    "A": "a1",
+    "B": "b2",
+    "y": 6.55
+   },
+   {
+    "subject": "p0",
+    "A": "a2",
+    "B": "b0",
+    "y": 4.979
+   },
+   {
+    "subject": "p0",
+    "A": "a2",
+    "B": "b1",
+    "y": 6.835
+   },
+   {
+    "subject": "p0",
+    "A": "a2",
+    "B": "b2",
+    "y": 6.126
+   },
+   {
+    "subject": "p1",
+    "A": "a0",
+    "B": "b0",
+    "y": 6.937
+   },
+   {
+    "subject": "p1",
+    "A": "a0",
+    "B": "b1",
+    "y": 6.541
+   },
+   {
+    "subject": "p1",
+    "A": "a0",
+    "B": "b2",
+    "y": 6.87
+   },
+   {
+    "subject": "p1",
+    "A": "a1",
+    "B": "b0",
+    "y": 7.335
+   },
+   {
+    "subject": "p1",
+    "A": "a1",
+    "B": "b1",
+    "y": 7.475
+   },
+   {
+    "subject": "p1",
+    "A": "a1",
+    "B": "b2",
+    "y": 7.221
+   },
+   {
+    "subject": "p1",
+    "A": "a2",
+    "B": "b0",
+    "y": 8.846
+   },
+   {
+    "subject": "p1",
+    "A": "a2",
+    "B": "b1",
+    "y": 7.375
+   },
+   {
+    "subject": "p1",
+    "A": "a2",
+    "B": "b2",
+    "y": 7.733
+   },
+   {
+    "subject": "p2",
+    "A": "a0",
+    "B": "b0",
+    "y": 4.308
+   },
+   {
+    "subject": "p2",
+    "A": "a0",
+    "B": "b1",
+    "y": 4.711
+   },
+   {
+    "subject": "p2",
+    "A": "a0",
+    "B": "b2",
+    "y": 6.323
+   },
+   {
+    "subject": "p2",
+    "A": "a1",
+    "B": "b0",
+    "y": 5.712
+   },
+   {
+    "subject": "p2",
+    "A": "a1",
+    "B": "b1",
+    "y": 6.236
+   },
+   {
+    "subject": "p2",
+    "A": "a1",
+    "B": "b2",
+    "y": 6.943
+   },
+   {
+    "subject": "p2",
+    "A": "a2",
+    "B": "b0",
+    "y": 5.177
+   },
+   {
+    "subject": "p2",
+    "A": "a2",
+    "B": "b1",
+    "y": 5.316
+   },
+   {
+    "subject": "p2",
+    "A": "a2",
+    "B": "b2",
+    "y": 6.4
+   },
+   {
+    "subject": "p3",
+    "A": "a0",
+    "B": "b0",
+    "y": 6.173
+   },
+   {
+    "subject": "p3",
+    "A": "a0",
+    "B": "b1",
+    "y": 5.804
+   },
+   {
+    "subject": "p3",
+    "A": "a0",
+    "B": "b2",
+    "y": 7.242
+   },
+   {
+    "subject": "p3",
+    "A": "a1",
+    "B": "b0",
+    "y": 7.129
+   },
+   {
+    "subject": "p3",
+    "A": "a1",
+    "B": "b1",
+    "y": 4.693
+   },
+   {
+    "subject": "p3",
+    "A": "a1",
+    "B": "b2",
+    "y": 8.434
+   },
+   {
+    "subject": "p3",
+    "A": "a2",
+    "B": "b0",
+    "y": 8.219
+   },
+   {
+    "subject": "p3",
+    "A": "a2",
+    "B": "b1",
+    "y": 8.874
+   },
+   {
+    "subject": "p3",
+    "A": "a2",
+    "B": "b2",
+    "y": 7.528
+   },
+   {
+    "subject": "p4",
+    "A": "a0",
+    "B": "b0",
+    "y": 5.257
+   },
+   {
+    "subject": "p4",
+    "A": "a0",
+    "B": "b1",
+    "y": 5.436
+   },
+   {
+    "subject": "p4",
+    "A": "a0",
+    "B": "b2",
+    "y": 5.873
+   },
+   {
+    "subject": "p4",
+    "A": "a1",
+    "B": "b0",
+    "y": 6.242
+   },
+   {
+    "subject": "p4",
+    "A": "a1",
+    "B": "b1",
+    "y": 6.107
+   },
+   {
+    "subject": "p4",
+    "A": "a1",
+    "B": "b2",
+    "y": 6.967
+   },
+   {
+    "subject": "p4",
+    "A": "a2",
+    "B": "b0",
+    "y": 4.588
+   },
+   {
+    "subject": "p4",
+    "A": "a2",
+    "B": "b1",
+    "y": 6.879
+   },
+   {
+    "subject": "p4",
+    "A": "a2",
+    "B": "b2",
+    "y": 8.945
+   },
+   {
+    "subject": "p5",
+    "A": "a0",
+    "B": "b0",
+    "y": 4.726
+   },
+   {
+    "subject": "p5",
+    "A": "a0",
+    "B": "b1",
+    "y": 5.627
+   },
+   {
+    "subject": "p5",
+    "A": "a0",
+    "B": "b2",
+    "y": 5.538
+   },
+   {
+    "subject": "p5",
+    "A": "a1",
+    "B": "b0",
+    "y": 5.909
+   },
+   {
+    "subject": "p5",
+    "A": "a1",
+    "B": "b1",
+    "y": 6.453
+   },
+   {
+    "subject": "p5",
+    "A": "a1",
+    "B": "b2",
+    "y": 6.273
+   },
+   {
+    "subject": "p5",
+    "A": "a2",
+    "B": "b0",
+    "y": 6.067
+   },
+   {
+    "subject": "p5",
+    "A": "a2",
+    "B": "b1",
+    "y": 7.754
+   },
+   {
+    "subject": "p5",
+    "A": "a2",
+    "B": "b2",
+    "y": 7.301
+   },
+   {
+    "subject": "p6",
+    "A": "a0",
+    "B": "b0",
+    "y": 3.478
+   },
+   {
+    "subject": "p6",
+    "A": "a0",
+    "B": "b1",
+    "y": 5.67
+   },
+   {
+    "subject": "p6",
+    "A": "a0",
+    "B": "b2",
+    "y": 4.801
+   },
+   {
+    "subject": "p6",
+    "A": "a1",
+    "B": "b0",
+    "y": 5.487
+   },
+   {
+    "subject": "p6",
+    "A": "a1",
+    "B": "b1",
+    "y": 4.592
+   },
+   {
+    "subject": "p6",
+    "A": "a1",
+    "B": "b2",
+    "y": 5.368
+   },
+   {
+    "subject": "p6",
+    "A": "a2",
+    "B": "b0",
+    "y": 4.491
+   },
+   {
+    "subject": "p6",
+    "A": "a2",
+    "B": "b1",
+    "y": 5.939
+   },
+   {
+    "subject": "p6",
+    "A": "a2",
+    "B": "b2",
+    "y": 6.241
+   },
+   {
+    "subject": "p7",
+    "A": "a0",
+    "B": "b0",
+    "y": 4.009
+   },
+   {
+    "subject": "p7",
+    "A": "a0",
+    "B": "b1",
+    "y": 3.71
+   },
+   {
+    "subject": "p7",
+    "A": "a0",
+    "B": "b2",
+    "y": 3.99
+   },
+   {
+    "subject": "p7",
+    "A": "a1",
+    "B": "b0",
+    "y": 4.907
+   },
+   {
+    "subject": "p7",
+    "A": "a1",
+    "B": "b1",
+    "y": 4.66
+   },
+   {
+    "subject": "p7",
+    "A": "a1",
+    "B": "b2",
+    "y": 5.513
+   },
+   {
+    "subject": "p7",
+    "A": "a2",
+    "B": "b0",
+    "y": 5.72
+   },
+   {
+    "subject": "p7",
+    "A": "a2",
+    "B": "b1",
+    "y": 5.231
+   },
+   {
+    "subject": "p7",
+    "A": "a2",
+    "B": "b2",
+    "y": 6.751
+   },
+   {
+    "subject": "p8",
+    "A": "a0",
+    "B": "b0",
+    "y": 4.323
+   },
+   {
+    "subject": "p8",
+    "A": "a0",
+    "B": "b1",
+    "y": 5.075
+   },
+   {
+    "subject": "p8",
+    "A": "a0",
+    "B": "b2",
+    "y": 4.885
+   },
+   {
+    "subject": "p8",
+    "A": "a1",
+    "B": "b0",
+    "y": 4.909
+   },
+   {
+    "subject": "p8",
+    "A": "a1",
+    "B": "b1",
+    "y": 4.445
+   },
+   {
+    "subject": "p8",
+    "A": "a1",
+    "B": "b2",
+    "y": 5.682
+   },
+   {
+    "subject": "p8",
+    "A": "a2",
+    "B": "b0",
+    "y": 5.602
+   },
+   {
+    "subject": "p8",
+    "A": "a2",
+    "B": "b1",
+    "y": 6.778
+   },
+   {
+    "subject": "p8",
+    "A": "a2",
+    "B": "b2",
+    "y": 7.394
+   },
+   {
+    "subject": "p9",
+    "A": "a0",
+    "B": "b0",
+    "y": 5.006
+   },
+   {
+    "subject": "p9",
+    "A": "a0",
+    "B": "b1",
+    "y": 6.026
+   },
+   {
+    "subject": "p9",
+    "A": "a0",
+    "B": "b2",
+    "y": 5.005
+   },
+   {
+    "subject": "p9",
+    "A": "a1",
+    "B": "b0",
+    "y": 6.958
+   },
+   {
+    "subject": "p9",
+    "A": "a1",
+    "B": "b1",
+    "y": 6.75
+   },
+   {
+    "subject": "p9",
+    "A": "a1",
+    "B": "b2",
+    "y": 7.748
+   },
+   {
+    "subject": "p9",
+    "A": "a2",
+    "B": "b0",
+    "y": 6.075
+   },
+   {
+    "subject": "p9",
+    "A": "a2",
+    "B": "b1",
+    "y": 6.483
+   },
+   {
+    "subject": "p9",
+    "A": "a2",
+    "B": "b2",
+    "y": 7.89
+   }
+  ],
+  "F": [
+   34.091797643310926,
+   9.878591825491341,
+   1.5205735142016192
+  ],
+  "df1": [
+   2.0,
+   2.0,
+   4.0
+  ],
+  "df2": [
+   18.0,
+   18.0,
+   36.0
+  ],
+  "p": [
+   7.561902599262404e-07,
+   0.0012719095109723368,
+   0.21684587293925692
+  ],
+  "gg": [
+   0.7865231686704436,
+   0.8668541178840354,
+   0.6803701100160834
+  ]
+ },
+ "mixedModel": {
+  "data": [
+   {
+    "subject": "s0",
+    "group": "ctrl",
+    "time": "t0",
+    "y": 11.261
+   },
+   {
+    "subject": "s0",
+    "group": "ctrl",
+    "time": "t1",
+    "y": 11.656
+   },
+   {
+    "subject": "s0",
+    "group": "ctrl",
+    "time": "t2",
+    "y": 12.622
+   },
+   {
+    "subject": "s1",
+    "group": "ctrl",
+    "time": "t0",
+    "y": 10.079
+   },
+   {
+    "subject": "s1",
+    "group": "ctrl",
+    "time": "t1",
+    "y": 11.846
+   },
+   {
+    "subject": "s1",
+    "group": "ctrl",
+    "time": "t2",
+    "y": 14.039
+   },
+   {
+    "subject": "s1",
+    "group": "ctrl",
+    "time": "t3",
+    "y": 12.12
+   },
+   {
+    "subject": "s2",
+    "group": "ctrl",
+    "time": "t0",
+    "y": 9.452
+   },
+   {
+    "subject": "s2",
+    "group": "ctrl",
+    "time": "t1",
+    "y": 10.976
+   },
+   {
+    "subject": "s3",
+    "group": "ctrl",
+    "time": "t0",
+    "y": 7.747
+   },
+   {
+    "subject": "s3",
+    "group": "ctrl",
+    "time": "t1",
+    "y": 8.203
+   },
+   {
+    "subject": "s3",
+    "group": "ctrl",
+    "time": "t2",
+    "y": 11.56
+   },
+   {
+    "subject": "s3",
+    "group": "ctrl",
+    "time": "t3",
+    "y": 10.537
+   },
+   {
+    "subject": "s4",
+    "group": "ctrl",
+    "time": "t0",
+    "y": 8.444
+   },
+   {
+    "subject": "s4",
+    "group": "ctrl",
+    "time": "t1",
+    "y": 7.49
+   },
+   {
+    "subject": "s4",
+    "group": "ctrl",
+    "time": "t2",
+    "y": 8.678
+   },
+   {
+    "subject": "s4",
+    "group": "ctrl",
+    "time": "t3",
+    "y": 11.065
+   },
+   {
+    "subject": "s5",
+    "group": "ctrl",
+    "time": "t0",
+    "y": 9.582
+   },
+   {
+    "subject": "s5",
+    "group": "ctrl",
+    "time": "t1",
+    "y": 9.996
+   },
+   {
+    "subject": "s5",
+    "group": "ctrl",
+    "time": "t2",
+    "y": 11.424
+   },
+   {
+    "subject": "s5",
+    "group": "ctrl",
+    "time": "t3",
+    "y": 9.325
+   },
+   {
+    "subject": "s6",
+    "group": "ctrl",
+    "time": "t0",
+    "y": 7.49
+   },
+   {
+    "subject": "s6",
+    "group": "ctrl",
+    "time": "t1",
+    "y": 8.925
+   },
+   {
+    "subject": "s6",
+    "group": "ctrl",
+    "time": "t2",
+    "y": 7.727
+   },
+   {
+    "subject": "s6",
+    "group": "ctrl",
+    "time": "t3",
+    "y": 8.786
+   },
+   {
+    "subject": "s7",
+    "group": "drug",
+    "time": "t0",
+    "y": 11.056
+   },
+   {
+    "subject": "s7",
+    "group": "drug",
+    "time": "t1",
+    "y": 12.208
+   },
+   {
+    "subject": "s7",
+    "group": "drug",
+    "time": "t2",
+    "y": 13.378
+   },
+   {
+    "subject": "s7",
+    "group": "drug",
+    "time": "t3",
+    "y": 11.492
+   },
+   {
+    "subject": "s8",
+    "group": "drug",
+    "time": "t0",
+    "y": 8.539
+   },
+   {
+    "subject": "s8",
+    "group": "drug",
+    "time": "t1",
+    "y": 9.722
+   },
+   {
+    "subject": "s8",
+    "group": "drug",
+    "time": "t2",
+    "y": 9.789
+   },
+   {
+    "subject": "s8",
+    "group": "drug",
+    "time": "t3",
+    "y": 14.245
+   },
+   {
+    "subject": "s9",
+    "group": "drug",
+    "time": "t0",
+    "y": 8.901
+   },
+   {
+    "subject": "s9",
+    "group": "drug",
+    "time": "t2",
+    "y": 12.744
+   },
+   {
+    "subject": "s9",
+    "group": "drug",
+    "time": "t3",
+    "y": 13.591
+   },
+   {
+    "subject": "s10",
+    "group": "drug",
+    "time": "t0",
+    "y": 10.705
+   },
+   {
+    "subject": "s10",
+    "group": "drug",
+    "time": "t1",
+    "y": 12.811
+   },
+   {
+    "subject": "s10",
+    "group": "drug",
+    "time": "t2",
+    "y": 11.052
+   },
+   {
+    "subject": "s10",
+    "group": "drug",
+    "time": "t3",
+    "y": 13.657
+   },
+   {
+    "subject": "s11",
+    "group": "drug",
+    "time": "t0",
+    "y": 10.929
+   },
+   {
+    "subject": "s11",
+    "group": "drug",
+    "time": "t1",
+    "y": 10.989
+   },
+   {
+    "subject": "s11",
+    "group": "drug",
+    "time": "t2",
+    "y": 11.444
+   },
+   {
+    "subject": "s11",
+    "group": "drug",
+    "time": "t3",
+    "y": 16.971
+   },
+   {
+    "subject": "s12",
+    "group": "drug",
+    "time": "t0",
+    "y": 9.704
+   },
+   {
+    "subject": "s12",
+    "group": "drug",
+    "time": "t1",
+    "y": 12.249
+   },
+   {
+    "subject": "s12",
+    "group": "drug",
+    "time": "t3",
+    "y": 11.65
+   },
+   {
+    "subject": "s13",
+    "group": "drug",
+    "time": "t0",
+    "y": 8.487
+   },
+   {
+    "subject": "s13",
+    "group": "drug",
+    "time": "t1",
+    "y": 9.327
+   },
+   {
+    "subject": "s13",
+    "group": "drug",
+    "time": "t2",
+    "y": 9.114
+   },
+   {
+    "subject": "s13",
+    "group": "drug",
+    "time": "t3",
+    "y": 13.024
+   },
+   {
+    "subject": "s14",
+    "group": "drug",
+    "time": "t0",
+    "y": 10.025
+   },
+   {
+    "subject": "s14",
+    "group": "drug",
+    "time": "t1",
+    "y": 11.18
+   },
+   {
+    "subject": "s14",
+    "group": "drug",
+    "time": "t2",
+    "y": 15.516
+   },
+   {
+    "subject": "s14",
+    "group": "drug",
+    "time": "t3",
+    "y": 17.329
+   },
+   {
+    "subject": "s15",
+    "group": "drug",
+    "time": "t0",
+    "y": 12.691
+   },
+   {
+    "subject": "s15",
+    "group": "drug",
+    "time": "t1",
+    "y": 12.888
+   },
+   {
+    "subject": "s15",
+    "group": "drug",
+    "time": "t2",
+    "y": 14.236
+   },
+   {
+    "subject": "s15",
+    "group": "drug",
+    "time": "t3",
+    "y": 15.16
+   }
+  ],
+  "beta": [
+   11.067614631121202,
+   -0.8643675769769104,
+   -1.43464637715295,
+   -0.43790012564718644,
+   0.5224942955731751,
+   0.3821136087229417,
+   0.1049387857886059,
+   0.3552465234967098
+  ],
+  "names": [
+   "Intercept",
+   "C(group, Sum)[S.ctrl]",
+   "C(time, Sum)[S.t0]",
+   "C(time, Sum)[S.t1]",
+   "C(time, Sum)[S.t2]",
+   "C(group, Sum)[S.ctrl]:C(time, Sum)[S.t0]",
+   "C(group, Sum)[S.ctrl]:C(time, Sum)[S.t1]",
+   "C(group, Sum)[S.ctrl]:C(time, Sum)[S.t2]"
+  ],
+  "sigmaU2": 1.3986625898430416,
+  "sigmaE2": 1.7170021817712182,
+  "llf": -109.20120965263338
+ }
+}
