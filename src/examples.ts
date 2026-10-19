@@ -2,13 +2,15 @@
 import { peakRunKey } from './engine/peaks.ts';
 import type { Edge } from '@xyflow/react';
 import { REGION_COLORS } from './nodes/regionColors.ts';
-import { PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
-import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, COLORBAR_DEFAULTS, CURVE_STYLE_DEFAULTS, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, SIDE_DEFAULTS, TEXT_SPEC_DEFAULTS, type AxesStyle, type CurveStyle, type SideStyle } from './figure/spec.ts';
+import { DRAWING_DEFAULTS, PYTHON_DEFAULTS, REPORT_DEFAULTS, COLUMNS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, DATAMANIP_DEFAULTS, AVERAGE_DEFAULTS, COMBINE_DEFAULTS, TRANSLATE_DEFAULTS, CURVEMATH_DEFAULTS, DIGITIZER_DEFAULTS, PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
+import { INSET_DEFAULTS, AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, COLORBAR_DEFAULTS, CURVE_STYLE_DEFAULTS, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, SIDE_DEFAULTS, TEXT_SPEC_DEFAULTS, type AxesStyle, type CurveStyle, type SideStyle } from './figure/spec.ts';
 import { PROJECT_VERSION, type Project } from './project.ts';
 import type { AnnotationItem, AppNode, ImportSheet, NodeType, Plot1DData, PlotLegend, PlotPage } from './types.ts';
 import type { FitParamSpec } from './engine/fit.ts';
 import { SC_D, SC_LAMBDA, SC_R } from './data/strongCoupling.ts';
 import { JOHNSON_AU } from './data/johnsonGold.ts';
+import { makeGroup } from './engine/subgraph.ts';
+import { FRAME_COLORS } from './nodeColors.ts';
 
 type Builder = { nodes: AppNode[]; edges: Edge[] };
 const builder = (): Builder => ({ nodes: [], edges: [] });
@@ -341,6 +343,17 @@ function drugExample(): Project {
   link(b, rep3, fr, 'in');
   const co = add(b, 'correl', 'dr-corr', 1360, 3600, { ...CORR_DEFAULTS, cols: 'Before, 1 h, 24 h' });
   link(b, rep3, co, 'in');
+  // the results of the one-factor study as one document
+  const rp = add(b, 'report', 'dr-report', 1360, 900, {
+    ...REPORT_DEFAULTS,
+    title: 'Drug study: the response by dose',
+    intro: 'Four groups of animals (Control, 10, 20 and 40 mg), the response measured once.',
+    items: { 0: { title: 'Normality of every group' }, 1: { title: 'One-way ANOVA' }, 2: { title: 'Tukey HSD: every pair of doses' }, 3: { title: 't-test: Control against 40 mg' } },
+  });
+  link(b, norm, rp, 'in-0');
+  link(b, an1, rp, 'in-1');
+  link(b, an1, rp, 'in-2', 'posthoc');
+  link(b, tt, rp, 'in-3');
   add(b, 'note', 'dr-note', -560, 0, {
     text: 'How the data are laid out for the statistics nodes.\n\n1. One factor — each group a column (Control | 10 mg | 20 mg | 40 mg): Normality, one-way ANOVA with Tukey, a t-test of two of the columns, Kruskal–Wallis; the groups (mean ± SE) of the ANOVA → a Plot.\n\n2. Two factors — indexed: every row one animal, its Response, its Dose and its Sex (text): two-way ANOVA (Dose, Sex, Dose × Sex).\n\n3. Repeated measures — a row per subject, a column per time (Before | 1 h | 24 h): repeated-measures ANOVA (Mauchly, Greenhouse–Geisser), Friedman, correlations.',
   });
@@ -1654,49 +1667,707 @@ function regressionExample(): Project {
   return project(b, 'Regression, PCA, power and a control chart');
 }
 
-export const EXAMPLES: { group: string; name: string; desc: string; make: () => Project }[] = [
+// ---- Data preparation ----
+
+// a side of the axes in a colour (its line, numbers and title), shown with its numbers and title (a right axis)
+const sideIn = (c: string, title: string) => side({ color: c, labelText: { color: c }, titleText: { color: c }, title, labels: true, showTitle: true });
+const ownRight = { mode: 'own' as const, scale: AXES_STYLE_DEFAULTS.y, fn: '' };
+
+// A temperature and humidity logger's file as it comes: three values missing, three spikes, three times written twice,
+// a block of rows written late (out of order), a column not needed (the battery); a door opened at 45 min (two humidity
+// readings to leave out by hand).
+function loggerFile(): string {
+  const r = rng(31);
+  const rowOf = (t: number, again = false) => {
+    const T = 21 + 3 * (1 - Math.exp(-t / 25)) + 0.6 * Math.sin((2 * Math.PI * t) / 60) + 0.08 * gauss(r) + (t === 34 ? 9 : t === 79 ? -7 : t === 102 ? 11 : 0);
+    const H = t === 45 ? 31.2 : t === 46 ? 29.5 : 45 - 6 * (1 - Math.exp(-t / 30)) + 0.3 * gauss(r);
+    const missing = [17, 63, 97].includes(t) && !again;
+    return `${t},${missing ? '' : (T + (again ? 0.02 : 0)).toFixed(2)},${H.toFixed(1)},${(3.3 - 0.0004 * t).toFixed(3)}`;
+  };
+  const order = [...Array.from({ length: 70 }, (_, t) => t), ...Array.from({ length: 11 }, (_, k) => 80 + k), ...Array.from({ length: 10 }, (_, k) => 70 + k), ...Array.from({ length: 30 }, (_, k) => 91 + k)];
+  const lines = ['Time (min),Temperature (°C),Humidity (%),Battery (V)'];
+  for (const t of order) {
+    lines.push(rowOf(t));
+    if ([10, 55, 88].includes(t)) lines.push(rowOf(t, true));
+  }
+  return lines.join('\n');
+}
+
+function loggerExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'lg-file', 0, 0, { ...IMPORT_DEFAULTS, name: 'logger', fileName: 'logger.csv', text: loggerFile(), textId: 'lg-1' });
+  // the battery left out, the rest as it is
+  const cols = add(b, 'columns', 'lg-cols', 640, 0, { ...COLUMNS_DEFAULTS, items: [{ from: 'Time (min)', role: 'x' }, { from: 'Temperature (°C)', role: 'y' }, { from: 'Humidity (%)', role: 'y' }, { from: 'Battery (V)', keep: false }] });
+  link(b, imp, cols, 'in');
+  // in the order of time, the times written twice merged
+  const filt = add(b, 'filterrows', 'lg-filter', 1100, 0, { ...FILTER_DEFAULTS, dup: 'mean', sortBy: 'Time (min)' });
+  link(b, cols, filt, 'in');
+  // the missing temperatures filled, the spikes found against the moving median and replaced
+  const clean = add(b, 'clean', 'lg-clean', 1560, 0, { ...CLEAN_DEFAULTS, cols: 'Temperature (°C)', missing: 'linear', outliers: 'movmedian', window: 7, k: 5, action: 'linear' });
+  link(b, filt, clean, 'in');
+  // the two humidity readings of the open door masked by hand (rows 46, 47 of the 121)
+  const manip = add(b, 'datamanip', 'lg-manip', 2020, 0, { ...DATAMANIP_DEFAULTS, x: 'Time (min)', y: 'Humidity (%)', ops: [{ kind: 'mask', rows: '46-47', n: 121 }] });
+  link(b, clean, manip, 'in');
+  const changes = add(b, 'book', 'lg-changes', 1560, 760, { ...WORKBOOK_DEFAULTS, name: 'changes', sheets: [], into: ['changes'] });
+  link(b, clean, changes, 'in-0', 'changes');
+  const p = add(
+    b,
+    'plot1d',
+    'lg-plot',
+    2560,
+    0,
+    plot(
+      {
+        // the file's values behind (its own data port), the cleaned ones over them
+        label: 'temperature, as logged',
+        style: curve(7, { mode: 'scatter', symbol: 'circle', symbolSize: 2.5, color: '#a0a0a0' }),
+        cols: { x: 'Time (min)', y: 'Temperature (°C)' },
+        rows: [
+          { label: 'temperature, cleaned', style: lineK(2), cols: { x: 'Time (min)', y: 'Temperature (°C)' } },
+          { label: 'humidity (2 points masked)', style: curve(1, { mode: 'linesymbol', symbol: 'square', symbolSize: 2.5, lineWidth: 0.8, axisY: 'right' }), cols: { x: 'Time (min)', y: 'Humidity (%)' } },
+        ],
+      },
+      {
+        axes: {
+          x: { ...AXES_STYLE_DEFAULTS.x, min: 0, max: 120 },
+          right: ownRight,
+          sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Time (min)' }), left: sideIn(PALETTE[2], 'Temperature (°C)'), right: sideIn(PALETTE[1], 'Humidity (%)'), top: side({ labels: false, showTitle: false }) },
+        },
+        legend: { x: 50, y: 4, anchor: 'tc' },
+        page: { name: 'logger_cleaned' },
+      },
+    ),
+  );
+  link(b, imp, p, 'series');
+  link(b, manip, p, 'dataset');
+  return project(b, 'Cleaning a sensor log: order, repeats, gaps, spikes');
+}
+
+// Three scans of one absorption band, each on its own wavelength grid (another step, another start), with noise and a
+// small drift of the height.
+function scanFile(k: number): string {
+  const r = rng(41 + k);
+  const G = (x: number, c: number, w: number) => Math.exp((-4 * Math.LN2 * (x - c) ** 2) / (w * w));
+  const [start, step, gain] = [
+    [400, 2, 1],
+    [401, 2.5, 0.96],
+    [400, 3, 1.05],
+  ][k];
+  const lines = ['Wavelength (nm);Absorbance'];
+  for (let x = start; x <= 700 + 1e-9; x += step) lines.push(`${+x.toFixed(2)};${(gain * (0.05 + 0.8 * G(x, 520, 70) + 0.25 * G(x, 610, 40)) + 0.012 * gauss(r)).toFixed(4)}`);
+  return lines.join('\n');
+}
+
+function scansExample(): Project {
+  const b = builder();
+  const imps = [0, 1, 2].map((k) => add(b, 'import', `sc-file${k + 1}`, 0, k * 560, { ...IMPORT_DEFAULTS, name: `scan ${k + 1}`, fileName: `scan${k + 1}.txt`, text: scanFile(k), textId: `sc-${k + 1}` }));
+  // the mean ± SD on a common grid of 2 nm
+  const avg = add(b, 'average', 'sc-avg', 700, 0, { ...AVERAGE_DEFAULTS, grid: 'uniform', from: 405, to: 695, points: 146 });
+  imps.forEach((id, k) => link(b, id, avg, `in-${k}`));
+  // every point of the three scans in one table, in the order of the wavelength
+  const all = add(b, 'combine', 'sc-all', 700, 760, { ...COMBINE_DEFAULTS, how: 'sortx', name: 'all scans' });
+  imps.forEach((id, k) => link(b, id, all, `in-${k}`));
+  const p = add(
+    b,
+    'plot1d',
+    'sc-plot',
+    1240,
+    0,
+    plot(
+      {
+        // the points behind (their own data port), the mean over them
+        label: 'the scans’ points',
+        style: curve(7, { mode: 'scatter', symbol: 'circle', symbolSize: 1.8, color: '#a0a0a0' }),
+        cols: { x: 'Wavelength (nm)', y: 'Absorbance' },
+        rows: [{ label: 'mean ± SD (3 scans)', style: curve(1, { lineWidth: 1.2, errStyle: 'band' }), cols: { x: 'Wavelength (nm)', y: 'mean', yerr: 'SD' } }],
+      },
+      {
+        axes: { x: { ...AXES_STYLE_DEFAULTS.x, min: 400, max: 700 }, sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Wavelength (nm)' }), left: side({ title: 'Absorbance' }) } },
+        legend: { x: 96, y: 4, anchor: 'tr' },
+        page: { name: 'scans_mean' },
+      },
+    ),
+  );
+  link(b, all, p, 'series');
+  link(b, avg, p, 'dataset');
+  return project(b, 'Replicate scans: mean ± SD on a common X');
+}
+
+// A reference and a sample spectrum on different grids; the spectrometer was 2 nm off when the sample was measured, and
+// the sample has one band more (655 nm).
+function diffFile(sample: boolean): string {
+  const r = rng(sample ? 52 : 51);
+  const G = (x: number, c: number, w: number) => Math.exp((-4 * Math.LN2 * (x - c) ** 2) / (w * w));
+  const base = (x: number) => 0.2 + 0.6 * G(x, 600, 60) + 0.3 * G(x, 720, 40);
+  const lines = ['Wavelength (nm);Intensity (a.u.)'];
+  if (sample) for (let x = 500.5; x <= 800; x += 1.5) lines.push(`${x};${(base(x - 2) + 0.25 * G(x - 2, 655, 18) + 0.005 * gauss(r)).toFixed(4)}`);
+  else for (let x = 500; x <= 800; x += 1) lines.push(`${x};${(base(x) + 0.005 * gauss(r)).toFixed(4)}`);
+  return lines.join('\n');
+}
+
+function differenceExample(): Project {
+  const b = builder();
+  const ref = add(b, 'import', 'df-ref', 0, 0, { ...IMPORT_DEFAULTS, name: 'reference', fileName: 'reference.txt', text: diffFile(false), textId: 'df-1' });
+  const smp = add(b, 'import', 'df-sample', 0, 560, { ...IMPORT_DEFAULTS, name: 'sample', fileName: 'sample.txt', text: diffFile(true), textId: 'df-2' });
+  // the sample's wavelengths corrected: 2 nm back
+  const tr = add(b, 'translate', 'df-shift', 680, 560, { ...TRANSLATE_DEFAULTS, mode: 'value', dx: -2, dy: 0 });
+  link(b, smp, tr, 'data');
+  // A − B and A / B on a common grid of 1 nm (where both curves are)
+  const op = (o: 'sub' | 'div') => ({ op: o, values: '', crossing: 'first' as const, abs: false, grid: 'uniform' as const, from: 505, to: 790, points: 286 });
+  const cm = add(b, 'curvemath', 'df-math', 1160, 0, { ...CURVEMATH_DEFAULTS, op: 'sub', grid: 'uniform', from: 505, to: 790, points: 286, ops: [op('sub'), op('div')] });
+  link(b, tr, cm, 'a');
+  link(b, ref, cm, 'b');
+  const p = add(
+    b,
+    'plot1d',
+    'df-plot',
+    1760,
+    0,
+    plot(
+      {
+        label: 'sample (−2 nm)',
+        style: lineK(1),
+        cols: { x: 'Wavelength (nm)', y: 'Intensity (a.u.)' },
+        rows: [
+          { label: 'reference', style: lineK(7, { color: '#7f7f7f' }), cols: { x: 'Wavelength (nm)', y: 'Intensity (a.u.)' } },
+          { label: 'sample − reference', style: lineK(3, { axisY: 'right' }), cols: { x: 'Wavelength (nm)', y: 'A − B' } },
+        ],
+      },
+      {
+        axes: {
+          x: { ...AXES_STYLE_DEFAULTS.x, min: 500, max: 800 },
+          right: ownRight,
+          sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Wavelength (nm)' }), left: side({ title: 'Intensity (a.u.)' }), right: sideIn(PALETTE[3], 'Difference (a.u.)'), top: side({ labels: false, showTitle: false }) },
+        },
+        legend: { x: 96, y: 4, anchor: 'tr' },
+        page: { name: 'difference' },
+      },
+    ),
+  );
+  link(b, tr, p, 'series');
+  link(b, ref, p, 'series-1');
+  link(b, cm, p, 'series-2');
+  return project(b, 'Difference spectrum: sample minus reference');
+}
+
+// The image of a graph (drawn here from a known curve, as a figure in a paper would be) for the Digitizer: its frame
+// from (70, 30) to (570, 340) pixels, X 0 … 10, Y 0 … 2.
+const digiCurve = (x: number) => 0.2 + 1.5 * Math.exp(-((x - 3) ** 2) / 2) + 0.4 * Math.exp(-((x - 7) ** 2) / 0.8);
+const digiU = (x: number) => 70 + 50 * x;
+const digiV = (y: number) => 340 - 155 * y;
+function digiImage(): string {
+  const ticks = (n: number, f: (k: number) => string) => Array.from({ length: n }, (_, k) => f(k)).join('');
+  const path = Array.from({ length: 201 }, (_, k) => `${k ? 'L' : 'M'}${digiU(k / 20).toFixed(1)},${digiV(digiCurve(k / 20)).toFixed(1)}`).join('');
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400" font-family="Arial" font-size="13">` +
+    `<rect width="600" height="400" fill="#ffffff"/>` +
+    `<rect x="70" y="30" width="500" height="310" fill="none" stroke="#000" stroke-width="1.2"/>` +
+    ticks(6, (k) => `<line x1="${digiU(2 * k)}" y1="340" x2="${digiU(2 * k)}" y2="346" stroke="#000"/><text x="${digiU(2 * k)}" y="362" text-anchor="middle">${2 * k}</text>`) +
+    ticks(5, (k) => `<line x1="64" y1="${digiV(k / 2)}" x2="70" y2="${digiV(k / 2)}" stroke="#000"/><text x="58" y="${digiV(k / 2) + 4}" text-anchor="end">${(k / 2).toFixed(1)}</text>`) +
+    `<text x="320" y="390" text-anchor="middle">Time (s)</text><text x="18" y="185" text-anchor="middle" transform="rotate(-90 18 185)">Signal (mV)</text>` +
+    `<path d="${path}" fill="none" stroke="#1f5fbf" stroke-width="2"/></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+function digitizerExample(): Project {
+  const b = builder();
+  // calibrated on the axes (two ticks on each), the curve's points placed as clicks would (on whole pixels)
+  const points = Array.from({ length: 21 }, (_, k) => ({ u: Math.round(digiU(k / 2)), v: Math.round(digiV(digiCurve(k / 2))) }));
+  const dg = add(b, 'digitizer', 'dg-image', 0, 0, {
+    ...DIGITIZER_DEFAULTS,
+    image: digiImage(),
+    imageName: 'figure_3b.svg',
+    w: 600,
+    h: 400,
+    axes: [
+      { u: 70, v: 340, val: 0 },
+      { u: 570, v: 340, val: 10 },
+      { u: 70, v: 340, val: 0 },
+      { u: 70, v: 30, val: 2 },
+    ],
+    xName: 'Time (s)',
+    yName: 'Signal (mV)',
+    sets: [{ name: 'Set 1', color: '#e6194b', points }],
+  });
+  // the curve the image was drawn from, to compare with
+  const x = add(b, 'gencol', 'dg-x', 0, 760, { ...GENCOL_DEFAULTS, name: 'Time (s)', mode: 'linspace', count: 201, start: 0, stop: 10 });
+  const y = add(b, 'mathcol', 'dg-true', 420, 760, { ...MATHCOL_DEFAULTS, name: 'Signal (mV)', formula: '0.2 + 1.5*exp(-(A-3)^2/2) + 0.4*exp(-(A-7)^2/0.8)' });
+  link(b, x, y, 'in-0');
+  const p = add(
+    b,
+    'plot1d',
+    'dg-plot',
+    900,
+    0,
+    plot(
+      {
+        label: 'read off the image',
+        style: curve(3, { mode: 'scatter', symbol: 'circle', symbolFill: 'open', symbolSize: 4.5, symbolEdge: 1 }),
+        cols: { x: 'Time (s)', y: 'Signal (mV)' },
+        rows: [{ label: 'the curve drawn', style: lineK(1, { lineWidth: 1 }) }],
+      },
+      {
+        axes: { x: { ...AXES_STYLE_DEFAULTS.x, min: 0, max: 10 }, y: { ...AXES_STYLE_DEFAULTS.y, min: 0, max: 2 }, sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Time (s)' }), left: side({ title: 'Signal (mV)' }) } },
+        legend: { x: 96, y: 4, anchor: 'tr' },
+        page: { name: 'digitized' },
+      },
+    ),
+  );
+  link(b, dg, p, 'dataset');
+  link(b, x, p, 'x-1');
+  link(b, y, p, 'y-1');
+  return project(b, 'Digitizer: values read off the image of a graph');
+}
+
+// ---- Python ----
+
+// A Raman spectrum with three bands on a sloping background (example values).
+function pyFile(): string {
+  const r = rng(61);
+  const G = (x: number, c: number, w: number) => Math.exp((-4 * Math.LN2 * (x - c) ** 2) / (w * w));
+  const lines = ['Raman shift (cm⁻¹);Intensity (a.u.)'];
+  for (let x = 1000; x <= 1800; x += 2) lines.push(`${x};${(0.1 + 0.00015 * (x - 1000) + 0.9 * G(x, 1150, 40) + 0.55 * G(x, 1350, 55) + 1.1 * G(x, 1600, 35) + 0.015 * gauss(r)).toFixed(4)}`);
+  return lines.join('\n');
+}
+
+const PY_CODE = `# A: the spectrum (a Table: its columns by name; A.df is a pandas DataFrame).
+# Every variable made here is an output of the node (peaks, fitted).
+import numpy as np
+import pandas as pd
+from scipy.signal import find_peaks
+from scipy.optimize import curve_fit
+
+def analyse(x, y):
+    # the peaks: at least 0.2 above their surroundings, 15 points apart
+    idx, _ = find_peaks(y, prominence=0.2, distance=15)
+
+    # a straight line and a Gaussian for every peak, started at the peaks found
+    def model(x, a0, a1, *p):
+        out = a0 + a1 * x
+        for h, c, w in zip(p[0::3], p[1::3], p[2::3]):
+            out = out + h * np.exp(-4 * np.log(2) * (x - c) ** 2 / w ** 2)
+        return out
+
+    p0 = [float(y.min()), 0.0]
+    for i in idx:
+        p0 += [float(y[i]), float(x[i]), 40.0]
+    best, cov = curve_fit(model, x, y, p0=p0)
+    err = np.sqrt(np.diag(cov))
+    peaks = pd.DataFrame({"center (cm⁻¹)": best[3::3], "± center": err[3::3],
+                          "height": best[2::3], "FWHM (cm⁻¹)": np.abs(best[4::3])})
+    # designated (X and Y) for the Plot
+    fitted = roles(pd.DataFrame({"Raman shift (cm⁻¹)": x, "fit": model(x, *best)}), x="Raman shift (cm⁻¹)", y="fit")
+    return peaks, fitted
+
+peaks, fitted = analyse(A["Raman shift (cm⁻¹)"], A["Intensity (a.u.)"])
+`;
+
+function pythonExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'py-file', 0, 0, { ...IMPORT_DEFAULTS, name: 'spectrum', fileName: 'raman_bands.txt', text: pyFile(), textId: 'py-1' });
+  // not run until Run is pressed (the first run downloads Python): its outputs declared, to be connected
+  const py = add(b, 'python', 'py-script', 680, 0, { ...PYTHON_DEFAULTS, code: PY_CODE, outs: [{ name: 'peaks', kind: 'dataset' }, { name: 'fitted', kind: 'dataset' }] });
+  link(b, imp, py, 'in-0');
+  const wb = add(b, 'book', 'py-peaks', 1400, 760, { ...WORKBOOK_DEFAULTS, name: 'peaks', sheets: [], into: ['peaks'] });
+  link(b, py, wb, 'in-0', 'py-peaks');
+  const p = add(
+    b,
+    'plot1d',
+    'py-plot',
+    1400,
+    0,
+    plot(
+      {
+        label: 'spectrum',
+        style: curve(7, { mode: 'scatter', symbol: 'circle', symbolSize: 2, color: '#808080' }),
+        cols: { x: 'Raman shift (cm⁻¹)', y: 'Intensity (a.u.)' },
+        // the fit: from its own data port, by its designations (nothing before the first Run)
+        rows: [{ label: 'fit (Python)', style: lineK(2) }],
+      },
+      {
+        axes: { x: { ...AXES_STYLE_DEFAULTS.x, min: 1000, max: 1800 }, sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Raman shift (cm⁻¹)' }), left: side({ title: 'Intensity (a.u.)' }) } },
+        legend: { x: 4, y: 4, anchor: 'tl' },
+        page: { name: 'python_fit' },
+      },
+    ),
+  );
+  link(b, imp, p, 'dataset');
+  link(b, py, p, 'series-1', 'py-fitted');
+  return project(b, 'Python script: peaks found and fitted with scipy');
+}
+
+// ---- Figures and layout ----
+
+// A photoluminescence spectrum: the band-edge emission, and two weak bands of trap states (example values).
+function plFile(): string {
+  const r = rng(71);
+  const G = (x: number, c: number, w: number) => Math.exp((-4 * Math.LN2 * (x - c) ** 2) / (w * w));
+  const lines = ['Wavelength (nm);PL (norm.)'];
+  for (let x = 450; x <= 800; x += 1) lines.push(`${x};${(G(x, 520, 28) + 0.035 * G(x, 645, 30) + 0.025 * G(x, 690, 25) + 0.0015 * gauss(r)).toFixed(5)}`);
+  return lines.join('\n');
+}
+
+function publicationExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'pub-file', 0, 0, { ...IMPORT_DEFAULTS, name: 'PL', fileName: 'pl_spectrum.txt', text: plFile(), textId: 'pub-1' });
+  // the inset: the weak bands, enlarged
+  const ins = add(
+    b,
+    'plot1d',
+    'pub-inset',
+    680,
+    760,
+    plot(
+      { label: 'PL', style: lineK(1, { lineWidth: 1 }), cols: { x: 'Wavelength (nm)', y: 'PL (norm.)' } },
+      { axes: { x: { ...AXES_STYLE_DEFAULTS.x, min: 600, max: 730, step: 50 }, y: { ...AXES_STYLE_DEFAULTS.y, min: 0, max: 0.05, step: 0.02 }, sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ showTitle: false }), left: side({ showTitle: false }) } }, page: { name: 'inset' } },
+    ),
+  );
+  link(b, imp, ins, 'dataset');
+  // the main figure, the inset in its upper right corner with the region it enlarges marked
+  const main = add(
+    b,
+    'plot1d',
+    'pub-main',
+    680,
+    0,
+    {
+      ...plot(
+        { label: 'PL', style: lineK(1, { lineWidth: 1.2 }), cols: { x: 'Wavelength (nm)', y: 'PL (norm.)' } },
+        { axes: { x: { ...AXES_STYLE_DEFAULTS.x, min: 450, max: 800 }, y: { ...AXES_STYLE_DEFAULTS.y, min: 0, max: 1.1 } , sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Wavelength (nm)' }), left: side({ title: 'PL intensity (norm.)' }) } }, page: { name: 'pl_figure' } },
+      ),
+      insets: [{ ...INSET_DEFAULTS, key: 'pub-inset', x: 52, y: 8, w: 44, h: 46, zoom: true }],
+    },
+  );
+  link(b, imp, main, 'dataset');
+  link(b, ins, main, 'insets', 'figure');
+  // the drawing over the figure: arrows and labels pinned to data points (they follow the data when the axes change),
+  // and the panel label
+  const pinned = (id: string, at: [number, number], tip: [number, number], label: string, dx: number, dy: number): AnnotationItem[] => [
+    { id: `${id}-arrow`, type: 'shape', pin: { at, ref: tip }, spec: { ...SHAPE_DEFAULTS, kind: 'arrow', coords: 'data', x1: tip[0] + dx, y1: tip[1] + dy, x2: tip[0], y2: tip[1], width: 0.6, headSize: 4 } },
+    { id: `${id}-text`, type: 'text', pin: { at, ref: tip }, spec: { ...TEXT_SPEC_DEFAULTS, coords: 'data', x: tip[0] + dx + (dx < 0 ? -1 : 1), y: tip[1] + dy, anchor: dx < 0 ? 'cr' : 'cl', text: label, style: { size: 7 } } },
+  ];
+  const dr = add(b, 'drawing', 'pub-draw', 1400, 0, {
+    ...DRAWING_DEFAULTS,
+    name: 'pl_annotated',
+    annotations: [
+      ...pinned('edge', [533, 0.45], [40, 30], 'band-edge emission', 8, 4),
+      ...pinned('trap', [668, 0.05], [60, 48], 'trap states', 5, -9),
+      { id: 'panel', type: 'text', spec: { ...TEXT_SPEC_DEFAULTS, coords: 'data', x: 1, y: 0.5, anchor: 'tl', text: '(a)', style: { size: 9, bold: true } } },
+    ],
+  });
+  link(b, main, dr, 'under', 'figure');
+  return project(b, 'Publication figure: an inset and annotations over it');
+}
+
+// A small workflow kept in order: frames for its stages, the processing steps in a group, a reroute for a long
+// connection.
+function organizeExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'org-file', 30, 74, { ...IMPORT_DEFAULTS, name: 'spectrum', fileName: 'raman_bands.txt', text: pyFile(), textId: 'org-1' });
+  const sm = add(b, 'smooth', 'org-smooth', 800, 74, { ...SMOOTH_DEFAULTS, method: 'savgol', points: 9, withData: false });
+  link(b, imp, sm, 'in');
+  const nm = add(b, 'normalize', 'org-norm', 1240, 74, { ...NORMALIZE_DEFAULTS, method: 'max' });
+  link(b, sm, nm, 'in');
+  const rr = add(b, 'reroute', 'org-route', 1300, 640, {});
+  link(b, nm, rr, 'in');
+  const p = add(
+    b,
+    'plot1d',
+    'org-plot',
+    30,
+    74,
+    plot(
+      { label: 'smoothed, normalized', style: lineK(1) },
+      { axes: { x: { ...AXES_STYLE_DEFAULTS.x, min: 1000, max: 1800 }, sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Raman shift (cm⁻¹)' }), left: side({ title: 'Intensity (norm.)' }) } }, legend: { x: 4, y: 4, anchor: 'tl' }, page: { name: 'organized' } },
+    ),
+  );
+  link(b, rr, p, 'series');
+  // Smooth and Normalize as one group node (open it to see them)
+  const g = makeGroup(b.nodes, b.edges, [sm, nm], (n) => (n.type === 'smooth' ? 'spectrum' : 'processed'), () => 'dataset')!;
+  // the frames (their nodes are their children: placed relative to them)
+  const frame = (id: string, name: string, color: string, x: number, y: number, w: number, h: number) => ({ id, type: 'frame', position: { x, y }, width: w, height: h, data: { name, color } }) as AppNode;
+  const frames = [frame('org-f1', '1 · Load', FRAME_COLORS[1], 0, 0, 640, 680), frame('org-f2', '2 · Process (a group: open it)', FRAME_COLORS[2], 760, 0, 470, 260), frame('org-f3', '3 · Results', FRAME_COLORS[3], 1480, 0, 720, 990)];
+  const nodes = g.nodes.map((n) =>
+    n.id === imp ? ({ ...n, parentId: 'org-f1' } as AppNode) : n.id === g.groupId ? ({ ...n, parentId: 'org-f2', position: { x: 30, y: 74 } } as AppNode) : n.id === p ? ({ ...n, parentId: 'org-f3' } as AppNode) : n,
+  );
+  return project({ nodes: [...frames, ...nodes], edges: g.edges }, 'Organizing a large graph: frames, a group, a reroute');
+}
+
+// Every example's note at its left: what it shows, what to try, then how it works (the example's own note, when it has one).
+type About = { what: string; try: string[] };
+const ABOUT: Record<string, About> = {
+  'UV-Vis spectrum: mean ± SD of three measurements': {
+    what: 'An instrument export read as it is (header lines skipped, units, decimal commas), the mean ± SD of three replicates, and a finished figure with an arrow on the peak and an eV axis on top.',
+    try: ['Double-click a value in the Import table and change it: the statistics and the figure follow.', 'Click the Plot and change the error bars or the colours in Options.', 'Export the figure (SVG, PDF, PNG under it) at its physical size.'],
+  },
+  'Generated data: a damped oscillation and noisy samples': {
+    what: 'Data made without a file: Generate column gives the time and the noise, Math column computes the signals from them, one Plot draws three curves (one with its own X).',
+    try: ['Change the formula of a Math column (e.g. the period 1.6 → 2).', 'Change the seed of the noise, or its SD.', 'Click ? on a node for what it does.'],
+  },
+  'Gold n, k: two blocks in one file (Split into columns)': {
+    what: 'A file with two blocks written one under the other (wl, n, then wl, k) laid side by side by Split into columns; n on the left axis, k on its own right axis.',
+    try: ['Look at the Import table: the second block starts after an empty line.', 'In Split into columns, change Blocks and see the columns it gives.'],
+  },
+  'Four runs in a workbook: Auto-extract': {
+    what: 'A spreadsheet with a sheet per run: Auto-extract takes the same columns out of every sheet by rules (Time = X, Signal = Y, D = ±Y), and one Plot draws them all from their designations.',
+    try: ['Change a rule of Auto-extract (e.g. leave a sheet out with !2).', 'Choose another sheet in Extract column.'],
+  },
+  'Cleaning a sensor log: order, repeats, gaps, spikes': {
+    what: 'A logger file as it comes — rows out of order, times written twice, missing values, spikes, a column not needed — made clean step by step; every step is a node you can open, change or remove.',
+    try: ['Open Clean data and switch the outlier test (MAD, IQR, Grubbs …); the Workbook lists every change.', 'In Data manipulation, click or drag on the graph to mask other points.', 'Remove the Filter & sort rows node’s sorting: the cleaned line goes back and forth.'],
+  },
+  'Replicate scans: mean ± SD on a common X': {
+    what: 'Three scans on different wavelength grids averaged on a common grid, with their SD as a band; all their points pooled into one table.',
+    try: ['In Average curves, switch the grid (every X, the X of the first scan, uniform).', 'Change the error style of the mean in the Plot (band or bars).'],
+  },
+  'Difference spectrum: sample minus reference': {
+    what: 'A sample measured with a 2 nm calibration error, moved back, then compared with its reference: the difference shows the band only the sample has.',
+    try: ['Set the shift of Translate to 0: the difference shows the misalignment as wiggles.', 'Look at the second output of Curve math: sample / reference.'],
+  },
+  'Digitizer: values read off the image of a graph': {
+    what: 'The image of a graph calibrated on its axes and its curve’s points placed (as clicks on whole pixels): the values read lie on the curve the image was drawn from.',
+    try: ['Open the Digitizer: drag a point, or add some with clicks.', 'Let it find the curve by its colour: Auto (by colour).', 'Open an image of your own (a figure of a paper).'],
+  },
+  'Overlapping peaks: peak deconvolution': {
+    what: 'A peak hidden in the side of another, separated by fitting a baseline and three peaks together; every peak drawn filled, the table of the peaks in a Workbook.',
+    try: ['Open the Peak analyzer and go through its steps: 1 Data, 2 Baseline, 3 Peaks, 4 Fit.', 'Change the shape of a peak, then Run analysis.', 'Look at the table of the peaks (center, FWHM, area %) in the Workbook.'],
+  },
+  'XPS: Shirley background and a spin–orbit doublet': {
+    what: 'A Ni 2p spectrum: the Shirley background and one Voigt line made a doublet (its partner 17.3 eV higher, half the area, the same widths), fitted together.',
+    try: ['In the Peak analyzer, switch the background to linear or Tougaard and run again.', 'Turn the doublet (2×) off and compare the fit.'],
+  },
+  'Raman on a fluorescence background: baselines from the data': {
+    what: 'A background ten times the lines, removed by baselines found from the data, in three nodes: Peak analyzer (airPLS), Integrate (asymmetric least squares) and Peak width (SNIP).',
+    try: ['Change the smoothness of a baseline and watch what is left above it.', 'Try another baseline of the list in the same node.'],
+  },
+  'Strong coupling: fit of every run, then the anticrossing': {
+    what: 'Reflectance spectra of a microcavity for 23 thicknesses: a Fit of every run gives the two dips, a second Fit of their positions gives the Rabi splitting Ω.',
+    try: ['Open Fit 1 and look at its parameter table: a row per thickness.', 'In Fit 2, see Ω and its error.', 'Look at the Plot: the spectra are coloured by the thickness.'],
+  },
+  'Calibration: unknowns, LOD and LOQ': {
+    what: 'A weighted straight-line calibration used backwards: two unknown concentrations with their 95 % intervals, the limits of detection and quantification, the sensitivity.',
+    try: ['Change the absorbance of an unknown in the Fit’s Use the fit.', 'Turn the weights off and compare the intervals.'],
+  },
+  'Kinetics and lifetimes: rate equations, reconvolution': {
+    what: 'Two fits beyond a formula: rate equations A → B → C solved at every step of the fit, and a fluorescence decay fitted through the instrument response.',
+    try: ['In the first Fit, change the starting values of k1 and k2 and fit again.', 'Turn Reconvolution off in the second Fit: the lifetime then includes the instrument’s.'],
+  },
+  'Impedance: an equivalent circuit fitted, a Nyquist plot': {
+    what: 'An equivalent circuit (R0 + R1 ∥ CPE) written with functions of your own, fitted to the real and imaginary parts at once; the Nyquist plot with equal scales.',
+    try: ['Change the circuit’s formula in the Fit (e.g. a capacitor instead of the CPE).', 'In the Plot, set Axes ▸ Aspect back to free and see the arcs flatten.'],
+  },
+  'Signal processing: smooth, FFT, deconvolution, interpolation': {
+    what: 'Four everyday operations on curves: smoothing and normalizing, the FFT spectrum and a low pass, deconvolving an instrument’s blur, reading two curves on a common X.',
+    try: ['Change the Method or the Window of Smooth.', 'Move the cut-off of the FFT low pass.', 'Change the number of iterations of the deconvolution.'],
+  },
+  'Signals: PSD, a Butterworth filter, the Allan deviation': {
+    what: 'The FFT node in three modes: the power spectral density of two tones in noise, a zero-phase Butterworth low pass, the Allan deviation of a drifting sensor.',
+    try: ['Change the order or the cut-off of the Butterworth filter.', 'Change the segment length of the PSD and watch the noise floor.'],
+  },
+  'Cyclic voltammogram: area between the branches': {
+    what: 'A potentiostat file with three cycles in one table: cut into cycles and into the pieces going up and coming back, the area between the branches, the peaks read off.',
+    try: ['Drag the edges of the hatched region in Integrate.', 'Add a value to read in Pick points (e.g. 0.3 V).'],
+  },
+  'Drug study: ANOVA, t-test, nonparametric, correlation': {
+    what: 'The three layouts of data the statistics nodes read — a column per group, indexed rows, a row per subject — with the tests that go with each; the results of the first written as one document by a Report.',
+    try: ['Switch the post-hoc test of the one-way ANOVA (Tukey, Bonferroni, Dunnett …): the Report follows.', 'In the Report, save it as Markdown (.md) or copy it.', 'Look at the normality of every group before the ANOVA.'],
+  },
+  'Python script: peaks found and fitted with scipy': {
+    what: 'A spectrum given to a Python script: scipy finds the peaks and fits them; the peaks go to a Workbook, the fitted curve to the Plot. Nothing leaves the computer: Python runs in the browser.',
+    try: ['Press Run in the Python script (the first time it downloads Python, about 10 MB): the fit appears in the Plot.', 'Change the prominence in find_peaks and run again.', 'Connect another dataset to A and use it in the code.'],
+  },
+  'Regression, PCA, power and a control chart': {
+    what: 'Linear and logistic regression on several predictors, correlations with principal components, a t-test with its power, a control chart.',
+    try: ['Leave a predictor out of the linear regression and compare R² and AIC.', 'Change the target power of the t-test.'],
+  },
+  'Two panels: colour by value, colour bar, spikes removed': {
+    what: 'Points coloured by their value with a colour bar, two spikes removed by a rule of a Math column, and two Plots side by side in a Merge with a shared Y axis and panel labels.',
+    try: ['In the Merge, change the rows and columns or the panel labels.', 'Remove the rule of the Math column: the spikes come back.'],
+  },
+  'Three Y axes and a broken X axis': {
+    what: 'Three quantities of one run, each on its own Y axis (left, right, one moved out), and an X axis broken over the hours without data.',
+    try: ['Click the Plot and move the third axis in Options ▸ Axes.', 'Change where the X axis is broken.'],
+  },
+  'Publication figure: an inset and annotations over it': {
+    what: 'A figure finished for a paper: the weak bands enlarged in an inset with the region marked, arrows and labels drawn over it by a Figure Drawing — pinned to the data, so they follow when the axes change.',
+    try: ['Open the Figure Drawing (its editor) and move a label, or add a shape.', 'Change the X limits of the main Plot: the arrows stay on their peaks.', 'Export the drawing’s figure (SVG, PDF, PNG).'],
+  },
+  'Organizing a large graph: frames, a group, a reroute': {
+    what: 'How to keep a graph readable: frames name its stages (their nodes move with them), a group node holds several steps, a reroute point leads a long connection.',
+    try: ['Open the group (its button or right-click) to see Smooth and Normalize; ← back returns.', 'Drag a frame by its title: its nodes move with it.', 'Double-click a connection to add another reroute point.'],
+  },
+  'Matrices: inverse, eigenvalues, SVD, a map as a matrix': {
+    what: 'A matrix and a vector typed in, then step by step: the inverse, the determinant, the eigenvalues and vectors, the SVD, the solution of A·x = b; maps of the results.',
+    try: ['Change a cell of the matrix A: every step is computed again.', 'Add a step in Matrix computation.'],
+  },
+  'Contour and heatmap: a reflectance map, scattered points': {
+    what: 'A reflectance map given as a matrix, with labelled contour lines and a cut drawn by a Plot, and scattered points interpolated and drawn as filled levels.',
+    try: ['Change the colour map or the number of levels.', 'Use the Reader to read a value off the map.'],
+  },
+  '3D: a surface, bars, clusters, a waterfall': {
+    what: 'Four 3D plots in one Merge: a surface with its contours on the floor, 3D bars of a matrix, clusters of points, and a waterfall of spectra in depth.',
+    try: ['Turn a plot with the mouse (Rotate), or zoom into it (Zoom).', 'Read values with the Reader, on the data or on the surface.', 'Add a mark (Marks ▸ + Arrow) and draw it on the figure.'],
+  },
+  '3D stacked maps: RSMs of five samples': {
+    what: 'Reciprocal space maps of five samples stacked at their own heights, on a log colour scale, the two reflections side by side with one colour bar.',
+    try: ['Choose the layers by hand (Layers ▸ my list).', 'Turn the view (Rotate) or change the elevation.'],
+  },
+  'Grouped bars with their values': {
+    what: 'The mean measures of three species, a series per measure side by side, the values written above the bars.',
+    try: ['Switch the Bar chart’s Arrangement to stacked or 100 % stacked.', 'Hide the values, or move them inside the bars.'],
+  },
+  'Stacked and 100 % stacked bars': {
+    what: 'Counts stacked, then their shares, the values in the segments; the two charts in a Merge with one legend.',
+    try: ['Change the hatching or the colours of a series.', 'Make the bars horizontal.'],
+  },
+  'Horizontal bars with errors': {
+    what: 'A score per person with its error bar, the values beyond the bars, a gradient and rounded corners.',
+    try: ['Sort the bars by their value.', 'Change the gradient or the corners.'],
+  },
+  'Bars from raw values: mean ± SD with the points': {
+    what: 'Replicates by treatment and day: every bar is the mean ± SD of its values, the values drawn over it.',
+    try: ['Switch the error from SD to SE or the 95 % CI.', 'Show the median or the count instead of the mean.'],
+  },
+  'Floating columns: a range per month': {
+    what: 'Every bar from the minimum to the maximum of its month, with rounded corners and a shadow.',
+    try: ['Change the shadow or the corners.', 'Switch the Arrangement to grouped to see the two columns.'],
+  },
+  'Waterfall: from the grants to the balance': {
+    what: 'A bridge chart of a laboratory’s year: income up, expenses down from the running total, the balance as the last bar.',
+    try: ['Change a value in the Import table and watch the running total.', 'Change the colours of the increases, decreases and total.'],
+  },
+  'Significance brackets on bars and boxes': {
+    what: 'Four treatments with brackets between the bars (Welch t, Holm) and every treatment against the control on the boxes (Tukey), the brackets stacked so they do not cross.',
+    try: ['Switch the test or the correction for the brackets.', 'Show p instead of stars, or hide the ns brackets.'],
+  },
+  'Box plots: notched, horizontal': {
+    what: 'Four samples as notched boxes with the mean, then horizontal with the whiskers at the 5th and 95th percentiles; in a Merge.',
+    try: ['Change the Whiskers (1.5 IQR, percentiles, min – max).', 'Show the values over the boxes.'],
+  },
+  'Box plot vs violin plot': {
+    what: 'The same four samples as boxes and as violins with their quartile lines, on one Y axis.',
+    try: ['Change the width of the violins’ kernel.', 'Put a box inside every violin.'],
+  },
+  'Grouped boxes from indexed data, with the values': {
+    what: 'Indexed data (a value, a treatment and a day per row) as boxes side by side by day, with their means and every value beside them.',
+    try: ['Swap the group and the subgroup.', 'Switch the values from swarm to jitter.'],
+  },
+  'Half violins and raincloud': {
+    what: 'The same values as half violins with their boxes, and as horizontal rainclouds with the values below.',
+    try: ['Change the gradient of the half violins.', 'Make the rainclouds vertical.'],
+  },
+  'Split violins: two subgroups': {
+    what: 'A violin per treatment split in two: day 1 on the left, day 7 on the right, each with its quartile lines.',
+    try: ['Change the colours of the two days.', 'Use one scale for all the violins.'],
+  },
+  'Histogram with two-mode fits': {
+    what: 'A two-mode sample of particle sizes: hatched bins, two normal distributions from the data, two Gaussians fitted to the bars and a kernel density.',
+    try: ['Change the Bins (width or number).', 'Show the counts, the density or the percent.'],
+  },
+  'Q-Q and normal probability plots': {
+    what: '50 strengths against the normal distribution: a Q-Q plot with its band, then a normal probability axis with the fitted line.',
+    try: ['Change the Distribution (lognormal, Weibull …) and compare.', 'Switch the Kind to ECDF or P-P.'],
+  },
+  'ECDF of two groups, bands and 1 − F': {
+    what: 'The reaction times of two groups as ECDF steps with their 95 % bands, and as 1 − F with fitted lognormal curves.',
+    try: ['Switch the band from simultaneous (DKW) to pointwise.', 'Fit another distribution.'],
+  },
+  'Weibull probability plot of failure times': {
+    what: 'The hours to failure of two batches on a Weibull probability axis with the fitted lines; a P-P plot with its band.',
+    try: ['Read the shape and the scale in the node.', 'Switch the Distribution to lognormal.'],
+  },
+  'Bland–Altman: two devices': {
+    what: 'The agreement of two devices measuring blood pressure: the differences against the means, the bias and the limits of agreement with their intervals.',
+    try: ['Switch the differences to % of the mean.', 'Colour the points by another column.'],
+  },
+  'Pie, doughnut and nested rings': {
+    what: 'The energy sources of a grid as a pie with slices moved out, a doughnut with the total in the hole, and two years as nested rings.',
+    try: ['Switch the Kind at the top of the options.', 'Move another slice out, or sort the slices.'],
+  },
+  'Polar: antenna pattern, wind rose, radar': {
+    what: 'An antenna’s gain in dB on a half circle, a month of wind as polar bars, and three materials scored on six properties as radar polygons.',
+    try: ['Change where 0° is and the direction of the angles.', 'Fill or unfill the radar polygons.'],
+  },
+  'Scatter matrix of four measures, three species': {
+    what: 'Every pair of four measures as points coloured by species, their densities on the diagonal and the correlations above it.',
+    try: ['Switch the diagonal to histograms.', 'Draw lines through the points.'],
+  },
+  'Ternary: soil texture, a diffusion path': {
+    what: 'The clay, sand and silt of soil samples in the texture triangle, and a composition along a diffusion couple as a line.',
+    try: ['Switch percents to fractions.', 'Change the grid step.'],
+  },
+  'Waterfall: reflectance vs thickness, a PL ridgeline': {
+    what: 'The spectra of a sweep one behind the other, coloured by the thickness, and photoluminescence spectra from 10 to 300 K as a ridgeline.',
+    try: ['Change the shift between the curves.', 'Switch the Fill (hiding, coloured, none).'],
+  },
+};
+
+function withAbout(p: Project, name: string): Project {
+  const a = ABOUT[name];
+  if (!a) return p;
+  const old = p.nodes.find((n) => n.type === 'note' && n.position.x === -560 && n.position.y === 0);
+  const how = old ? (old.data as { text: string }).text : '';
+  const text = [`What this shows\n${a.what}`, `Try\n${a.try.map((t) => `• ${t}`).join('\n')}`, ...(how ? [`How it works\n${how}`] : [])].join('\n\n');
+  // tall enough for the text (measured: about 78 characters a line at this width, 18.5 px a line; the title bar and a margin)
+  const lines = text.split('\n').reduce((k, l) => k + Math.max(1, Math.ceil(l.length / 78)), 0);
+  const note = { id: old?.id ?? 'about', type: 'note', position: { x: -560, y: 0 }, width: 480, height: Math.min(1000, 76 + Math.ceil(18.5 * lines)), data: { text } } as AppNode;
+  return { ...p, nodes: [note, ...p.nodes.filter((n) => n !== old)] };
+}
+
+const LIST: { group: string; name: string; desc: string; make: () => Project }[] = [
   { group: 'Getting started', name: 'UV-Vis spectrum: mean ± SD of three measurements', desc: 'Import (skipped lines, units line, decimal commas), Statistics on rows (mean ± SD of the replicates), Statistics on columns over a range of X, error bars, an arrow on the peak, an eV axis on top.', make: spectrumExample },
   { group: 'Getting started', name: 'Generated data: a damped oscillation and noisy samples', desc: 'Generate column (linspace, random), Math column, one Plot with three curves (one with its own X), legend.', make: generatedExample },
-  { group: 'Figures', name: 'Two panels: colour by value, colour bar, spikes removed', desc: 'Points coloured by their value with a colour bar, two spikes emptied by a Math column rule (rows 12, 37 → NaN), a shaded band; a Merge puts the two Plots side by side with a shared Y axis and panel labels (a), (b).', make: panelsExample },
   { group: 'Getting started', name: 'Gold n, k: two blocks in one file (Split into columns)', desc: 'A file of optical constants with wl, n and then wl, k written under it: Split into columns lays the blocks side by side (wl, n, k) and one Plot draws n on the left axis, k on its own right axis.', make: nkExample },
   { group: 'Getting started', name: 'Four runs in a workbook: Auto-extract', desc: 'A spreadsheet workbook (a sheet per run), Auto-extract rules (Time = X, Signal = Y, column D = ±Y in every sheet, each Y named by its sheet), one Plot from the designations; Extract column from one sheet.', make: workbookExample },
+  { group: 'Data preparation', name: 'Cleaning a sensor log: order, repeats, gaps, spikes', desc: 'A logger file as it comes: Columns leaves the battery out, Filter & sort rows puts the rows in time order and merges the times written twice, Clean data fills the missing temperatures and replaces the spikes (moving median), Data manipulation masks two humidity readings by hand; the raw and the cleaned data in one Plot, the changes in a Workbook.', make: loggerExample },
+  { group: 'Data preparation', name: 'Replicate scans: mean ± SD on a common X', desc: 'Three scans on different wavelength grids: Average curves gives their mean ± SD on a common grid (a band in the Plot); Combine columns puts every point of the three scans in one table, in the order of the wavelength.', make: scansExample },
+  { group: 'Data preparation', name: 'Difference spectrum: sample minus reference', desc: 'A sample measured 2 nm off: Translate moves it back, Curve math gives sample − reference and sample / reference on a common grid; the difference on its own axis shows the band the sample has more.', make: differenceExample },
+  { group: 'Data preparation', name: 'Digitizer: values read off the image of a graph', desc: 'The image of a published graph, calibrated on its axes, the points of its curve placed; the values read compared with the curve it was drawn from.', make: digitizerExample },
+  { group: 'Spectroscopy & peaks', name: 'Overlapping peaks: peak deconvolution', desc: 'A spectrum with a peak hidden in the side of another: Peak analyzer fits a baseline and three peaks (each its shape) together, separating them; the data, every peak and their sum (the envelope) go to a Plot, the table of the peaks (center, height, FWHM, area %) to a Workbook.', make: overlapExample },
+  { group: 'Spectroscopy & peaks', name: 'XPS: Shirley background and a spin–orbit doublet', desc: 'A Ni 2p spectrum: Peak analyzer with the Shirley background and one exact Voigt line made a doublet (2×: 17.3 eV, half the area, the same widths — linked in the fit); the lines filled down to the background.', make: xpsExample },
+  { group: 'Spectroscopy & peaks', name: 'Raman on a fluorescence background: baselines from the data', desc: 'One list of baselines in three nodes, found from the data: airPLS under four fitted lines (Peak analyzer), asymmetric least squares under the integrated ranges (Integrate), SNIP under the measured widths (Peak width).', make: ramanBaselineExample },
+  { group: 'Spectroscopy & peaks', name: 'Strong coupling: fit of every run, then the anticrossing', desc: 'R(λ) of a microcavity with an exciton for 23 cavity thicknesses (computed by transfer matrices, one table): a Fit of every run (two Lorentzian dips), then a Fit of both polariton branches together (coupled-oscillator dispersion) giving the splitting Ω; the fits drawn by Plots like any data.', make: strongCouplingExample },
+  { group: 'Fitting', name: 'Calibration: unknowns, LOD and LOQ', desc: 'A weighted straight-line calibration; Use the fit: two unknowns read backwards with their 95 % intervals (3 replicates each), the limits of detection and quantification, the sensitivity with its error — to a Workbook; the line with its prediction band.', make: calibrationExample },
+  { group: 'Fitting', name: 'Kinetics and lifetimes: rate equations, reconvolution', desc: 'Fit ▸ Equations: A → B → C fitted from the intermediate B (dA/dt, dB/dt solved numerically); a fluorescence decay fitted through the instrument response (reconvolution with the IRF, its shift and background), on a log axis.', make: kineticsExample },
+  { group: 'Fitting', name: 'Impedance: an equivalent circuit fitted, a Nyquist plot', desc: 'Fit ▸ Complex: R0 + R1 ∥ CPE written with functions of your own, fitted to Re Z and −Im Z at once; the Nyquist plot with equal scales (Aspect = 1).', make: impedanceExample },
+  { group: 'Signals', name: 'Signal processing: smooth, FFT, deconvolution, interpolation', desc: 'A noisy spectrum smoothed (Savitzky–Golay) and normalized; the FFT spectrum of a sampled signal and an FFT low pass; a spectrum blurred by the instrument deconvolved (Richardson–Lucy); two curves on different X read on a common X (spline).', make: signalExample },
+  { group: 'Signals', name: 'Signals: PSD, a Butterworth filter, the Allan deviation', desc: 'The FFT node in three modes: the power spectral density (Welch, dB), a zero-phase Butterworth low pass, the Allan deviation of a drifting sensor on log–log axes.', make: spectralExample },
+  { group: 'Signals', name: 'Cyclic voltammogram: area between the branches', desc: 'A potentiostat file with three cycles in one table: Split into columns makes a current column per cycle (a Plot coloured by the cycle) and cuts the pieces going up and coming back; Integrate takes the area between them, absolute, over a region (hatched); Pick points reads the peaks and the current at 0.5 V.', make: cvExample },
   { group: 'Statistics', name: 'Drug study: ANOVA, t-test, nonparametric, correlation', desc: 'The three layouts of the data for the statistics nodes — each group a column, indexed (value + factors), a row per subject — with Normality & outliers, one-way ANOVA + Tukey (the means ± SE in a Plot), a t-test, Kruskal–Wallis + Dunn, two-way ANOVA (Dose × Sex), repeated-measures ANOVA, Friedman and correlations.', make: drugExample },
-  { group: 'Analysis', name: 'Signal processing: smooth, FFT, deconvolution, interpolation', desc: 'A noisy spectrum smoothed (Savitzky–Golay) and normalized; the FFT spectrum of a sampled signal and an FFT low pass; a spectrum blurred by the instrument deconvolved (Richardson–Lucy); two curves on different X read on a common X (spline).', make: signalExample },
-  { group: 'Analysis', name: 'Overlapping peaks: peak deconvolution', desc: 'A spectrum with a peak hidden in the side of another: Peak analyzer fits a baseline and three peaks (each its shape) together, separating them; the data, every peak and their sum (the envelope) go to a Plot, the table of the peaks (center, height, FWHM, area %) to a Workbook.', make: overlapExample },
-  { group: 'Analysis', name: 'Cyclic voltammogram: area between the branches', desc: 'A potentiostat file with three cycles in one table: Split into columns makes a current column per cycle (a Plot coloured by the cycle) and cuts the pieces going up and coming back; Integrate takes the area between them, absolute, over a region (hatched); Pick points reads the peaks and the current at 0.5 V.', make: cvExample },
-  { group: 'Analysis', name: 'Strong coupling: fit of every run, then the anticrossing', desc: 'R(λ) of a microcavity with an exciton for 23 cavity thicknesses (computed by transfer matrices, one table): a Fit of every run (two Lorentzian dips), then a Fit of both polariton branches together (coupled-oscillator dispersion) giving the splitting Ω; the fits drawn by Plots like any data.', make: strongCouplingExample },
-  { group: 'Analysis', name: 'Matrices: inverse, eigenvalues, SVD, a map as a matrix', desc: 'A matrix A and a vector b typed in; Matrix computation in steps — A⁻¹, A⁻¹·A (= I), det A, the eigenvalues and vectors, the SVD, the solution of A·x = b —, every result on its own port; Contour / heatmap draws A⁻¹ and the eigenvectors with their values in the cells, and a reflectance map read as a matrix (the angle and the wavelengths kept as its Y and X).', make: matrixExample },
-  { group: 'Charts', name: 'Grouped bars with their values', desc: 'The mean bill and flipper measures of three penguin species, a series per measure side by side, the values written above the bars.', make: groupedBarsExample },
-  { group: 'Charts', name: 'Stacked and 100 % stacked bars', desc: 'Counts stacked, then their shares (hatched), the values in the middle of the segments; the two charts in a Merge with one legend below them.', make: stackedBarsExample },
-  { group: 'Charts', name: 'Horizontal bars with errors', desc: 'A score per person with its error bar, the values beyond the bars, a gradient and rounded corners.', make: horizontalBarsExample },
-  { group: 'Charts', name: 'Bars from raw values: mean ± SD with the points', desc: 'Replicate measurements by treatment and day, every bar the mean ± SD of its values, the values drawn over the bars.', make: rawBarsExample },
-  { group: 'Charts', name: 'Floating columns: a range per month', desc: 'Every bar from the minimum to the maximum of its month (example values), rounded corners and a shadow.', make: floatingBarsExample },
-  { group: 'Charts', name: 'Waterfall: from the grants to the balance', desc: 'A waterfall (bridge) chart of a laboratory’s year — income up, expenses down from the running total, the balance as the last bar, dashed connectors, every change written on its bar; increases, decreases and the total in colours of their own (Bar chart ▸ Arrangement ▸ waterfall).', make: waterfallExample },
-  { group: 'Charts', name: 'Histogram with two-mode fits', desc: 'A two-mode sample of particle sizes: bins of 1.5 nm, hatched; two normals from the data (maximum likelihood), two Gaussians fitted to the bars and a kernel density, their parameters in the node.', make: histogramExample },
-  { group: 'Charts', name: 'Box plots: notched, horizontal', desc: 'Four samples (one with outliers) as notched boxes with the mean; the same horizontal with whiskers at the 5th and 95th percentiles, hatched; in a Merge.', make: boxPlotsExample },
-  { group: 'Charts', name: 'Box plot vs violin plot', desc: 'The same four samples as boxes and as violins with their quartile lines, one Y axis in a Merge.', make: boxVsViolinExample },
-  { group: 'Charts', name: 'Grouped boxes from indexed data, with the values', desc: 'Indexed data (a value, a treatment and a day per row): the response of every treatment by day, boxes side by side with their means, every value beside them as a swarm.', make: groupedBoxExample },
-  { group: 'Charts', name: 'Half violins and raincloud', desc: 'The same values as half violins (gradient) with their boxes, and as horizontal rainclouds with the values below.', make: rainExample },
-  { group: 'Charts', name: 'Split violins: two subgroups', desc: 'A split violin per treatment: day 1 on the left, day 7 on the right, each with its quartile lines.', make: splitViolinExample },
-  { group: 'Charts', name: 'Significance brackets on bars and boxes', desc: 'Four treatments, mean ± SD bars with the values and brackets between neighbours (Welch t, Holm), boxes with every treatment against the control (Tukey HSD, stars and p, ns shown); the brackets stacked so they do not cross.', make: significanceExample },
-  { group: 'Charts', name: 'Q-Q and normal probability plots', desc: '50 tensile strengths against the normal distribution — the quantiles with the line through the quartiles and its 95 % pointwise band, then the values on a normal probability axis (in %) with the fitted line and its band; r, Anderson–Darling and its p in the nodes.', make: qqProbabilityExample },
-  { group: 'Charts', name: 'ECDF of two groups, bands and 1 − F', desc: 'The reaction times of two groups (indexed data) as ECDF steps with their simultaneous 95 % bands (DKW), and as 1 − F with the fitted lognormal CDFs.', make: ecdfExample },
-  { group: 'Charts', name: 'Weibull probability plot of failure times', desc: 'A Weibull plot as in reliability work: the hours to failure of two batches on a Weibull probability axis with the hours on a log axis, the fitted Weibull lines (shape and scale in the node); a P-P plot with the 95 % DKW band.', make: weibullExample },
-  { group: 'Charts', name: 'Bland–Altman: two devices', desc: 'After Bland & Altman 1986: the systolic pressure of 60 patients by two devices — the differences against the means, the bias and the limits of agreement with their exact 95 % intervals (shaded), the regression on the mean (device B reads higher in the high range), the points by site; then the differences in % with limits from a regression (Bland & Altman 1999).', make: blandAltmanExample },
-  { group: 'Charts', name: 'Pie, doughnut and nested rings', desc: 'The energy sources of a grid — a pie with wind and solar moved out, the names outside on leader lines and the percents inside, a doughnut sorted largest first with the total in the hole, and the two years as nested rings.', make: pieExample },
-  { group: 'Charts', name: 'Contour and heatmap: a reflectance map, scattered points', desc: 'A reflectance map R(λ, θ) given as a matrix (the angle, then a column per wavelength) — smooth, with labelled contour lines and a cut at 30° drawn by a Plot —, and 250 scattered points of a surface interpolated on their triangles and drawn as filled levels with their lines.', make: contourExample },
-  { group: 'Charts', name: 'Polar: antenna pattern, wind rose, radar', desc: 'The gain of a half-wave dipole in dB on a half circle (0° at the top, clockwise, −30 dB at the centre), a month of wind as polar bars with compass labels, and three materials scored on six properties as filled radar polygons.', make: polarExample },
-  { group: 'Charts', name: 'Scatter matrix of four measures, three species', desc: 'Four measures of 90 flowers (in the manner of Fisher’s iris data) — every pair as points coloured by species below the diagonal, the kernel densities on it, the Pearson correlations (with stars) above; X shared down the columns, Y along the rows.', make: scatterMatrixExample },
-  { group: 'Charts', name: 'Ternary: soil texture, a diffusion path', desc: 'The soil texture triangle: the clay, sand and silt of 45 samples from three sites (percents, coloured by site), and the Fe–Ni–Cr composition along a diffusion couple as a line with symbols (fractions, a grid every 0.2).', make: ternaryExample },
-  { group: 'Charts', name: 'Waterfall: reflectance vs thickness, a PL ridgeline', desc: 'The reflectance of a microcavity for 23 thicknesses (Split into columns gives every curve its thickness) one behind the other, the front curves hiding those behind, coloured by the thickness with a colour bar and the thickness written at each; and a ridgeline of photoluminescence spectra from 10 to 300 K, each to its maximum, filled in its colour.', make: curvesWaterfallExample },
-  { group: 'Charts', name: '3D: a surface, bars, clusters, a waterfall', desc: 'A surface of two peaks and a dip (a mesh every 4 cells, its contour lines on the floor), a year’s rainfall at four stations as 3D bars (a matrix), three clusters of points with lines down to the floor, and the microcavity’s reflectance for 23 thicknesses in depth (a 3D waterfall with walls) — in one Merge.', make: plot3dExample },
-  { group: 'Charts', name: '3D stacked maps: RSMs of five samples', desc: 'Reciprocal space maps (Qx, Qz, intensity; example values) of five samples, one table per reflection with a column naming the sample: 3D plot ▸ stacked maps finds the samples by their labels (S1 … S5; Layers ▸ my list chooses every layer by hand) and puts every sample’s map flat at its own height — the counts below 8 left out, the colours on a log scale —, a dashed vertical line through the stack and a rectangle on the floor; the two reflections side by side in a Merge with one colour scale and one colour bar. ⟲ Rotate turns a view with the mouse.', make: rsmExample },
-  { group: 'Analysis', name: 'XPS: Shirley background and a spin–orbit doublet', desc: 'A Ni 2p spectrum: Peak analyzer with the Shirley background and one exact Voigt line made a doublet (2×: 17.3 eV, half the area, the same widths — linked in the fit); the lines filled down to the background.', make: xpsExample },
-  { group: 'Analysis', name: 'Raman on a fluorescence background: baselines from the data', desc: 'One list of baselines in three nodes, found from the data: airPLS under four fitted lines (Peak analyzer), asymmetric least squares under the integrated ranges (Integrate), SNIP under the measured widths (Peak width).', make: ramanBaselineExample },
-  { group: 'Analysis', name: 'Calibration: unknowns, LOD and LOQ', desc: 'A weighted straight-line calibration; Use the fit: two unknowns read backwards with their 95 % intervals (3 replicates each), the limits of detection and quantification, the sensitivity with its error — to a Workbook; the line with its prediction band.', make: calibrationExample },
-  { group: 'Analysis', name: 'Kinetics and lifetimes: rate equations, reconvolution', desc: 'Fit ▸ Equations: A → B → C fitted from the intermediate B (dA/dt, dB/dt solved numerically); a fluorescence decay fitted through the instrument response (reconvolution with the IRF, its shift and background), on a log axis.', make: kineticsExample },
-  { group: 'Analysis', name: 'Impedance: an equivalent circuit fitted, a Nyquist plot', desc: 'Fit ▸ Complex: R0 + R1 ∥ CPE written with functions of your own, fitted to Re Z and −Im Z at once; the Nyquist plot with equal scales (Aspect = 1).', make: impedanceExample },
-  { group: 'Analysis', name: 'Signals: PSD, a Butterworth filter, the Allan deviation', desc: 'The FFT node in three modes: the power spectral density (Welch, dB), a zero-phase Butterworth low pass, the Allan deviation of a drifting sensor on log–log axes.', make: spectralExample },
+  { group: 'Statistics', name: 'Python script: peaks found and fitted with scipy', desc: 'A spectrum given to a Python script: scipy finds its peaks and fits a Gaussian for each on a straight line; the table of the peaks to a Workbook, the fit drawn over the data. Runs when Run is pressed (the first time Python is downloaded, about 10 MB).', make: pythonExample },
   { group: 'Statistics', name: 'Regression, PCA, power and a control chart', desc: 'Fit ▸ linear and logistic regression on several predictors, Correlation with a clustered matrix and principal components (scores plotted), a t-test with its power, a control chart from Descriptive statistics.', make: regressionExample },
-  { group: 'Figures', name: 'Three Y axes and a broken X axis', desc: 'Signal, temperature and pressure of one run, each on its own Y axis (left, right, a third one moved out); the X axis broken over the hours without data.', make: multiAxisExample },
+  { group: 'Figures & layout', name: 'Two panels: colour by value, colour bar, spikes removed', desc: 'Points coloured by their value with a colour bar, two spikes emptied by a Math column rule (rows 12, 37 → NaN), a shaded band; a Merge puts the two Plots side by side with a shared Y axis and panel labels (a), (b).', make: panelsExample },
+  { group: 'Figures & layout', name: 'Three Y axes and a broken X axis', desc: 'Signal, temperature and pressure of one run, each on its own Y axis (left, right, a third one moved out); the X axis broken over the hours without data.', make: multiAxisExample },
+  { group: 'Figures & layout', name: 'Publication figure: an inset and annotations over it', desc: 'A spectrum with its weak bands enlarged in an inset (the region marked), and a Figure Drawing over the figure: arrows and labels pinned to data points, a panel label; the drawing is the figure to export.', make: publicationExample },
+  { group: 'Figures & layout', name: 'Organizing a large graph: frames, a group, a reroute', desc: 'A small workflow kept in order: a frame for every stage, Smooth and Normalize in one group node (open it to see them), a reroute point to lead a long connection.', make: organizeExample },
+  { group: 'Matrices & 3D', name: 'Matrices: inverse, eigenvalues, SVD, a map as a matrix', desc: 'A matrix A and a vector b typed in; Matrix computation in steps — A⁻¹, A⁻¹·A (= I), det A, the eigenvalues and vectors, the SVD, the solution of A·x = b —, every result on its own port; Contour / heatmap draws A⁻¹ and the eigenvectors with their values in the cells, and a reflectance map read as a matrix (the angle and the wavelengths kept as its Y and X).', make: matrixExample },
+  { group: 'Matrices & 3D', name: 'Contour and heatmap: a reflectance map, scattered points', desc: 'A reflectance map R(λ, θ) given as a matrix (the angle, then a column per wavelength) — smooth, with labelled contour lines and a cut at 30° drawn by a Plot —, and 250 scattered points of a surface interpolated on their triangles and drawn as filled levels with their lines.', make: contourExample },
+  { group: 'Matrices & 3D', name: '3D: a surface, bars, clusters, a waterfall', desc: 'A surface of two peaks and a dip (a mesh every 4 cells, its contour lines on the floor), a year’s rainfall at four stations as 3D bars (a matrix), three clusters of points with lines down to the floor, and the microcavity’s reflectance for 23 thicknesses in depth (a 3D waterfall with walls) — in one Merge.', make: plot3dExample },
+  { group: 'Matrices & 3D', name: '3D stacked maps: RSMs of five samples', desc: 'Reciprocal space maps (Qx, Qz, intensity; example values) of five samples, one table per reflection with a column naming the sample: 3D plot ▸ stacked maps finds the samples by their labels (S1 … S5; Layers ▸ my list chooses every layer by hand) and puts every sample’s map flat at its own height — the counts below 8 left out, the colours on a log scale —, a dashed vertical line through the stack and a rectangle on the floor; the two reflections side by side in a Merge with one colour scale and one colour bar. ⟲ Rotate turns a view with the mouse.', make: rsmExample },
+  { group: 'Charts: bars', name: 'Grouped bars with their values', desc: 'The mean bill and flipper measures of three penguin species, a series per measure side by side, the values written above the bars.', make: groupedBarsExample },
+  { group: 'Charts: bars', name: 'Stacked and 100 % stacked bars', desc: 'Counts stacked, then their shares (hatched), the values in the middle of the segments; the two charts in a Merge with one legend below them.', make: stackedBarsExample },
+  { group: 'Charts: bars', name: 'Horizontal bars with errors', desc: 'A score per person with its error bar, the values beyond the bars, a gradient and rounded corners.', make: horizontalBarsExample },
+  { group: 'Charts: bars', name: 'Bars from raw values: mean ± SD with the points', desc: 'Replicate measurements by treatment and day, every bar the mean ± SD of its values, the values drawn over the bars.', make: rawBarsExample },
+  { group: 'Charts: bars', name: 'Floating columns: a range per month', desc: 'Every bar from the minimum to the maximum of its month (example values), rounded corners and a shadow.', make: floatingBarsExample },
+  { group: 'Charts: bars', name: 'Waterfall: from the grants to the balance', desc: 'A waterfall (bridge) chart of a laboratory’s year — income up, expenses down from the running total, the balance as the last bar, dashed connectors, every change written on its bar; increases, decreases and the total in colours of their own (Bar chart ▸ Arrangement ▸ waterfall).', make: waterfallExample },
+  { group: 'Charts: bars', name: 'Significance brackets on bars and boxes', desc: 'Four treatments, mean ± SD bars with the values and brackets between neighbours (Welch t, Holm), boxes with every treatment against the control (Tukey HSD, stars and p, ns shown); the brackets stacked so they do not cross.', make: significanceExample },
+  { group: 'Charts: box & violin', name: 'Box plots: notched, horizontal', desc: 'Four samples (one with outliers) as notched boxes with the mean; the same horizontal with whiskers at the 5th and 95th percentiles, hatched; in a Merge.', make: boxPlotsExample },
+  { group: 'Charts: box & violin', name: 'Box plot vs violin plot', desc: 'The same four samples as boxes and as violins with their quartile lines, one Y axis in a Merge.', make: boxVsViolinExample },
+  { group: 'Charts: box & violin', name: 'Grouped boxes from indexed data, with the values', desc: 'Indexed data (a value, a treatment and a day per row): the response of every treatment by day, boxes side by side with their means, every value beside them as a swarm.', make: groupedBoxExample },
+  { group: 'Charts: box & violin', name: 'Half violins and raincloud', desc: 'The same values as half violins (gradient) with their boxes, and as horizontal rainclouds with the values below.', make: rainExample },
+  { group: 'Charts: box & violin', name: 'Split violins: two subgroups', desc: 'A split violin per treatment: day 1 on the left, day 7 on the right, each with its quartile lines.', make: splitViolinExample },
+  { group: 'Charts: distributions', name: 'Histogram with two-mode fits', desc: 'A two-mode sample of particle sizes: bins of 1.5 nm, hatched; two normals from the data (maximum likelihood), two Gaussians fitted to the bars and a kernel density, their parameters in the node.', make: histogramExample },
+  { group: 'Charts: distributions', name: 'Q-Q and normal probability plots', desc: '50 tensile strengths against the normal distribution — the quantiles with the line through the quartiles and its 95 % pointwise band, then the values on a normal probability axis (in %) with the fitted line and its band; r, Anderson–Darling and its p in the nodes.', make: qqProbabilityExample },
+  { group: 'Charts: distributions', name: 'ECDF of two groups, bands and 1 − F', desc: 'The reaction times of two groups (indexed data) as ECDF steps with their simultaneous 95 % bands (DKW), and as 1 − F with the fitted lognormal CDFs.', make: ecdfExample },
+  { group: 'Charts: distributions', name: 'Weibull probability plot of failure times', desc: 'A Weibull plot as in reliability work: the hours to failure of two batches on a Weibull probability axis with the hours on a log axis, the fitted Weibull lines (shape and scale in the node); a P-P plot with the 95 % DKW band.', make: weibullExample },
+  { group: 'Charts: distributions', name: 'Bland–Altman: two devices', desc: 'After Bland & Altman 1986: the systolic pressure of 60 patients by two devices — the differences against the means, the bias and the limits of agreement with their exact 95 % intervals (shaded), the regression on the mean (device B reads higher in the high range), the points by site; then the differences in % with limits from a regression (Bland & Altman 1999).', make: blandAltmanExample },
+  { group: 'Charts: more types', name: 'Pie, doughnut and nested rings', desc: 'The energy sources of a grid — a pie with wind and solar moved out, the names outside on leader lines and the percents inside, a doughnut sorted largest first with the total in the hole, and the two years as nested rings.', make: pieExample },
+  { group: 'Charts: more types', name: 'Polar: antenna pattern, wind rose, radar', desc: 'The gain of a half-wave dipole in dB on a half circle (0° at the top, clockwise, −30 dB at the centre), a month of wind as polar bars with compass labels, and three materials scored on six properties as filled radar polygons.', make: polarExample },
+  { group: 'Charts: more types', name: 'Scatter matrix of four measures, three species', desc: 'Four measures of 90 flowers (in the manner of Fisher’s iris data) — every pair as points coloured by species below the diagonal, the kernel densities on it, the Pearson correlations (with stars) above; X shared down the columns, Y along the rows.', make: scatterMatrixExample },
+  { group: 'Charts: more types', name: 'Ternary: soil texture, a diffusion path', desc: 'The soil texture triangle: the clay, sand and silt of 45 samples from three sites (percents, coloured by site), and the Fe–Ni–Cr composition along a diffusion couple as a line with symbols (fractions, a grid every 0.2).', make: ternaryExample },
+  { group: 'Charts: more types', name: 'Waterfall: reflectance vs thickness, a PL ridgeline', desc: 'The reflectance of a microcavity for 23 thicknesses (Split into columns gives every curve its thickness) one behind the other, the front curves hiding those behind, coloured by the thickness with a colour bar and the thickness written at each; and a ridgeline of photoluminescence spectra from 10 to 300 K, each to its maximum, filled in its colour.', make: curvesWaterfallExample },
 ];
+
+// the examples as opened: every one with its note
+export const EXAMPLES = LIST.map((e) => ({ ...e, make: () => withAbout(e.make(), e.name) }));
+

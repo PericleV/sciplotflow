@@ -3565,7 +3565,9 @@ for (const ex of EXAMPLES) {
   // an SVG as Word keeps it once inserted (Word 16: drawn again — no <metadata>, the paths rewritten; the ids of groups kept)
   const word = readFileSync(new URL('./fixtures/word-inserted.svg', import.meta.url), 'utf8');
   const we = svgProject(word);
-  const wx = EXAMPLES[0].make();
+  // the fixture was saved before the examples had their note: compared without it
+  const wx0 = EXAMPLES[0].make();
+  const wx = { ...wx0, nodes: wx0.nodes.filter((q) => q.id !== 'about') };
   const wp = we ? await openEmbedded(we) : 'none';
   ok(!word.includes('<metadata') && we?.projectId === 'pidW' && typeof wp !== 'string' && wp.nodes.map((q) => `${q.id}:${q.type}`).join() === toProject(wx.nodes, wx.edges).nodes.map((q) => `${q.id}:${q.type}`).join(), 'editable figure: the project read from an SVG inserted in Word (the file Word keeps, scripts/fixtures/word-inserted.svg)');
   const r1 = await projectRevision(p);
@@ -4609,6 +4611,52 @@ for (const ex of EXAMPLES) {
   ok(tabbed.split('\n')[1] === 'X\tY\tLabel' && tableCells(ds, { ...o, masked: 'empty' })[3][1] === null, `Export: text with a tab, the designations line, a masked value left empty (${JSON.stringify(tabbed)})`);
 }
 
+{
+  // the examples of the data preparation, statistics and figures: what each one is meant to show
+  const ex = (start: string) => {
+    const p = EXAMPLES.find((e) => e.name.startsWith(start))!.make();
+    return { p, r: evaluateGraph(p.nodes, p.edges) };
+  };
+  const view = (r: Map<string, { view: unknown }>, id: string) => r.get(id)?.view as Record<string, unknown> | undefined;
+  const out = (r: Map<string, { outputs: Record<string, { t: string; v: unknown }> }>, id: string, port = 'out') => {
+    const v = r.get(id)?.outputs[port];
+    return v?.t === 'dataset' ? (v.v as { columns: { name: string; values: Float64Array; mask?: Uint8Array }[] }) : undefined;
+  };
+  const lg = ex('Cleaning');
+  const lgRep = ((view(lg.r, 'lg-clean')?.report as string[] | undefined) ?? []).join(' ');
+  const hum = out(lg.r, 'lg-manip')?.columns.find((c) => c.name === 'Humidity (%)');
+  ok(/3 missing values filled/.test(lgRep) && /3 outliers .*rows 35, 80, 103/.test(lgRep) && out(lg.r, 'lg-filter')?.columns[0].values.length === 121 && hum?.mask?.[45] === 1 && hum.mask[46] === 1 && hum.mask.reduce((a, b) => a + b, 0) === 2, `example “Cleaning a sensor log”: the rows merged and sorted, 3 gaps filled, exactly the 3 spikes found, 2 points masked (${lgRep})`);
+  const sc = ex('Replicate');
+  const avg = out(sc.r, 'sc-avg');
+  ok(avg?.columns.map((c) => c.name).join() === 'Wavelength (nm),mean,SD,SE,N' && avg.columns[0].values.length === 146 && avg.columns[4].values.every((v) => v === 3) && out(sc.r, 'sc-all')?.columns[0].values.length === 372, 'example “Replicate scans”: the mean of the 3 scans on 146 points, all 372 points pooled');
+  const df = ex('Difference');
+  const dd = out(df.r, 'df-math');
+  const peakAt = dd ? dd.columns[0].values[dd.columns[1].values.indexOf(Math.max(...dd.columns[1].values))] : NaN;
+  ok(!!dd && near(peakAt, 655, 3) && !!out(df.r, 'df-math', 'out-1'), `example “Difference spectrum”: sample − reference peaks at the band only the sample has (${peakAt} nm)`);
+  const dg = ex('Digitizer');
+  const dp = out(dg.r, 'dg-image');
+  const curveAt = (t: number) => 0.2 + 1.5 * Math.exp(-((t - 3) ** 2) / 2) + 0.4 * Math.exp(-((t - 7) ** 2) / 0.8);
+  const dErr = dp ? Math.max(...Array.from(dp.columns[0].values, (x, i) => Math.abs(dp.columns[1].values[i] - curveAt(x)))) : NaN;
+  ok(dp?.columns[0].values.length === 21 && dErr < 0.01, `example “Digitizer”: the 21 points read lie on the curve drawn (largest gap ${dErr.toFixed(4)} mV)`);
+  const dr = ex('Drug study');
+  const doc = view(dr.r, 'dr-report')?.doc as { blocks: { title: string }[] } | undefined;
+  ok(doc?.blocks.map((q) => q.title).join(' | ') === 'Normality of every group | One-way ANOVA | Tukey HSD: every pair of doses | t-test: Control against 40 mg', 'example “Drug study”: the Report with its four blocks');
+  const py = ex('Python script');
+  const pyNode = py.p.nodes.find((n) => n.id === 'py-script')!.data as { run?: number; outs?: { name: string }[] };
+  ok(!pyNode.run && pyNode.outs?.map((o) => o.name).join() === 'peaks,fitted' && /Run/.test(String(view(py.r, 'py-script')?.waiting)) && !(py.r.get('py-plot')?.warnings ?? []).length, 'example “Python script”: not run before Run (no download), its outputs connected, no warning');
+  const pub = ex('Publication');
+  const pubFig = pub.r.get('pub-draw')?.outputs.figure?.v as { axes: { inset?: unknown; drawing?: unknown }[] } | undefined;
+  ok(!!pubFig && pubFig.axes.some((a) => a.inset) && pubFig.axes.some((a) => a.drawing) && Object.keys((view(pub.r, 'pub-draw')?.pinShift as object) ?? {}).length === 4, 'example “Publication figure”: the inset, the drawing over the figure, its 4 pinned objects moved to their data');
+  const org = ex('Organizing');
+  const orgFig = org.r.get('org-plot')?.outputs.figure?.v as { axes: { curves: unknown[] }[] } | undefined;
+  ok(org.p.nodes.filter((n) => n.type === 'frame').length === 3 && org.p.nodes.some((n) => n.type === 'subgraph') && org.p.nodes.some((n) => n.type === 'reroute') && (orgFig?.axes[0].curves.length ?? 0) > 0, 'example “Organizing”: 3 frames, a group, a reroute, the curve through them');
+  // every node is shown by at least one example (the nodes inside groups counted)
+  const seen = new Set<string>();
+  const walk = (ns: AppNode[]) => ns.forEach((n) => (seen.add(n.type), Array.isArray((n.data as { nodes?: AppNode[] }).nodes) && walk((n.data as { nodes: AppNode[] }).nodes)));
+  for (const e of EXAMPLES) walk(e.make().nodes);
+  const missing = (Object.keys(NODE_HELP) as string[]).filter((t) => !seen.has(t));
+  ok(!missing.length, `examples: every node in at least one (${missing.join(', ')})`);
+}
 {
   // the help in a node: every node a short text (a sentence or two), the whole one in Help
   const types = Object.keys(NODE_HELP) as (keyof typeof NODE_HELP)[];
