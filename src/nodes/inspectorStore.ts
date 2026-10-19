@@ -23,7 +23,7 @@ export function setSlot(id: string, el: HTMLElement | null) {
 }
 export const useSlot = (id: string | null): HTMLElement | null => useSyncExternalStore(subscribe, () => (id ? (slots.get(id) ?? null) : null));
 
-// The node types with no options for the panel (a note's text, a frame, a reroute point, the groups and their ports):
-// every other node shows its options there when it is clicked.
-const NO_PANEL = new Set<string>(['note', 'reroute', 'subgraph', 'groupin', 'groupout']);
+// The node types with no options for the panel (a frame has its own; a reroute point, the groups and their ports): every
+// other node shows its options there when it is clicked — a note its whole document, in the editor.
+const NO_PANEL = new Set<string>(['reroute', 'subgraph', 'groupin', 'groupout']);
 export const hasPanel = (type: string | undefined) => !!type && !NO_PANEL.has(type);

@@ -1,5 +1,6 @@
 // Checks of the computations (npm run check): CSV reading, formulas, statistics (against values computed with
 // numpy / by hand), axis ticks, and every example graph evaluated without errors.
+import { docFromText, isPlain, plainOf } from '../src/nodes/richDoc.ts';
 import { NODE_HELP, NODE_SHORT } from '../src/help.ts';
 import * as Sg from '../src/engine/signal.ts';
 import { legendLayout } from '../src/figure/legendLayout.ts';
@@ -4656,6 +4657,13 @@ for (const ex of EXAMPLES) {
   for (const e of EXAMPLES) walk(e.make().nodes);
   const missing = (Object.keys(NODE_HELP) as string[]).filter((t) => !seen.has(t));
   ok(!missing.length, `examples: every node in at least one (${missing.join(', ')})`);
+}
+{
+  // a Note's document: a plain text as paragraphs and back; plain paragraphs kept as the text alone, formatting not
+  const d0 = docFromText('Sample A\n\nmeasured at 20 °C');
+  ok(d0.content?.length === 3 && plainOf(d0) === 'Sample A\n\nmeasured at 20 °C' && isPlain(d0), 'Note: a plain text as paragraphs, and back');
+  const rich = { type: 'doc', content: [{ type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Results' }] }, { type: 'bulletList', content: [{ type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'a', marks: [{ type: 'bold' }] }] }] }, { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'b' }] }] }] }, { type: 'paragraph', attrs: { textAlign: 'center' }, content: [{ type: 'text', text: 'c' }] }] };
+  ok(plainOf(rich) === 'Results\n• a\n• b\nc' && !isPlain(rich) && !isPlain({ type: 'doc', content: [{ type: 'paragraph', attrs: { textAlign: 'center' }, content: [{ type: 'text', text: 'x' }] }] }) && isPlain({ type: 'doc', content: [{ type: 'paragraph', attrs: { textAlign: 'left', indent: 0, lineHeight: null }, content: [{ type: 'text', text: 'x' }] }] }), 'Note: the plain text of a formatted document (headings, lists); formatting kept as a document');
 }
 {
   // the help in a node: every node a short text (a sentence or two), the whole one in Help

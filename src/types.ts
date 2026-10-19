@@ -1,3 +1,4 @@
+import type { RichDoc } from './nodes/richDoc.ts';
 import type { TrendSpec } from './engine/trend.ts';
 import type { AggSpec } from './engine/aggregate.ts';
 import type { QuickFitSpec } from './engine/quickfit.ts';
@@ -402,7 +403,8 @@ export type DrawingComponent = { id: string; name: string; w: number; h: number;
 export type DrawingData = PageData & { annotations?: AnnotationItem[]; grid?: Partial<DrawingGrid>; snapObjects?: boolean; components?: DrawingComponent[]; under?: 'draw' | 'guide' };
 
 // ---- Notes, layout ----
-export type NoteData = { text: string };
+// doc: the formatted note (the editor's document; absent: a plain note, its text alone); text: its plain text, always
+export type NoteData = { text: string; doc?: RichDoc };
 export type FrameData = { name: string; color: string };
 export type RerouteData = Record<string, never>;
 // A group node: a graph inside one node. Its ports: what enters by the Group input node inside, what leaves by the

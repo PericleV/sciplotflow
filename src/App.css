@@ -1235,3 +1235,38 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 /* the data reader over a graph of a node: a layer over its canvas */
 .canvas-reader { position: absolute; left: 0; top: 0; outline: none; z-index: 2; }
 .reader-host { position: relative; display: inline-block; line-height: 0; }
+
+/* ---- Note: a formatted document (RichView in the node, the editor in the panel and on a page) ----
+   the document is paper: white, dark text, its own font and size, whatever the theme */
+.rich-doc { font-family: Arial, Helvetica, sans-serif; font-size: 11pt; line-height: 1.15; color: #111111; overflow-wrap: anywhere; }
+.rich-doc p { margin: 0 0 6pt; }
+.rich-doc h1 { font-size: 16pt; margin: 12pt 0 6pt; }
+.rich-doc h2 { font-size: 13pt; margin: 10pt 0 4pt; }
+.rich-doc h3 { font-size: 11.5pt; margin: 8pt 0 4pt; }
+.rich-doc > :first-child, .rich-doc .ProseMirror > :first-child { margin-top: 0; }
+.rich-doc ul, .rich-doc ol { margin: 0 0 6pt; padding-left: 20pt; }
+.rich-doc li p { margin: 0 0 2pt; }
+.rich-doc blockquote { margin: 0 0 6pt; padding-left: 10pt; border-left: 3px solid #c9c9c9; color: #444444; }
+.rich-doc a { color: #1a5fb4; }
+.rich-doc code, .rich-doc pre { font-family: 'Courier New', monospace; }
+.rich-doc .ProseMirror { outline: none; min-height: 100%; }
+.rich-doc .rich-more { color: #888888; margin: 0; }
+/* in the node: its beginning, cut at the node's height */
+.note-rich { background: #ffffff; border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; max-height: 260px; overflow: hidden; cursor: default; font-size: 9pt; }
+.note-rich .rich-doc { font-size: 9pt; }
+.node-note.sized .note-rich { flex: 1; min-height: 0; max-height: none; }
+/* the editor: its toolbar, then the paper */
+.rich-editor { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.rt-toolbar { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.rt-group { display: inline-flex; flex-wrap: wrap; gap: 2px; align-items: center; }
+.rt-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; padding: 0 3px; }
+.rt-btn.on { background: var(--accent); color: #ffffff; border-color: var(--accent); }
+.rt-size { width: 52px; }
+.rt-link input { width: 180px; }
+.rich-paper { background: #ffffff; border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px; min-height: 220px; max-height: 60vh; overflow: auto; cursor: text; }
+.rich-paper .rich-doc { min-height: 200px; }
+/* on a page of its own: an A4 sheet over the app */
+.rich-backdrop { position: fixed; inset: 0; z-index: 50; display: flex; justify-content: center; align-items: flex-start; background: rgb(0 0 0 / 0.45); padding: 16px; overflow: auto; }
+.rich-editor.large { width: min(860px, 100%); }
+.rich-editor.large .rt-toolbar { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; position: sticky; top: 0; z-index: 1; }
+.rich-editor.large .rich-paper { width: 210mm; max-width: 100%; box-sizing: border-box; padding: 20mm; min-height: 297mm; max-height: none; align-self: center; box-shadow: 0 6px 24px rgb(0 0 0 / 0.3); }

@@ -17,6 +17,7 @@ The full licence texts of these packages (and of the packages they use) are ship
 | fflate | MIT | compression (share links, project files) |
 | SheetJS Community Edition (`xlsx`) | Apache-2.0 | reading .xlsx / .xls / .ods |
 | CodeMirror 6 (`@codemirror/*`, `@lezer/*`, style-mod, w3c-keyname, crelt, find-cluster-break) | MIT | the editor of the Python script |
+| Tiptap 3 (`@tiptap/*`) and ProseMirror (`prosemirror-*`, orderedmap, rope-sequence, linkifyjs) | MIT | the editor of a Note (a small word processor) |
 | Lucide (`lucide-react`) | ISC | the icons of the buttons (the Figure Drawing editor: a few more drawn in its style) |
 | Paper.js (`paper`, its core without PaperScript) and paperjs-offset | MIT | Figure Drawing: paths combined (union, subtract, intersect, exclude, divide), offset, stroke to path — loaded only when one of these is used |
 

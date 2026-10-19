@@ -73,7 +73,7 @@ export function HelpPanel({ onClose, examples, focus }: { onClose: () => void; e
       ))}
       <h4>Open-source software</h4>
       <p className="hint">
-        SciPlotFlow is built with React, React Flow, fflate, SheetJS (spreadsheets) and CodeMirror (the Python editor); a Python script runs Pyodide with numpy, scipy, pandas, matplotlib and the other libraries it imports, loaded from jsDelivr when first used. Their licences (MIT, ISC, BSD, Apache-2.0, MPL-2.0):{' '}
+        SciPlotFlow is built with React, React Flow, fflate, SheetJS (spreadsheets), CodeMirror (the Python editor) and Tiptap / ProseMirror (the editor of a Note); a Python script runs Pyodide with numpy, scipy, pandas, matplotlib and the other libraries it imports, loaded from jsDelivr when first used. Their licences (MIT, ISC, BSD, Apache-2.0, MPL-2.0):{' '}
         <a href={`${import.meta.env.BASE_URL}THIRD_PARTY_LICENSES.txt`} target="_blank" rel="noreferrer">
           the full texts
         </a>
