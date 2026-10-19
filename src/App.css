@@ -1270,3 +1270,8 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .rich-editor.large { width: min(860px, 100%); }
 .rich-editor.large .rt-toolbar { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; position: sticky; top: 0; z-index: 1; }
 .rich-editor.large .rich-paper { width: 210mm; max-width: 100%; box-sizing: border-box; padding: 20mm; min-height: 297mm; max-height: none; align-self: center; box-shadow: 0 6px 24px rgb(0 0 0 / 0.3); }
+
+/* the canvas controls (bottom left) beside the Nodes panel while it is open over the canvas, not under it: moved by the
+   panel's width less its strip's (200 − 30 px), with the panel's slide */
+.react-flow__controls { transition: transform 0.2s ease-out; }
+.workspace > .palette.overlay:not(.inspector):not(.closing) ~ .canvas .react-flow__controls { transform: translateX(170px); }
