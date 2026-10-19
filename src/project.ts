@@ -300,15 +300,15 @@ function checked(nodes: unknown[], edges: unknown[]): { nodes: AppNode[]; edges:
 export function parseProject(text: string): Project | string {
   try {
     let p = JSON.parse(text, revive) as Record<string, unknown>;
-    if (!isObj(p) || p.app !== 'graph-flow') return 'Not a Graph Flow project file.';
+    if (!isObj(p) || p.app !== 'graph-flow') return 'Not a SciPlotFlow project file.';
     const v0 = p.version;
-    if (typeof v0 !== 'number') return 'Not a Graph Flow project file (no format version).';
-    if (v0 > PROJECT_VERSION) return `This project was saved by a newer version of Graph Flow (format ${v0}; this page reads up to ${PROJECT_VERSION}). Reload the page to get the latest version.`;
+    if (typeof v0 !== 'number') return 'Not a SciPlotFlow project file (no format version).';
+    if (v0 > PROJECT_VERSION) return `This project was saved by a newer version of SciPlotFlow (format ${v0}; this page reads up to ${PROJECT_VERSION}). Reload the page to get the latest version.`;
     for (let v = v0; v < PROJECT_VERSION; v++) {
-      if (!MIGRATIONS[v]) return `This project was saved by an older version of Graph Flow (format ${v0}); it cannot be opened.`;
+      if (!MIGRATIONS[v]) return `This project was saved by an older version of SciPlotFlow (format ${v0}); it cannot be opened.`;
       p = { ...MIGRATIONS[v](p), version: v + 1 };
     }
-    if (!Array.isArray(p.nodes) || !Array.isArray(p.edges)) return 'Not a Graph Flow project file.';
+    if (!Array.isArray(p.nodes) || !Array.isArray(p.edges)) return 'Not a SciPlotFlow project file.';
     return { app: 'graph-flow', version: PROJECT_VERSION, ...checked(p.nodes, p.edges), ...(typeof p.name === 'string' && p.name ? { name: p.name } : {}), ...(typeof p.id === 'string' && p.id ? { id: p.id } : {}) };
   } catch {
     return 'The file is not valid JSON.';
@@ -376,7 +376,7 @@ export async function decodeProject(code: string): Promise<Project | string> {
   try {
     return parseProject(await pipe(fromBase64Url(code), new DecompressionStream('deflate-raw')).text());
   } catch {
-    return 'The link does not contain a valid Graph Flow project.';
+    return 'The link does not contain a valid SciPlotFlow project.';
   }
 }
 

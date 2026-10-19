@@ -463,7 +463,7 @@ export function FigureView({ fig, width, maxHeight = 480, page, setPage, layoutT
         </span>
         <Select<'full' | 'nodata' | 'none'>
           value={embedMode}
-          title="An editable figure: the project inside the SVG and PNG files — in Word or PowerPoint insert the SVG (they re-encode a PNG, which loses the project); in a document, “Save as Picture”, then drop the image on Graph Flow: the project opens at this figure (and Update document… replaces the figure there). Without the imported data: smaller, the files are opened again. TIFF, PDF and Copy never carry it"
+          title="An editable figure: the project inside the SVG and PNG files — in Word or PowerPoint insert the SVG (they re-encode a PNG, which loses the project); in a document, “Save as Picture”, then drop the image on SciPlotFlow: the project opens at this figure (and Update document… replaces the figure there). Without the imported data: smaller, the files are opened again. TIFF, PDF and Copy never carry it"
           options={[
             ['full', 'project inside'],
             ['nodata', 'project, no imported data'],

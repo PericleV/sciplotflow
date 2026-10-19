@@ -39,12 +39,12 @@ export function AppCrash({ error }: { error: Error }) {
     if (!saved) return;
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([saved], { type: 'application/json' }));
-    a.download = 'graph-flow-project.json';
+    a.download = 'sciplotflow-project.json';
     a.click();
   };
   return (
     <div className="crash">
-      <h2>Graph Flow stopped because of an error</h2>
+      <h2>SciPlotFlow stopped because of an error</h2>
       <pre>{error.message}</pre>
       <p>Your project is kept in this browser. Download it first, then reload the page; if the error comes back with this project, start over.</p>
       <div className="row">
@@ -52,7 +52,7 @@ export function AppCrash({ error }: { error: Error }) {
         <button onClick={() => location.reload()}>Reload</button>
         <button
           onClick={() => {
-            if (!confirm('Start over? The project kept in this browser is removed (download it first); Graph Flow opens with its first example.')) return;
+            if (!confirm('Start over? The project kept in this browser is removed (download it first); SciPlotFlow opens with its first example.')) return;
             try {
               localStorage.removeItem('graph-flow:project');
             } catch {

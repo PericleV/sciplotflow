@@ -1,4 +1,4 @@
-// The figures of a Word (.docx) or PowerPoint (.pptx) document that carry a Graph Flow project (embed.ts), and the
+// The figures of a Word (.docx) or PowerPoint (.pptx) document that carry a SciPlotFlow project (embed.ts), and the
 // document written again with some of them replaced. A document is a zip of XML parts and media: every picture is an
 // <a:blip r:embed="…"> (a PNG, or the PNG shown by older programs) with, for an SVG, an <asvg:svgBlip r:embed="…"> in
 // it; the relationships of the part (…/_rels/part.xml.rels) give the media files. A figure replaced: its SVG and its

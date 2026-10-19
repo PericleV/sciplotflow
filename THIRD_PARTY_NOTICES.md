@@ -1,7 +1,7 @@
 # Third-party notices
 
-Graph Flow is built on open-source software, loads more of it when a Python script runs, and uses published colour
-palettes and data in its examples. Everything listed here is under a licence compatible with Graph Flow's own (MIT).
+SciPlotFlow is built on open-source software, loads more of it when a Python script runs, and uses published colour
+palettes and data in its examples. Everything listed here is under a licence compatible with SciPlotFlow's own (MIT).
 
 ## 1. Built into the app
 

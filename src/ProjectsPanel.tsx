@@ -22,7 +22,7 @@ export function ProjectsPanel(props: { onClose: () => void; currentId: string; k
   };
   const addFiles = async (fs: File[]) => {
     const r = await libAddFiles(await Promise.all(fs.map(async (f) => ({ name: f.name, text: await f.text() }))));
-    setMsg(`${r.added} project${r.added === 1 ? '' : 's'} added.${r.bad.length ? ` Not a Graph Flow project: ${r.bad.join(', ')}.` : ''}`);
+    setMsg(`${r.added} project${r.added === 1 ? '' : 's'} added.${r.bad.length ? ` Not a SciPlotFlow project: ${r.bad.join(', ')}.` : ''}`);
   };
   useEffect(() => {
     const read = () => {
@@ -51,7 +51,7 @@ export function ProjectsPanel(props: { onClose: () => void; currentId: string; k
     const { text, count, lost } = await libBackup();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-    a.download = `graph-flow-projects-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `sciplotflow-projects-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     setMsg(`${count} project${count === 1 ? '' : 's'} in the file.${lost ? ` ${lost} imported file(s) were no longer in the browser.` : ''}`);

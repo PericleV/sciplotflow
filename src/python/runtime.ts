@@ -14,7 +14,7 @@ import numpy as np
 _ROLES = ('x', 'y', 'z', 'xerr', 'yerr', 'label', 'none')
 
 class Table(dict):
-    """A dataset of Graph Flow: its columns by name (numpy arrays), their designations (roles), its name.
+    """A dataset of SciPlotFlow: its columns by name (numpy arrays), their designations (roles), its name.
     T["Wavelength (nm)"] is a column; T.df the same as a pandas DataFrame."""
     def __init__(self, cols=(), roles=None, name=''):
         super().__init__(cols)

@@ -120,7 +120,7 @@ export function readBackup(text: string): { name: string; saved: number; project
   } catch {
     return 'The file is not valid JSON.';
   }
-  if (v.app !== 'graph-flow-backup' || !Array.isArray(v.projects)) return 'This is not a Graph Flow backup (a file made by Projects ▸ Back up all).';
+  if (v.app !== 'graph-flow-backup' || !Array.isArray(v.projects)) return 'This is not a SciPlotFlow backup (a file made by Projects ▸ Back up all).';
   const out: { name: string; saved: number; project: Project }[] = [];
   for (const it of v.projects) {
     const p = parseProject(JSON.stringify(it?.project ?? null));

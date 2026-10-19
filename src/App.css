@@ -286,7 +286,7 @@ table.point td { padding: 2px 10px; }
 .legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
 .legend i.grad { width: 60px; height: 8px; background: linear-gradient(90deg, #440154, #3e4989, #26828e, #35b779, #b5de2b); }
 
-.library { position: absolute; top: 0; right: 0; bottom: 0; width: 430px; z-index: 10; background: var(--panel); border-left: 1px solid var(--border);
+.library { position: absolute; top: 0; right: 0; bottom: 0; width: 430px; z-index: 16; background: var(--panel); border-left: 1px solid var(--border);
   box-shadow: -4px 0 12px rgb(0 0 0 / 0.15); display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; overflow-y: auto; font-size: var(--fs); }
 .library header { display: flex; justify-content: space-between; align-items: center; }
 .library .row { display: flex; gap: 6px; align-items: center; }
@@ -304,12 +304,17 @@ table.point td { padding: 2px 10px; }
 .help-panel dl { margin: 4px 0 8px; display: flex; flex-direction: column; gap: 6px; }
 .help-panel dt { font-weight: 600; }
 .help-panel dd { margin: 0 0 0 10px; color: var(--muted); }
+.help-panel dd p { margin: 0 0 4px; }
+.help-panel dd .help-short { color: var(--text); }
+.help-panel .help-focus { outline: 2px solid var(--accent, #2f6fd6); outline-offset: 3px; border-radius: 4px; }
 .help-table { border-collapse: collapse; font-size: var(--fs-small); }
 .help-table td { border-top: 1px solid var(--border); padding: 3px 6px; vertical-align: top; }
 .help-table td:first-child { font-weight: 600; white-space: nowrap; }
 .project-item.open { border-left: 3px solid var(--accent); }
 .project-item { display: grid; grid-template-columns: 1fr auto auto auto auto; gap: 6px; align-items: center; padding: 4px; border-bottom: 1px solid var(--border); }
-.node-help { font-size: var(--fs-small); color: var(--muted); background: var(--input); border-radius: 4px; padding: 6px 8px; margin: 4px 8px 0; }
+/* the node's help: as wide as the node already is (never widening it), its link to Help */
+.node-help { font-size: var(--fs-small); color: var(--muted); background: var(--input); border-radius: 4px; padding: 6px 8px; margin: 4px 8px 0; contain: inline-size; }
+.node-help .link-btn { display: inline; padding: 0; border: none; background: none; color: var(--accent, #2f6fd6); font-size: inherit; cursor: pointer; text-decoration: underline; }
 .lib-item { display: grid; grid-template-columns: 16px 1fr auto; gap: 6px; align-items: center; text-align: left; border-color: transparent; background: transparent; }
 .lib-item.active { border-color: var(--accent); background: var(--input); }
 .lib-search { width: 100%; box-sizing: border-box; }
@@ -659,7 +664,7 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .chips { display: flex; flex-wrap: wrap; gap: 3px; }
 .chips .chip { padding: 1px 6px; font-size: var(--fs-small); font-family: var(--mono); }
 
-/* ---- Graph Flow nodes ---- */
+/* ---- SciPlotFlow nodes ---- */
 .node-import, .node-book { width: var(--node-l); }
 .sheet-tab-x { margin-left: 6px; opacity: 0.6; }
 .sheet-tab-x:hover { opacity: 1; color: var(--err); }

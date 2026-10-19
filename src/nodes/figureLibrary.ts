@@ -38,7 +38,7 @@ export const newFigureId = () => `fig-${Date.now().toString(36)}-${Math.random()
 export const libraryFile = (list: LibFigure[]) => JSON.stringify({ format: 'graph-flow-figures', version: 1, figures: list });
 export function readLibraryFile(text: string): LibFigure[] {
   const j = JSON.parse(text) as { format?: string; figures?: LibFigure[] };
-  if (j.format !== 'graph-flow-figures' || !Array.isArray(j.figures)) throw new Error('Not a Graph Flow figure library.');
+  if (j.format !== 'graph-flow-figures' || !Array.isArray(j.figures)) throw new Error('Not a SciPlotFlow figure library.');
   return j.figures.filter((f) => f && typeof f.id === 'string' && Array.isArray(f.items) && f.w > 0 && f.h > 0);
 }
 

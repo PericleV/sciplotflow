@@ -1,5 +1,6 @@
 // Checks of the computations (npm run check): CSV reading, formulas, statistics (against values computed with
 // numpy / by hand), axis ticks, and every example graph evaluated without errors.
+import { NODE_HELP, NODE_SHORT } from '../src/help.ts';
 import * as Sg from '../src/engine/signal.ts';
 import { legendLayout } from '../src/figure/legendLayout.ts';
 import { fitLook, quickFit, quickFitsOf } from '../src/engine/quickfit.ts';
@@ -4606,6 +4607,13 @@ for (const ex of EXAMPLES) {
   const tabbed = tableText(ds, { ...o, delimiter: 'custom', custom: '\\t', roles: true, masked: 'empty' });
   ok(exportOptions({ format: 'csv', decimal: ',' } as never).delimiter === ';' && extensionOf(exportOptions({ delimiter: '\t' })) === 'tsv' && extensionOf(o) === 'csv', 'Export: the first form of the settings read; the extension from the delimiter');
   ok(tabbed.split('\n')[1] === 'X\tY\tLabel' && tableCells(ds, { ...o, masked: 'empty' })[3][1] === null, `Export: text with a tab, the designations line, a masked value left empty (${JSON.stringify(tabbed)})`);
+}
+
+{
+  // the help in a node: every node a short text (a sentence or two), the whole one in Help
+  const types = Object.keys(NODE_HELP) as (keyof typeof NODE_HELP)[];
+  const long = types.filter((t) => !NODE_SHORT[t] || NODE_SHORT[t].length > 260);
+  ok(types.length === Object.keys(NODE_SHORT).length && long.length === 0, `Help: a short text for every node, none too long (${long.join(', ')})`);
 }
 
 console.log(`${passed} passed, ${failed} failed`);

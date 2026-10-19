@@ -164,7 +164,7 @@ export function PythonNodeView({ id, data }: NodeProps<PythonNode>) {
           <img className="py-figure" alt={`matplotlib figure ${f.num}`} title={`matplotlib figure ${f.num}`} src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(f.svg)}`} />
           {f.desc && (
             <div className="row wrap">
-              <button className="nodrag" title="This figure as Plots of Graph Flow (a Merge for several axes): their data come from this script (run again: they change), their look is set in the Plots" onClick={() => makePlot(f.num)}>
+              <button className="nodrag" title="This figure as Plots of SciPlotFlow (a Merge for several axes): their data come from this script (run again: they change), their look is set in the Plots" onClick={() => makePlot(f.num)}>
                 Make Plot
               </button>
               {!!f.desc.skipped.length && <span className="muted" title={[...new Set(f.desc.skipped)].join('\n')}>not made: {[...new Set(f.desc.skipped)].join('; ')}</span>}

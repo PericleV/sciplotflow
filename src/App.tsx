@@ -95,7 +95,7 @@ import { FindNode } from './FindNode.tsx';
 import { PlotColumnsDialog, type PlotChoice } from './PlotColumnsDialog.tsx';
 import { buildFigure } from './plotBuild.ts';
 import { readFiles } from './readFiles.ts';
-import type { AppNode } from './types.ts';
+import type { AppNode, NodeType } from './types.ts';
 import { ArrowLeft, ArrowRight, CornerDownRight, Grid3x3, Map as MapIcon, Maximize, Redo2, Search, Spline, TriangleAlert, Undo2 } from 'lucide-react';
 import { IC } from './nodes/iconProps.ts';
 
@@ -284,7 +284,7 @@ function Flow() {
   useEffect(() => openProject(projectId, !hasPython(initial.nodes)), []); // eslint-disable-line react-hooks/exhaustive-deps
   const [examples, setExamples] = useState<ExampleList>([]);
   useEffect(() => {
-    document.title = `${projectName || 'Untitled project'} — Graph Flow`;
+    document.title = `${projectName || 'Untitled project'} — SciPlotFlow`;
   }, [projectName]);
   const [panel, setPanel] = useState<'projects' | 'docs' | 'help' | null>(null);
   // the clicks on the empty canvas (each folds the options panel when nothing is pinned there)
@@ -476,7 +476,7 @@ function Flow() {
   const [focusFig, setFocusFig] = useState<FigureRef | null>(null);
   const openFigureFile = async (file: File) => {
     const e = fileProject(new Uint8Array(await file.arrayBuffer()));
-    if (!e) return alert(`“${file.name}” has no Graph Flow project in it: export the figure with “project inside” (SVG or PNG).`);
+    if (!e) return alert(`“${file.name}” has no SciPlotFlow project in it: export the figure with “project inside” (SVG or PNG).`);
     const p = await openEmbedded(e);
     if (typeof p === 'string') return alert(p);
     const when = new Date(e.exported).toLocaleString();
@@ -947,6 +947,16 @@ function Flow() {
     window.addEventListener('graph-flow:plot', ask);
     return () => window.removeEventListener('graph-flow:plot', ask);
   }, []);
+  // a node's “More in Help”: Help opened at its entry
+  const [helpAt, setHelpAt] = useState<{ type: NodeType; n: number } | null>(null);
+  useEffect(() => {
+    const open = (e: Event) => {
+      setHelpAt((h) => ({ type: (e as CustomEvent<NodeType>).detail, n: (h?.n ?? 0) + 1 }));
+      setPanel('help');
+    };
+    window.addEventListener('graph-flow:help', open);
+    return () => window.removeEventListener('graph-flow:help', open);
+  }, []);
 
   const addNode = (t: Template, at?: { x: number; y: number }) => {
     const r = canvasRef.current?.getBoundingClientRect();
@@ -976,9 +986,9 @@ function Flow() {
   return (
     <div className="app">
       <header className="toolbar">
-        <span className="brand" title="Graph Flow — node-based data analysis and graphs">
+        <span className="brand" title="SciPlotFlow — node-based data analysis and graphs">
           <img className="logo" src="./logo.svg" alt="" width={22} height={22} />
-          <strong className="brand-text">Graph Flow</strong>
+          <strong className="brand-text">SciPlotFlow</strong>
         </span>
         <input
           className="project-name"
@@ -1022,7 +1032,7 @@ function Flow() {
         </button>
         <button
           onClick={() =>
-            download(stringifyProject(toProject(root.nodes, root.edges, projectName, projectId), 1), `${(projectName || 'graph-flow-project').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '')}.json`, 'application/json')
+            download(stringifyProject(toProject(root.nodes, root.edges, projectName, projectId), 1), `${(projectName || 'sciplotflow-project').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '')}.json`, 'application/json')
           }
         >
           Save
@@ -1219,7 +1229,7 @@ function Flow() {
                 />
               )}
               {shownPanel === 'docs' && <DocumentPanel onClose={() => setPanel(null)} current={projectInfo.current} id={projectId} results={rootEngine.results} />}
-              {shownPanel === 'help' && <HelpPanel onClose={() => setPanel(null)} examples={examples} />}
+              {shownPanel === 'help' && <HelpPanel onClose={() => setPanel(null)} examples={examples} focus={helpAt} />}
             </Suspense>
             </div>
             {finding && <FindNode onClose={() => setFinding(false)} />}

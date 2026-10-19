@@ -1,4 +1,4 @@
-Third-party software in graph-flow
+Third-party software in sciplotflow
 
 The app is built with the open-source packages below; each is under its own licence, whose full text follows.
 What is loaded only when a Python script runs (Pyodide, numpy, scipy, pandas, matplotlib …), the colour palettes

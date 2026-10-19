@@ -62,7 +62,7 @@ export function DocumentPanel(props: { onClose: () => void; current: () => Proje
     setDoc({ name: f.name, doc: d });
     setRows(list);
     setChosen(new Set(list.filter((r) => r.status === 'update' || r.status === 'current').map((r) => r.k)));
-    if (!d.figures.length) setMsg(`No figure with a Graph Flow project in “${f.name}” (${d.pictures} picture${d.pictures === 1 ? '' : 's'}): insert the figures exported as SVG with “project inside” (Word and PowerPoint re-encode an inserted PNG, which loses the project; an SVG exported by an earlier version of Graph Flow loses it too — export it again).`);
+    if (!d.figures.length) setMsg(`No figure with a SciPlotFlow project in “${f.name}” (${d.pictures} picture${d.pictures === 1 ? '' : 's'}): insert the figures exported as SVG with “project inside” (Word and PowerPoint re-encode an inserted PNG, which loses the project; an SVG exported by an earlier version of SciPlotFlow loses it too — export it again).`);
   };
 
   const update = async () => {

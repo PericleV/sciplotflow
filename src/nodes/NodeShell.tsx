@@ -9,7 +9,7 @@ import { useNodeResult } from '../engine/engine.ts';
 import { nodeColor, nodeTitle, textOn } from '../nodeColors.ts';
 import type { AppNode } from '../types.ts';
 import { ErrorBoundary } from '../ErrorBoundary.tsx';
-import { NODE_HELP } from '../help.ts';
+import { NODE_SHORT } from '../help.ts';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { IC } from './iconProps.ts';
 
@@ -70,7 +70,7 @@ export function withShell<P extends NodeProps<AppNode>>(View: ComponentType<P>) 
               ●
             </span>
           )}
-          <button className="nodrag node-collapse node-help-btn" title={`What this node does: ${NODE_HELP[type as AppNode['type']] ?? ''}`} onClick={() => setHelp((h) => !h)} onDoubleClick={(e) => e.stopPropagation()}>
+          <button className="nodrag node-collapse node-help-btn" title={`What this node does: ${NODE_SHORT[type as AppNode['type']] ?? ''}`} onClick={() => setHelp((h) => !h)} onDoubleClick={(e) => e.stopPropagation()}>
             ?
           </button>
           <button
@@ -82,7 +82,14 @@ export function withShell<P extends NodeProps<AppNode>>(View: ComponentType<P>) 
             {collapsed ? <ChevronRight {...IC} /> : <ChevronDown {...IC} />}
           </button>
         </div>
-        {help && !collapsed && <div className="node-help">{NODE_HELP[type as AppNode['type']]}</div>}
+        {help && !collapsed && (
+          <div className="node-help">
+            {NODE_SHORT[type as AppNode['type']]}{' '}
+            <button className="nodrag link-btn" title="Everything about this node: its options, inputs and outputs, in Help" onClick={() => window.dispatchEvent(new CustomEvent('graph-flow:help', { detail: type }))}>
+              More in Help →
+            </button>
+          </div>
+        )}
         <ErrorBoundary
           resetKey={data}
           fallback={(e, reset) => (
