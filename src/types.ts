@@ -9,7 +9,7 @@ import type { TableExport } from './engine/exportTable.ts';
 import type { SheetEdits } from './engine/sheet.ts';
 import type { ExtractNames, ExtractRule } from './engine/extract.ts';
 import type { ManipOp } from './engine/manip.ts';
-import type { CombineSpec, UnstackSpec } from './engine/reshape.ts';
+import type { CombineMode, CombinePort, CombineSpec, UnstackSpec } from './engine/reshape.ts';
 import type { Baseline, DiffMethod, Pt, Region } from './engine/calculus.ts';
 import type { PickOptions, PickRule } from './engine/pick.ts';
 import type { BaseKind, FindOptions, PeakItem } from './engine/peaks.ts';
@@ -147,7 +147,20 @@ export type UnstackData = UnstackSpec;
 // inserted at a row, interleaved, sorted by X; name: of the result when the inputs are columns. Or side by side (how
 // 'side'): the columns of A, B, C … next to each other — where: in the order of the ports (absent), B, C … at the start,
 // after the column `ref` of A or in place of it; names: the new names of the columns added (B, C …), comma-separated.
-export type CombineData = Omit<CombineSpec, 'how'> & { how: CombineSpec['how'] | 'side'; name: string; where?: 'ports' | 'start' | 'after' | 'replace'; ref?: string; names?: string };
+// result (absent in older nodes: from `how` and the inputs, combineSettings): what comes out — one column, side by side,
+// in sheets (a workbook), into a table (the port `into`), tables one under the other; order: the ports in the order
+// wanted; ports: the settings of every input (by its port number); desc: sorted, the largest first.
+export type CombineData = Omit<CombineSpec, 'how'> & {
+  how: CombineSpec['how'] | 'side';
+  name: string;
+  where?: 'ports' | 'start' | 'after' | 'replace';
+  ref?: string;
+  names?: string;
+  result?: CombineMode;
+  order?: number[];
+  ports?: Record<string, CombinePort>;
+  into?: number;
+};
 // Differentiate / Integrate: of X and one or more Y (a dataset: from the designations
 // or chosen; or a series), every Y on its own (with its X). Derivative: order 1 or 2, the mean of
 // the slopes to the neighbours or Savitzky–Golay (window points, polynomial degree). Integral: signed or absolute area

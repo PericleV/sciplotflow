@@ -5,8 +5,9 @@
 // column of their own. Pure.
 //
 // A formula names a column of the data by its name as it comes in ([Wavelength (nm)]), a column added here by its id
-// ([=c1]) and an input of the node by its letter ({A}): renaming a column in the node changes only how the formula is
-// shown (formulaShown / formulaStored translate), never what it computes.
+// ([=c1]) and an input of the node by its letter ({A}); a column written by its letter in the list (A, B … as in a
+// spreadsheet) is kept as [@its key]: renaming or moving a column in the node changes only how the formula is shown
+// (formulaShown / formulaStored translate), never what it computes.
 import { compile } from './expr.ts';
 import { pick } from './extract.ts';
 import { isCol, withColumnFunctions } from './colfns.ts';
@@ -54,25 +55,39 @@ const cellOf = (c: Column, i: number) => {
   return Number.isFinite(v) ? String(v) : '';
 };
 
-// ---- the references of a formula: [key] a column of the data or added (=id), {A} an input ----
+// ---- the references of a formula: [key] a column of the data or added (=id), [@key] the same written by its letter,
+// {A} an input ----
 const REF = /\[([^\]]+)\]|\{([A-Z]{1,2})\}/g;
-// the formula as stored, shown with the names the columns have now
+// a column's letter in the list (A … Z, AA …), by its place
+export const lineLetter = (k: number) => (k < 26 ? String.fromCharCode(65 + k) : String.fromCharCode(64 + Math.floor(k / 26)) + String.fromCharCode(65 + (k % 26)));
+// the references and the bare letters of a formula as written (a [ not closed yet, being typed: left as it is)
+const SHOWN = /\[([^\]]+)\]|\[[^\]]*$|\{[A-Z]{1,2}\}|\b([A-Z]{1,2})\b(?!\s*\()/g;
+// the formula as stored, shown with the names the columns have now (a column kept by its letter: its letter now)
 export function formulaShown(stored: string, lines: Pick<ColumnLine, 'from' | 'name'>[]): string {
   return stored.replace(REF, (whole, key: string | undefined) => {
     if (key === undefined) return whole;
+    if (key.startsWith('@')) {
+      const k = lines.findIndex((l) => l.from === key.slice(1));
+      // its column gone: shown by the name it had
+      return k >= 0 ? lineLetter(k) : `[${key.slice(1)}]`;
+    }
     const L = lines.find((l) => l.from === key);
     return L ? `[${L.name}]` : whole;
   });
 }
-// the formula as written (the names shown) stored by the columns' keys: a name out first, else a name in
+// the formula as written (the names and letters shown) stored by the columns' keys: a name out first, else a name in;
+// a letter of the list as [@key]
 export function formulaStored(shown: string, lines: Pick<ColumnLine, 'from' | 'name'>[]): string {
-  return shown.replace(REF, (whole, name: string | undefined) => {
+  return shown.replace(SHOWN, (whole, name: string | undefined, letter: string | undefined) => {
+    if (letter !== undefined) {
+      const L = lines.find((_, k) => lineLetter(k) === letter);
+      return L ? `[@${L.from}]` : whole;
+    }
     if (name === undefined) return whole;
     const L = lines.find((l) => l.name === name) ?? lines.find((l) => l.from === name);
     return L ? `[${L.from}]` : whole;
   });
 }
-const varName = (k: number) => (k < 26 ? String.fromCharCode(65 + k) : String.fromCharCode(64 + Math.floor(k / 26)) + String.fromCharCode(65 + (k % 26)));
 
 // a column added, of `rows` rows (those of its columns, else of the data): its values, or why not
 function computeColumn(c: ComputedColumn, get: (ref: string) => Column | Scalar | null, rows: number): Column | string {
@@ -93,16 +108,23 @@ function computeColumn(c: ComputedColumn, get: (ref: string) => Column | Scalar 
     return { ...rest, name: named, values: Float64Array.from(src.values), ...(src.text ? { text: [...src.text] } : {}) };
   }
   const src = (c.formula ?? '').trim();
-  if (!src) return 'write a formula, e.g. [A] / [B] * 100';
+  if (!src) return 'write a formula, e.g. B / C * 100';
   // every reference a letter of its own (A, B …), then the functions of whole columns, compiled
   const refs = new Map<string, string>();
   const vals: Inputs = {};
   let missing = '';
+  // a letter not met in the list stays as it is (unknown): the references take the other letters
+  const bare = new Set([...src.replace(REF, ' ').matchAll(/\b[A-Z]{1,2}\b/g)].map((m) => m[0]));
+  let next = 0;
+  const free = () => {
+    while (bare.has(lineLetter(next))) next++;
+    return lineLetter(next++);
+  };
   const text = src.replace(REF, (whole) => {
     if (!refs.has(whole)) {
       const v = get(whole);
-      if (!v) missing ||= whole;
-      const x = varName(refs.size);
+      if (!v) missing ||= whole.startsWith('[@') ? `[${whole.slice(2)}` : whole;
+      const x = free();
       refs.set(whole, x);
       if (v) vals[x] = v;
     }
@@ -112,7 +134,7 @@ function computeColumn(c: ComputedColumn, get: (ref: string) => Column | Scalar 
   const f = compile(withColumnFunctions(text, vals));
   if (typeof f === 'string') return f;
   const bad = f.names.filter((x) => !(x in vals) && x !== 'i' && x !== 'n');
-  if (bad.length) return `unknown name${bad.length > 1 ? 's' : ''} ${bad.join(', ')} — write a column as [its name], an input as {A}`;
+  if (bad.length) return `unknown name${bad.length > 1 ? 's' : ''} ${bad.join(', ')}: write a column as its letter (A, B …) or [its name], an input as {A}`;
   const cols = f.names.filter((x) => x in vals && isCol(vals[x])).map((x) => [x, (vals[x] as Column).values] as const);
   const n = cols.length ? Math.max(...cols.map(([, a]) => a.length)) : rows;
   const v: Record<string, number> = { n };
@@ -164,7 +186,9 @@ export function columnsOf(ds: Dataset, s: ColumnsSpec, inputs: Inputs = {}): Col
   const get = (ref: string): Column | Scalar | null => {
     const m = /^\[([^\]]+)\]$|^\{([A-Z]{1,2})\}$/.exec(ref.trim());
     if (!m) return null;
-    return (m[1] !== undefined ? byKey.get(m[1]) : inputs[m[2]]) ?? null;
+    if (m[2] !== undefined) return inputs[m[2]] ?? null;
+    // by its letter: [@key]
+    return byKey.get(m[1]) ?? (m[1].startsWith('@') ? byKey.get(m[1].slice(1)) : undefined) ?? null;
   };
   // the columns added, in their order
   const added: Column[] = [];

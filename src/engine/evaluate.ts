@@ -13,7 +13,7 @@ import { generatedValues } from './gencol.ts';
 import { withColumnFunctions } from './colfns.ts';
 export { withColumnFunctions };
 import type { Edge } from '@xyflow/react';
-import type { AnnotationItem, AppNode, CalculusData, CombineData, PeakData, PeakWidthData, PickData, CanvasData, DrawingData, DrawingComponent, CanvasItem, CanvasLayout, CurveRow, MathColData, PythonData, RowRule, FitNodeData, GenColData, PageData, Plot1DData, StatsData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from '../types.ts';
+import type { AnnotationItem, AppNode, CalculusData, PeakData, PeakWidthData, PickData, CanvasData, DrawingData, DrawingComponent, CanvasItem, CanvasLayout, CurveRow, MathColData, PythonData, RowRule, FitNodeData, GenColData, PageData, Plot1DData, StatsData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from '../types.ts';
 import { axisRange } from '../figure/ticks.ts';
 import { autoFrame, axesGeometry, placeAuto, placeInsets, placeLegends } from '../figure/axes.ts';
 import { legendLayout } from '../figure/legendLayout.ts';
@@ -34,7 +34,7 @@ import { controlChart } from './multivar.ts';
 import { linearRegression, logisticRegression, type Coef } from './regression.ts';
 import { surfaceModel } from './surface.ts';
 import { describe, STATS, type StatKey } from './stats.ts';
-import { combine, labelRuns, unstack, type BlockInfo, type SplitGraph } from './reshape.ts';
+import { combineNode, combineSettings, labelRuns, sideBySide, unstack, type BlockInfo, type CombineInput, type CombineSettings, type SplitGraph } from './reshape.ts';
 import { pickPoints, type Picked } from './pick.ts';
 import { CURVE_OP_LABELS, curveFormulas, curveMath, curveOf, curveOpPort, curveOps, translate, type Curve2, type CurveMathData, type CurveOpView, type CurvePlotLine, stepInfo, type StepInfo } from './curvemath.ts';
 import { changesTable, cleanData, filterRows } from './cleaning.ts';
@@ -140,7 +140,8 @@ export type NodeView = {
   inputs?: MathInput[]; // Math column
   blocks?: { list: BlockInfo[]; how: string }; // Split into columns: the blocks found
   split?: SplitGraph; // Split into columns: its graph (the column the blocks are found from, the curves, the cuts)
-  combine?: { letter: string; kind: 'column' | 'dataset'; name: string; rows: number; cols: number }[]; // Combine columns: its inputs
+  combine?: { port: number; letter: string; kind: 'column' | 'dataset' | 'workbook'; name: string; rows: number; cols: number; columns: string[]; sheets?: string[] }[]; // Combine columns: its inputs
+  combineSettings?: CombineSettings; // Combine columns: its settings as it works with them (an older node's translated)
   changed?: number; // Math column: how many rows the rules changed
   stats?: Record<StatKey, number>;
   statsOf?: Column;
@@ -163,6 +164,7 @@ export type NodeView = {
   // and the values of those with few
   layers?: { name: string; at: number; points: number; shown: boolean; from: number; where?: string; is?: string }[];
   columnLines?: ColumnLine[]; // Columns: every column in, as it comes out
+  columnsHead?: { names: string[]; rows: string[][] }; // Columns: the first rows of the data as they come in (for the names from a row)
   // Peak width: the points (their run, in a region or not), the baseline of every run, every result
   widths?: { x: Float64Array; y: Float64Array; run: Int32Array; used: Uint8Array; labels: string[]; xName: string; bases: { x: number[]; y: number[] }[]; results: { run: number; region: number; kind: 'peak' | 'dip'; x: number; y: number; fwhm: number; left: number; right: number; leftY: number; rightY: number; height: number; min: number; xMin: number; max: number; xMax: number; count: number; of: number }[] };
   extractCols?: { sheet: string; columns: { name: string; role: ColumnRole }[] }; // Auto-extract (simple): the first sheet's columns
@@ -380,31 +382,6 @@ function mathErrors(text: string | undefined, f: { fn: (v: Record<string, number
   return { err, warnings };
 }
 
-// Combine columns ▸ side by side: the columns of A, then those of B, C … (or B, C … first, after a column of A, in its
-// place), renamed by the list given; the shorter ones end in empty cells, a name met twice becomes “name (2)”.
-function combineSide(sets: Dataset[], d: CombineData, view: NodeView): Out {
-  const [a, ...rest] = sets;
-  const names = (d.names ?? '').split(',').map((s) => s.trim());
-  let k = 0;
-  const added = rest.flatMap((s) => s.columns).map((c) => {
-    const nm = names[k++];
-    return nm ? { ...c, name: nm } : c;
-  });
-  const where = d.where ?? 'ports';
-  let cols: Column[];
-  if (where === 'ports') cols = [...a.columns, ...added];
-  else if (where === 'start') cols = [...added, ...a.columns];
-  else {
-    const ref = d.ref ? findColumn(a.columns, d.ref) : undefined;
-    const j = ref ? a.columns.indexOf(ref) : -1;
-    if (j < 0) return { errors: [d.ref ? `No column “${d.ref}” in A.` : 'Choose the column of A.'], view: { ...view, available: a.columns.map(colInfo) } };
-    cols = [...a.columns.slice(0, where === 'after' ? j + 1 : j), ...added, ...a.columns.slice(j + 1)];
-  }
-  const lens = [...new Set(sets.map((s) => Math.max(0, maxOf(s.columns.map((c) => c.values.length)))))];
-  const warnings = lens.length > 1 ? [`The inputs have ${lens.join(', ')} rows: empty cells below the shorter ones.`] : [];
-  return { outputs: { out: { t: 'dataset', v: { name: a.name, columns: sideBySide(cols) } } }, warnings, view: { ...view, available: a.columns.map(colInfo) } };
-}
-
 // Math column ▸ rules for chosen rows: in order, the rows chosen (a list, a condition, all) given a formula of the inputs
 // and v (the value the formula and the rules above gave); the rows no rule chose kept, emptied or set to a value. out is
 // changed in place.
@@ -468,22 +445,6 @@ function mergeSets(sets: Dataset[]): Dataset | undefined {
     }),
   );
   return { name: sets.map((d) => d.name).join(' + '), columns };
-}
-
-// Columns laid side by side on one sheet: the same length (the shorter ones end in empty cells), names used twice
-// made distinct (“name (2)”).
-function sideBySide(cols: Column[]): Column[] {
-  const len = Math.max(0, maxOf(cols.map((c) => c.values.length)));
-  const seen = new Set<string>();
-  return cols.map((c) => {
-    let nm = c.name;
-    for (let k = 2; seen.has(nm); k++) nm = `${c.name} (${k})`;
-    seen.add(nm);
-    if (c.values.length === len) return nm === c.name ? c : { ...c, name: nm };
-    const values = new Float64Array(len).fill(NaN);
-    values.set(c.values);
-    return { ...c, name: nm, values, ...(c.text ? { text: [...c.text, ...Array<string>(len - c.text.length).fill('')] } : {}), ...(c.mask ? { mask: undefined } : {}) };
-  });
 }
 
 // The data of a curve as a dataset (X, Y, ±Y, ±X designated), and back: the first curve of a dataset by its designations.
@@ -4251,7 +4212,19 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
     }
     case 'filterrows': {
       const v = one('in');
-      if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset.' } };
+      // every sheet of a workbook: the same rules on each, a workbook out
+      if (v?.t === 'workbook') {
+        const sheets: Dataset[] = [];
+        const report: string[] = [];
+        for (const q of v.v.sheets) {
+          const r = filterRows(q, n.data);
+          if (typeof r === 'string') return { errors: [`${q.name}: ${r}`], view: { available: (v.v.sheets[0]?.columns ?? []).map(colInfo) } };
+          sheets.push({ ...r.dataset, name: q.name });
+          report.push(`${q.name}: ${r.report}`);
+        }
+        return { outputs: { out: { t: 'workbook', v: { name: v.v.name, sheets } } }, view: { available: (v.v.sheets[0]?.columns ?? []).map(colInfo), report } };
+      }
+      if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset or a workbook.' } };
       const available = v.v.columns.map(colInfo);
       const r = filterRows(v.v, n.data);
       if (typeof r === 'string') return { errors: [r], view: { available } };
@@ -4332,29 +4305,28 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       return { outputs: { out: { t: 'dataset', v: r.dataset }, long: { t: 'dataset', v: r.long } }, warnings: r.warnings, view: { available, blocks: { list: r.blocks, how: r.how }, ...(r.graph ? { split: r.graph } : {}) } };
     }
     case 'combine': {
-      const d = n.data;
-      const ins: { port: number; v: Extract<Value, { t: 'column' | 'dataset' }> }[] = [];
+      const ins: CombineInput[] = [];
       for (const [h, list] of inputs) {
         const m = /^in-(\d+)$/.exec(h);
         const v = list[0]?.value;
-        if (m && v && (v.t === 'column' || v.t === 'dataset')) ins.push({ port: Number(m[1]), v });
+        if (m && v && (v.t === 'column' || v.t === 'dataset' || v.t === 'workbook')) ins.push({ port: Number(m[1]), v } as CombineInput);
       }
       ins.sort((a, b) => a.port - b.port);
-      const combineInputs = ins.map((x) => ({ letter: columnLetter(x.port), kind: x.v.t, name: x.v.t === 'column' ? titleOf(x.v.v) : x.v.v.name, rows: x.v.t === 'column' ? x.v.v.values.length : Math.max(0, maxOf(x.v.v.columns.map((c) => c.values.length))), cols: x.v.t === 'dataset' ? x.v.v.columns.length : 1 }));
-      const columnsOnly = ins.every((x) => x.v.t === 'column');
-      const view: NodeView = { combine: combineInputs, available: ins.flatMap((x) => (x.v.t === 'dataset' ? x.v.v.columns : [x.v.v])).filter((c, j, a) => a.findIndex((o) => o.name === c.name) === j).map(colInfo) };
-      if (!ins.length) return { view: { ...view, waiting: 'Connect columns or datasets to A, B, C … (a new port appears when the last one is used).' } };
-      // columns are matched by their place (their names usually differ)
-      const sets = ins.map((x) => (x.v.t === 'dataset' ? x.v.v : { name: x.v.v.name, columns: [x.v.v] }));
-      if (d.how === 'side') return combineSide(sets, d, view);
-      const r = combine(sets, { ...d, how: d.how, match: columnsOnly ? 'position' : d.match });
+      const settings = combineSettings(n.data, ins.map((x) => ({ port: x.port, kind: x.v.t, cols: x.v.t === 'column' ? 1 : x.v.t === 'dataset' ? x.v.v.columns.length : 1 })));
+      // every input: its kind, size, columns (a workbook: of the sheet chosen) and sheets
+      const allCols: Column[] = [];
+      const combineInputs = ins.map((x) => {
+        const sheets = x.v.t === 'workbook' ? x.v.v.sheets : undefined;
+        const want = settings.ports[x.port]?.sheet;
+        const t = x.v.t === 'column' ? { name: x.v.v.name, columns: [x.v.v] } : x.v.t === 'dataset' ? x.v.v : ((want && sheets?.find((q) => q.name === want)) || sheets?.[0] || { name: '', columns: [] });
+        allCols.push(...t.columns);
+        return { port: x.port, letter: columnLetter(x.port), kind: x.v.t, name: x.v.t === 'column' ? titleOf(x.v.v) : x.v.v.name, rows: Math.max(0, maxOf(t.columns.map((c) => c.values.length))), cols: t.columns.length, columns: t.columns.map((c) => c.name), ...(sheets ? { sheets: sheets.map((q) => q.name) } : {}) };
+      });
+      const view: NodeView = { combine: combineInputs, combineSettings: settings, available: allCols.filter((c, j, a) => a.findIndex((o) => o.name === c.name) === j).map(colInfo) };
+      if (!ins.length) return { view: { ...view, waiting: 'Connect columns, datasets or workbooks to A, B, C … (a new port appears when the last one is used).' } };
+      const r = combineNode(ins, settings);
       if (typeof r === 'string') return { errors: [r], view };
-      const source = r.source;
-      if (columnsOnly) {
-        const c = r.dataset.columns[0];
-        return { outputs: { out: { t: 'column', v: { ...c, name: d.name.trim() || c.name } }, source: { t: 'column', v: source } }, warnings: r.warnings, view };
-      }
-      return { outputs: { out: { t: 'dataset', v: r.dataset }, source: { t: 'column', v: source } }, warnings: r.warnings, view };
+      return { outputs: { out: r.out, ...(r.source ? { source: { t: 'column', v: r.source } } : {}) }, warnings: r.warnings, view };
     }
     case 'autoextract': {
       const v = one('in');
@@ -4432,8 +4404,12 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       const ds = one('in');
       if (ds?.t !== 'dataset') return { view: { waiting: 'Connect a dataset.', inputs: ins } };
       const r = columnsOf(ds.v, n.data, vals);
-      if (typeof r === 'string') return { errors: [r], view: { available: ds.v.columns.map(colInfo), inputs: ins } };
-      return { outputs: { out: { t: 'dataset', v: r.dataset }, names: { t: 'column', v: r.names } }, warnings: r.warnings, view: { available: r.dataset.columns.map(colInfo), columnLines: r.lines, inputs: ins } };
+      // the first rows as they come in: a row of them can give the names
+      const cell = (c: Column, i: number) => c.text?.[i]?.trim() || (Number.isFinite(c.values[i]) ? fmtNum(c.values[i], 6) : '');
+      const nHead = Math.min(8, Math.max(0, maxOf(ds.v.columns.map((c) => c.values.length))));
+      const columnsHead = { names: ds.v.columns.map((c) => c.name), rows: Array.from({ length: nHead }, (_, i) => ds.v.columns.map((c) => cell(c, i))) };
+      if (typeof r === 'string') return { errors: [r], view: { available: ds.v.columns.map(colInfo), inputs: ins, columnsHead } };
+      return { outputs: { out: { t: 'dataset', v: r.dataset }, names: { t: 'column', v: r.names } }, warnings: r.warnings, view: { available: r.dataset.columns.map(colInfo), columnLines: r.lines, inputs: ins, columnsHead } };
     }
     case 'stats':
       return n.data.on === 'rows' ? statsRows({ cols: n.data.cols ?? '', x: n.data.x ?? '', rows: n.data.rows, err: n.data.err ?? 'sd' }, one('in')) : statsColumns(n.data, one('in'));
@@ -4537,9 +4513,11 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
 // outputs from the nodes feeding its Group output, its errors when nodes inside have errors. The nodes inside a group
 // have results under `group/inner` ids.
 // The nodes that take one sheet of a workbook on a port (its name: the node's `sheet`): the graphs on their dataset
-// port, Columns, Extract column and Pick points on their input
-const SHEET_PORTS: Record<string, string> = { columns: 'in', extract: 'in', pick: 'in', ...Object.fromEntries(['histogram', 'barchart', 'boxviolin', 'probplot', 'blandaltman', 'pie', 'polar', 'waterfall', 'contour', 'ternary', 'plot3d'].map((t) => [t, 'dataset'])) };
+// port, Columns, Extract column, Pick points, Filter & sort rows on their input
+const SHEET_PORTS: Record<string, string> = { columns: 'in', extract: 'in', pick: 'in', filterrows: 'in', ...Object.fromEntries(['histogram', 'barchart', 'boxviolin', 'probplot', 'blandaltman', 'pie', 'polar', 'waterfall', 'contour', 'ternary', 'plot3d'].map((t) => [t, 'dataset'])) };
 export const sheetPort = (type: string | undefined): string | undefined => (type ? SHEET_PORTS[type] : undefined);
+// the nodes that can also take every sheet (`sheet` '*': the workbook itself, a workbook out)
+export const everySheet = (type: string | undefined) => type === 'filterrows';
 
 export function evaluateGraph(nodes: AppNode[], edges: Edge[], cache: EvalCache = newCache()): Map<string, NodeResult> {
   if (!nodes.some((n) => n.type === 'subgraph')) return evaluateFlat(nodes, edges, cache);
@@ -4662,7 +4640,7 @@ function evaluateFlat(nodes: AppNode[], edges: Edge[], cache: EvalCache = newCac
         bookSheets = book.sheets.map((q) => q.name);
         const want = (n.data as { sheet?: string }).sheet;
         const sheet = want ? book.sheets.find((q) => q.name === want) : book.sheets[0];
-        value = sheet ? { t: 'dataset', v: sheet } : undefined;
+        if (!(want === '*' && everySheet(n.type))) value = sheet ? { t: 'dataset', v: sheet } : undefined;
       }
       const l = inputs.get(th) ?? [];
       const srcNode = n.type === 'report' ? byId.get(e.source) : undefined;
@@ -4686,7 +4664,7 @@ function evaluateFlat(nodes: AppNode[], edges: Edge[], cache: EvalCache = newCac
         out = { errors: [`Internal error: ${(err as Error).message}`] };
       }
       const want = (n.data as { sheet?: string }).sheet;
-      if (bookSheets && want && !bookSheets.includes(want)) out = { ...out, errors: [...(out.errors ?? []), `No sheet “${want}” in the workbook.`] };
+      if (bookSheets && want && want !== '*' && !bookSheets.includes(want)) out = { ...out, errors: [...(out.errors ?? []), `No sheet “${want}” in the workbook.`] };
       r = { rev: ++cache.rev, outputs: out.outputs ?? {}, errors: out.errors ?? [], warnings: out.warnings ?? [], view: { ...out.view, ...(bookSheets ? { sheets: bookSheets } : {}) }, ...(out.inner ? { inner: out.inner } : {}) };
       // (a node inside measured formulas: the one around it too; what was asked before this node kept for its caller)
       const measured = resetMathAsked();

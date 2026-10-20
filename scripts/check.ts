@@ -51,7 +51,7 @@ import { placeComponent, rotateItem } from '../src/engine/drawingItems.ts';
 import { aboveOf, elbowCorners, lineLength, offsetLine, outlinePoint, taperOutline, trimLine, waveLine } from '../src/figure/shapes.ts';
 import { alignMoves, distributeMoves, geomBox, moveItem, snapAxis } from '../src/nodes/drawingOps.ts';
 import { CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, COMBINE_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, IMPORT_DEFAULTS, PLOT1D_DEFAULTS } from '../src/defaults.ts';
-import type { AppNode, CalculusData, FitNodeData, PeakData, PickData, Plot1DData, WorkbookData } from '../src/types.ts';
+import type { AppNode, CalculusData, CombineData, FitNodeData, PeakData, PickData, Plot1DData, WorkbookData } from '../src/types.ts';
 import { applySheet, hasEdits, readSheet, sheetText } from '../src/engine/sheet.ts';
 import { scaledSize, SHAPE_DEFAULTS } from '../src/figure/spec.ts';
 import { formatTime, parseTime, timeTicks } from '../src/figure/timeaxis.ts';
@@ -584,6 +584,16 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
     const ren = comp([{ id: 'c1', name: 'ratio', formula: '[a] / [b] * 100' }], { items: [{ from: 'a', name: 'alpha' }, { from: '=c1' }], namesFrom: undefined, prefix: 'R ' });
     const lines = typeof ren === 'string' ? [] : ren.lines;
     ok(vs(ren, 'ratio') === [50, 80, 87.5].join() && formulaShown('[a] / [b] * 100', lines) === '[alpha] / [R b] * 100' && formulaStored('[alpha] + [R c] * 10 + [b]', lines) === '[a] + [c] * 10 + [b]' && formulaStored('[gone] * 2', lines) === '[gone] * 2', 'Columns: a column renamed by hand or with a prefix — the formula still right, shown with the new names; typed with them, stored by the names in');
+    // by the letters of the list: kept by the column (moved: its new letter shown, the same values), mean(B) of a whole
+    // column, a letter past the list left as it is, a [ being typed not touched
+    const lt = comp([]);
+    const ltLines = typeof lt === 'string' ? [] : lt.lines;
+    const byLetter = formulaStored('B / C * 100 + mean(B) - Z', ltLines);
+    const moved = comp([{ id: 'c1', name: 'r', formula: byLetter.replace(' - Z', '') }], { items: [{ from: 'b' }, { from: 'Sample' }] });
+    const movedLines = typeof moved === 'string' ? [] : moved.lines;
+    ok(byLetter === '[@a] / [@b] * 100 + mean([@a]) - Z' && formulaShown(byLetter, ltLines) === 'B / C * 100 + mean(B) - Z' && formulaShown('[@a] / [@b]', movedLines) === 'C / A' && vs(moved, 'r') === [54, 84, 91.5].join() && formulaStored('[R 4', ltLines) === '[R 4', 'Columns: a formula by the letters of the list — kept by the column when it moves, mean(B) of a whole column, a [ being typed left alone');
+    const unknownLetter = comp([{ id: 'c1', name: 'u', formula: '[@a] + Z' }]);
+    ok(typeof unknownLetter !== 'string' && unknownLetter.warnings.some((w) => w.includes('“u”: unknown name Z')), 'Columns: a letter not in the list said, the letters of the columns still right');
     const named = comp([{ id: 'c1', name: 'sum', formula: '[a] + [b]' }], { namesFrom: { col: '[Sample]', drop: true } });
     ok(vs(named, 'sum') === [3, 9, 15].join() && typeof named !== 'string' && formulaShown('[a] + [b]', named.lines) === '[S1] + [S2]', 'Columns: the names from a column — a formula of the columns renamed still right');
     const port = comp([{ id: 'c1', name: 'scaled', formula: '[c] * {A} - mean([c])' }, { id: 'c2', name: 'k', kind: 'value', value: 7 }, { id: 'c3', name: 'copy', kind: 'copy', copy: '{B}' }], {}, { A: { name: 'f', value: 10 }, B: column('ext', Float64Array.of(9, 8, 7)) });
@@ -2052,6 +2062,28 @@ for (const ex of EXAMPLES) {
   const rep = filterRows(two, { ...FILTER_DEFAULTS, dup: 'mean', dupCol: 'x, g' });
   ok(typeof rep !== 'string' && Array.from(rep.dataset.columns[2].values).join('/') === '15/30/40' && rep.report.includes('of x + g averaged'), `Filter rows: repeated in two columns together, averaged (${typeof rep === 'string' ? rep : rep.report})`);
   ok(sortKeysOf({ sortBy: 'x', desc: true }).length === 1 && sortKeysOf({ sortBy: 'x', desc: true, sorts: [] }).length === 0 && filterRows(ds, { ...FILTER_DEFAULTS, sorts: [{ col: 'nope', desc: false }] }) === 'No column “nope” to sort by.', 'Filter rows: an older project keeps its one sort column; an unknown column is said');
+  // sort rules in turn: only some columns moved (by another column, each by its own values, reversed), the others in
+  // place; whole rows reversed; the rules win over the older keys
+  const col = (r: ReturnType<typeof filterRows>, j: number) => (typeof r === 'string' ? r : Array.from(r.dataset.columns[j].values).join('/'));
+  const onlyY = filterRows(ds, { ...FILTER_DEFAULTS, sorts: [{ col: 'x', desc: false }], sortRules: [{ cols: 'y', how: 'by', keys: [{ col: 'x', desc: true }] }] });
+  ok(col(onlyY, 0) === '3/1/2/2/5' && col(onlyY, 1) === '50/30/20/22/10' && typeof onlyY !== 'string' && onlyY.report.includes('y sorted by x (largest first)'), `Filter rows: only Y moved, by X (largest first); X in place; the rules win over the older keys (${col(onlyY, 1)})`);
+  const own = filterRows(ds, { ...FILTER_DEFAULTS, sortRules: [{ cols: 'x', how: 'own', desc: true }, { cols: 'y', how: 'reverse' }] });
+  ok(col(own, 0) === '5/3/2/2/1' && col(own, 1) === '50/22/20/10/30', `Filter rows: X sorted on its own (largest first), then Y alone reversed (${col(own, 0)} ${col(own, 1)})`);
+  const rev = filterRows(ds, { ...FILTER_DEFAULTS, sortRules: [{ how: 'reverse' }] });
+  ok(col(rev, 0) === '5/2/2/1/3' && col(rev, 1) === '50/22/20/10/30' && typeof rev !== 'string' && rev.dataset.columns[2].text!.join(' ') === 'a3 b a1 a2 a10', 'Filter rows: whole rows reversed (the text with them)');
+  ok(filterRows(ds, { ...FILTER_DEFAULTS, sortRules: [{ cols: 'nope', how: 'own' }] }) === 'Sort: no column “nope”.', 'Filter rows: a sort rule on a missing column said');
+  // a workbook in: the sheet chosen (a dataset out), or every sheet (the same rules on each, a workbook out)
+  const fw = (sheet?: string) =>
+    evaluateGraph(
+      [
+        { id: 'w', type: 'book', position: { x: 0, y: 0 }, data: { ...WORKBOOK_DEFAULTS, sheets: [{ name: 'S1', text: 'a\n3\n1\n2\n' }, { name: 'S2', text: 'a\n9\n7\n8\n' }] } } as AppNode,
+        { id: 'f', type: 'filterrows', position: { x: 0, y: 0 }, data: { ...FILTER_DEFAULTS, sortRules: [{ how: 'by', keys: [{ col: 'a', desc: false }] }], ...(sheet ? { sheet } : {}) } } as AppNode,
+      ],
+      [{ id: 'e', source: 'w', sourceHandle: 'book', target: 'f', targetHandle: 'in' }],
+    ).get('f')!.outputs.out;
+  const one = fw('S2');
+  const every = fw('*');
+  ok(one?.t === 'dataset' && Array.from(one.v.columns[0].values).join() === '7,8,9' && every?.t === 'workbook' && every.v.sheets.map((q) => `${q.name}:${Array.from(q.columns[0].values).join()}`).join(' ') === 'S1:1,2,3 S2:7,8,9', 'Filter rows: a workbook in — one sheet (a dataset), or every sheet sorted (a workbook)');
 }
 
 {
@@ -3636,6 +3668,27 @@ for (const ex of EXAMPLES) {
   ok(names(run({ where: 'start', names: 'Y2' })) === 'Y2,z,x,y' && names(run({ where: 'replace', ref: 'y' })) === 'x,y,z' && run({ where: 'after', ref: 'w' }).errors.length === 1, 'Combine side by side: before A, renamed; in place of a column; a missing column said');
   const cn = { id: 'c', type: 'combine', position: at, data: { ...COMBINE_DEFAULTS, how: 'side' } } as AppNode;
   ok(sourcePort(cn, 'out') === 'dataset', 'Combine side by side: a dataset out, even of columns');
+  // the Result chosen: columns A, B, C one under the other in the order A C B, interleaved, sorted by value (largest
+  // first); a column put between two columns of a sheet of a workbook, another continuing a column; in sheets
+  const col = (id: string, v: number[]) => ({ id, type: 'gencol', position: at, data: { ...GENCOL_DEFAULTS, mode: 'formula', formula: `${v.map((x, k) => `(i==${k + 1})*${x}`).join('+')}`, count: v.length, name: id } }) as AppNode;
+  const book = { id: 'w', type: 'book', position: at, data: { ...WORKBOOK_DEFAULTS, sheets: [{ name: 'S1', text: 'p\tq\n1\t2\n' }, { name: 'N', text: 'B\tC\tD\n1\t2\t3\n4\t5\t6\n' }] } } as AppNode;
+  const wire = (pairs: [string, string, number][]) => pairs.map(([src, h, p], k) => ({ id: `w${k}`, source: src, sourceHandle: h, target: 'c', targetHandle: `in-${p}` }));
+  const comb = (data: Partial<CombineData>, nodes: AppNode[], pairs: [string, string, number][]) => evaluateGraph([...nodes, { id: 'c', type: 'combine', position: at, data: { ...COMBINE_DEFAULTS, ...data } } as AppNode], wire(pairs)).get('c')!;
+  const three = [col('a', [1, 2]), col('b', [10, 20]), col('cc', [100, 200])];
+  const abc: [string, string, number][] = [['a', 'out', 0], ['b', 'out', 1], ['cc', 'out', 2]];
+  const colVals = (r: ReturnType<typeof comb>) => (r.outputs.out?.t === 'column' ? Array.from(r.outputs.out.v.values).join() : `${r.outputs.out?.t} ${r.errors.join()}`);
+  ok(colVals(comb({ result: 'column', order: [0, 2, 1] }, three, abc)) === '1,2,100,200,10,20' && colVals(comb({ result: 'column', how: 'interleave', order: [0, 2, 1] }, three, abc)) === '1,100,10,2,200,20' && colVals(comb({ result: 'column', how: 'sortx', desc: true }, three, abc)) === '200,100,20,10,2,1', 'Combine ▸ one column: in the order A C B, interleaved A₁C₁B₁ …, sorted by value (largest first)');
+  const side = comb({ result: 'side', order: [1, 0], ports: { 1: { names: 'Bee' } } }, three.slice(0, 2), abc.slice(0, 2));
+  ok(side.outputs.out?.t === 'dataset' && side.outputs.out.v.columns.map((c) => c.name).join() === 'Bee,a', 'Combine ▸ side by side: in the order of the list, renamed → a dataset');
+  const sh = comb({ result: 'sheets', ports: { 1: { sheetOut: 'Two' }, 2: { sheetOut: 'Two' } } }, three, abc);
+  ok(sh.outputs.out?.t === 'workbook' && sh.outputs.out.v.sheets.map((q) => `${q.name}:${q.columns.map((c) => c.name).join('+')}`).join(' ') === 'Sheet 1:a Two:b+cc', 'Combine ▸ in sheets: the inputs with the same sheet side by side → a workbook');
+  const into = comb({ result: 'into', into: 0, ports: { 0: { sheet: 'N' }, 1: { action: 'after', ref: 'B', names: 'A' }, 2: { action: 'under', ref: 'D' } } }, [book, col('a', [7, 8]), col('cc', [9])], [['w', 'book', 0], ['a', 'out', 1], ['cc', 'out', 2]]);
+  const o = into.outputs.out;
+  const nSheet = o?.t === 'workbook' ? o.v.sheets.find((q) => q.name === 'N') : undefined;
+  ok(o?.t === 'workbook' && o.v.sheets.length === 2 && o.v.sheets[0].columns[0].name === 'p' && nSheet?.columns.map((c) => c.name).join() === 'B,A,C,D' && Array.from(nSheet.columns[1].values).join() === '7,8,NaN' && Array.from(nSheet.columns[3].values).join() === '3,6,9', `Combine ▸ into a table: A put between B and C of sheet N, another continuing D; the other sheet kept (${nSheet?.columns.map((c) => c.name).join()})`);
+  const cnInto = { id: 'c', type: 'combine', position: at, data: { ...COMBINE_DEFAULTS, result: 'into', into: 0 } } as AppNode;
+  const ctx = { node: (nid: string) => (nid === 'w' ? book : nid === 'c' ? cnInto : undefined), edges: wire([['w', 'book', 0]]) };
+  ok(sourcePort(cnInto, 'out', ctx) === 'workbook' && sourcePort({ ...cnInto, data: { ...cnInto.data, result: 'column' } } as AppNode, 'out') === 'column' && comb({ result: 'into', into: 0, ports: { 1: { action: 'after', ref: 'zz' } } }, three.slice(0, 2), abc.slice(0, 2)).errors[0] === 'B: no column “zz” in A.', 'Combine ▸ the output port: into a sheet of a workbook → a workbook, one column → a column; a missing column said');
 }
 
 // ---- Editable figures: the project inside an SVG / PNG (embed.ts), the figures of a Word / PowerPoint document

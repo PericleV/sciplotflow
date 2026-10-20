@@ -27,8 +27,13 @@ export type FilterData = {
   dupCol: string; // '' = the designated X; a list (2, B-D, names): repeated in all of them together
   sortBy: string; // '' = not sorted (older projects; `sorts` when present)
   desc: boolean;
-  // sorted by several columns: by the first, rows equal in it by the second, and so on
+  // sorted by several columns: by the first, rows equal in it by the second, and so on (older projects; `sortRules`
+  // when present)
   sorts?: SortKey[];
+  // the sort rules, applied in turn (absent: one rule from `sorts` / `sortBy`)
+  sortRules?: SortRule[];
+  // a workbook on the input: its sheet (absent: the first); '*': every sheet, a workbook out
+  sheet?: string;
   // after sorting: only the first N rows kept (absent or 0: all), as the 5 largest values; or the last N
   top?: number;
   topFrom?: 'start' | 'end';
@@ -36,6 +41,89 @@ export type FilterData = {
 };
 // the sort keys of a filter (an older project: its one column)
 export const sortKeysOf = (d: Pick<FilterData, 'sorts' | 'sortBy' | 'desc'>): SortKey[] => d.sorts ?? (d.sortBy ? [{ col: d.sortBy, desc: d.desc }] : []);
+// A sort rule: the columns it moves (cols: '' = whole rows, every column with them; else a list: 2-4, B-D, names) —
+// by columns (keys: the first, rows equal in it by the next …), each column by its own values (desc: largest first),
+// or put in the reverse order (the last row first)
+export type SortRule = { cols?: string; how: 'by' | 'own' | 'reverse'; keys?: SortKey[]; desc?: boolean };
+// the sort rules of a filter (an older project: one rule of whole rows by its keys)
+export function sortRulesOf(d: Pick<FilterData, 'sorts' | 'sortBy' | 'desc' | 'sortRules'>): SortRule[] {
+  if (d.sortRules) return d.sortRules;
+  const keys = sortKeysOf(d);
+  return keys.length ? [{ how: 'by', keys }] : [];
+}
+
+const isMissing = (w: string | number) => typeof w === 'number' && !Number.isFinite(w);
+// two cells of a column compared: numbers, or text in its natural order; empty cells last whatever the order
+function compareCells(s: Column, desc: boolean, a: number, b: number): number {
+  const val = (i: number) => (i >= s.values.length ? NaN : s.text?.[i]?.trim() ? s.text[i] : s.values[i]);
+  const [u, v] = [val(a), val(b)];
+  if (isMissing(u) || isMissing(v)) return isMissing(u) === isMissing(v) ? 0 : isMissing(u) ? 1 : -1;
+  const c = typeof u === 'string' || typeof v === 'string' ? String(u).localeCompare(String(v), undefined, { numeric: true }) : (u as number) - (v as number);
+  return desc ? -c : c;
+}
+// a column with its rows in a new order (idx: the rows taken; past its end: empty)
+function reordered(c: Column, idx: number[]): Column {
+  return {
+    ...c,
+    values: Float64Array.from(idx, (i) => (i < c.values.length ? c.values[i] : NaN)),
+    ...(c.text ? { text: idx.map((i) => c.text![i] ?? '') } : {}),
+    ...(c.mask ? { mask: Uint8Array.from(idx, (i) => c.mask![i] ?? 0) } : {}),
+  };
+}
+// the order of the rows 0 … n−1 sorted by the keys in turn (stable)
+function sortedOrder(n: number, by: { s: Column; desc: boolean }[]): number[] {
+  const idx = Array.from({ length: n }, (_, i) => i);
+  idx.sort((a, b) => {
+    for (const k of by) {
+      const c = compareCells(k.s, k.desc, a, b);
+      if (c) return c;
+    }
+    return a - b;
+  });
+  return idx;
+}
+// One sort rule on the columns: their new columns, what it did, or why not
+function applySortRule(cols: Column[], r: SortRule): { cols: Column[]; text: string } | string | null {
+  const len = (cs: Column[]) => Math.max(0, maxOf(cs.map((c) => c.values.length)));
+  // the columns moved
+  let moved: number[];
+  if (r.cols?.trim()) {
+    const one = findColumn(cols, r.cols);
+    if (one) moved = [cols.indexOf(one)];
+    else {
+      const p = pick(r.cols, cols.map((c) => c.name), true);
+      if (p.missing.length || !p.found.length) return `Sort: no column ${(p.missing.length ? p.missing : [r.cols]).map((m) => `“${m}”`).join(', ')}.`;
+      moved = p.found;
+    }
+  } else moved = cols.map((_, j) => j);
+  const whole = !r.cols?.trim();
+  const which = whole ? 'rows' : moved.map((j) => cols[j].name).join(', ');
+  const out = [...cols];
+  if (r.how === 'reverse') {
+    if (whole) {
+      const n = len(cols);
+      const idx = Array.from({ length: n }, (_, i) => n - 1 - i);
+      return { cols: cols.map((c) => reordered(c, idx)), text: 'the rows reversed' };
+    }
+    for (const j of moved) out[j] = reordered(cols[j], Array.from({ length: cols[j].values.length }, (_, i) => cols[j].values.length - 1 - i));
+    return { cols: out, text: `${which} reversed` };
+  }
+  if (r.how === 'own') {
+    for (const j of moved) out[j] = reordered(cols[j], sortedOrder(cols[j].values.length, [{ s: cols[j], desc: !!r.desc }]));
+    return { cols: out, text: `${whole ? 'every column' : which} sorted on its own${r.desc ? ' (largest first)' : ''}` };
+  }
+  const keys = (r.keys ?? []).filter((k) => k.col);
+  if (!keys.length) return null;
+  const by: { s: Column; desc: boolean }[] = [];
+  for (const k of keys) {
+    const s = findColumn(cols, k.col);
+    if (!s) return `No column “${k.col}” to sort by.`;
+    by.push({ s, desc: k.desc });
+  }
+  const idx = sortedOrder(len([...by.map((k) => k.s), ...moved.map((j) => cols[j])]), by);
+  for (const j of moved) out[j] = reordered(cols[j], idx);
+  return { cols: out, text: `${whole ? 'sorted' : `${which} sorted`} by ${by.map((k) => `${k.s.name}${k.desc ? ' (largest first)' : ''}`).join(', then ')}` };
+}
 export function filterRows(ds: Dataset, d: FilterData): { dataset: Dataset; report: string; text: string } | string {
   const n = Math.max(0, maxOf(ds.columns.map((c) => c.values.length)));
   const X = designatedX(ds);
@@ -88,34 +176,13 @@ export function filterRows(ds: Dataset, d: FilterData): { dataset: Dataset; repo
     rows = firsts.map((g) => g[0]);
     if (merged) steps.push(`${merged} repeated value${merged > 1 ? 's' : ''} of ${key.name} ${d.dup === 'first' ? 'kept once' : 'averaged'}`);
   }
-  // sorting by every key in turn (stable; missing values last in each)
-  const keys = sortKeysOf(d).filter((k) => k.col);
-  if (keys.length) {
-    const by: { s: Column; desc: boolean }[] = [];
-    for (const k of keys) {
-      const s = findColumn(cols, k.col);
-      if (!s) return `No column “${k.col}” to sort by.`;
-      by.push({ s, desc: k.desc });
-    }
-    const len = Math.max(0, maxOf(cols.map((c) => c.values.length)));
-    const idx = Array.from({ length: len }, (_, i) => i);
-    const bad = (w: string | number) => typeof w === 'number' && !Number.isFinite(w);
-    const one = (s: Column, desc: boolean, a: number, b: number) => {
-      const val = (i: number) => (s.text?.[i]?.trim() ? s.text[i] : s.values[i]);
-      const [u, v] = [val(a), val(b)];
-      if (bad(u) || bad(v)) return bad(u) === bad(v) ? 0 : bad(u) ? 1 : -1;
-      const c = typeof u === 'string' || typeof v === 'string' ? String(u).localeCompare(String(v), undefined, { numeric: true }) : (u as number) - (v as number);
-      return desc ? -c : c;
-    };
-    idx.sort((a, b) => {
-      for (const k of by) {
-        const c = one(k.s, k.desc, a, b);
-        if (c) return c;
-      }
-      return a - b;
-    });
-    cols = cols.map((c) => ({ ...c, values: Float64Array.from(idx, (i) => c.values[i]), ...(c.text ? { text: idx.map((i) => c.text![i]) } : {}), ...(c.mask ? { mask: Uint8Array.from(idx, (i) => c.mask![i]) } : {}) }));
-    steps.push(`sorted by ${by.map((k) => `${k.s.name}${k.desc ? ' (largest first)' : ''}`).join(', then ')}`);
+  // the sort rules in turn
+  for (const rule of sortRulesOf(d)) {
+    const r = applySortRule(cols, rule);
+    if (r === null) continue;
+    if (typeof r === 'string') return r;
+    cols = r.cols;
+    steps.push(r.text);
   }
   // only the first (or the last) N rows
   const top = Math.max(0, Math.floor(d.top ?? 0) || 0);

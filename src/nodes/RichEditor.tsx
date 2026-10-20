@@ -63,6 +63,7 @@ import { EngineContext } from '../engine/engine.ts';
 import { applyNotePage, getNotePage, subscribeNotePage, type NotePage } from '../theme.ts';
 import { nodeDisplayName } from '../nodeColors.ts';
 import type { AppNode } from '../types.ts';
+import { IMAGE_ACCEPT } from '../imageFile.ts';
 
 const ptOf = (v: string) => (v.endsWith('pt') ? parseFloat(v) : v.endsWith('px') ? (parseFloat(v) * 72) / 96 : NaN);
 
@@ -274,7 +275,7 @@ function Toolbar({ editor, onLarge, large, figures, onExport, onMath }: { editor
         <input
           ref={file}
           type="file"
-          accept="image/*"
+          accept={IMAGE_ACCEPT}
           hidden
           onChange={async (e) => {
             const f = e.target.files?.[0];

@@ -16,6 +16,7 @@ import { Check, Field, Messages, NumInput, OutPort, Select, TextInput, ResultSum
 import { NodeOptions } from './NodeOptions.tsx';
 import { Maximize2, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
+import { IMAGE_ACCEPT, imageUrl } from '../imageFile.ts';
 
 type Tool = 'none' | 'points' | 'errbar' | 'pipette' | 'area' | 'lasso' | 'exclude';
 // a calibration point being placed: one of the axes / corners, or a new grid point
@@ -38,14 +39,9 @@ const HINT: Record<Tool, string> = {
   exclude: 'Drag a rectangle over text, the legend, another curve: left out of the search (then back to Points).',
 };
 
-// an image file (or pasted) as a data URL: a large photo made smaller (3000 px at most, JPEG)
+// an image file (or pasted) as a data URL (a TIFF as a PNG): a large photo made smaller (3000 px at most, JPEG)
 async function readImage(file: Blob): Promise<{ url: string; w: number; h: number }> {
-  const url = await new Promise<string>((ok, no) => {
-    const r = new FileReader();
-    r.onload = () => ok(String(r.result));
-    r.onerror = () => no(r.error);
-    r.readAsDataURL(file);
-  });
+  const url = await imageUrl(file);
   const img = await loadImg(url);
   if (file.size < 1.5e6 && Math.max(img.naturalWidth, img.naturalHeight) <= 3000) return { url, w: img.naturalWidth, h: img.naturalHeight };
   const k = Math.min(1, 3000 / Math.max(img.naturalWidth, img.naturalHeight));
@@ -594,7 +590,7 @@ export function DigitizerNodeView({ id, data }: NodeProps<DigitizerNode>) {
         <input
           ref={file}
           type="file"
-          accept="image/*"
+          accept={IMAGE_ACCEPT}
           hidden
           onChange={(e) => {
             const f = e.target.files?.[0];

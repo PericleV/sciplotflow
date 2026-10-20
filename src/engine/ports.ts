@@ -69,7 +69,6 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
     case 'correl':
     case 'curvemath':
     case 'translate':
-    case 'filterrows':
     case 'clean':
     case 'smooth':
     case 'interp':
@@ -81,9 +80,22 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
       return 'dataset';
     case 'unstack':
       return 'dataset';
+    case 'filterrows':
+      // every sheet of a workbook: a workbook
+      return node.data.sheet === '*' ? 'workbook' : 'dataset';
     case 'combine': {
       if (handle === 'source') return 'column';
-      // side by side: a dataset; else columns in → a column out, a dataset among the inputs → a dataset
+      // what it gives: one column, a dataset, a workbook (in sheets; into a sheet of a workbook)
+      const res = node.data.result;
+      if (res === 'column') return 'column';
+      if (res === 'side' || res === 'tables') return 'dataset';
+      if (res === 'sheets') return 'workbook';
+      if (res === 'into') {
+        const e = ctx?.edges.find((x) => x.target === node.id && x.targetHandle === `in-${node.data.into ?? 0}`);
+        const src = e && ctx?.node(e.source);
+        return src && depth < 50 && sourcePort(src, e.sourceHandle, ctx, depth + 1) === 'workbook' ? 'workbook' : 'dataset';
+      }
+      // older nodes — side by side: a dataset; else columns in → a column out, a dataset among the inputs → a dataset
       if (node.data.how === 'side') return 'dataset';
       const ins = ctx?.edges.filter((x) => x.target === node.id && /^in-\d+$/.test(x.targetHandle ?? '')) ?? [];
       return depth < 50 && ins.some((e) => {
@@ -191,7 +203,7 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
     case 'peakwidth':
       return handle === 'in' ? ['dataset'] : [];
     case 'combine':
-      return /^in-\d+$/.test(handle) ? ['column', 'dataset'] : [];
+      return /^in-\d+$/.test(handle) ? ['column', 'dataset', 'workbook'] : [];
     case 'average':
       return /^in-\d+$/.test(handle) ? ['dataset'] : [];
     case 'report':
@@ -213,9 +225,11 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
       return handle === 'a' || handle === 'b' ? ['dataset', 'workbook'] : handle === 'x' || handle === 'ya' || handle === 'yb' ? ['column'] : [];
     case 'smooth':
     case 'fft':
-    case 'filterrows':
     case 'clean':
       return handle === 'in' ? ['dataset'] : [];
+    case 'filterrows':
+      // a workbook: the sheet chosen in the node, or every sheet
+      return handle === 'in' ? ['dataset', 'workbook'] : [];
     case 'interp':
       return handle === 'in' ? ['dataset'] : handle === 'at' ? ['column', 'dataset'] : [];
     case 'normalize':

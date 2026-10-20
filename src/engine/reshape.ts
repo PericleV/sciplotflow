@@ -3,7 +3,7 @@
 import { pick } from './extract.ts';
 import { joined, restarts, splitRows, takeRows, type CycleOpts } from './split.ts';
 import { parseRows } from './rows.ts';
-import { column, fmtNum, roleOf, valueText, type Column, type ColumnRole, type Dataset } from './table.ts';
+import { column, findColumn, fmtNum, roleOf, valueText, type Column, type ColumnRole, type Dataset, type Workbook } from './table.ts';
 import { maxOf } from './minmax.ts';
 
 // ---- Split into columns ----
@@ -453,6 +453,7 @@ export type CombineSpec = {
   match: 'name' | 'position'; // datasets: columns matched by their name or their place
   x: string; // sortx: the X column of the datasets ('' = the designated one)
   dup: 'all' | 'mean' | 'first'; // sortx: rows with the same X — all kept, their mean, the first one
+  desc?: boolean; // sortx: the largest first
 };
 export type CombineResult = { dataset: Dataset; source: Column; warnings: string[] };
 
@@ -518,7 +519,8 @@ export function combine(inputs: Dataset[], s: CombineSpec): CombineResult | stri
       return c && r.i < c.values.length ? c.values[r.i] : NaN;
     };
     // stable: equal X keep the order of the inputs; empty X at the end
-    refs = refs.map((r, j) => ({ r, j, v: xv(r) })).sort((a, b) => (Number.isNaN(a.v) ? (Number.isNaN(b.v) ? a.j - b.j : 1) : Number.isNaN(b.v) ? -1 : a.v - b.v || a.j - b.j)).map((e) => e.r);
+    const sign = s.desc ? -1 : 1;
+    refs = refs.map((r, j) => ({ r, j, v: xv(r) })).sort((a, b) => (Number.isNaN(a.v) ? (Number.isNaN(b.v) ? a.j - b.j : 1) : Number.isNaN(b.v) ? -1 : sign * (a.v - b.v) || a.j - b.j)).map((e) => e.r);
     if (s.dup !== 'all') {
       // rows with the same X: one row (the first, or the mean of every column)
       const groups: Ref[][] = [];
@@ -564,4 +566,233 @@ export function combine(inputs: Dataset[], s: CombineSpec): CombineResult | stri
   });
   const source = column('source', Float64Array.from(refs, (r) => r.k + 1));
   return { dataset: { name: inputs[0].name, columns }, source, warnings };
+}
+
+// ---- Combine columns ▸ the node: what comes out ----
+
+// One column (one under the other), side by side (a dataset), side by side in sheets (a workbook), into a table (the
+// columns of the other inputs put into one of them: a dataset or a sheet of a workbook), tables one under the other
+export type CombineMode = 'column' | 'side' | 'sheets' | 'into' | 'tables';
+// into a table: an input's columns at the end, the start, after / before / instead of a column; or its column under /
+// above a column (continuing it), inserted into it after a row, interleaved with it
+export type IntoAction = 'end' | 'start' | 'after' | 'before' | 'replace' | 'under' | 'above' | 'insert' | 'interleave';
+// the settings of one input: the column it gives (One column, and under / above … into a table; '' = its Y), its sheet
+// (a workbook; '' = the first), new names of its columns (comma-separated), the sheet it goes to (in sheets), what it
+// does into the table, the column of the table (ref) and the row (at)
+export type CombinePort = { col?: string; sheet?: string; names?: string; sheetOut?: string; action?: IntoAction; ref?: string; at?: number };
+// the settings as the node works with them (an older node's translated: combineSettings)
+export type CombineSettings = {
+  result: CombineMode;
+  order: number[]; // the ports, in the order wanted (only those connected)
+  ports: Record<string, CombinePort>;
+  into: number; // into a table: the port of the table
+  how: 'after' | 'interleave' | 'insert' | 'sortx';
+  at: number;
+  match: 'name' | 'position';
+  x: string;
+  dup: 'all' | 'mean' | 'first';
+  desc: boolean;
+  name: string;
+};
+// what is connected to a port
+export type CombineInput = { port: number; v: { t: 'column'; v: Column } | { t: 'dataset'; v: Dataset } | { t: 'workbook'; v: Workbook } };
+// the node's data (types.ts CombineData)
+type CombineNodeData = Omit<CombineSpec, 'how'> & {
+  how: CombineHow | 'side';
+  name: string;
+  where?: 'ports' | 'start' | 'after' | 'replace';
+  ref?: string;
+  names?: string;
+  result?: CombineMode;
+  order?: number[];
+  ports?: Record<string, CombinePort>;
+  into?: number;
+  desc?: boolean;
+};
+
+// The settings of the node for the inputs connected: its own, or those an older node (no `result`) meant — side by side
+// (after A, before A, after / in place of a column of A: into A), else columns → one column, a dataset → tables.
+export function combineSettings(d: CombineNodeData, ins: { port: number; kind: CombineInput['v']['t']; cols: number }[]): CombineSettings {
+  const present = ins.map((i) => i.port).sort((a, b) => a - b);
+  let order = d.order ? [...d.order.filter((p) => present.includes(p)), ...present.filter((p) => !d.order!.includes(p))] : present;
+  let how = d.how;
+  if (how === 'before') {
+    order = [...order].reverse();
+    how = 'after';
+  }
+  const base = { order, ports: d.ports ?? {}, into: d.into ?? order[0] ?? 0, at: d.at, match: d.match, x: d.x, dup: d.dup, desc: !!d.desc, name: d.name };
+  if (d.result) return { ...base, result: d.result, how: how === 'side' ? 'after' : how };
+  if (how !== 'side') return { ...base, result: ins.every((i) => i.kind === 'column') ? 'column' : 'tables', how };
+  // side by side, older: the names of the columns of B, C … in turn
+  const names = (d.names ?? '').split(',').map((s) => s.trim());
+  const ports: Record<string, CombinePort> = {};
+  let k = 0;
+  for (const p of order.slice(1)) {
+    const n = ins.find((i) => i.port === p)?.cols ?? 1;
+    const own = names.slice(k, k + n);
+    k += n;
+    if (own.some(Boolean)) ports[p] = { names: own.join(', ') };
+  }
+  const where = d.where ?? 'ports';
+  if (where === 'after' || where === 'replace') {
+    for (const p of order.slice(1)) ports[p] = { ...ports[p], action: where, ref: d.ref ?? '' };
+    return { ...base, result: 'into', ports, into: order[0] ?? 0, how: 'after' };
+  }
+  return { ...base, result: 'side', ports, order: where === 'start' ? [...order.slice(1), ...order.slice(0, 1)] : order, how: 'after' };
+}
+
+// Columns side by side: the shorter ones end in empty cells, a name met twice becomes “name (2)”.
+export function sideBySide(cols: Column[]): Column[] {
+  const len = Math.max(0, maxOf(cols.map((c) => c.values.length)));
+  const seen = new Set<string>();
+  return cols.map((c) => {
+    let nm = c.name;
+    for (let k = 2; seen.has(nm); k++) nm = `${c.name} (${k})`;
+    seen.add(nm);
+    if (c.values.length === len) return nm === c.name ? c : { ...c, name: nm };
+    const values = new Float64Array(len).fill(NaN);
+    values.set(c.values);
+    return { ...c, name: nm, values, ...(c.text ? { text: [...c.text, ...Array<string>(len - c.text.length).fill('')] } : {}), ...(c.mask ? { mask: undefined } : {}) };
+  });
+}
+
+// the letter of a port (A, B …)
+const portLetter = (p: number) => (p < 26 ? String.fromCharCode(65 + p) : String.fromCharCode(64 + Math.floor(p / 26)) + String.fromCharCode(65 + (p % 26)));
+// an input as a table: a column alone, a dataset, the sheet chosen of a workbook
+function tableOf(i: CombineInput, s: CombinePort | undefined): Dataset | string {
+  if (i.v.t === 'column') return { name: i.v.v.name, columns: [i.v.v] };
+  if (i.v.t === 'dataset') return i.v.v;
+  const book = i.v.v;
+  const sheet = s?.sheet ? book.sheets.find((q) => q.name === s.sheet) : book.sheets[0];
+  return sheet ?? `${portLetter(i.port)}: no sheet “${s?.sheet ?? ''}” in the workbook.`;
+}
+// the column an input gives: itself, the one chosen, else its first Y (else its first column that is not X)
+function columnOf(i: CombineInput, s: CombinePort | undefined): Column | string {
+  if (i.v.t === 'column') return i.v.v;
+  const t = tableOf(i, s);
+  if (typeof t === 'string') return t;
+  if (s?.col) return findColumn(t.columns, s.col) ?? `${portLetter(i.port)}: no column “${s.col}”.`;
+  const y = t.columns.findIndex((_, j) => roleOf(t.columns, j) === 'y');
+  const c = t.columns[y >= 0 ? y : t.columns.findIndex((_, j) => roleOf(t.columns, j) !== 'x')] ?? t.columns[0];
+  return c ?? `${portLetter(i.port)}: no column.`;
+}
+// the columns of an input with the new names given to them
+const renamed = (cols: Column[], names: string | undefined) => {
+  const nm = (names ?? '').split(',').map((s) => s.trim());
+  return cols.map((c, k) => (nm[k] ? { ...c, name: nm[k] } : c));
+};
+// two columns made one (the first keeps its name): b under / above a, inserted into a after row `at`, interleaved
+function joinColumns(a: Column, b: Column, how: 'under' | 'above' | 'insert' | 'interleave', at: number): Column {
+  const la = a.values.length;
+  const lb = b.values.length;
+  const refs: [0 | 1, number][] = [];
+  const seq = (k: 0 | 1, n: number) => Array.from({ length: n }, (_, i): [0 | 1, number] => [k, i]);
+  if (how === 'under') refs.push(...seq(0, la), ...seq(1, lb));
+  else if (how === 'above') refs.push(...seq(1, lb), ...seq(0, la));
+  else if (how === 'insert') {
+    const k = Math.min(la, Math.max(0, Math.floor(at || 0)));
+    refs.push(...seq(0, la).slice(0, k), ...seq(1, lb), ...seq(0, la).slice(k));
+  } else for (let i = 0; i < Math.max(la, lb); i++) refs.push(...(i < la ? [[0, i] as [0, number]] : []), ...(i < lb ? [[1, i] as [1, number]] : []));
+  const src = [a, b];
+  const text = a.text || b.text ? refs.map(([k, i]) => src[k].text?.[i] ?? '') : undefined;
+  const mask = a.mask || b.mask ? Uint8Array.from(refs, ([k, i]) => src[k].mask?.[i] ?? 0) : undefined;
+  return { ...a, values: Float64Array.from(refs, ([k, i]) => src[k].values[i]), ...(text ? { text } : {}), ...(mask ? { mask } : {}) };
+}
+
+export type CombineOut = { out: CombineInput['v']; source?: Column; warnings: string[] } | string;
+
+// The node: the inputs (in the order of their ports) combined as the settings say.
+export function combineNode(ins: CombineInput[], s: CombineSettings): CombineOut {
+  if (!ins.length) return 'Connect columns, datasets or workbooks to A, B, C …';
+  const byPort = new Map(ins.map((i) => [i.port, i]));
+  const ordered = s.order.map((p) => byPort.get(p)!).filter(Boolean);
+  const port = (i: CombineInput) => s.ports[i.port];
+  const warnings: string[] = [];
+  const rowsDiffer = (sets: Dataset[]) => {
+    const lens = [...new Set(sets.map((q) => Math.max(0, maxOf(q.columns.map((c) => c.values.length)))))];
+    if (lens.length > 1) warnings.push(`The inputs have ${lens.join(', ')} rows: empty cells below the shorter ones.`);
+  };
+  if (s.result === 'column' || s.result === 'tables') {
+    const sets: Dataset[] = [];
+    for (const i of ordered) {
+      if (s.result === 'column') {
+        const c = columnOf(i, port(i));
+        if (typeof c === 'string') return c;
+        sets.push({ name: c.name, columns: [c] });
+      } else {
+        const t = tableOf(i, port(i));
+        if (typeof t === 'string') return t;
+        sets.push(t);
+      }
+    }
+    const r = combine(sets, { how: s.how, at: s.at, match: s.result === 'column' ? 'position' : s.match, x: s.result === 'column' ? '' : s.x, dup: s.dup, desc: s.desc });
+    if (typeof r === 'string') return r;
+    // the source: the port of every row (1 = A, 2 = B …)
+    const source = { ...r.source, values: Float64Array.from(r.source.values, (k) => (Number.isFinite(k) ? ordered[k - 1].port + 1 : k)) };
+    if (s.result === 'column') {
+      const c = r.dataset.columns[0];
+      return { out: { t: 'column', v: { ...c, name: s.name.trim() || c.name } }, source, warnings: r.warnings };
+    }
+    return { out: { t: 'dataset', v: r.dataset }, source, warnings: r.warnings };
+  }
+  if (s.result === 'side' || s.result === 'sheets') {
+    // in sheets: the inputs with the same sheet side by side, the sheets in the order first met
+    const groups = new Map<string, Dataset[]>();
+    for (const i of ordered) {
+      const t = tableOf(i, port(i));
+      if (typeof t === 'string') return t;
+      const key = s.result === 'sheets' ? port(i)?.sheetOut?.trim() || 'Sheet 1' : '';
+      groups.set(key, [...(groups.get(key) ?? []), { ...t, columns: renamed(t.columns, port(i)?.names) }]);
+    }
+    const sheets = [...groups].map(([key, sets]): Dataset => {
+      rowsDiffer(sets);
+      return { name: key || sets[0].name, columns: sideBySide(sets.flatMap((q) => q.columns)) };
+    });
+    if (s.result === 'side') return { out: { t: 'dataset', v: sheets[0] }, warnings };
+    return { out: { t: 'workbook', v: { name: ordered[0] ? (tableOf(ordered[0], port(ordered[0])) as Dataset).name : 'Combined', sheets } }, warnings };
+  }
+  // into a table: the other inputs in turn
+  const target = byPort.get(s.into) ?? ordered[0];
+  const table = tableOf(target, port(target));
+  if (typeof table === 'string') return table;
+  let cols = [...table.columns];
+  const lens = [Math.max(0, maxOf(cols.map((c) => c.values.length)))];
+  for (const i of ordered) {
+    if (i === target) continue;
+    const ps = port(i) ?? {};
+    const action = ps.action ?? 'end';
+    const L = portLetter(i.port);
+    const refAt = () => {
+      if (!ps.ref) return `${L}: choose the column of ${portLetter(target.port)}.`;
+      const c = findColumn(cols, ps.ref);
+      return c ? cols.indexOf(c) : `${L}: no column “${ps.ref}” in ${portLetter(target.port)}.`;
+    };
+    if (action === 'under' || action === 'above' || action === 'insert' || action === 'interleave') {
+      const j = refAt();
+      if (typeof j === 'string') return j;
+      const c = columnOf(i, ps);
+      if (typeof c === 'string') return c;
+      cols[j] = joinColumns(cols[j], c, action, ps.at ?? 0);
+      continue;
+    }
+    const t = tableOf(i, ps);
+    if (typeof t === 'string') return t;
+    lens.push(Math.max(0, maxOf(t.columns.map((c) => c.values.length))));
+    const added = renamed(t.columns, ps.names);
+    if (action === 'end') cols = [...cols, ...added];
+    else if (action === 'start') cols = [...added, ...cols];
+    else {
+      const j = refAt();
+      if (typeof j === 'string') return j;
+      cols = [...cols.slice(0, action === 'after' ? j + 1 : j), ...added, ...cols.slice(action === 'before' ? j : j + 1)];
+    }
+  }
+  const ls = [...new Set(lens)];
+  if (ls.length > 1) warnings.push(`The inputs have ${ls.join(', ')} rows: empty cells below the shorter ones.`);
+  const ds: Dataset = { name: table.name, columns: sideBySide(cols) };
+  if (target.v.t === 'workbook') {
+    const book = target.v.v;
+    return { out: { t: 'workbook', v: { ...book, sheets: book.sheets.map((q) => (q === table ? ds : q)) } }, warnings };
+  }
+  return { out: { t: 'dataset', v: ds }, warnings };
 }

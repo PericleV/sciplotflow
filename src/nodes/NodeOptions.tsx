@@ -6,7 +6,7 @@ import { type ReactNode, type SyntheticEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useInternalNode, useNodeConnections, useNodeId, useReactFlow } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
-import { sheetPort } from '../engine/evaluate.ts';
+import { everySheet, sheetPort } from '../engine/evaluate.ts';
 import type { AppNode } from '../types.ts';
 import { InPanel, useSlot } from './inspectorStore.ts';
 import { Field, Select } from './ui.tsx';
@@ -41,7 +41,7 @@ export function NodeOptions({ children }: { children: ReactNode }) {
         {sheets && id && (
           <div className="row">
             <Field label="Sheet" title="The sheet of the workbook these data come from">
-              <Select<string> value={sheet} options={[['', viaShown ? 'the one shown in the source' : `first (${sheets[0] ?? ''})`], ...sheets.map((nm): [string, string] => [nm, nm]), ...(sheet && !sheets.includes(sheet) ? [[sheet, `${sheet} (missing)`] as [string, string]] : [])]} onChange={chooseSheet} />
+              <Select<string> value={sheet} options={[['', viaShown ? 'the one shown in the source' : `first (${sheets[0] ?? ''})`], ...(everySheet(type) && !viaShown ? [['*', 'every sheet (a workbook out)'] as [string, string]] : []), ...sheets.map((nm): [string, string] => [nm, nm]), ...(sheet && sheet !== '*' && !sheets.includes(sheet) ? [[sheet, `${sheet} (missing)`] as [string, string]] : [])]} onChange={chooseSheet} />
             </Field>
           </div>
         )}

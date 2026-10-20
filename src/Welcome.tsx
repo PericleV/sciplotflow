@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { FileUp, FolderOpen, FilePlus2, ArrowRight, Camera, X } from 'lucide-react';
 import { libList, type LibEntry } from './library.ts';
 import { IC } from './nodes/iconProps.ts';
+import { ACCEPT, pickDataFiles } from './readFiles.ts';
 import { setWelcomeAtStart, welcomeAtStart } from './theme.ts';
 import { loadTourProgress, SHOW_TOURS, stepsOf, TOURS } from './tour/tours.ts';
 
@@ -67,7 +68,11 @@ export function Welcome(props: {
           Data analysis and publication-quality graphs in your browser, built from nodes. Import a file, clean it, compute, fit and test, then draw the figure. Everything updates as you change it, and your data never leave your computer.
         </p>
         <div className="welcome-actions">
-          <button title="Open a data file (CSV, text, Excel …) in a new Import node. You can also drop the file on the canvas." onClick={() => file.current?.click()}>
+          <button title="Open a data file (CSV, text, Excel …) in a new Import node. You can also drop the file on the canvas." onClick={() =>
+              void pickDataFiles(() => file.current?.click()).then((fs) => {
+                if (fs?.length) props.onImport(fs);
+              })
+            }>
             <FileUp {...IC} /> Import your data…
           </button>
           <button title="Open a project you saved with Save (.json)" onClick={props.onOpenFile}>
@@ -86,6 +91,7 @@ export function Welcome(props: {
           ref={file}
           type="file"
           multiple
+          accept={ACCEPT}
           hidden
           onChange={(e) => {
             const fs = [...(e.target.files ?? [])];

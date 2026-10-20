@@ -33,6 +33,36 @@ export async function readText(f: Blob, encoding = 'auto'): Promise<string> {
 export const isWorkbook = (name: string) => /\.(xlsx|xlsm|xlsb|xls|ods|fods)$/i.test(name);
 export const ACCEPT = '.csv,.txt,.tsv,.dat,.asc,.prn,.s1p,.s2p,.s3p,.s4p,.s6p,.s8p,.snp,.xlsx,.xlsm,.xlsb,.xls,.ods,text/*';
 
+// The kinds of data files, named, for the browser's file dialog (Chrome, Edge): the first one shown, “All files” too
+const TEXT_EXTS = ['.csv', '.txt', '.tsv', '.dat', '.asc', '.prn'];
+const SHEET_EXTS = ['.xlsx', '.xlsm', '.xlsb', '.xls', '.ods'];
+const TOUCHSTONE_EXTS = ['.s1p', '.s2p', '.s3p', '.s4p', '.s6p', '.s8p', '.snp'];
+const FILE_TYPES = [
+  { description: 'Data files', accept: { 'text/plain': [...TEXT_EXTS, ...TOUCHSTONE_EXTS], 'application/octet-stream': SHEET_EXTS } },
+  { description: 'Text tables', accept: { 'text/plain': TEXT_EXTS } },
+  { description: 'Spreadsheets', accept: { 'application/octet-stream': SHEET_EXTS } },
+  { description: 'Touchstone (S-parameters)', accept: { 'text/plain': TOUCHSTONE_EXTS } },
+];
+type OpenFilePicker = (o: { multiple?: boolean; types?: typeof FILE_TYPES; excludeAcceptAllOption?: boolean; id?: string }) => Promise<{ getFile: () => Promise<File> }[]>;
+// Data files chosen in the browser's dialog, its kinds named (Data files, Text tables, Spreadsheets …); null: the
+// dialog closed. Where the browser has no such dialog (Firefox, Safari) or may not open it here: `fallback` (a file
+// input) is clicked instead and undefined returned.
+export async function pickDataFiles(fallback: () => void, multiple = true): Promise<File[] | null | undefined> {
+  const picker = (window as unknown as { showOpenFilePicker?: OpenFilePicker }).showOpenFilePicker;
+  if (!picker) {
+    fallback();
+    return undefined;
+  }
+  try {
+    const handles = await picker({ multiple, types: FILE_TYPES, excludeAcceptAllOption: false, id: 'data-files' });
+    return await Promise.all(handles.map((h) => h.getFile()));
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') return null;
+    fallback();
+    return undefined;
+  }
+}
+
 // The sheets of a workbook file (empty sheets left out).
 async function readWorkbook(f: File): Promise<ImportSheet[]> {
   const XLSX = await import('xlsx');

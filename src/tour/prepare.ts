@@ -233,7 +233,7 @@ export const PREPARE: Tour = {
           combine,
           (s) => ({ type: 'combine', data: structuredClone(COMBINE_DEFAULTS), from: [...wire(gencol(s)?.id, 'in-0'), ...wire(extract(s)?.id, 'in-1'), ...wire(mathcol(s)?.id, 'in-2')] }),
         ),
-        sets<'combine'>('Side by side', 'Set **How** to **side by side**. You get one table with Time, Run 2 and the model, ready for a graph.\n\nCombine can also stack columns or tables one under the other.', combine, (n) => n.data.how === 'side', (n) => [put(n.id, 'How', 'side by side', { how: 'side' })], 'How'),
+        sets<'combine'>('Side by side', 'Set **Result** to **side by side**. You get one table with Time, Run 2 and the model, ready for a graph.\n\nCombine can also put columns one under the other, into a table, or in sheets.', combine, (n) => n.data.result === 'side' || (!n.data.result && n.data.how === 'side'), (n) => [put(n.id, 'Result', 'side by side (a dataset)', { result: 'side' })], 'Result'),
       ],
     },
     {

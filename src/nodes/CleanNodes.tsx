@@ -3,7 +3,7 @@ import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import { X } from 'lucide-react';
 import type { AppNode, CleanData, CleanNode, FilterData, FilterNode } from '../types.ts';
-import { sortKeysOf, type SortKey } from '../engine/cleaning.ts';
+import { sortRulesOf, type SortKey, type SortRule } from '../engine/cleaning.ts';
 import { IC } from './iconProps.ts';
 import { DataPreview } from './DataNodes.tsx';
 import { Y_AUTO } from './xAuto.ts';
@@ -18,32 +18,80 @@ function useNode<T>(id: string) {
   return { r, names: (r?.view.available ?? []).map((c) => c.name), set: (p: Partial<T>) => updateNodeData(id, p as Record<string, unknown>) };
 }
 
-// The columns the rows are sorted by, one under the other: each from the smallest up or from the largest down; rows
-// equal in one are sorted by the next. Older projects: their one column (sortBy) shown as the first key.
-function SortKeys({ data, cols, set }: { data: FilterData; cols: [string, string][]; set: (p: Partial<FilterData>) => void }) {
-  const keys = sortKeysOf(data);
-  const put = (sorts: SortKey[]) => set({ sorts, sortBy: '', desc: false });
-  const ORDER: [string, string][] = [
-    ['up', 'smallest first'],
-    ['down', 'largest first'],
-  ];
-  if (!keys.length) return <Select value="" options={[['', 'not sorted'], ...cols]} onChange={(col) => col && put([{ col, desc: false }])} />;
+// The sort rules, applied in turn: each moves whole rows or only some columns; by columns (the first, then the next for
+// rows equal in it), every column by its own values, or reversed. Older projects: their keys shown as one rule.
+const ORDER: [string, string][] = [
+  ['up', 'smallest first'],
+  ['down', 'largest first'],
+];
+function SortRules({ data, cols, set }: { data: FilterData; cols: [string, string][]; set: (p: Partial<FilterData>) => void }) {
+  const rules = sortRulesOf(data);
+  const put = (sortRules: SortRule[]) => set({ sortRules, sorts: undefined, sortBy: '', desc: false });
+  const setRule = (i: number, p: Partial<SortRule>) => put(rules.map((q, j) => (j === i ? { ...q, ...p } : q)));
+  const names = cols.map(([c]) => c);
+  const first = names[0] ?? '';
   return (
-    <span className="sort-keys">
-      {keys.map((k, i) => (
-        <span key={i} className="row">
-          {i > 0 && <span className="muted">then</span>}
-          <Select value={k.col} options={cols.some(([c]) => c === k.col) ? cols : [[k.col, k.col], ...cols]} onChange={(col) => put(keys.map((q, j) => (j === i ? { ...q, col } : q)))} />
-          <Select value={k.desc ? 'down' : 'up'} options={ORDER} onChange={(o) => put(keys.map((q, j) => (j === i ? { ...q, desc: o === 'down' } : q)))} />
-          <button className="nodrag ts-btn" title="Not sorted by this column" aria-label="Remove" onClick={() => put(keys.filter((_, j) => j !== i))}>
-            <X {...IC} />
-          </button>
-        </span>
-      ))}
-      <button className="nodrag" title="Rows equal in the columns above are sorted by one more column" onClick={() => put([...keys, { col: cols.find(([c]) => !keys.some((k) => k.col === c))?.[0] ?? '', desc: false }])}>
-        + Then by
+    <div className="sort-rules">
+      {rules.map((r, i) => {
+        const keys = r.keys ?? [];
+        const setKeys = (k: SortKey[]) => setRule(i, { keys: k });
+        return (
+          <div key={i} className="col-added">
+            <div className="row">
+              <b>Rule {i + 1}</b>
+              <button className="nodrag ts-btn" title="Remove this rule" aria-label="Remove" onClick={() => put(rules.filter((_, j) => j !== i))}>
+                <X {...IC} />
+              </button>
+            </div>
+            <div className="col-form">
+              <span title="What moves: whole rows (every column with them), or only some columns (the others stay as they are)">Move</span>
+              <ColumnsPicker value={r.cols ?? ''} names={names} auto="whole rows" title="Whole rows, or only these columns: one, or several (a list: 2, B-D, names)" onChange={(c) => setRule(i, { cols: c || undefined })} />
+              <span>How</span>
+              <Select<SortRule['how']>
+                value={r.how}
+                options={[
+                  ['by', 'sorted by columns'],
+                  ['own', 'each by its own values'],
+                  ['reverse', 'reversed (last row first)'],
+                ]}
+                onChange={(how) => setRule(i, { how, ...(how === 'by' && !keys.length ? { keys: [{ col: first, desc: false }] } : {}) })}
+              />
+              {r.how === 'own' && (
+                <>
+                  <span>Order</span>
+                  <Select value={r.desc ? 'down' : 'up'} options={ORDER} onChange={(o) => setRule(i, { desc: o === 'down' || undefined })} />
+                </>
+              )}
+              {r.how === 'by' && (
+                <>
+                  <span title="Rows equal in the first column are sorted by the next, and so on">By</span>
+                  <span className="sort-keys">
+                    {keys.map((k, q) => (
+                      <span key={q} className="row">
+                        {q > 0 && <span className="muted">then</span>}
+                        <Select value={k.col} options={cols.some(([c]) => c === k.col) ? cols : [[k.col, k.col], ...cols]} onChange={(col) => setKeys(keys.map((x, j) => (j === q ? { ...x, col } : x)))} />
+                        <Select value={k.desc ? 'down' : 'up'} options={ORDER} onChange={(o) => setKeys(keys.map((x, j) => (j === q ? { ...x, desc: o === 'down' } : x)))} />
+                        {keys.length > 1 && (
+                          <button className="nodrag ts-btn" title="Not sorted by this column" aria-label="Remove" onClick={() => setKeys(keys.filter((_, j) => j !== q))}>
+                            <X {...IC} />
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                    <button className="nodrag" title="Rows equal in the columns above are sorted by one more column" onClick={() => setKeys([...keys, { col: names.find((c) => !keys.some((k) => k.col === c)) ?? first, desc: false }])}>
+                      + Then by
+                    </button>
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })}
+      <button className="nodrag" title="One more sort, after the ones above (e.g. columns A and B by T, then C on its own)" onClick={() => put([...rules, { how: 'by', keys: [{ col: first, desc: false }] }])}>
+        + Sort rule
       </button>
-    </span>
+    </div>
   );
 }
 
@@ -53,7 +101,7 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
   const cols: [string, string][] = names.map((n) => [n, n]);
   return (
     <div className="node node-clean">
-      <InPort label="dataset" port="dataset" id="in" title="The rows of this dataset (every column with them)" />
+      <InPort label="dataset" port="dataset" id="in" title="The rows of this dataset (every column with them); a workbook: the sheet chosen, or every sheet" />
       {(r?.view.report ?? []).map((l, i) => (
         <div key={i} className="hint">
           {l}
@@ -80,8 +128,9 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
             </>
           )}
         </span>
-        <span>Sort by</span>
-        <SortKeys data={data} cols={cols} set={set} />
+        <span title="The sort rules, applied in turn">Sort</span>
+        <span className="muted">{sortRulesOf(data).length ? 'the rules in turn' : 'not sorted'}</span>
+        <SortRules data={data} cols={cols} set={set} />
         <span title="After sorting: only this many rows, from the top or from the bottom (sorted largest first, the first 5 are the 5 largest values). Empty: all">Only the</span>
         <span className="row">
           <Select<'start' | 'end'>
@@ -102,10 +151,11 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
         </span>
       </div>
       {out?.t === 'dataset' && <DataPreview columns={out.v.columns} rows={5} />}
+      {out?.t === 'workbook' && out.v.sheets[0] && <DataPreview columns={out.v.sheets[0].columns} rows={5} />}
       </NodeOptions>
       <ResultSummary result={r} />
       <Messages result={r} />
-      <OutPort label="dataset" port="dataset" id="out" title="The rows kept, merged, sorted, thinned (every column)" />
+      <OutPort label={out?.t === 'workbook' ? 'workbook' : 'dataset'} port={out?.t === 'workbook' ? 'workbook' : 'dataset'} id="out" title="The rows kept, merged, sorted, thinned (every column); every sheet: a workbook" />
     </div>
   );
 }

@@ -54,6 +54,7 @@ import { OptColor } from './fields.tsx';
 import { Check, Field, NumInput, Select } from './ui.tsx';
 import { alignMoves, copiedItems, copyItems, distributeMoves, groupItems, toPathItem, ungroupItems, geomBox, mapItem, MM, moveItem, snapAxis, union, type AlignHow, type Rect } from './drawingOps.ts';
 import type { Pt, StickSide } from '../figure/shapes.ts';
+import { IMAGE_ACCEPT, imageUrl } from '../imageFile.ts';
 
 type Tool = 'select' | 'corner' | 'pen' | 'image' | 'text' | 'line' | 'arrow' | 'double' | 'curved' | 'elbow' | 'equilibrium' | 'retro' | 'dimension' | 'rect' | 'ellipse' | 'polygon' | 'polyline' | 'star' | 'regular' | 'arc' | 'bracket' | 'brace' | 'callout';
 // what each tool draws: its first look (the points come from the drag)
@@ -61,7 +62,7 @@ const TOOLS: { tool: Tool; title: string; key?: string; spec?: Partial<ShapeSpec
   { tool: 'select', title: 'Select and move (V): click an object, Shift / Ctrl + click more, or drag a box around them', key: 'v' },
   { tool: 'corner', title: 'Corners (K): click a shape, then its corners (Shift: more) and drag one inward to round them — as much as you drag (its radius also typed in the options)', key: 'k' },
   { tool: 'pen', title: 'Pen (B): click for a corner, drag for a smooth node (its curve); click the first node to close the path, double-click (or Enter) to end it open', key: 'b' },
-  { tool: 'image', title: 'Image (I): a picture from a file (PNG, JPEG, SVG …) — also paste one (Ctrl+V) or drop it on the page', key: 'i' },
+  { tool: 'image', title: 'Image (I): a picture from a file (PNG, JPEG, TIFF, SVG …) — also paste one (Ctrl+V) or drop it on the page', key: 'i' },
   { tool: 'text', title: 'Text (T): click where it goes', key: 't' },
   { tool: 'line', title: 'Line (L): drag from its start to its end (Shift: by 15°)', key: 'l', spec: { kind: 'line', head2: 'none' } },
   { tool: 'arrow', title: 'Arrow (A): drag from its start to its head (Shift: by 15°)', key: 'a', spec: { kind: 'arrow' } },
@@ -587,9 +588,7 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
   // a picture placed in the middle of the page (40 mm wide at most), its proportions kept
   const addImage = (file: File) => {
     if (file.size > 3e6 && !confirm(`${file.name} is ${(file.size / 1e6).toFixed(1)} MB: it goes into the project (and its files). Place it anyway?`)) return;
-    const rd = new FileReader();
-    rd.onload = () => {
-      const href = String(rd.result);
+    void imageUrl(file).then((href) => {
       const img = new Image();
       const place = (nw: number, nh: number) => {
         const w = Math.min(40, (W / MM) * 0.6);
@@ -600,13 +599,12 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
       img.onload = () => place(img.naturalWidth, img.naturalHeight);
       img.onerror = () => place(0, 0);
       img.src = href;
-    };
-    rd.readAsDataURL(file);
+    }, (e: Error) => alert(`${file.name}: ${e.message}`));
   };
   const pickImage = () => {
     const inp = document.createElement('input');
     inp.type = 'file';
-    inp.accept = 'image/*,.svg';
+    inp.accept = IMAGE_ACCEPT;
     inp.onchange = () => inp.files?.[0] && addImage(inp.files[0]);
     inp.click();
   };

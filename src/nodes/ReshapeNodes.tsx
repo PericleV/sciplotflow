@@ -1,10 +1,11 @@
-// Split into columns (a long table cut into blocks side by side) and Combine columns (columns / datasets one under
-// the other).
+// Split into columns (a long table cut into blocks side by side) and Combine columns (columns, datasets, workbooks:
+// one column, side by side, in sheets, into a table, tables one under the other).
+import { useState } from 'react';
 import { xAutoLabel } from './xAuto.ts';
 import { useNodeConnections, useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import { columnLetter } from '../engine/csv.ts';
-import type { BlockMode, ThenMode } from '../engine/reshape.ts';
+import { combineSettings, type BlockMode, type CombineMode, type CombinePort, type CombineSettings, type IntoAction, type ThenMode } from '../engine/reshape.ts';
 import { rowsText } from '../engine/split.ts';
 import { SplitGraphView, type SplitEdits } from './SplitGraph.tsx';
 import { RotateCcw, X as XIcon } from 'lucide-react';
@@ -273,115 +274,237 @@ export function UnstackNodeView({ id, data }: NodeProps<UnstackNode>) {
   );
 }
 
-const COMBINE_HOW: [CombineData['how'], string][] = [
-  ['side', 'side by side (columns next to each other)'],
-  ['after', 'after (A, then B, C …)'],
-  ['before', 'before (… C, B, then A)'],
-  ['insert', 'inserted into A after row'],
-  ['interleave', 'interleaved (A₁ B₁ A₂ B₂ …)'],
-  ['sortx', 'sorted by X'],
+const RESULTS: [CombineMode, string][] = [
+  ['column', 'one column (one under the other)'],
+  ['side', 'side by side (a dataset)'],
+  ['sheets', 'side by side, in sheets (a workbook)'],
+  ['into', 'into a table (a dataset or a sheet)'],
+  ['tables', 'tables one under the other (a dataset)'],
 ];
+const INTO_ACTIONS: [IntoAction, string][] = [
+  ['end', 'new columns at the end'],
+  ['start', 'new columns at the start'],
+  ['after', 'new columns after'],
+  ['before', 'new columns before'],
+  ['replace', 'new columns instead of'],
+  ['under', 'under the column (continues it)'],
+  ['above', 'above the column'],
+  ['insert', 'into the column after row'],
+  ['interleave', 'interleaved with the column'],
+];
+// the actions that put one column into a column of the table (the others add columns)
+const INTO_ONE = new Set<IntoAction>(['under', 'above', 'insert', 'interleave']);
+
+// The settings written as node data (an older node takes the new form at its first change)
+const combineData = (s: CombineSettings): Partial<CombineData> => ({ result: s.result, order: s.order, ports: s.ports, into: s.into, how: s.how, at: s.at, match: s.match, x: s.x, dup: s.dup, desc: s.desc || undefined, name: s.name });
 
 export function CombineNodeView({ id, data }: NodeProps<CombineNode>) {
   const { updateNodeData } = useReactFlow<AppNode>();
-  const set = (patch: Partial<CombineData>) => updateNodeData(id, patch);
   const r = useNodeResult(id);
   const conns = useNodeConnections({ handleType: 'target' });
   // one free port after the last one used
   const used = conns.map((c) => Number(/^in-(\d+)$/.exec(c.targetHandle ?? '')?.[1] ?? -1));
   const count = Math.max(2, Math.max(-1, maxOf(used)) + 2);
   const ins = r?.view.combine ?? [];
-  const byLetter = new Map(ins.map((i) => [i.letter, i]));
-  const side = data.how === 'side';
-  const anyDataset = ins.some((i) => i.kind === 'dataset');
+  const byPort = new Map(ins.map((i) => [i.port, i]));
+  const s = r?.view.combineSettings ?? combineSettings(data, []);
+  const write = (p: Partial<CombineSettings>) => updateNodeData(id, combineData({ ...s, ...p }));
+  const setPort = (port: number, p: Partial<CombinePort>) => write({ ports: { ...s.ports, [port]: { ...s.ports[port], ...p } } });
+  const [moving, setMoving] = useState<number | null>(null);
+  const [dropAt, setDropAt] = useState<number | null>(null);
+  const move = (a: number, b: number) => {
+    if (a === b) return;
+    const order = [...s.order];
+    const [x] = order.splice(a, 1);
+    order.splice(b, 0, x);
+    write({ order });
+  };
+  const stack = s.result === 'column' || s.result === 'tables';
+  const target = byPort.get(s.into);
   const o = r?.outputs.out;
-  const outCols: Column[] = o?.t === 'dataset' ? o.v.columns : o?.t === 'column' ? [o.v] : [];
+  // a workbook out: the sheet the others went into, else the first
+  const shownSheet = o?.t === 'workbook' ? ((s.result === 'into' && o.v.sheets.find((q) => q.name === (s.ports[s.into]?.sheet || target?.sheets?.[0]))) || o.v.sheets[0]) : undefined;
+  const preview: Column[] = o?.t === 'dataset' ? o.v.columns : o?.t === 'column' ? [o.v] : (shownSheet?.columns ?? []);
+  const outKind = o?.t === 'workbook' ? 'workbook' : o?.t === 'column' ? 'column' : o ? 'dataset' : s.result === 'column' ? 'column' : s.result === 'sheets' ? 'workbook' : 'dataset';
+  const colOpts = (names: string[]): [string, string][] => names.map((n, k) => [n, `${columnLetter(k)} · ${n}`]);
   return (
     <div className="node node-combine">
       {Array.from({ length: count }, (_, k) => {
-        const inp = byLetter.get(columnLetter(k));
+        const inp = byPort.get(k);
         return (
-          <InPort key={k} label={columnLetter(k)} port="column" id={`in-${k}`} title="A column or a dataset (side by side: a dataset out; else all columns: a column out, a dataset among them: a dataset out)">
-            <span className="muted ellipsis">{inp ? `${inp.name} · ${inp.kind === 'dataset' ? `${inp.cols} columns, ` : ''}${inp.rows} rows` : 'connect a column or a dataset'}</span>
+          <InPort key={k} label={columnLetter(k)} port="column" id={`in-${k}`} title="A column, a dataset or a workbook (its sheet chosen in the list of inputs)">
+            <span className="muted ellipsis">{inp ? `${inp.name} · ${inp.kind === 'column' ? '' : `${inp.cols} columns, `}${inp.rows} rows` : 'connect a column, dataset or workbook'}</span>
           </InPort>
         );
       })}
       <NodeOptions>
-      <div className="grid2">
-        <Field label="How" title="Side by side: the columns of B, C … next to those of A. Else one under the other — the rows of B, C … after A, before it, inside it after a row, one row of each in turn, or all sorted by X">
-          <Select value={data.how} options={COMBINE_HOW} onChange={(how) => set({ how })} />
-        </Field>
-        {side && (
-          <Field label="Where" title="Where the columns of B, C … go among those of A">
-            <Select
-              value={data.where ?? 'ports'}
-              options={[
-                ['ports', 'after A (in the order of the ports)'],
-                ['start', 'before A'],
-                ['after', 'after a column of A'],
-                ['replace', 'in place of a column of A'],
-              ]}
-              onChange={(where) => set({ where })}
-            />
+        <div className="grid2">
+          <Field label="Result" title="What comes out: one column (the inputs one under the other), a dataset (side by side), a workbook (side by side, in sheets), a table with the other inputs put into it, or tables one under the other">
+            <Select<CombineMode> value={s.result} options={RESULTS} onChange={(result) => write({ result, ...(result === 'into' && !byPort.has(s.into) ? { into: s.order[0] ?? 0 } : {}) })} />
           </Field>
+          {stack && (
+            <Field label="How" title="One after another (in the order of the list), one row of each in turn, inserted into the first after a row, or all sorted">
+              <Select<CombineSettings['how']>
+                value={s.how}
+                options={[
+                  ['after', 'one after another'],
+                  ['interleave', 'interleaved (A₁ B₁ A₂ B₂ …)'],
+                  ['insert', 'into the first after row'],
+                  ['sortx', s.result === 'column' ? 'sorted by value' : 'sorted by a column'],
+                ]}
+                onChange={(how) => write({ how })}
+              />
+            </Field>
+          )}
+          {stack && s.how === 'insert' && (
+            <Field label="After row" title="The others go after this row of the first in the list (0: before its first row)">
+              <NumInput value={s.at} min={0} step={1} onChange={(at) => write({ at })} />
+            </Field>
+          )}
+          {s.result === 'tables' && s.how === 'sortx' && (
+            <Field label="By" title="The column the rows are sorted by">
+              <ColumnSelect value={s.x} onChange={(x) => write({ x })} avail={r?.view.available ?? []} auto={xAutoLabel(r?.view.available)} />
+            </Field>
+          )}
+          {stack && s.how === 'sortx' && (
+            <>
+              <Field label="Order">
+                <Select<'up' | 'down'>
+                  value={s.desc ? 'down' : 'up'}
+                  options={[
+                    ['up', 'smallest first'],
+                    ['down', 'largest first'],
+                  ]}
+                  onChange={(v) => write({ desc: v === 'down' })}
+                />
+              </Field>
+              <Field label="Same value" title="Rows with the same value: all kept, one row with the mean, or the first one">
+                <Select<CombineSettings['dup']>
+                  value={s.dup}
+                  options={[
+                    ['all', 'keep all'],
+                    ['mean', 'mean'],
+                    ['first', 'the first'],
+                  ]}
+                  onChange={(dup) => write({ dup })}
+                />
+              </Field>
+            </>
+          )}
+          {s.result === 'tables' && (
+            <Field label="Match" title="The columns of the tables matched by their name (a missing one: empty cells) or by their place">
+              <Select<CombineSettings['match']>
+                value={s.match}
+                options={[
+                  ['name', 'by name'],
+                  ['position', 'by position'],
+                ]}
+                onChange={(match) => write({ match })}
+              />
+            </Field>
+          )}
+          {s.result === 'column' && (
+            <Field label="Name" title="The name of the column out (empty: that of the first)">
+              <TextInput value={s.name} placeholder={byPort.get(s.order[0])?.name ?? 'of the first'} onChange={(name) => write({ name })} />
+            </Field>
+          )}
+          {s.result === 'into' && (
+            <Field label="Into" title="The table the other inputs go into (a dataset, a column, or a sheet of a workbook: the other sheets kept)">
+              <Select<string> value={String(s.into)} options={(ins.length ? ins : [{ port: s.into, letter: columnLetter(s.into), name: '' }]).map((i): [string, string] => [String(i.port), `${i.letter}${i.name ? ` · ${i.name}` : ''}`])} onChange={(v) => write({ into: Number(v) })} />
+            </Field>
+          )}
+        </div>
+        {ins.length > 0 && <div className="hint">{s.result === 'into' ? 'Drag ⠿ to change the order the inputs go in.' : 'In this order (drag ⠿ to change it):'}</div>}
+        <div className="combine-list">
+          {s.order.map((port, k) => {
+            const inp = byPort.get(port);
+            if (!inp) return null;
+            const ps = s.ports[port] ?? {};
+            const isTarget = s.result === 'into' && port === s.into;
+            const action = ps.action ?? 'end';
+            const oneCol = (s.result === 'column' || (s.result === 'into' && INTO_ONE.has(action))) && inp.kind !== 'column';
+            return (
+              <div
+                key={port}
+                className={`col-added combine-in${dropAt === k && moving !== null && moving !== k ? (moving < k ? ' drop-after' : ' drop-before') : ''}`}
+                onDragOver={(ev) => {
+                  if (moving === null) return;
+                  ev.preventDefault();
+                  setDropAt(k);
+                }}
+                onDrop={(ev) => {
+                  ev.preventDefault();
+                  if (moving !== null) move(moving, k);
+                  setMoving(null);
+                  setDropAt(null);
+                }}
+              >
+                <div className="row">
+                  <span
+                    className="grip nodrag"
+                    draggable
+                    title="Drag to change the order"
+                    onDragStart={(ev) => {
+                      ev.dataTransfer.effectAllowed = 'move';
+                      ev.dataTransfer.setData('text/plain', String(port));
+                      setMoving(k);
+                    }}
+                    onDragEnd={() => {
+                      setMoving(null);
+                      setDropAt(null);
+                    }}
+                  >
+                    ⠿
+                  </span>
+                  <b>{inp.letter}</b>
+                  <span className="ellipsis grow">{inp.name}</span>
+                  <span className="muted">{`${inp.kind === 'column' ? '' : `${inp.kind} · ${inp.cols} col${inp.cols === 1 ? '' : 's'}, `}${inp.rows} row${inp.rows === 1 ? '' : 's'}`}</span>
+                </div>
+                <div className="row wrap">
+                  {inp.sheets && (
+                    <Field label="Sheet">
+                      <Select<string> value={ps.sheet ?? ''} options={[['', `first (${inp.sheets[0] ?? ''})`], ...inp.sheets.map((nm): [string, string] => [nm, nm])]} onChange={(sheet) => setPort(port, { sheet: sheet || undefined })} />
+                    </Field>
+                  )}
+                  {isTarget && <span className="muted">the table</span>}
+                  {s.result === 'into' && !isTarget && (
+                    <>
+                      <Select<IntoAction> value={action} options={INTO_ACTIONS} onChange={(a) => setPort(port, { action: a })} />
+                      {action !== 'end' && action !== 'start' && <Select<string> value={ps.ref ?? ''} options={[['', `column of ${target?.letter ?? 'the table'}…`], ...colOpts(target?.columns ?? [])]} onChange={(ref) => setPort(port, { ref })} />}
+                      {action === 'insert' && <NumInput className="tiny" min={0} step={1} value={ps.at ?? 0} onChange={(at) => setPort(port, { at })} />}
+                    </>
+                  )}
+                  {oneCol && (
+                    <Field label="Column" title="The column of this input taken (auto: its Y)">
+                      <Select<string> value={ps.col ?? ''} options={[['', 'its Y'], ...colOpts(inp.columns)]} onChange={(col) => setPort(port, { col: col || undefined })} />
+                    </Field>
+                  )}
+                  {s.result === 'sheets' && (
+                    <Field label="To sheet" title="The sheet it goes to (inputs with the same sheet side by side)">
+                      <TextInput className="short-text" value={ps.sheetOut ?? ''} placeholder="Sheet 1" onChange={(sheetOut) => setPort(port, { sheetOut: sheetOut || undefined })} />
+                    </Field>
+                  )}
+                  {(s.result === 'side' || s.result === 'sheets' || (s.result === 'into' && !isTarget && !INTO_ONE.has(action))) && (
+                    <Field label="Names" title="New names of its columns, in order, separated by commas (empty or a missing one: its own name)">
+                      <TextInput className="short-text" value={ps.names ?? ''} placeholder={inp.columns.slice(0, 2).join(', ') + (inp.columns.length > 2 ? ' …' : '')} onChange={(names) => setPort(port, { names: names || undefined })} />
+                    </Field>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {preview.length > 0 && <DataPreview columns={preview.slice(0, 8)} rows={4} />}
+        {o?.t === 'workbook' && o.v.sheets.length > 1 && (
+          <div className="hint">
+            {o.v.sheets.length} sheets: {o.v.sheets.map((q) => q.name).join(', ')} ({shownSheet?.name} shown)
+          </div>
         )}
-        {side && (data.where === 'after' || data.where === 'replace') && (
-          <Field label="Column" title="The column of A">
-            <ColumnSelect value={data.ref ?? ''} onChange={(ref) => set({ ref })} avail={r?.view.available ?? []} auto="choose" />
-          </Field>
-        )}
-        {side && (
-          <Field label="Names" title="New names of the columns of B, C …, in order, separated by commas (empty or a missing one: its own name; a name met twice becomes “name (2)”)">
-            <TextInput value={data.names ?? ''} placeholder="their own · e.g. Fit, Error" onChange={(names) => set({ names })} />
-          </Field>
-        )}
-        {data.how === 'insert' && (
-          <Field label="After row" title="B, C … go after this row of A (0: before its first row)">
-            <NumInput value={data.at} min={0} step={1} onChange={(at) => set({ at })} />
-          </Field>
-        )}
-        {data.how === 'sortx' && anyDataset && !side && (
-          <Field label="X" title="The column the rows are sorted by">
-            <ColumnSelect value={data.x} onChange={(x) => set({ x })} avail={r?.view.available ?? []} auto={xAutoLabel(r?.view.available)} />
-          </Field>
-        )}
-        {data.how === 'sortx' && (
-          <Field label="Same X" title="Rows with the same X value: all kept, one row with the mean of every column, or the first one">
-            <Select
-              value={data.dup}
-              options={[
-                ['all', 'keep all'],
-                ['mean', 'mean'],
-                ['first', 'the first'],
-              ]}
-              onChange={(dup) => set({ dup })}
-            />
-          </Field>
-        )}
-        {anyDataset && !side && (
-          <Field label="Match" title="The columns of the datasets matched by their name (a missing one: empty cells) or by their place">
-            <Select
-              value={data.match}
-              options={[
-                ['name', 'by name'],
-                ['position', 'by position'],
-              ]}
-              onChange={(match) => set({ match })}
-            />
-          </Field>
-        )}
-        {!anyDataset && !side && (
-          <Field label="Name" title="The name of the result (empty: the name of A)">
-            <TextInput value={data.name} placeholder={ins[0]?.name ?? 'of A'} onChange={(name) => set({ name })} />
-          </Field>
-        )}
-      </div>
-      {outCols.length > 0 && <DataPreview columns={outCols.slice(0, 8)} rows={4} />}
       </NodeOptions>
       <ResultSummary result={r} />
       <Messages result={r} />
-      <OutPort label={o?.t === 'dataset' ? 'dataset' : 'column'} port={o?.t === 'dataset' ? 'dataset' : 'column'} />
-      {!side && <OutPort label="source" port="column" id="source" title="Which input every row comes from (1 = A, 2 = B …): designate it Group, or give it to Split into columns ▸ by a column, to undo the combination" />}
+      <OutPort label={outKind} port={outKind} />
+      {stack && <OutPort label="source" port="column" id="source" title="Which input every row comes from (1 = A, 2 = B …): designate it Group, or give it to Split into columns ▸ by a column, to undo the combination" />}
     </div>
   );
 }

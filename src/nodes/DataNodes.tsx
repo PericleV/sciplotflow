@@ -1,16 +1,17 @@
 // Data nodes: Import, Extract column, Math column, Generate column, Columns, Auto-extract.
 import { ExportTable } from './ExportTable.tsx';
 import { MATH_PRESETS } from '../engine/mathPresets.ts';
-import { Fragment, useRef, useState, type DragEvent, type ReactNode } from 'react';
+import { Fragment, useLayoutEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import { useNodeConnections, useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
+import type { MathInput, NodeResult } from '../engine/evaluate.ts';
 import { isCommentLine, columnLetter, textLines, type CsvOptions, type Delimiter, type Decimal } from '../engine/csv.ts';
 import { cellText, fmtNum, ROLE_LABELS, titleOf, type Column, type ColumnRole } from '../engine/table.ts';
 import { ROLE_OPTIONS, type ExtractNames, type ExtractRule } from '../engine/extract.ts';
-import { formulaShown, formulaStored, type ColumnItem, type ComputedColumn, type ComputedKind } from '../engine/columns.ts';
+import { formulaShown, formulaStored, lineLetter, type ColumnItem, type ColumnLine, type ComputedColumn, type ComputedKind } from '../engine/columns.ts';
 import { GEN_SPEC_DEFAULTS, type GenSpec } from '../engine/gencol.ts';
 import { hasEdits, type SheetEdits } from '../engine/sheet.ts';
-import { ACCEPT, ENCODINGS, readFiles } from '../readFiles.ts';
+import { ACCEPT, ENCODINGS, pickDataFiles, readFiles } from '../readFiles.ts';
 import type { AppNode, ColumnsData, ColumnsNode, AutoExtractData, AutoExtractNode, ExtractNode, GenColData, GenColNode, ImportData, ImportNode, MathColData, MathColNode } from '../types.ts';
 import { AutoText, Check, Field, InPort, Messages, NumInput, OutPort, Select, TextInput, ResultSummary } from './ui.tsx';
 import { RowRules } from './RowRules.tsx';
@@ -118,9 +119,14 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
   const header = csv ? csv.headerLines : 0;
   // nothing read or typed yet: the node offers to open, paste or start a table itself
   const empty = !data.text && !sheets.length && !r?.view.sheet;
+  // the browser's dialog with the kinds of data files named (else the file input)
+  const openFiles = async () => {
+    const fs = await pickDataFiles(() => file.current?.click());
+    if (fs?.length) await load(fs);
+  };
   const openButtons = (
     <>
-      <button className="nodrag" onClick={() => file.current?.click()} title="A text table (.csv, .txt, .tsv, .dat …), a spreadsheet workbook (.xlsx, .xls, .ods); several files at once make a workbook (each a sheet)">
+      <button className="nodrag" onClick={() => void openFiles()} title="A text table (.csv, .txt, .tsv, .dat …), a spreadsheet workbook (.xlsx, .xls, .ods); several files at once make a workbook (each a sheet)">
         Open file
       </button>
       <button className="nodrag" onClick={() => folder.current?.click()} title="Every data file of a folder, each a sheet (in the order of their names): ready for a Batch">
@@ -648,6 +654,237 @@ const ADD_KINDS: [ComputedKind, string][] = [
   ['value', 'one value'],
 ];
 
+// The formula of a column added in Columns: written with the letters of the list (A, B …) or [names], a letter put in
+// where the cursor is by a click; its first values or why not under it
+function ColumnFormula({ c, lines, inputs, result, setFormula }: { c: ComputedColumn; lines: ColumnLine[]; inputs: MathInput[]; result: NodeResult | undefined; setFormula: (stored: string) => void }) {
+  const ta = useRef<HTMLTextAreaElement>(null);
+  const shown = formulaShown(c.formula ?? '', lines);
+  const self = `=${c.id}`;
+  // the cursor after the letter put in, once the text has changed
+  const caret = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const t = ta.current;
+    if (caret.current === null || !t) return;
+    t.focus();
+    t.setSelectionRange(caret.current, caret.current);
+    caret.current = null;
+  }, [shown]);
+  const put = (ref: string) => {
+    const t = ta.current;
+    const [a, b] = t && document.activeElement === t ? [t.selectionStart, t.selectionEnd] : [shown.length, shown.length];
+    caret.current = a + ref.length;
+    setFormula(formulaStored(shown.slice(0, a) + ref + shown.slice(b), lines));
+  };
+  const line = lines.find((L) => L.from === self);
+  const o = result?.outputs.out;
+  const col = line && o?.t === 'dataset' ? o.v.columns.find((x) => x.name === line.name) : undefined;
+  const problem = line ? result?.warnings.find((w) => w.startsWith(`“${line.name}”: `)) : undefined;
+  return (
+    <div className="col-formula">
+      <div className="formula-row">
+        <span className="muted">=</span>
+        <AutoText
+          className="mono"
+          inputRef={ta}
+          value={shown}
+          placeholder="e.g. B / C * 100, or [R 400 nm] / [R 410 nm] * 100"
+          title="A formula of the columns, row by row: a column by its letter (A, B …) or [its name]; an input as {A}; i the row, n the rows. Moving or renaming a column keeps the formula right"
+          onChange={(v) => setFormula(formulaStored(v, lines))}
+        />
+      </div>
+      <div className="col-refs nowheel">
+        {lines.map((L, k) =>
+          L.from === self ? null : (
+            <button key={L.from} className="nodrag" onMouseDown={(e) => e.preventDefault()} title={`Put ${lineLetter(k)} (${L.name}) in the formula`} onClick={() => put(lineLetter(k))}>
+              <b>{lineLetter(k)}</b> {L.name}
+            </button>
+          ),
+        )}
+        {inputs.map((i) => (
+          <button key={i.letter} className="nodrag" onMouseDown={(e) => e.preventDefault()} title={`Put {${i.letter}} (the input on port ${i.letter}) in the formula`} onClick={() => put(`{${i.letter}}`)}>
+            <b>{`{${i.letter}}`}</b> {i.name}
+          </button>
+        ))}
+      </div>
+      <div className="hint">i the row, n the rows; abs sqrt exp log log10 sin cos …; mean(A) max(A) sum(A) … of a whole column.</div>
+      {problem && line ? (
+        <div className="hint err">{problem.slice(line.name.length + 4)}</div>
+      ) : col && c.formula?.trim() ? (
+        <div className="hint mono ellipsis">
+          = {Array.from(col.values.slice(0, 5), (v) => (Number.isFinite(v) ? fmtNum(v, 5) : '—')).join(', ')}
+          {col.values.length > 5 ? ' …' : ''}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+type RenameHow = 'list' | 'replace' | 'affix' | 'row' | 'column';
+const RENAME_LABEL: Record<RenameHow, string> = { list: 'new names, in order', replace: 'replace a text in the names', affix: 'add a text before / after', row: 'names from a row of the data', column: 'names from a column' };
+const RENAME_CLEAR: Record<RenameHow, Partial<ColumnsData>> = { list: { names: undefined }, replace: { find: '', replace: '' }, affix: { prefix: '', suffix: '' }, row: { namesRow: 0 }, column: { namesFrom: undefined } };
+const RENAME_HOWS = Object.keys(RENAME_LABEL) as RenameHow[];
+
+// Rename several columns in Columns: one way on screen at a time (the others set before stay on, listed under it), the
+// names before → after
+function RenameSeveral({ data, set, lines, head, refOptions }: { data: ColumnsData; set: (p: Partial<ColumnsData>) => void; lines: ColumnLine[]; head?: { names: string[]; rows: string[][] }; refOptions: [string, string][] }) {
+  const on: Record<RenameHow, boolean> = {
+    list: !!data.names?.trim(),
+    replace: !!data.find,
+    affix: !!(data.prefix || data.suffix),
+    row: (data.namesRow ?? 0) >= 1,
+    column: !!data.namesFrom?.col,
+  };
+  const [how, setHow] = useState<RenameHow>(() => RENAME_HOWS.find((k) => on[k]) ?? 'list');
+  const also = RENAME_HOWS.filter((k) => k !== how && on[k]);
+  const nf = data.namesFrom;
+  const setNf = (p: Partial<NonNullable<ColumnsData['namesFrom']>>) => set({ namesFrom: { col: '', ...nf, ...p } });
+  const changed = lines.filter((L) => !L.computed && !L.input && L.auto !== L.from);
+  const row = data.namesRow ?? 0;
+  return (
+    <details className="sub">
+      <summary>Rename several columns</summary>
+      <div className="col-form">
+        <span>How</span>
+        <Select<RenameHow> value={how} options={RENAME_HOWS.map((k): [RenameHow, string] => [k, `${RENAME_LABEL[k]}${on[k] ? ' ✓' : ''}`])} onChange={setHow} />
+        {(how === 'list' || how === 'replace' || how === 'affix') && (
+          <>
+            <span title="The columns these changes apply to (a name written by hand on a column wins)">Columns</span>
+            <span className="row">
+              <Select<NonNullable<ColumnsData['renameOn']>>
+                value={data.renameOn ?? 'all'}
+                options={[
+                  ['all', 'all'],
+                  ['y', 'the Y columns'],
+                  ['list', 'the columns listed'],
+                  ['ticked', 'the ones ticked above'],
+                ]}
+                onChange={(renameOn) => set({ renameOn: renameOn === 'all' ? undefined : renameOn })}
+              />
+              {data.renameOn === 'list' && <TextInput className="short-text" value={data.renameList ?? ''} placeholder="2-4, B-D" title="Columns by number, letter or name: 2-4, B-D, “R 400 nm”" onChange={(renameList) => set({ renameList })} />}
+            </span>
+          </>
+        )}
+        {how === 'list' && (
+          <>
+            <span title="Given in order to the columns chosen, in the order of the list">New names</span>
+            <AutoText value={data.names ?? ''} placeholder="S1, S2, S3 (separated by , or ;)" onChange={(names) => set({ names: names || undefined })} />
+          </>
+        )}
+        {how === 'replace' && (
+          <>
+            <span>Replace</span>
+            <span className="row">
+              <TextInput className="short-text" value={data.find ?? ''} placeholder="this text" onChange={(find) => set({ find })} />
+              <span className="muted">with</span>
+              <TextInput className="short-text" value={data.replace ?? ''} placeholder="nothing" onChange={(replace) => set({ replace })} />
+            </span>
+          </>
+        )}
+        {how === 'affix' && (
+          <>
+            <span>Before</span>
+            <TextInput className="short-text" value={data.prefix ?? ''} placeholder="text before every name" onChange={(prefix) => set({ prefix })} />
+            <span>After</span>
+            <TextInput className="short-text" value={data.suffix ?? ''} placeholder="text after every name" onChange={(suffix) => set({ suffix })} />
+          </>
+        )}
+        {how === 'row' && (
+          <>
+            <span>Row</span>
+            <span className="row">
+              <NumInput className="tiny" min={1} step={1} value={row || NaN} placeholder="none" onChange={(v) => set({ namesRow: v >= 1 ? Math.floor(v) : 0 })} />
+              <span className="muted">or click it below</span>
+            </span>
+          </>
+        )}
+        {how === 'column' && (
+          <>
+            <span title="Its values, in order, become the names of other columns (Sample: S1, S2, S3 → the 3 columns after it)">Column</span>
+            <Select<string> value={nf?.col ?? ''} options={[['', 'none'], ...refOptions.filter(([ref]) => !ref.startsWith('[='))]} onChange={(col) => set({ namesFrom: col ? { ...nf, col } : undefined })} />
+            {nf?.col && (
+              <>
+                <span>Names of</span>
+                <span className="row">
+                  <Select<'others' | 'y' | 'list'>
+                    value={nf.to ?? 'others'}
+                    options={[
+                      ['others', 'all the other columns'],
+                      ['y', 'the Y columns'],
+                      ['list', 'the columns listed'],
+                    ]}
+                    onChange={(to) => setNf({ to })}
+                  />
+                  {nf.to === 'list' && <TextInput className="short-text" value={nf.list ?? ''} placeholder="2-4, B-D" title="Columns by number, letter or name: 2-4, B-D, “R 400 nm”" onChange={(list) => setNf({ list })} />}
+                </span>
+                <span />
+                <Check label="leave that column out" value={!!nf.drop} onChange={(drop) => setNf({ drop })} />
+              </>
+            )}
+          </>
+        )}
+      </div>
+      {how === 'row' && head && head.rows.length > 0 && (
+        <>
+          <div className="hint">Click the row that holds the names: it becomes the header and leaves the data.</div>
+          <div className="data-scroll pick-rows nowheel nodrag">
+            <table>
+              <thead>
+                <tr>
+                  <th className="rowhead" />
+                  {head.names.map((nm, j) => (
+                    <th key={j}>{nm}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {head.rows.map((cells, i) => (
+                  <tr key={i} className={row === i + 1 ? 'on' : ''} title={row === i + 1 ? 'These are the names (click again: none)' : `Names from row ${i + 1}`} onClick={() => set({ namesRow: row === i + 1 ? 0 : i + 1 })}>
+                    <td className="rowhead">{i + 1}</td>
+                    {cells.map((t, j) => (
+                      <td key={j}>{t}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      {also.length > 0 && (
+        <div className="row wrap rename-also">
+          <span className="muted">Also on:</span>
+          {also.map((k) => (
+            <span key={k} className="chip">
+              <button className="nodrag" title="Show it" onClick={() => setHow(k)}>
+                {RENAME_LABEL[k]}
+              </button>
+              <button className="nodrag" title="Take it off" onClick={() => set(RENAME_CLEAR[k])}>
+                <X {...IC} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {how !== 'row' && (
+        <div className="rename-preview">
+          {changed.length ? (
+            <>
+              {changed.slice(0, 8).map((L) => (
+                <div key={L.from} className="ellipsis">
+                  <span className="muted">{L.from}</span> → {L.auto}
+                </div>
+              ))}
+              {changed.length > 8 && <div className="muted">and {changed.length - 8} more</div>}
+            </>
+          ) : (
+            <span className="muted">No name changed yet.</span>
+          )}
+        </div>
+      )}
+    </details>
+  );
+}
+
 // The columns of a dataset: a row each (⠿ dragged to move it, kept or not, its name, its designation; a column added: ƒ),
 // every name at once (replace, before, after; from a row of the data or from a column), the columns added (a formula of
 // the others, a value, a copy) with their place; ports A, B … for columns from elsewhere.
@@ -717,8 +954,6 @@ export function ColumnsNodeView({ id, data }: NodeProps<ColumnsNode>) {
   const placeOptions = (key: string): [string, string][] => [['', 'place…'], ['end', 'at the end'], ...lines.filter((L) => L.from !== key).flatMap((L): [string, string][] => [[`a:${L.from}`, `after ${L.name}`], [`b:${L.from}`, `before ${L.name}`], [`i:${L.from}`, `instead of ${L.name}`]])];
   // the columns on the ports A, B …: in the list, each with its place
   const inputLines = lines.filter((L) => L.input);
-  const nf = data.namesFrom;
-  const setNf = (p: Partial<NonNullable<ColumnsData['namesFrom']>>) => set({ namesFrom: { col: '', ...nf, ...p } });
   // the columns renamed together: ticked in the list (by their names in the data)
   const picking = data.renameOn === 'ticked';
   const picked = data.renamePick ?? [];
@@ -768,6 +1003,9 @@ export function ColumnsNodeView({ id, data }: NodeProps<ColumnsNode>) {
                 }}
               >
                 {L.computed ? 'ƒ' : L.input ? L.from.slice(1, -1) : '⠿'}
+              </span>
+              <span className="col-letter" title={`Its letter in the formulas: ${lineLetter(k)}`}>
+                {lineLetter(k)}
               </span>
               <input className="nodrag" type="checkbox" checked={L.keep} title="Kept (untick: left out — a formula may still use it)" onChange={(e) => setItem(L.from, { keep: e.target.checked ? undefined : false })} />
               {picking && (L.computed ? <span /> : <input className="nodrag pick" type="checkbox" checked={picked.includes(L.from)} title="Renamed with the others ticked (Rename several columns)" onChange={(e) => setPick(L.from, e.target.checked)} />)}
@@ -832,18 +1070,7 @@ export function ColumnsNodeView({ id, data }: NodeProps<ColumnsNode>) {
                 onChange={(w) => w && place(c.id, w)}
               />
             </div>
-            {kind === 'formula' && (
-              <div className="row">
-                <TextInput
-                  className="mono grow"
-                  value={formulaShown(c.formula ?? '', lines)}
-                  placeholder="[R 400 nm] / [R 410 nm] * 100"
-                  title="A formula of the columns, row by row: a column as [its name] (renaming it later keeps the formula right), an input as {A}; i the row, n the rows; abs sqrt exp log log10 sin cos … and mean([…]) max([…]) … of a whole column"
-                  onChange={(v) => setComputed(c.id, { formula: formulaStored(v, lines) })}
-                />
-                <Select<string> value="" title="Put a column in the formula" options={[['', '+ column'], ...refOptions]} onChange={(ref) => ref && setComputed(c.id, { formula: `${c.formula ?? ''}${ref}` })} />
-              </div>
-            )}
+            {kind === 'formula' && <ColumnFormula c={c} lines={lines} inputs={inputs} result={r} setFormula={(formula) => setComputed(c.id, { formula })} />}
             {kind === 'value' && (
               <Field label="Value" title="The same number in every row">
                 <NumInput className="short" value={c.value ?? NaN} onChange={(value) => setComputed(c.id, { value })} />
@@ -856,65 +1083,10 @@ export function ColumnsNodeView({ id, data }: NodeProps<ColumnsNode>) {
                 <Select<string> value={c.copy ?? ''} options={[['', '—'], ...refOptions.filter(([ref]) => ref !== `[=${c.id}]`)]} onChange={(copy) => setComputed(c.id, { copy: copy || undefined })} />
               </Field>
             )}
-            {line && kind === 'formula' && !c.formula?.trim() && <div className="hint">Write a formula, or pick a column with “+ column”.</div>}
           </div>
         );
       })}
-      <details className="sub">
-        <summary>Rename several columns</summary>
-        <div className="col-form">
-          <span title="The columns these changes apply to (a name written by hand on a column wins)">Columns</span>
-          <span className="row">
-            <Select<NonNullable<ColumnsData['renameOn']>>
-              value={data.renameOn ?? 'all'}
-              options={[
-                ['all', 'all'],
-                ['y', 'the Y columns'],
-                ['list', 'the columns listed'],
-                ['ticked', 'the ones ticked above'],
-              ]}
-              onChange={(renameOn) => set({ renameOn: renameOn === 'all' ? undefined : renameOn })}
-            />
-            {data.renameOn === 'list' && <TextInput className="short-text" value={data.renameList ?? ''} placeholder="2-4, B-D" title="Columns by number, letter or name: 2-4, B-D, “R 400 nm”" onChange={(renameList) => set({ renameList })} />}
-          </span>
-          <span title="New names given in order to the columns chosen (in the order shown): one per line, or separated by ; or ,">New names</span>
-          <AutoText value={data.names ?? ''} placeholder="S1, S2, S3 … (one per line, or ; or ,)" onChange={(names) => set({ names: names || undefined })} />
-          <span title="In every name this text is replaced by the other (a name written by hand wins)">Replace in names</span>
-          <span className="row">
-            <TextInput className="short-text" value={data.find ?? ''} placeholder="this text" onChange={(find) => set({ find })} />
-            <span className="muted">→</span>
-            <TextInput className="short-text" value={data.replace ?? ''} placeholder="(nothing)" onChange={(replace) => set({ replace })} />
-          </span>
-          <span title="Written before / after every name">Add before / after</span>
-          <span className="row">
-            <TextInput className="short-text" value={data.prefix ?? ''} placeholder="before" onChange={(prefix) => set({ prefix })} />
-            <TextInput className="short-text" value={data.suffix ?? ''} placeholder="after" onChange={(suffix) => set({ suffix })} />
-          </span>
-          <span title="This row of the data holds the names of the columns (it becomes the header and leaves the data); empty: none">Names from a row</span>
-          <NumInput className="tiny" min={1} step={1} value={data.namesRow || NaN} placeholder="none" onChange={(v) => set({ namesRow: v >= 1 ? Math.floor(v) : 0 })} />
-          <span title="The values of a column, in order, become the names of other columns (e.g. Sample: S1, S2, S3 → the 3 columns after it)">Names from a column</span>
-          <Select<string> value={nf?.col ?? ''} options={[['', 'none'], ...refOptions.filter(([ref]) => !ref.startsWith('[='))]} onChange={(col) => set({ namesFrom: col ? { ...nf, col } : undefined })} />
-          {nf?.col && (
-            <>
-              <span>… of</span>
-              <span className="row">
-                <Select<'others' | 'y' | 'list'>
-                  value={nf.to ?? 'others'}
-                  options={[
-                    ['others', 'all the other columns'],
-                    ['y', 'the Y columns'],
-                    ['list', 'the columns listed'],
-                  ]}
-                  onChange={(to) => setNf({ to })}
-                />
-                {nf.to === 'list' && <TextInput className="short-text" value={nf.list ?? ''} placeholder="2-4, B-D" title="Columns by number, letter or name: 2-4, B-D, “R 400 nm”" onChange={(list) => setNf({ list })} />}
-              </span>
-              <span />
-              <Check label="leave that column out" value={!!nf.drop} onChange={(drop) => setNf({ drop })} />
-            </>
-          )}
-        </div>
-      </details>
+      <RenameSeveral data={data} set={set} lines={lines} head={r?.view.columnsHead} refOptions={refOptions} />
       </NodeOptions>
       <ResultSummary result={r} />
       <Messages result={r} />

@@ -22,6 +22,7 @@ import { BorderControls } from './BorderControls.tsx';
 import { Copy, Ellipsis, RotateCcw, X } from 'lucide-react';
 import { linearEnds, NO_GRAD_PLACE, radialPlace } from '../figure/gradient.ts';
 import { IC } from './iconProps.ts';
+import { IMAGE_ACCEPT, imageUrl } from '../imageFile.ts';
 
 // where: on the frame of a Plot (data units or % of the frame), on the page of a Merge (% of the page), or an object of
 // a Figure Drawing (mm, its layer the order of its objects)
@@ -406,17 +407,14 @@ export function ShapeEditor({ s, set, where, placing, onPlace }: { s: ShapeSpec;
             <Check label="Stretched" title="Filling its box (else its proportions kept, in the middle of the box)" value={!!s.stretch} onChange={(stretch) => set({ stretch: stretch || undefined })} />
             <button
               className="nodrag"
-              title="Another picture in its place (PNG, JPEG, SVG …)"
+              title="Another picture in its place (PNG, JPEG, TIFF, SVG …)"
               onClick={() => {
                 const inp = document.createElement('input');
                 inp.type = 'file';
-                inp.accept = 'image/*,.svg';
+                inp.accept = IMAGE_ACCEPT;
                 inp.onchange = () => {
                   const f = inp.files?.[0];
-                  if (!f) return;
-                  const rd = new FileReader();
-                  rd.onload = () => set({ href: String(rd.result) });
-                  rd.readAsDataURL(f);
+                  if (f) void imageUrl(f).then((href) => set({ href }), (e: Error) => alert(`${f.name}: ${e.message}`));
                 };
                 inp.click();
               }}

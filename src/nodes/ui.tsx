@@ -1,5 +1,5 @@
 // Small building blocks of the node views: number fields, choices, ports, messages.
-import { useContext, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from 'react';
+import { useContext, useLayoutEffect, useRef, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { InPanel } from './inspectorStore.ts';
 import { Handle, Position, useNodeConnections, useNodeId, useNodesData } from '@xyflow/react';
 import { nodeDisplayName } from '../nodeColors.ts';
@@ -166,8 +166,10 @@ export function Messages({ result }: { result?: NodeResult }) {
 }
 
 // One line of text that wraps instead of scrolling (a formula): the box grows with the text; Enter does not break it.
-export function AutoText({ value, onChange, className, placeholder, title }: { value: string; onChange: (v: string) => void; className?: string; placeholder?: string; title?: string }) {
-  const ref = useRef<HTMLTextAreaElement>(null);
+// inputRef: the textarea, to put a text where the cursor is
+export function AutoText({ value, onChange, className, placeholder, title, inputRef }: { value: string; onChange: (v: string) => void; className?: string; placeholder?: string; title?: string; inputRef?: RefObject<HTMLTextAreaElement | null> }) {
+  const own = useRef<HTMLTextAreaElement>(null);
+  const ref = inputRef ?? own;
   useLayoutEffect(() => {
     const t = ref.current;
     if (!t) return;

@@ -8,6 +8,7 @@ import { Table, TableView } from '@tiptap/extension-table';
 import type { Node as PMNode } from '@tiptap/pm/model';
 import type { EditorView, ViewMutationRecord } from '@tiptap/pm/view';
 import { NodeSelection } from '@tiptap/pm/state';
+import { imageUrl, isTiff } from '../imageFile.ts';
 import { boxCss, cssText, placeCss, placeOf } from './richDoc.ts';
 import { BoxView, PictureView } from './RichPicture.tsx';
 
@@ -79,15 +80,11 @@ export const TextBox = Node.create({
   },
 });
 
-// a picture file as a data URL: a small one as it is, a large one made smaller (at most 1600 px a side, JPEG)
+// a picture file as a data URL: a small one as it is (a TIFF as a PNG), a large one made smaller (at most 1600 px a
+// side, JPEG)
 export async function pictureFromFile(file: File): Promise<string | null> {
-  if (!file.type.startsWith('image/')) return null;
-  const url = await new Promise<string>((ok, no) => {
-    const r = new FileReader();
-    r.onload = () => ok(String(r.result));
-    r.onerror = () => no(r.error);
-    r.readAsDataURL(file);
-  });
+  if (!file.type.startsWith('image/') && !(await isTiff(file))) return null;
+  const url = await imageUrl(file);
   if (file.size < 400_000 || file.type === 'image/svg+xml') return url;
   const img = new Image();
   await new Promise((ok, no) => {
