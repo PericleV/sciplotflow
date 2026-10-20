@@ -6,10 +6,11 @@ import type { Edge } from '@xyflow/react';
 import type { AppNode } from '../types.ts';
 import { evaluateGraph, newCache, type NodeResult } from './evaluate.ts';
 import type { PyResult } from './python.ts';
+import { setMathSizes, type MathSize } from '../math/sizes.ts';
 
 export type EvalNode = { id: string; type: string; ver: number; data?: unknown };
-// py: the results of Python scripts run since (by node id)
-export type EvalRequest = { seq: number; nodes: EvalNode[]; edges: Edge[]; py?: [string, PyResult][] };
+// py: the results of Python scripts run since (by node id); math: the sizes of the formulas drawn since
+export type EvalRequest = { seq: number; nodes: EvalNode[]; edges: Edge[]; py?: [string, PyResult][]; math?: [string, MathSize][] };
 export type EvalReply = { seq: number; ids: string[]; changed: [string, NodeResult][] };
 
 const cache = newCache();
@@ -41,8 +42,9 @@ function plain(v: unknown, seen = new Map<object, unknown>()): unknown {
 }
 
 self.onmessage = (e: MessageEvent<EvalRequest>) => {
-  const { seq, nodes, edges, py } = e.data;
+  const { seq, nodes, edges, py, math } = e.data;
   for (const [id, result] of py ?? []) cache.py.set(id, { seq: (cache.py.get(id)?.seq ?? 0) + 1, result });
+  if (math) setMathSizes(math);
   const ids = new Set<string>();
   const list = nodes.map((q) => {
     ids.add(q.id);

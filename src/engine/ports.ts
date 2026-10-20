@@ -152,6 +152,8 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
       return (src && sourcePort(src, e.sourceHandle, ctx, depth + 1)) || 'any';
     }
     case 'subgraph': {
+      // a Batch: a row per file, a sheet per file, every file's rows
+      if (node.data.batch) return handle === 'sheets' ? 'workbook' : handle === 'table' || handle === 'stacked' ? 'dataset' : null;
       // what the inside source of this output gives
       const e = node.data.edges.find((x) => x.target === 'group-out' && x.targetHandle === handle);
       const src = e && node.data.nodes.find((x) => x.id === e.source);
@@ -268,6 +270,8 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
     case 'groupout':
       return handle === 'in' || node.type === 'groupout' ? ALL : [];
     case 'subgraph': {
+      // a Batch's first input: the files (a workbook, a sheet each; or one dataset)
+      if (node.data.batch && handle === node.data.inputs[0]?.id) return ['workbook', 'dataset'];
       // what the inside node fed by this input accepts
       const e = node.data.edges.find((x) => x.source === 'group-in' && x.sourceHandle === handle);
       const t = e && node.data.nodes.find((x) => x.id === e.target);

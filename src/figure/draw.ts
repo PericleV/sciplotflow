@@ -2,10 +2,12 @@
 // paths, dashes, arrow heads.
 import type { Curve, Dash, ResolvedText, SymbolShape } from './spec.ts';
 import { maxOf } from '../engine/minmax.ts';
+import { mathFace, mathSize } from '../math/sizes.ts';
 
 // ---- rich text ----
 // x^{2} x_{i} x^2 · \alpha … \Omega, \pm \times \deg \AA … (SYMBOLS) · \bold{…} \italic{…} \underline{…} \overline{…}
-// \size{12}{…} \size{+2}{…} \color{red}{…} \font{Times}{…} · \\ a new line · \{ \} \^ \_ \\ \% the characters themselves.
+// \size{12}{…} \size{+2}{…} \color{red}{…} \font{Times}{…} · \\ a new line · \{ \} \^ \_ \\ \% \$ the characters
+// themselves · $…$ a formula in LaTeX (drawn by MathJax), $$…$$ one drawn as on a line of its own.
 export const SYMBOLS: Record<string, string> = {
   alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε', varepsilon: 'ϵ', zeta: 'ζ', eta: 'η', theta: 'θ', vartheta: 'ϑ', iota: 'ι', kappa: 'κ', lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', omicron: 'ο', pi: 'π', rho: 'ρ', sigma: 'σ', tau: 'τ', upsilon: 'υ', phi: 'φ', varphi: 'ϕ', chi: 'χ', psi: 'ψ', omega: 'ω',
   Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π', Sigma: 'Σ', Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
@@ -26,8 +28,9 @@ export const SYMBOL_GROUPS: [string, string][] = [
   ['Other', '…⋯•⋆†⊥∥∈∩∪⊂∀∃⟨⟩∅'],
 ];
 
-export type Run = { t: string; bold: boolean; italic: boolean; underline: boolean; overline: boolean; scale: number; shift: number; color?: string; font?: string; size?: number; sizeDelta: number };
-type State = Omit<Run, 't'>;
+// math: a formula, its LaTeX in t ($…$ in the text; $$…$$: drawn as on a line of its own, larger)
+export type Run = { t: string; bold: boolean; italic: boolean; underline: boolean; overline: boolean; scale: number; shift: number; color?: string; font?: string; size?: number; sizeDelta: number; math?: { display: boolean } };
+type State = Omit<Run, 't' | 'math'>;
 const BASE: State = { bold: false, italic: false, underline: false, overline: false, scale: 1, shift: 0, sizeDelta: 0 };
 const sameStyle = (a: State, b: State) =>
   a.bold === b.bold && a.italic === b.italic && a.underline === b.underline && a.overline === b.overline && a.scale === b.scale && a.shift === b.shift && a.sizeDelta === b.sizeDelta && a.size === b.size && a.color === b.color && a.font === b.font;
@@ -43,9 +46,23 @@ export function parseRich(src: string): Run[][] {
       if (!p) return;
       const line = lines[lines.length - 1];
       const last = line[line.length - 1];
-      if (last && sameStyle(last, st)) last.t += p;
+      if (last && !last.math && sameStyle(last, st)) last.t += p;
       else line.push({ t: p, ...st });
     });
+  };
+  // at a $: the end of the formula it opens, or -1 (not a formula: a $ followed by a space, or with no $ to close it
+  // that follows something other than a space and is not followed by a digit, as in “5 $ to 10 $”)
+  const mathEnd = (at: number, two: boolean): number => {
+    const from = at + (two ? 2 : 1);
+    if (!two && /\s/.test(src[from] ?? ' ')) return -1;
+    for (let j = from; j < src.length; j++) {
+      if (src[j] === '\\') j++;
+      else if (src[j] === '$') {
+        if (two) return src[j + 1] === '$' && j > from ? j : -1;
+        return j > from && !/\s/.test(src[j - 1]) && !/\d/.test(src[j + 1] ?? '') ? j : -1;
+      } else if (src[j] === '\n') return -1;
+    }
+    return -1;
   };
   // reads {…} (or one character / one command when there are no braces) as a group in the given state
   const group = (st: State) => {
@@ -107,6 +124,15 @@ export function parseRich(src: string): Run[][] {
     while (i < src.length) {
       const ch = src[i];
       if (until && ch === until) return;
+      if (ch === '$') {
+        const two = src[i + 1] === '$';
+        const end = mathEnd(i, two);
+        if (end >= 0) {
+          lines[lines.length - 1].push({ t: src.slice(i + (two ? 2 : 1), end).trim(), ...st, math: { display: two } });
+          i = end + (two ? 2 : 1);
+          continue;
+        }
+      }
       if (ch === '\\') one(st);
       else if ((ch === '^' || ch === '_') && i + 1 < src.length) {
         i++;
@@ -125,10 +151,19 @@ export function parseRich(src: string): Run[][] {
 const charEm = (ch: string) => (/[ilI.,:;'|!’ ]/.test(ch) ? 0.28 : /[mwMW@]/.test(ch) ? 0.86 : /[A-Z0-9#%&]/.test(ch) ? 0.64 : /[Ͱ-Ͽ]/.test(ch) ? 0.6 : 0.54);
 export const runSize = (r: Run, base: number) => Math.max(0.5, (r.size ?? base) + r.sizeDelta) * r.scale;
 // Width (pt) of each line and the line height, roughly (no measuring in the DOM: the drawing is the same everywhere).
+// A formula's size (pt): its width, height above the baseline and depth under it, in the math font of its text.
+export function runMath(r: Run, st: ResolvedText) {
+  const m = mathSize(r.t, !!r.math?.display, mathFace(r.font ?? st.font, st.mathFont));
+  const s = runSize(r, st.size);
+  return { w: m.w * s, h: m.h * s, d: m.d * s };
+}
+// The height of a line: a formula taller than the text makes room for itself.
+export const lineHeightOf = (lines: Run[][], st: ResolvedText) => Math.max(st.size * 1.2, ...lines.flatMap((l) => l.filter((r) => r.math).map((r) => { const m = runMath(r, st); return m.h + m.d + 0.25 * st.size; })));
+export const textRunWidth = (r: Run, st: ResolvedText) => [...r.t].reduce((b, ch) => b + charEm(ch), 0) * runSize(r, st.size) * (r.bold || st.bold ? 1.07 : 1);
 export function richMetrics(text: string, st: ResolvedText): { widths: number[]; width: number; lines: number; lineHeight: number } {
   const lines = parseRich(text);
-  const widths = lines.map((l) => l.reduce((a, r) => a + [...r.t].reduce((b, ch) => b + charEm(ch), 0) * runSize(r, st.size) * (r.bold || st.bold ? 1.07 : 1), 0));
-  return { widths, width: Math.max(0, maxOf(widths)), lines: lines.length, lineHeight: st.size * 1.2 };
+  const widths = lines.map((l) => l.reduce((a, r) => a + (r.math ? runMath(r, st).w : textRunWidth(r, st)), 0));
+  return { widths, width: Math.max(0, maxOf(widths)), lines: lines.length, lineHeight: lineHeightOf(lines, st) };
 }
 // Text of a markup without the markup (tooltips, names).
 export const plainText = (text: string) => parseRich(text).map((l) => l.map((r) => r.t).join('')).join(' ');

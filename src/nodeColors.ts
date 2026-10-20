@@ -153,7 +153,7 @@ export const NODE_TITLES: Record<NodeType, string> = {
   groupout: 'Group output',
 };
 
-export const nodeTitle = (n: AppNode): string => NODE_TITLES[n.type];
+export const nodeTitle = (n: AppNode): string => (n.type === 'subgraph' && n.data.batch ? 'Batch' : NODE_TITLES[n.type]);
 
 // A short name of a node for tooltips: its type and its own name / label / caption when it has one.
 export function nodeDisplayName(n: AppNode): string {

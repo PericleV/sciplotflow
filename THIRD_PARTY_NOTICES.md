@@ -18,9 +18,10 @@ The full licence texts of these packages (and of the packages they use) are ship
 | SheetJS Community Edition (`xlsx`) | Apache-2.0 | reading .xlsx / .xls / .ods |
 | CodeMirror 6 (`@codemirror/*`, `@lezer/*`, style-mod, w3c-keyname, crelt, find-cluster-break) | MIT | the editor of the Python script |
 | Tiptap 3 (`@tiptap/*`) and ProseMirror (`prosemirror-*`, orderedmap, rope-sequence, linkifyjs) | MIT | the editor of a Note (a small word processor) |
-| KaTeX (`katex`) | MIT | the formulas of a Note (drawn, and as MathML for the exports) |
+| MathJax 4 (`@mathjax/src`) and its math fonts (`@mathjax/mathjax-fira-font`, `@mathjax/mathjax-stix2-font`, `@mathjax/mathjax-newcm-font`; based on Fira, STIX Two and New Computer Modern) | Apache-2.0 | the LaTeX formulas of the figures and of a Note (drawn as curves, and as MathML for a Note's exports); loaded only when the first formula appears |
 | Lucide (`lucide-react`) | ISC | the icons of the buttons (the Figure Drawing editor: a few more drawn in its style) |
 | Paper.js (`paper`, its core without PaperScript) and paperjs-offset | MIT | Figure Drawing: paths combined (union, subtract, intersect, exclude, divide), offset, stroke to path — loaded only when one of these is used |
+| Yjs (`yjs`) and lib0 | MIT | working together (Collaborate): the project as a shared document kept in step between browsers — loaded only when a session starts |
 
 ## 2. Loaded only when a Python script runs
 

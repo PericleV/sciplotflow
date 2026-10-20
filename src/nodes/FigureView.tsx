@@ -5,7 +5,7 @@ import { useContext, useEffect, useId, useRef, useState, type PointerEvent as Re
 import { createPortal } from 'react-dom';
 import { useNodeId, useReactFlow } from '@xyflow/react';
 import { figureCopied } from './figureClip.ts';
-import { makeEmbedded, type Embedded } from '../figure/embed.ts';
+import { EDITABLE_FIGURES, makeEmbedded, type Embedded } from '../figure/embed.ts';
 import { ProjectInfoContext } from '../projectInfo.ts';
 import { exportPng, exportSvg, exportTiff, copyPng, printPdf, pixelSize, safeName, MAX_PIXELS } from '../figure/export.ts';
 import { FigureSvg } from '../figure/render.tsx';
@@ -32,6 +32,7 @@ import { BorderControls } from './BorderControls.tsx';
 import { FigureRangeLayer, type XRange } from './FigureRange.tsx';
 import { Crosshair, Maximize2, MoveHorizontal, Rotate3d, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
+import { MATH_FACE_NAMES, mathFace, type MathFontChoice } from '../math/sizes.ts';
 
 type ViewMode = 'normal' | 'gray' | 'deutan' | 'protan' | 'tritan';
 // colour-blindness simulations (Machado et al. 2009, severity 1) as SVG colour matrices
@@ -239,7 +240,7 @@ export function FigureView({ fig, width, maxHeight = 480, page, setPage, layoutT
   // the project put in the SVG and PNG (an editable figure): this figure's node, the groups of the level shown
   const info = useContext(ProjectInfoContext);
   const nodeId = useNodeId();
-  const embedMode = page.embed ?? 'full';
+  const embedMode = EDITABLE_FIGURES ? (page.embed ?? 'full') : 'none';
   const [embedSize, setEmbedSize] = useState('');
   const embedOf = async (): Promise<Embedded | undefined> => {
     if (!info || !nodeId || embedMode === 'none') return undefined;
@@ -466,7 +467,7 @@ export function FigureView({ fig, width, maxHeight = 480, page, setPage, layoutT
         <span className={`hint${px.w > MAX_PIXELS || px.h > MAX_PIXELS ? ' err-text' : ''}`}>
           {px.w} × {px.h} px
         </span>
-        <Select<'full' | 'nodata' | 'none'>
+        {EDITABLE_FIGURES && <Select<'full' | 'nodata' | 'none'>
           value={embedMode}
           title="An editable figure: the project inside the SVG and PNG files — in Word or PowerPoint insert the SVG (they re-encode a PNG, which loses the project); in a document, “Save as Picture”, then drop the image on SciPlotFlow: the project opens at this figure (and Update document… replaces the figure there). Without the imported data: smaller, the files are opened again. TIFF, PDF and Copy never carry it"
           options={[
@@ -475,7 +476,7 @@ export function FigureView({ fig, width, maxHeight = 480, page, setPage, layoutT
             ['none', 'no project'],
           ]}
           onChange={(embed) => setPage({ embed: embed === 'full' ? undefined : embed })}
-        />
+        />}
         {embedMode !== 'none' && embedSize && <span className="hint" title="The project in the last SVG / PNG exported">+ {embedSize}</span>}
       </div>
     </div>
@@ -552,6 +553,18 @@ export function PageControls({ page, set, fixed }: { page: PageData; set: (p: Pa
       {!!page.title && <TextStyleControls label="Title font" value={page.titleText ?? { bold: true }} onChange={(titleText) => set({ titleText })} />}
       <Field label="Decimal comma" title="The numbers the figure writes — on the axes and colour bars, the values of points and bars, the parameters a node writes — with a comma: 2,5 (the texts you type stay as you type them)">
         <Check label="2,5" value={!!page.comma} onChange={(comma) => set({ comma: comma || undefined })} />
+      </Field>
+      <Field label="Formula font" title="The font of the formulas you write between $ signs ($\alpha^2$). Automatic picks the one that looks like the text: a sans font for Arial or Calibri, a serif one for Times or Cambria">
+        <Select<MathFontChoice>
+          value={page.mathFont ?? 'auto'}
+          options={[
+            ['auto', `automatic (${MATH_FACE_NAMES[mathFace(page.font, 'auto')]})`],
+            ['sans', MATH_FACE_NAMES.sans],
+            ['serif', MATH_FACE_NAMES.serif],
+            ['latex', MATH_FACE_NAMES.latex],
+          ]}
+          onChange={(f) => set({ mathFont: f === 'auto' ? undefined : f })}
+        />
       </Field>
       <div className="grid2">
         <Field label="Background">

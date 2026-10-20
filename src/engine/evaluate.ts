@@ -4,6 +4,7 @@
 import { fitLook, isTrend, paramText, QUICK_FIT_NAMES, quickFit, quickFitsOf, type QuickFitResult, type QuickFitSpec } from './quickfit.ts';
 import { aggregateByX } from './aggregate.ts';
 import { richMetrics } from '../figure/draw.ts';
+import { markMathAsked, mathSizesVersion, resetMathAsked } from '../math/sizes.ts';
 import { bendPoints, outlinePoint, type Outline, type Pt, type StickSide } from '../figure/shapes.ts';
 import { parsePath, pathBox, pathText, reversePath, shapeToPath } from '../figure/paths.ts';
 import { placeComponent } from './drawingItems.ts';
@@ -19,7 +20,8 @@ import { legendLayout } from '../figure/legendLayout.ts';
 import { columnLetter, readTable, type CsvResult } from './csv.ts';
 import { curveColumns, digest, figPort, outValue, toPy, type PyJob, type PyResult, type PyValue } from './python.ts';
 import { applySheet, hasEdits, readSheet, type SheetMap } from './sheet.ts';
-import { flattenGroups, GROUP_OUT } from './subgraph.ts';
+import { flattenGroups, GROUP_IN, GROUP_OUT } from './subgraph.ts';
+import { gather, orderFiles, resultOf, type FileRun } from './batch.ts';
 import { takeRows } from './split.ts';
 import { parseRows } from './rows.ts';
 export { parseRows };
@@ -32,7 +34,7 @@ import { controlChart } from './multivar.ts';
 import { linearRegression, logisticRegression, type Coef } from './regression.ts';
 import { surfaceModel } from './surface.ts';
 import { describe, STATS, type StatKey } from './stats.ts';
-import { combine, labelRuns, unstack, type BlockInfo } from './reshape.ts';
+import { combine, labelRuns, unstack, type BlockInfo, type SplitGraph } from './reshape.ts';
 import { pickPoints, type Picked } from './pick.ts';
 import { CURVE_OP_LABELS, curveFormulas, curveMath, curveOf, curveOpPort, curveOps, translate, type Curve2, type CurveMathData, type CurveOpView, type CurvePlotLine, stepInfo, type StepInfo } from './curvemath.ts';
 import { changesTable, cleanData, filterRows } from './cleaning.ts';
@@ -137,6 +139,7 @@ export type NodeView = {
   calc?: { x: Float64Array; y: Float64Array; run: Int32Array; used: Uint8Array; labels: string[]; lower: { x: number[]; y: number[] }[]; bases: { x: number[]; y: number[] }[]; fills: { index: number; x: number[]; y: number[]; b: number[] }[][]; areas: { run: string; region: string; index: number; lo: number; hi: number; area: number }[]; xName: string; yNames: string[]; resName: string }; // Extract / Combine columns / Plot: the columns of the input dataset
   inputs?: MathInput[]; // Math column
   blocks?: { list: BlockInfo[]; how: string }; // Split into columns: the blocks found
+  split?: SplitGraph; // Split into columns: its graph (the column the blocks are found from, the curves, the cuts)
   combine?: { letter: string; kind: 'column' | 'dataset'; name: string; rows: number; cols: number }[]; // Combine columns: its inputs
   changed?: number; // Math column: how many rows the rules changed
   stats?: Record<StatKey, number>;
@@ -172,13 +175,18 @@ export type NodeView = {
   matInputs?: { port: number; letter: string; kind: 'matrix' | 'column' | 'scalar'; name: string; rows: number; cols: number }[];
   matSteps?: { id: string; name: string; error?: string; warnings: string[]; parts: { key: string; label: string; info?: MatrixInfo; value?: number }[] }[];
   waiting?: string; // what is missing before the node can give a result
+  // Batch: the files it ran on, those that failed and why
+  batch?: { files: number; failed: { name: string; errors: string[] }[] };
 };
-export type NodeResult = { rev: number; outputs: Record<string, Value>; errors: string[]; warnings: string[]; view: NodeView };
+// inner: a Batch's steps as they ran on its first file (shown when the batch is opened), by their ids inside it
+export type NodeResult = { rev: number; outputs: Record<string, Value>; errors: string[]; warnings: string[]; view: NodeView; inner?: Map<string, NodeResult> };
 
 // name: of the node it comes from (as the nodes show it), for the titles of a Report
 type Inputs = Map<string, { from: string; handle: string; value: Value | undefined; name?: string }[]>;
 // py: the results of the Python scripts (run on the main thread's side, given here by node id; seq: they changed)
-export type EvalCache = { entries: Map<string, { key: string; result: NodeResult }>; rev: number; py: Map<string, { seq: number; result: PyResult }> };
+// sub: the caches of the runs of a Batch (by the batch's id and the file), kept between evaluations
+// math: the sizes of the formulas (math/sizes.ts) the result was measured with (absent: it measured none)
+export type EvalCache = { entries: Map<string, { key: string; result: NodeResult; math?: number }>; rev: number; py: Map<string, { seq: number; result: PyResult }>; sub?: Map<string, EvalCache> };
 export const newCache = (): EvalCache => ({ entries: new Map(), rev: 0, py: new Map() });
 // the Python results of the evaluation under way (pythonNode reads them by the node's id)
 let pyNow: EvalCache['py'] = new Map();
@@ -190,7 +198,7 @@ const MAX_ROWS = 10_000_000;
 export function logicalData(n: AppNode): unknown {
   if (n.type === 'note' || n.type === 'frame') return null;
   // a group: what is inside, not where the nodes inside are drawn
-  if (n.type === 'subgraph') return [n.data.inputs, n.data.outputs, n.data.nodes.map((x) => [x.id, x.type, logicalData(x)]), n.data.edges.map((e) => [e.source, e.sourceHandle, e.target, e.targetHandle])];
+  if (n.type === 'subgraph') return [n.data.inputs, n.data.outputs, n.data.nodes.map((x) => [x.id, x.type, logicalData(x)]), n.data.edges.map((e) => [e.source, e.sourceHandle, e.target, e.targetHandle]), n.data.batch ?? null];
   const { caption: _c, collapsed: _k, ...rest } = n.data as Record<string, unknown>;
   if (n.type === 'import') {
     delete rest.text;
@@ -206,7 +214,7 @@ export function plotRows(d: Plot1DData, count: number): CurveRow[] {
   return Array.from({ length: count }, (_, k) => (k === 0 ? first : (d.rows?.[k - 1] ?? { label: '', style: { ...d.style, color: PALETTE[(base + k) % PALETTE.length] } })));
 }
 
-type Out = { outputs?: Record<string, Value>; errors?: string[]; warnings?: string[]; view?: NodeView };
+type Out = { outputs?: Record<string, Value>; errors?: string[]; warnings?: string[]; view?: NodeView; inner?: Map<string, NodeResult> };
 
 function generate(d: GenColData, like: Column | undefined): Out {
   const n = like ? like.values.length : Math.floor(d.count);
@@ -1563,6 +1571,7 @@ function scatterMatrixNode(n: { id: string; data: ScatterMatrixData }, inputs: I
     bold: !!page.bold,
     italic: !!page.italic,
     textColor: page.textColor || '#000000',
+    mathFont: page.mathFont,
     background: page.background || 'white',
     panels: 'none',
     name: page.name || 'scatter_matrix',
@@ -2175,7 +2184,7 @@ function layers3dNode(n: { id: string; data: Plot3DData }, inputs: Inputs): Out 
 
 // The default text of a page (every text on “auto”).
 export const pageText =(p: Partial<PageData> | undefined): TextDefaults =>
-  p ? { font: p.font || TEXT_DEFAULTS.font, size: p.size && p.size > 0 ? p.size : TEXT_DEFAULTS.size, bold: !!p.bold, italic: !!p.italic, color: p.textColor || '#000000' } : TEXT_DEFAULTS;
+  p ? { font: p.font || TEXT_DEFAULTS.font, size: p.size && p.size > 0 ? p.size : TEXT_DEFAULTS.size, bold: !!p.bold, italic: !!p.italic, color: p.textColor || '#000000', ...(p.mathFont && { mathFont: p.mathFont }) } : TEXT_DEFAULTS;
 const pageBackground = (b: string | undefined) => (b === 'none' ? 'none' : !b || b === 'white' ? '#ffffff' : b);
 
 // The annotations kept in a Plot or a Merge, as drawn; a colour bar explains the first curve coloured by a map.
@@ -4320,7 +4329,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       const available = v.v.columns.map(colInfo);
       const r = unstack(v.v, n.data);
       if (typeof r === 'string') return { errors: [r], view: { available } };
-      return { outputs: { out: { t: 'dataset', v: r.dataset } }, warnings: r.warnings, view: { available, blocks: { list: r.blocks, how: r.how } } };
+      return { outputs: { out: { t: 'dataset', v: r.dataset }, long: { t: 'dataset', v: r.long } }, warnings: r.warnings, view: { available, blocks: { list: r.blocks, how: r.how }, ...(r.graph ? { split: r.graph } : {}) } };
     }
     case 'combine': {
       const d = n.data;
@@ -4536,8 +4545,9 @@ export function evaluateGraph(nodes: AppNode[], edges: Edge[], cache: EvalCache 
   if (!nodes.some((n) => n.type === 'subgraph')) return evaluateFlat(nodes, edges, cache);
   const flat = flattenGroups(nodes, edges);
   const results = evaluateFlat(flat.nodes, flat.edges, cache);
+  // (a Batch is not opened in place: it has its own result, evaluateFlat gave it)
   const groupResult = (g: Extract<AppNode, { type: 'subgraph' }>, path: string): NodeResult => {
-    for (const n of g.data.nodes) if (n.type === 'subgraph') results.set(`${path}/${n.id}`, groupResult(n, `${path}/${n.id}`));
+    for (const n of g.data.nodes) if (n.type === 'subgraph' && !n.data.batch) results.set(`${path}/${n.id}`, groupResult(n, `${path}/${n.id}`));
     const outputs: Record<string, Value> = {};
     for (const p of g.data.outputs) {
       const e = g.data.edges.find((x) => x.target === GROUP_OUT && x.targetHandle === p.id);
@@ -4548,12 +4558,75 @@ export function evaluateGraph(nodes: AppNode[], edges: Edge[], cache: EvalCache 
     const r: NodeResult = { rev: ++cache.rev, outputs, errors: bad ? [`${bad} node${bad > 1 ? 's' : ''} inside ${bad > 1 ? 'have' : 'has'} errors: open the group to see.`] : [], warnings: [], view: {} };
     return r;
   };
-  for (const n of nodes) if (n.type === 'subgraph') results.set(n.id, groupResult(n, n.id));
+  for (const n of nodes) if (n.type === 'subgraph' && !n.data.batch) results.set(n.id, groupResult(n, n.id));
   return results;
 }
 
-// Evaluates a graph without groups; `cache` keeps the results between calls.
-function evaluateFlat(nodes: AppNode[], edges: Edge[], cache: EvalCache = newCache()): Map<string, NodeResult> {
+// ---- Batch: the group's steps run on every file ----
+// a file's table (an input's value): the same object, the same number, one count for all (the steps after it are not
+// computed again while it stays the same)
+const fileRevs = new WeakMap<object, number>();
+let fileSeq = 0;
+const revOf = (o: object) => {
+  if (!fileRevs.has(o)) fileRevs.set(o, ++fileSeq);
+  return fileRevs.get(o)!;
+};
+function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cache: EvalCache): Out {
+  const g = n.data;
+  const first = g.inputs[0]?.id;
+  const v = first ? inputs.get(first)?.[0]?.value : undefined;
+  if (!v) return { view: { waiting: 'Connect the files: an Import with several files opened together, or a workbook (a sheet per file).' } };
+  const files: Dataset[] = v.t === 'workbook' ? v.v.sheets : v.t === 'dataset' ? [v.v] : [];
+  if (!files.length) return { errors: ['The files must be a workbook (a sheet per file) or a dataset.'] };
+  const spec = g.batch ?? {};
+  const ordered = orderFiles(files, spec);
+  const inner = flattenGroups(g.nodes, g.edges);
+  const warnings = [...ordered.warnings];
+  if (inner.nodes.some((q) => q.type === 'python')) warnings.push('Python steps do not run inside a batch.');
+  // the other inputs: the same for every file
+  const others: Record<string, Value> = {};
+  for (const p of g.inputs.slice(1)) {
+    const o = inputs.get(p.id)?.[0]?.value;
+    if (o) others[p.id] = o;
+  }
+  cache.sub ??= new Map();
+  const outerPy = pyNow;
+  const runs: FileRun[] = [];
+  let preview: Map<string, NodeResult> | undefined;
+  ordered.files.forEach((f, k) => {
+    const key = `${n.id}#${k}`;
+    const sub = cache.sub!.get(key) ?? newCache();
+    cache.sub!.set(key, sub);
+    const rev = Object.values(others).reduce((a, o) => a * 7919 + revOf(o.v as object), revOf(f));
+    const seed = new Map<string, NodeResult>([[GROUP_IN, { rev, outputs: { [first!]: { t: 'dataset', v: f }, ...others }, errors: [], warnings: [], view: {} }]]);
+    const res = evaluateFlat(inner.nodes, inner.edges, sub, seed);
+    const run: FileRun = { name: f.name, values: [], tables: [], errors: [] };
+    for (const p of g.outputs) {
+      const e = inner.edges.find((x) => x.target === GROUP_OUT && x.targetHandle === p.id);
+      resultOf(p.label, e ? res.get(e.source)?.outputs[e.sourceHandle ?? 'out'] : undefined, run);
+    }
+    for (const q of inner.nodes) for (const err of res.get(q.id)?.errors ?? []) run.errors.push(`${q.type}: ${err}`);
+    runs.push(run);
+    if (k === 0) preview = res;
+  });
+  pyNow = outerPy;
+  // the caches of files no longer there: forgotten
+  for (const key of [...cache.sub.keys()]) if (key.startsWith(`${n.id}#`) && Number(key.slice(n.id.length + 1)) >= ordered.files.length) cache.sub.delete(key);
+  if (!g.outputs.length) warnings.push('Nothing leaves the steps: connect what to keep (a value, a table) to the Group output inside the batch.');
+  const failed = runs.filter((r) => r.errors.length).map((r) => ({ name: r.name, errors: r.errors }));
+  if (failed.length) warnings.push(`${failed.length} of ${runs.length} file${runs.length > 1 ? 's' : ''} had errors (see the options).`);
+  const out = gather(runs, ordered.read, ordered.parts);
+  return {
+    outputs: { table: { t: 'dataset', v: out.table }, sheets: { t: 'workbook', v: out.sheets }, ...(out.stacked ? { stacked: { t: 'dataset', v: out.stacked } } : {}) },
+    warnings,
+    view: { batch: { files: runs.length, failed } },
+    inner: preview,
+  };
+}
+
+// Evaluates a graph without groups (a Batch is one node here); `cache` keeps the results between calls; `seed`: results
+// given beforehand (the input of a Batch's steps: the file).
+function evaluateFlat(nodes: AppNode[], edges: Edge[], cache: EvalCache = newCache(), seed?: Map<string, NodeResult>): Map<string, NodeResult> {
   pyNow = cache.py ?? new Map();
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const incoming = new Map<string, Edge[]>();
@@ -4563,7 +4636,7 @@ function evaluateFlat(nodes: AppNode[], edges: Edge[], cache: EvalCache = newCac
     l.push(e);
     incoming.set(e.target, l);
   }
-  const results = new Map<string, NodeResult>();
+  const results = new Map<string, NodeResult>(seed ?? []);
   const state = new Map<string, 'busy' | 'done'>();
   const visit = (id: string): NodeResult => {
     const done = results.get(id);
@@ -4602,22 +4675,28 @@ function evaluateFlat(nodes: AppNode[], edges: Edge[], cache: EvalCache = newCac
     const key = JSON.stringify([n.type, logicalData(n), tokens, n.type === 'python' ? (cache.py.get(id)?.seq ?? 0) : 0]);
     const cached = cache.entries.get(id);
     let r: NodeResult;
-    if (cached && cached.key === key) r = cached.result;
+    if (cached && cached.key === key && (cached.math === undefined || cached.math === mathSizesVersion())) r = cached.result;
     else {
       let out: Out;
+      const asked = resetMathAsked();
       try {
         // a node of a type this version does not know gives nothing
-        out = evalNode(n, inputs) ?? { warnings: [`Unknown node type “${n.type}”.`] };
+        out = n.type === 'subgraph' && n.data.batch ? runBatch(n, inputs, cache) : (evalNode(n, inputs) ?? { warnings: [`Unknown node type “${n.type}”.`] });
       } catch (err) {
         out = { errors: [`Internal error: ${(err as Error).message}`] };
       }
       const want = (n.data as { sheet?: string }).sheet;
       if (bookSheets && want && !bookSheets.includes(want)) out = { ...out, errors: [...(out.errors ?? []), `No sheet “${want}” in the workbook.`] };
-      r = { rev: ++cache.rev, outputs: out.outputs ?? {}, errors: out.errors ?? [], warnings: out.warnings ?? [], view: { ...out.view, ...(bookSheets ? { sheets: bookSheets } : {}) } };
-      cache.entries.set(id, { key, result: r });
+      r = { rev: ++cache.rev, outputs: out.outputs ?? {}, errors: out.errors ?? [], warnings: out.warnings ?? [], view: { ...out.view, ...(bookSheets ? { sheets: bookSheets } : {}) }, ...(out.inner ? { inner: out.inner } : {}) };
+      // (a node inside measured formulas: the one around it too; what was asked before this node kept for its caller)
+      const measured = resetMathAsked();
+      cache.entries.set(id, { key, result: r, ...(measured ? { math: mathSizesVersion() } : {}) });
+      if (asked || measured) markMathAsked();
     }
     state.set(id, 'done');
     results.set(id, r);
+    // a Batch: its steps as they ran on the first file, under its id (seen when it is opened)
+    if (r.inner) for (const [k, q] of r.inner) if (k !== GROUP_IN) results.set(`${id}/${k}`, q);
     return r;
   };
   for (const n of nodes) visit(n.id);

@@ -17,6 +17,7 @@ import type { BaseOptions } from './engine/baselines.ts';
 import type { AnovaData, CorrData, NonparData, NormData, TTestData } from './engine/statnodes.ts';
 import type { CurveMathData, TranslateData } from './engine/curvemath.ts';
 import type { CleanData, FilterData } from './engine/cleaning.ts';
+import type { BatchSpec } from './engine/batch.ts';
 import type { DigitizerData } from './engine/digitize.ts';
 import type { HistSpec } from './engine/histogram.ts';
 import type { BarSpec } from './engine/barchart.ts';
@@ -303,6 +304,8 @@ export type PageData = {
   titleText?: TextStyle;
   // the numbers the figure writes (axes, values, labels) with a decimal comma: 2,5
   comma?: boolean;
+  // the font of the formulas ($…$ in the texts): absent, the one that looks like the text's font
+  mathFont?: 'sans' | 'serif' | 'latex';
 };
 // An annotation kept in a Plot (on its frame: data units or % of the frame) or a Merge (% of the page), or an object of a
 // Figure Drawing (in mm): its name in the layers, hidden (not drawn nor exported), locked (not moved with the mouse).
@@ -404,13 +407,15 @@ export type DrawingData = PageData & { annotations?: AnnotationItem[]; grid?: Pa
 
 // ---- Notes, layout ----
 // doc: the formatted note (the editor's document; absent: a plain note, its text alone); text: its plain text, always
-export type NoteData = { text: string; doc?: RichDoc };
+// mathFont: the font of its formulas (absent: the one that looks like its text)
+export type NoteData = { text: string; doc?: RichDoc; mathFont?: 'sans' | 'serif' | 'latex' };
 export type FrameData = { name: string; color: string };
 export type RerouteData = Record<string, never>;
 // A group node: a graph inside one node. Its ports: what enters by the Group input node inside, what leaves by the
 // Group output node (key: the outside node and port it was made from; type: of the value, for the port colours).
 export type GroupPort = { id: string; label: string; key?: string; type?: string };
-export type GroupData = { name: string; nodes: AppNode[]; edges: Edge[]; inputs: GroupPort[]; outputs: GroupPort[] };
+// batch: a Batch (the steps run on every file of its first input, their results gathered; engine/batch.ts)
+export type GroupData = { name: string; nodes: AppNode[]; edges: Edge[]; inputs: GroupPort[]; outputs: GroupPort[]; batch?: BatchSpec };
 export type GroupIoData = Record<string, never>;
 
 export type ImportNode = Node<ImportData, 'import'>;

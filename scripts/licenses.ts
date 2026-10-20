@@ -4,8 +4,10 @@
 // and its packages, from jsDelivr) and the palettes and data used are listed in THIRD_PARTY_NOTICES.md.
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+// (a path with spaces or other characters escaped in a URL read right)
+const root = fileURLToPath(new URL('..', import.meta.url));
 const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8')) as { packages: Record<string, { version?: string; license?: string; dev?: boolean; devOptional?: boolean; optional?: boolean; resolved?: string }> };
 const own = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { name: string };
 

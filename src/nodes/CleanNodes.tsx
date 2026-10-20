@@ -1,11 +1,14 @@
 // Filter & sort rows, Clean data: the settings, the report, the rows that come out.
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
+import { X } from 'lucide-react';
 import type { AppNode, CleanData, CleanNode, FilterData, FilterNode } from '../types.ts';
+import { sortKeysOf, type SortKey } from '../engine/cleaning.ts';
+import { IC } from './iconProps.ts';
 import { DataPreview } from './DataNodes.tsx';
 import { Y_AUTO } from './xAuto.ts';
 import { RowSelectControls } from './StatsNodes.tsx';
-import { Check, Field, InPort, Messages, NumInput, OutPort, Select, ResultSummary } from './ui.tsx';
+import { Field, InPort, Messages, NumInput, OutPort, Select, ResultSummary } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
 import { ColumnsPicker } from './ColumnsPicker.tsx';
 
@@ -15,6 +18,35 @@ function useNode<T>(id: string) {
   return { r, names: (r?.view.available ?? []).map((c) => c.name), set: (p: Partial<T>) => updateNodeData(id, p as Record<string, unknown>) };
 }
 
+// The columns the rows are sorted by, one under the other: each from the smallest up or from the largest down; rows
+// equal in one are sorted by the next. Older projects: their one column (sortBy) shown as the first key.
+function SortKeys({ data, cols, set }: { data: FilterData; cols: [string, string][]; set: (p: Partial<FilterData>) => void }) {
+  const keys = sortKeysOf(data);
+  const put = (sorts: SortKey[]) => set({ sorts, sortBy: '', desc: false });
+  const ORDER: [string, string][] = [
+    ['up', 'smallest first'],
+    ['down', 'largest first'],
+  ];
+  if (!keys.length) return <Select value="" options={[['', 'not sorted'], ...cols]} onChange={(col) => col && put([{ col, desc: false }])} />;
+  return (
+    <span className="sort-keys">
+      {keys.map((k, i) => (
+        <span key={i} className="row">
+          {i > 0 && <span className="muted">then</span>}
+          <Select value={k.col} options={cols.some(([c]) => c === k.col) ? cols : [[k.col, k.col], ...cols]} onChange={(col) => put(keys.map((q, j) => (j === i ? { ...q, col } : q)))} />
+          <Select value={k.desc ? 'down' : 'up'} options={ORDER} onChange={(o) => put(keys.map((q, j) => (j === i ? { ...q, desc: o === 'down' } : q)))} />
+          <button className="nodrag ts-btn" title="Not sorted by this column" aria-label="Remove" onClick={() => put(keys.filter((_, j) => j !== i))}>
+            <X {...IC} />
+          </button>
+        </span>
+      ))}
+      <button className="nodrag" title="Rows equal in the columns above are sorted by one more column" onClick={() => put([...keys, { col: cols.find(([c]) => !keys.some((k) => k.col === c))?.[0] ?? '', desc: false }])}>
+        + Then by
+      </button>
+    </span>
+  );
+}
+
 export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
   const { r, names, set } = useNode<FilterData>(id);
   const out = r?.outputs.out;
@@ -22,8 +54,13 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
   return (
     <div className="node node-clean">
       <InPort label="dataset" port="dataset" id="in" title="The rows of this dataset (every column with them)" />
-      <RowSelectControls value={data.rows} onChange={(rows) => set({ rows })} hasX result={r} />
+      {(r?.view.report ?? []).map((l, i) => (
+        <div key={i} className="hint">
+          {l}
+        </div>
+      ))}
       <NodeOptions>
+      <RowSelectControls value={data.rows} onChange={(rows) => set({ rows })} hasX result={r} />
       <div className="col-form">
         <span>Repeated</span>
         <span className="row">
@@ -39,14 +76,24 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
           {data.dup !== 'keep' && (
             <>
               <span>Values of</span>
-              <Select value={data.dupCol} options={[['', 'the X'], ...cols]} onChange={(dupCol) => set({ dupCol })} />
+              <ColumnsPicker value={data.dupCol} names={names} auto="the X" title="The column whose repeated values count; several (a list): rows repeated in all of them together, as the same sample on the same day" onChange={(dupCol) => set({ dupCol })} />
             </>
           )}
         </span>
         <span>Sort by</span>
+        <SortKeys data={data} cols={cols} set={set} />
+        <span title="After sorting: only this many rows, from the top or from the bottom (sorted largest first, the first 5 are the 5 largest values). Empty: all">Only the</span>
         <span className="row">
-          <Select value={data.sortBy} options={[['', 'not sorted'], ...cols]} onChange={(sortBy) => set({ sortBy })} />
-          {data.sortBy && <Check label="Descending" value={data.desc} onChange={(desc) => set({ desc })} />}
+          <Select<'start' | 'end'>
+            value={data.topFrom ?? 'start'}
+            options={[
+              ['start', 'first'],
+              ['end', 'last'],
+            ]}
+            onChange={(topFrom) => set({ topFrom: topFrom === 'start' ? undefined : topFrom })}
+          />
+          <NumInput className="tiny" min={0} step={1} placeholder="all" value={data.top || NaN} onChange={(top) => set({ top: Math.max(0, Math.floor(top) || 0) || undefined })} />
+          <span className="muted">rows (empty: all)</span>
         </span>
         <span>Keep</span>
         <span className="row">
@@ -54,11 +101,6 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
           <NumInput className="tiny" min={1} step={1} value={data.every} onChange={(every) => set({ every: Math.max(1, Math.floor(every) || 1) })} />
         </span>
       </div>
-      {(r?.view.report ?? []).map((l, i) => (
-        <div key={i} className="hint">
-          {l}
-        </div>
-      ))}
       {out?.t === 'dataset' && <DataPreview columns={out.v.columns} rows={5} />}
       </NodeOptions>
       <ResultSummary result={r} />

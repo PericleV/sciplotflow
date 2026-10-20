@@ -7,7 +7,8 @@ import type { AnnotationItem, CanvasItem } from '../types.ts';
 import { categoryColors, legendColor, mapColor, mapT, stopsOf } from './colors.ts';
 import { cellEdges } from '../engine/contour.ts';
 import { legendLayout } from './legendLayout.ts';
-import { dashArray, hasLine, hasSymbols, lineOnly, parseRich, plainText, richMetrics, runSize, splinePath, symbolPath } from './draw.ts';
+import { dashArray, hasLine, hasSymbols, lineHeightOf, lineOnly, parseRich, plainText, richMetrics, runMath, runSize, splinePath, symbolPath, textRunWidth, type Run } from './draw.ts';
+import { mathBox, mathError, mathFace, useMathVersion } from '../math/store.ts';
 import { CORNERED, isClosed as pathClosed, mapSegs, parsePath, pathBox, pathPolylines, pathText, radiiOf, roundedRectD, shapeToPath } from './paths.ts';
 import { formatLabels, niceStep, parseBreaks } from './ticks.ts';
 import { ThreeView } from './render3d.tsx';
@@ -142,8 +143,10 @@ type VAlign = 'baseline' | 'top' | 'middle' | 'bottom';
 // justify: the width (pt) every line but the last is spread to (more room between its words)
 export function RichText({ x, y, text: raw, st, anchor = 'start', valign = 'baseline', rotate = 0, num = false, justify }: { x: number; y: number; text: string; st: ResolvedText; anchor?: 'start' | 'middle' | 'end'; valign?: VAlign; rotate?: number; num?: boolean; justify?: number }) {
   const comma = useContext(CommaContext);
+  useMathVersion(); // drawn again when a formula is ready
   const text = num && comma ? commaNumbers(raw) : raw;
   const lines = parseRich(text);
+  if (lines.some((l) => l.some((r) => r.math))) return <MathText x={x} y={y} lines={lines} st={st} anchor={anchor} valign={valign} rotate={rotate} />;
   const widths = justify ? richMetrics(text, st).widths : [];
   const spacing = (li: number) => {
     if (!justify || li >= lines.length - 1) return undefined;
@@ -189,6 +192,85 @@ export function RichText({ x, y, text: raw, st, anchor = 'start', valign = 'base
       {tspans}
     </text>
   );
+}
+
+// A text with formulas: every piece placed by its width (the text's measured in the browser's font, the formulas' as
+// MathJax drew them, in curves), a formula with its baseline on the text's.
+let measurer: CanvasRenderingContext2D | null | undefined;
+const measured = new Map<string, number>();
+function textWidth(r: Run, st: ResolvedText): number {
+  const size = runSize(r, st.size);
+  const font = `${r.italic || st.italic ? 'italic ' : ''}${r.bold || st.bold ? 'bold ' : ''}100px ${r.font ?? st.font}`;
+  const key = `${font}\n${r.t}`;
+  let w = measured.get(key);
+  if (w === undefined) {
+    if (measurer === undefined) measurer = typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d') : null;
+    if (!measurer) return textRunWidth(r, st);
+    measurer.font = font;
+    w = measurer.measureText(r.t).width / 100;
+    measured.set(key, w);
+  }
+  return w * size;
+}
+function MathText({ x, y, lines, st, anchor, valign, rotate }: { x: number; y: number; lines: Run[][]; st: ResolvedText; anchor: 'start' | 'middle' | 'end'; valign: VAlign; rotate: number }) {
+  const lh = lineHeightOf(lines, st);
+  const n = lines.length;
+  // the height of the first line above its baseline and the depth of the last under it (a formula: its own)
+  const reach = (line: Run[], up: boolean) =>
+    Math.max(
+      (up ? 0.8 : 0.22) * st.size,
+      ...line.filter((r) => r.math).map((r) => {
+        const m = runMath(r, st);
+        return up ? m.h - r.shift * st.size : m.d + r.shift * st.size;
+      }),
+    );
+  const [up, down] = [reach(lines[0], true), reach(lines[n - 1], false)];
+  // (in the middle: as a text without formulas, moved by half what the formulas reach further)
+  const first = valign === 'top' ? up : valign === 'middle' ? -((n - 1) / 2) * lh + 0.35 * st.size + (up - 0.8 * st.size - (down - 0.22 * st.size)) / 2 : valign === 'bottom' ? -(n - 1) * lh - down : 0;
+  const parts: ReactNode[] = [];
+  lines.forEach((line, li) => {
+    const base = y + first + li * lh;
+    const pieces = line.map((r) => {
+      if (!r.math) return { r, w: textWidth(r, st), box: null };
+      const box = mathBox(r.t, r.math.display, mathFace(r.font ?? st.font, st.mathFont));
+      return { r, w: box ? box.w * runSize(r, st.size) : runMath(r, st).w, box };
+    });
+    const width = pieces.reduce((a, p) => a + p.w, 0);
+    let px = anchor === 'middle' ? x - width / 2 : anchor === 'end' ? x - width : x;
+    pieces.forEach(({ r, w, box }, ri) => {
+      const by = base + r.shift * st.size;
+      const color = r.color ?? st.color;
+      if (r.math) {
+        const s = runSize(r, st.size);
+        // a formula not drawn yet takes its place; a wrong one: its LaTeX in red
+        if (box) parts.push(<g key={`${li}-${ri}`} transform={`translate(${n2(px - box.x0 * s)} ${n2(by)}) scale(${+(s / 1000).toFixed(5)})`} color={color} fill={color} dangerouslySetInnerHTML={{ __html: box.body }} />);
+        else if (mathError(r.t, r.math.display, mathFace(r.font ?? st.font, st.mathFont)))
+          parts.push(
+            <text key={`${li}-${ri}`} x={n2(px)} y={n2(by)} fontFamily={st.font} fontSize={n2(s)} fill="#cc0000">
+              {r.t}
+            </text>,
+          );
+      } else
+        parts.push(
+          <text
+            key={`${li}-${ri}`}
+            x={n2(px)}
+            y={n2(by)}
+            fontFamily={r.font ?? st.font}
+            fontSize={n2(runSize(r, st.size))}
+            fontWeight={r.bold || st.bold ? 'bold' : undefined}
+            fontStyle={r.italic || st.italic ? 'italic' : undefined}
+            fill={color}
+            textDecoration={r.underline ? 'underline' : undefined}
+            xmlSpace="preserve"
+          >
+            {r.overline ? [...r.t].map((ch) => (ch.trim() ? `${ch}̅` : ch)).join('') : r.t}
+          </text>,
+        );
+      px += w;
+    });
+  });
+  return <g transform={rotate ? `rotate(${n2(rotate)} ${n2(x)} ${n2(y)})` : undefined}>{parts}</g>;
 }
 
 const ANCHOR_H: Record<Anchor, 'start' | 'middle' | 'end'> = { tl: 'start', cl: 'start', bl: 'start', tc: 'middle', c: 'middle', bc: 'middle', tr: 'end', cr: 'end', br: 'end' };
@@ -2106,9 +2188,9 @@ function Handle({ x, y, info, anchor, round, on }: { x: number; y: number; info:
   return (
     <Draggable info={info}>
       {round ? (
-        <circle data-export="skip" className="shape-handle" cx={n2(x)} cy={n2(y)} r={n2(2.2 * k)} fill="#14b8a6" stroke="#ffffff" strokeWidth={n2(0.6 * k)} />
+        <circle data-export="skip" className="shape-handle" cx={n2(x)} cy={n2(y)} r={n2(2.2 * k)} fill="var(--select)" stroke="#ffffff" strokeWidth={n2(0.6 * k)} />
       ) : (
-        <rect data-export="skip" data-anchor={anchor} className="shape-handle" x={n2(x - 2.8 * k)} y={n2(y - 2.8 * k)} width={n2(5.6 * k)} height={n2(5.6 * k)} fill={on ? '#14b8a6' : '#ffffff'} stroke="#14b8a6" strokeWidth={n2(0.8 * k)} />
+        <rect data-export="skip" data-anchor={anchor} className="shape-handle" x={n2(x - 2.8 * k)} y={n2(y - 2.8 * k)} width={n2(5.6 * k)} height={n2(5.6 * k)} fill={on ? 'var(--select)' : '#ffffff'} stroke="var(--select)" strokeWidth={n2(0.8 * k)} />
       )}
     </Draggable>
   );
@@ -2129,7 +2211,7 @@ function RotateHandle({ cx, cy, r, deg, info }: { cx: number; cy: number; r: num
         return { rotation: d };
       })}
     >
-      <circle data-export="skip" className="shape-handle" cx={n2(hx)} cy={n2(hy)} r={n2(3 * k)} fill="#ffffff" stroke="#14b8a6" strokeWidth={n2(0.8 * k)} />
+      <circle data-export="skip" className="shape-handle" cx={n2(hx)} cy={n2(hy)} r={n2(3 * k)} fill="#ffffff" stroke="var(--select)" strokeWidth={n2(0.8 * k)} />
     </Draggable>
   );
 }
@@ -2257,7 +2339,7 @@ function PathHandles({ s, m, info, item }: { s: ShapeSpec; m: Mapper; info: (pat
   });
   return (
     <g>
-      {guides.length > 0 && <path data-export="skip" className="shape-handle" d={guides.join('')} fill="none" stroke="#14b8a6" strokeWidth={n2(0.5 * k)} />}
+      {guides.length > 0 && <path data-export="skip" className="shape-handle" d={guides.join('')} fill="none" stroke="var(--select)" strokeWidth={n2(0.5 * k)} />}
       {nodes}
       {turn}
     </g>
@@ -2923,7 +3005,7 @@ function AxesFrameView({ ax, W, H, idPrefix, defaults: pageDefaults, beneath }: 
 }
 
 // ---- “Edit layout” (Merge): the frames move and resize with the mouse, the panel grid's margins and gaps too ----
-const ACCENT = '#14b8a6';
+const ACCENT = 'var(--select)';
 const HANDLES: [number, number, string][] = [
   [-1, -1, 'nwse-resize'],
   [0, -1, 'ns-resize'],

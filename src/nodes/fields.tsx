@@ -4,10 +4,10 @@ import { useRef, useState } from 'react';
 import { SYMBOL_GROUPS } from '../figure/draw.ts';
 import { FONTS, type TextStyle } from '../figure/spec.ts';
 import { NumInput } from './ui.tsx';
-import { CornerDownLeft, RotateCcw, X } from 'lucide-react';
+import { CornerDownLeft, RotateCcw, Sigma, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
 
-const RICH_HELP = 'Rich text: x^{2}, x_{i}, \\alpha, \\Delta, \\pm, \\bold{…}, \\italic{…}, \\size{12}{…}, \\color{#d62728}{…} (Ω: a colour chosen), \\\\ new line; Ω for symbols';
+const RICH_HELP = 'Rich text: x^{2}, x_{i}, \\alpha, \\Delta, \\pm, \\bold{…}, \\italic{…}, \\size{12}{…}, \\color{#d62728}{…} (Ω: a colour chosen), \\\\ new line, $\\frac{a}{b}$ a LaTeX formula; Ω for symbols';
 
 // A text box with the Ω menu (symbols, superscript, subscript, bold, italic, size, colour, new line).
 export function RichInput({ value, onChange, placeholder, title, multiline }: { value: string; onChange: (v: string) => void; placeholder?: string; title?: string; multiline?: boolean }) {
@@ -71,6 +71,9 @@ export function RichInput({ value, onChange, placeholder, title, multiline }: { 
             </span>
             <button title="New line: \\" onClick={() => wrap('\\\\')}>
               <CornerDownLeft {...IC} />
+            </button>
+            <button title="A formula in LaTeX between $ signs: $\frac{a}{b}$, $\Delta E = h\nu$ ($$…$$: drawn larger, as on a line of its own)" onClick={() => wrap('$', '$')}>
+              <Sigma {...IC} />
             </button>
             <button className="close" title="Close" onClick={() => setOpen(false)}>
               <X {...IC} />

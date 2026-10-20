@@ -31,6 +31,7 @@ import { DRAG_TYPE, NodePalette, type PaletteGroup } from './NodePalette.tsx';
 const ProjectsPanel = lazy(() => import('./ProjectsPanel.tsx').then((m) => ({ default: m.ProjectsPanel })));
 const DocumentPanel = lazy(() => import('./DocumentPanel.tsx').then((m) => ({ default: m.DocumentPanel })));
 const HelpPanel = lazy(() => import('./HelpPanel.tsx').then((m) => ({ default: m.HelpPanel })));
+const CollabPanel = lazy(() => import('./CollabPanel.tsx').then((m) => ({ default: m.CollabPanel })));
 import { download } from './figure/export.ts';
 import { PALETTE } from './figure/spec.ts';
 import { ContextMenu, type MenuAction, type MenuItem, type MenuState } from './ContextMenu.tsx';
@@ -42,13 +43,21 @@ import { editCaption } from './nodes/captionStore.ts';
 import { FlowEdge } from './FlowEdge.tsx';
 import { withShell } from './nodes/NodeShell.tsx';
 import { FrameNodeView } from './nodes/FrameNode.tsx';
-import { applyTheme, loadPrefs, loadTheme, savePrefs, STEPS, type CanvasPrefs, type Theme } from './theme.ts';
+import { applyColors, applyNotePage, applyTheme, getNotePage, loadColors, loadPrefs, loadTheme, myColor, myName, savePrefs, STEPS, welcomeAtStart, type CanvasPrefs, type Theme, type UiColors } from './theme.ts';
+import { ColorChoice } from './ColorChoice.tsx';
 import { hasRefs, withTexts } from './textStore.ts';
-import { libMigrate, libPut } from './library.ts';
-import { allowProject, openProject } from './python/runner.ts';
+import { libGet, libMigrate, libPut } from './library.ts';
+import { Welcome } from './Welcome.tsx';
+import { TourPanel } from './tour/TourPanel.tsx';
+import { RecordLayer, type RecordExtra } from './tour/RecordLayer.tsx';
+import { loadTourProgress, placeOf, saveTourProgress, TOURS, wireEdge, withAdded, type TourApi } from './tour/tours.ts';
+import type { CollabSession } from './collab/session.ts';
+import { PresenceLayer } from './collab/PresenceLayer.tsx';
+import { colorOf } from './collab/presence.ts';
+import { allowProject, distrustProject, openProject } from './python/runner.ts';
 import { PythonNodeView } from './nodes/PythonNode.tsx';
 import { autosave, decodeProject, encodeProject, keepLastSession, parseProject, PROJECT_VERSION, saveToBrowser, stringifyProject, toProject, type Project } from './project.ts';
-import { fileProject, newProjectId, openEmbedded, projectRevision, type FigureRef } from './figure/embed.ts';
+import { EDITABLE_FIGURES, fileProject, newProjectId, openEmbedded, projectRevision, type FigureRef } from './figure/embed.ts';
 import { ProjectInfoContext } from './projectInfo.ts';
 import { DataManipNodeView } from './nodes/DataManipNode.tsx';
 import { FitNodeView } from './nodes/FitNode.tsx';
@@ -86,7 +95,7 @@ import { RerouteNodeView } from './nodes/RerouteNode.tsx';
 import { GroupInNodeView, GroupNodeView, GroupOutNodeView } from './nodes/GroupNodes.tsx';
 import { GroupNavContext } from './nodes/groupNav.ts';
 import { forgetTemplate, listTemplates, saveTemplate, templateById, useTemplates } from './nodes/templates.ts';
-import { composeRoot, makeGroup, ungroupNode, type Level } from './engine/subgraph.ts';
+import { asBatch, composeRoot, makeGroup, NEW_OUT, ungroupNode, type Level } from './engine/subgraph.ts';
 import type { NodeResult } from './engine/evaluate.ts';
 import { canPaste, copySettings, pastedData, useClipboard } from './nodes/clipboard.ts';
 import { clearDefaultStyle, defaultStyleFor, forgetStyle, saveStyle, setDefaultStyle, styledData, stylesFor, userStylesFor, withDefaultStyle } from './nodes/styles.ts';
@@ -96,7 +105,7 @@ import { PlotColumnsDialog, type PlotChoice } from './PlotColumnsDialog.tsx';
 import { buildFigure } from './plotBuild.ts';
 import { readFiles } from './readFiles.ts';
 import type { AppNode, NodeType } from './types.ts';
-import { ArrowLeft, ArrowRight, CornerDownRight, Grid3x3, Map as MapIcon, Maximize, Redo2, Search, Spline, TriangleAlert, Undo2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CornerDownRight, Grid3x3, Map as MapIcon, Maximize, Redo2, Search, Spline, TriangleAlert, Undo2, Users } from 'lucide-react';
 import { IC } from './nodes/iconProps.ts';
 
 const baseNodeTypes = {
@@ -267,6 +276,14 @@ const loadExamples = () => import('./examples.ts').then((m) => m.EXAMPLES as Exa
 // The page opens on the project left at the last visit (kept automatically; Projects: “Last session”).
 const lastSession = keepLastSession();
 const EMPTY: Project = { app: 'graph-flow', version: PROJECT_VERSION, nodes: [], edges: [] };
+// a group's port named after its node's own name (a column's name, a label…), else the port, else the node type
+const portLabel = (nd: AppNode, h: string | null | undefined) => {
+  const d = nd.data as { name?: unknown; label?: unknown; caption?: unknown; column?: unknown };
+  const own = [d.caption, d.name, d.label, d.column].find((v): v is string => typeof v === 'string' && v.trim() !== '');
+  return own ?? (h && h !== 'out' && h !== 'in' ? h : nodeTitle(nd));
+};
+// recording mode: the page filmed for the README (scripts/gifs/record.ts), opened with ?record
+const RECORD = new URLSearchParams(location.search).has('record');
 const initial: Project = lastSession?.project ?? EMPTY;
 
 // a project with Python code (in groups too)
@@ -275,7 +292,9 @@ const hasPython = (nodes: AppNode[]): boolean => nodes.some((n) => n.type === 'p
 function Flow() {
   const [nodes, setNodes, onNodesChange] = useNodesState<AppNode>(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initial.edges);
-  const history = useHistory(nodes, edges, setNodes, setEdges);
+  // while working together, undo and redo are the session's (only the changes made here)
+  const undoExt = useRef<{ undo: () => void; redo: () => void } | null>(null);
+  const history = useHistory(nodes, edges, setNodes, setEdges, undoExt);
   // the project's title: the example loaded, the file opened, or typed in the toolbar
   const [projectName, setProjectName] = useState(initial.name ?? '');
   // the project's identity: kept by its saves, carried by its figures (a document's figures are found by it)
@@ -286,15 +305,18 @@ function Flow() {
   useEffect(() => {
     document.title = `${projectName || 'Untitled project'} — SciPlotFlow`;
   }, [projectName]);
-  const [panel, setPanel] = useState<'projects' | 'docs' | 'help' | null>(null);
+  const [panel, setPanel] = useState<'projects' | 'docs' | 'help' | 'collab' | null>(() => (location.hash.startsWith('#join=') ? 'collab' : null));
+  // the welcome window: at start (unless turned off; not over a project opened from a link — shared, a session, an
+  // invitation), from Help
+  const [welcome, setWelcome] = useState(() => welcomeAtStart() && !RECORD && !/^#(p|c|join)=/.test(location.hash));
   // the clicks on the empty canvas (each folds the options panel when nothing is pinned there)
   const [paneClicks, setPaneClicks] = useState(0);
   // the clicks on a node (each unfolds the options panel, even when it was folded by hand)
   const [nodeClicks, setNodeClicks] = useState(0);
-  const togglePanel = (p: 'projects' | 'docs' | 'help') => setPanel((cur) => (cur === p ? null : p));
+  const togglePanel = (p: 'projects' | 'docs' | 'help' | 'collab') => setPanel((cur) => (cur === p ? null : p));
   // the panel on the right closed with an animation
   const { shown: shownPanel, closing: panelClosing } = useLeaving(panel);
-  const { screenToFlowPosition, fitBounds, fitView, getNodesBounds, getNodes, getNode, getEdges, setViewport, deleteElements, updateNodeData } = useReactFlow<AppNode>();
+  const { screenToFlowPosition, flowToScreenPosition, setCenter, getZoom, getInternalNode, fitBounds, fitView, getNodesBounds, getNodes, getNode, getEdges, setViewport, deleteElements, updateNodeData } = useReactFlow<AppNode>();
   const clipboard = useClipboard();
   const [menu, setMenu] = useState<MenuState | null>(null);
   // Find a node (Ctrl+F or the ⌕ button of the canvas controls)
@@ -313,6 +335,9 @@ function Flow() {
   const [prefs, setPrefs] = useState<CanvasPrefs>(loadPrefs);
   const setPref = (patch: Partial<CanvasPrefs>) => setPrefs((p) => savePrefs({ ...p, ...patch }));
   useEffect(() => applyTheme(theme), [theme]);
+  const [colors, setColors] = useState<UiColors>(loadColors);
+  useEffect(() => applyColors(colors), [colors]);
+  useEffect(() => applyNotePage(getNotePage()), []);
   const openFile = useRef<HTMLInputElement>(null);
 
   // inside group nodes: the levels above the one shown (outermost first); the whole graph is put back together for
@@ -334,7 +359,8 @@ function Flow() {
   const [pins, setPins] = useState<string[]>([]);
   const selectedOne = useMemo(() => {
     const sel = nodes.filter((n) => n.selected);
-    return sel.length === 1 && hasPanel(sel[0].type) ? sel[0] : null;
+    // (a group has no options, a Batch has: the names, the order, what failed)
+    return sel.length === 1 && (hasPanel(sel[0].type) || (sel[0].type === 'subgraph' && !!sel[0].data.batch)) ? sel[0] : null;
   }, [nodes]);
   const pinnedNodes = useMemo(() => pins.flatMap((pid) => nodes.filter((n) => n.id === pid)), [pins, nodes]);
   const pin = (pid: string, on: boolean) => setPins((ps) => (on ? [...ps.filter((x) => x !== pid), pid] : ps.filter((x) => x !== pid)));
@@ -411,6 +437,8 @@ function Flow() {
   }, [initialized, fitPending, getNodes, getNodesBounds, setViewport]);
 
   const load = (p: Project, name?: string) => {
+    // another project while working together: out of the session first (else it would replace the shared one)
+    if (collabRef.current && !fromSession.current) leaveSession();
     // the project open until now: kept in Projects first (its last change too)
     if (p.id !== projectId) keepInLibrary();
     // a project kept in the browser: its big texts come back from IndexedDB first
@@ -476,7 +504,7 @@ function Flow() {
   const [focusFig, setFocusFig] = useState<FigureRef | null>(null);
   const openFigureFile = async (file: File) => {
     const e = fileProject(new Uint8Array(await file.arrayBuffer()));
-    if (!e) return alert(`“${file.name}” has no SciPlotFlow project in it: export the figure with “project inside” (SVG or PNG).`);
+    if (!e) return alert(`“${file.name}” has no SciPlotFlow project in it${EDITABLE_FIGURES ? ': export the figure with “project inside” (SVG or PNG)' : ''}.`);
     const p = await openEmbedded(e);
     if (typeof p === 'string') return alert(p);
     const when = new Date(e.exported).toLocaleString();
@@ -519,6 +547,112 @@ function Flow() {
     if (p.repaired) alert(p.repaired);
   };
 
+  // ---- Working together (Collaborate): a session keeps this project in step with the others' ----
+  const [collab, setCollab] = useState<CollabSession | null>(null);
+  const collabRef = useRef<CollabSession | null>(null);
+  collabRef.current = collab;
+  // a guest's answer to send back (joined by an invitation), with the host's name and the connection
+  const [answerInfo, setAnswerInfo] = useState<{ code: string; host: string; pc: RTCPeerConnection; at: number } | null>(null);
+  const [joinCode] = useState(() => (location.hash.startsWith('#join=') ? location.hash.slice(6) : ''));
+  const [peerCount, setPeerCount] = useState(0);
+  // a merge of the others' changes given to the page (shown once it has rendered)
+  const [mergeTick, setMergeTick] = useState(0);
+  // the project the session gets on joining is loaded as a project (not a reason to leave)
+  const fromSession = useRef(false);
+  const live = useRef({ root, projectName, projectId, stack });
+  live.current = { root, projectName, projectId, stack };
+  useEffect(() => {
+    if (!collab) return;
+    // a change made here: the session reads the project shown when it writes it
+    collab.setSource(() => toProject(live.current.root.nodes, live.current.root.edges, live.current.projectName, live.current.projectId));
+    undoExt.current = { undo: () => collab.undoLocal(), redo: () => collab.redoLocal() };
+    const offRemote = collab.onRemote(() => {
+      const inc = collab.incoming();
+      // a Python script changed by someone else (its code, or running by itself): held until allowed again
+      const py = (p: Project, id: string) => p.nodes.find((n) => n.id === id && (n.type === 'python' || (n.type === 'subgraph' && hasPython([n]))));
+      const touched = [...inc.changed].some((id) => {
+        const [a, b] = [py(inc.now, id), py(inc.base, id)];
+        if (!a) return false;
+        if (!b || a.type === 'subgraph') return true;
+        const [da, db] = [a.data as { code?: string; auto?: boolean }, b.data as { code?: string; auto?: boolean }];
+        return da.code !== db.code || da.auto !== db.auto;
+      });
+      if (touched) distrustProject();
+      // inside a group: back to the top level, where the others' changes are merged
+      if (live.current.stack.length) {
+        const r = live.current.root;
+        setStack([]);
+        setPins([]);
+        setNodes(inc.nodes(r.nodes));
+        setEdges(inc.edges(r.edges));
+      } else {
+        setNodes(inc.nodes);
+        setEdges(inc.edges);
+      }
+      if (inc.name !== undefined) setProjectName(inc.name);
+      setMergeTick((t) => t + 1);
+    });
+    const offPeers = collab.onPeers(() => setPeerCount(collab.peers().length));
+    collab.onJoined((p) => {
+      fromSession.current = true;
+      load(p, p.name ?? 'Shared project');
+      fromSession.current = false;
+    });
+    return () => {
+      offRemote();
+      offPeers();
+      undoExt.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collab]);
+  // presence: the level shown (the groups opened) and the nodes selected here, for the others; this side's colour
+  const level = stack.map((l) => l.groupId).join('/');
+  const selectedIds = nodes.filter((n) => n.selected).map((n) => n.id).join(',');
+  useEffect(() => {
+    collab?.presence.set({ level, selected: selectedIds ? selectedIds.split(',') : [] });
+  }, [collab, level, selectedIds]);
+  useEffect(() => {
+    if (collab) collab.presence.set({ color: myColor() || colorOf(collab.name) });
+  }, [collab]);
+  // a change made here goes out (a moment later); a merge shown lets the changes made meanwhile go out
+  useEffect(() => collab?.changed(), [collab, root, projectName]);
+  useEffect(() => collab?.shown(), [collab, mergeTick]);
+  const startSession = async (name: string) => {
+    const { CollabSession } = await import('./collab/session.ts');
+    setCollab(CollabSession.host(toProject(root.nodes, root.edges, projectName, projectId), name));
+  };
+  const joinSession = async (code: string, name: string, address?: string): Promise<string | null> => {
+    const { CollabSession } = await import('./collab/session.ts');
+    const r = await CollabSession.byCode(code, name, address);
+    if (typeof r === 'string') return r;
+    setAnswerInfo({ code: r.answer, host: r.host, pc: r.pc, at: r.at });
+    setCollab(r.session);
+    return null;
+  };
+  // a guest after a lost connection: a new invitation answered within the session (its work kept and merged)
+  const rejoinSession = async (code: string, address?: string): Promise<string | null> => {
+    const s = collabRef.current;
+    if (!s) return 'Not in a session.';
+    const r = await s.rejoin(code, address);
+    if (typeof r === 'string') return r;
+    setAnswerInfo({ code: r.answer, host: r.host, pc: r.pc, at: r.at });
+    return null;
+  };
+  function leaveSession() {
+    collabRef.current?.leave();
+    collabRef.current = null;
+    setCollab(null);
+    setAnswerInfo(null);
+    setPeerCount(0);
+    history.reset();
+  }
+  // a link to a session in this browser (#c=…): joined through the tabs; an invitation (#join=…): the panel has it
+  useEffect(() => {
+    const room = location.hash.startsWith('#c=') ? location.hash.slice(3) : '';
+    if (location.hash.startsWith('#c=') || location.hash.startsWith('#join=')) window.history.replaceState(null, '', location.pathname + location.search);
+    if (room) void import('./collab/session.ts').then(({ CollabSession }) => setCollab(CollabSession.guest(room, myName() || 'Guest')));
+  }, []);
+
   // Empty project: no nodes, no connections.
   const newProject = () => {
     const text = 'Start a new, empty project?\n\nThe current one stays in Projects (once it has been changed); Save also keeps it as a file.';
@@ -530,9 +664,18 @@ function Flow() {
     [getNode, getEdges, currentGroup],
   );
 
-  // Single-input handles keep only the newest connection.
+  // Single-input handles keep only the newest connection. A connection to “+” of a Group output: a new output of the
+  // group open (in a Batch: one more thing kept for every file).
   const onConnect = useCallback(
-    (c: Connection) =>
+    (c: Connection) => {
+      const src = getNode(c.source);
+      if (c.targetHandle === NEW_OUT && src) {
+        const id = `out-${crypto.randomUUID().slice(0, 6)}`;
+        const port = { id, label: portLabel(src, c.sourceHandle), type: sourcePort(src, c.sourceHandle) ?? 'any' };
+        setStack((st) => st.map((lv, k) => (k < st.length - 1 ? lv : { ...lv, nodes: lv.nodes.map((n) => (n.id === lv.groupId && n.type === 'subgraph' ? ({ ...n, data: { ...n.data, outputs: [...n.data.outputs, port] } } as AppNode) : n)) })));
+        setEdges((eds) => addEdge({ ...c, targetHandle: id }, eds));
+        return;
+      }
       setEdges((eds) => {
         const multi = isMultiInput(getNode(c.target), c.targetHandle);
         const kept = eds.filter(
@@ -540,7 +683,8 @@ function Flow() {
             !(e.target === c.target && e.targetHandle === c.targetHandle && (!multi || e.source === c.source)),
         );
         return addEdge(c, kept);
-      }),
+      });
+    },
     [setEdges, getNode],
   );
 
@@ -721,21 +865,20 @@ function Flow() {
           {
             label: 'Make a group node',
             onClick: () => {
-              const r = makeGroup(
-                getNodes(),
-                getEdges(),
-                ids,
-                (nd, h) => {
-                  // a port named after its node's own name (a column's name, a label…), else the port, else the node type
-                  const d = nd.data as { name?: unknown; label?: unknown; caption?: unknown; column?: unknown };
-                  const own = [d.caption, d.name, d.label, d.column].find((v): v is string => typeof v === 'string' && v.trim() !== '');
-                  return own ?? (h && h !== 'out' && h !== 'in' ? h : nodeTitle(nd));
-                },
-                (nd, h) => sourcePort(nd, h, portCtx),
-              );
+              const r = makeGroup(getNodes(), getEdges(), ids, portLabel, (nd, h) => sourcePort(nd, h, portCtx));
               if (!r) return;
               setNodes(r.nodes);
               setEdges(r.edges);
+            },
+          },
+          {
+            label: 'Make a batch (run on every file)',
+            onClick: () => {
+              const r = makeGroup(getNodes(), getEdges(), ids, portLabel, (nd, h) => sourcePort(nd, h, portCtx));
+              if (!r) return;
+              const b = asBatch(r.nodes, r.edges, r.groupId, portLabel, (nd, h) => sourcePort(nd, h));
+              setNodes(b.nodes);
+              setEdges(b.edges);
             },
           },
           ...(clipboard?.kind === 'node'
@@ -983,6 +1126,117 @@ function Flow() {
     setNodes((ns) => [...ns.map((n) => (n.selected ? { ...n, selected: false } : n)), made]);
   };
 
+  // a guided tour: its step, its window over the canvas; where it was left (step, project) kept in this browser
+  const [tour, setTour] = useState<{ id: string; step: number } | null>(null);
+  const tourDef = tour ? TOURS.find((t) => t.id === tour.id) : undefined;
+  useEffect(() => {
+    if (tour) saveTourProgress({ tour: tour.id, step: tour.step, project: projectId });
+  }, [tour, projectId]);
+  const tourStep = useCallback((k: number) => setTour((t) => t && { ...t, step: Math.max(0, k) }), []);
+  // a tour starts in a project of its own; one left half-way goes on in its project (opened again when another is open)
+  const startTour = (id: string) => {
+    const t = TOURS.find((q) => q.id === id);
+    if (!t) return;
+    setWelcome(false);
+    const left = loadTourProgress();
+    const fresh = () => {
+      load(t.project ? { ...EMPTY, ...t.project() } : EMPTY, `Tour: ${t.title}`);
+      setTour({ id, step: 0 });
+    };
+    if (left?.tour !== id || left.step === 0) return fresh();
+    if (left.project === projectId) return setTour({ id, step: left.step });
+    void libGet(left.project).then((p) => {
+      if (typeof p === 'string') return fresh();
+      load(p);
+      setTour({ id, step: left.step });
+    });
+  };
+  const closeTour = (finished: boolean) => {
+    setTour(null);
+    if (finished) saveTourProgress(null);
+  };
+  // what Show me does
+  const tourApi: TourApi = {
+    importText: (name, text) => {
+      const r = canvasRef.current?.getBoundingClientRect();
+      void importFiles([new File([text], name, { type: 'text/csv' })], screenToFlowPosition(r ? { x: r.left + r.width / 5, y: r.top + r.height / 6 } : { x: 200, y: 150 }));
+    },
+    plot: (id) => {
+      const out = engine.results.get(id)?.outputs.out;
+      const cols = out?.t === 'dataset' ? out.v.columns.map((c) => c.name) : [];
+      if (cols.length > 1) makeFigure(id, { graph: 'line', curves: cols.slice(1).map((y) => ({ x: cols[0], y, yerr: '', xerr: '' })), into: '', split: 'one', merge: false, style: '' });
+    },
+    place: (spec) => placeOf(getNodes(), spec),
+    add: (spec, at) => {
+      const id = `${spec.type}-${crypto.randomUUID().slice(0, 8)}`;
+      const r = withAdded(getNodes(), getEdges(), spec, id, at);
+      setNodes(r.nodes);
+      setEdges(r.edges);
+      return id;
+    },
+    connect: (from, to) => setEdges((es) => (es.some((e) => e.target === to && e.targetHandle === from.to && e.source === from.id) ? es : [...es, wireEdge(from, to)])),
+    frame: (ids, name) => {
+      const r = groupNodes(getNodes(), ids, name, FRAME_COLORS[0]);
+      if (r.frameId) setNodes(r.nodes);
+    },
+    setData: (id, f) => setNodes((ns) => ns.map((n) => (n.id === id ? ({ ...n, data: f(n.data as Record<string, unknown>) } as AppNode) : n))),
+    select: (id) => setNodes((ns) => ns.map((n) => (!!n.selected === (n.id === id) ? n : { ...n, selected: n.id === id }))),
+    nodes: () => getNodes(),
+    edges: () => getEdges(),
+    toScreen: (p) => flowToScreenPosition(p),
+    // the place of a new node (as large as a usual one) brought into view when it is not
+    reveal: async (p) => {
+      const r = canvasRef.current?.getBoundingClientRect();
+      if (!r) return;
+      // the open Nodes and Options panels cover the canvas at its sides
+      const left = r.left + (document.querySelector('.palette.overlay:not(.inspector)')?.getBoundingClientRect().width ?? 0);
+      const right = r.right - (document.querySelector('.inspector.overlay')?.getBoundingClientRect().width ?? 0);
+      const a = flowToScreenPosition(p);
+      const b = flowToScreenPosition({ x: p.x + 560, y: p.y + 360 });
+      if (a.x >= left && a.y >= r.top && b.x <= right && b.y <= r.bottom) return;
+      // (its animation stops while the page is hidden: never waited for longer than it lasts)
+      // its middle brought to the middle of what the panels leave free
+      const shift = screenToFlowPosition({ x: (left + right) / 2, y: 0 }).x - screenToFlowPosition({ x: r.left + r.width / 2, y: 0 }).x;
+      await Promise.race([setCenter(p.x + 280 - shift, p.y + 180, { zoom: getZoom(), duration: 500 }), new Promise((done) => setTimeout(done, 700))]);
+    },
+  };
+
+  // recording mode (?record): what the film script needs besides Show me
+  const recordExtra: RecordExtra = {
+    blank: () => load(EMPTY, 'Untitled project'),
+    example: async (name) => {
+      const list = examples.length ? examples : await loadExamples();
+      const ex = list.find((e) => e.name.startsWith(name));
+      if (ex) load(ex.make(), ex.name);
+      return !!ex;
+    },
+    // the nodes as large as they fit (at most their own size), their right edge against the Options panel (room px
+    // at the right), their top at the top: the film shows them and the panel side by side, little canvas between
+    focus: async (ids, room = 0) => {
+      const r = canvasRef.current?.getBoundingClientRect();
+      if (!r) return;
+      if (!room) {
+        await fitView({ nodes: ids.map((id) => ({ id })), padding: 0.06, duration: 0, maxZoom: 1 });
+        return;
+      }
+      const b = getNodesBounds(ids);
+      const z = Math.min(1, (r.width - room - 60) / b.width, (r.height - 48) / b.height);
+      await setViewport({ x: r.width - room - 24 - (b.x + b.width) * z, y: 24 - b.y * z, zoom: z });
+    },
+    // one node: as large as fits beside the panel (a tall one: its top part), against the panel
+    focusTop: async (id, room = 0) => {
+      const n = getInternalNode(id);
+      const r = canvasRef.current?.getBoundingClientRect();
+      if (!n || !r) return;
+      const p = n.internals.positionAbsolute;
+      const w = n.measured.width ?? 560;
+      const z = Math.min(1, (r.width - room - 60) / w);
+      await setViewport({ x: r.width - room - 24 - (p.x + w) * z, y: 24 - p.y * z, zoom: z });
+    },
+    setTheme,
+    setColors,
+  };
+
   return (
     <div className="app">
       <header className="toolbar">
@@ -1040,9 +1294,11 @@ function Flow() {
         <button className={panel === 'projects' ? 'active' : ''} onClick={() => togglePanel('projects')} title="Several projects kept in this browser">
           Projects
         </button>
-        <button className={panel === 'docs' ? 'active' : ''} onClick={() => togglePanel('docs')} title="Update the figures of this project in a Word or PowerPoint document (figures exported with “project inside”)">
-          Update document…
-        </button>
+        {EDITABLE_FIGURES && (
+          <button className={panel === 'docs' ? 'active' : ''} onClick={() => togglePanel('docs')} title="Update the figures of this project in a Word or PowerPoint document (figures exported with “project inside”)">
+            Update document…
+          </button>
+        )}
         <button
           title="Copy a link that opens this project (the whole project is in the link: nothing is sent to a server)"
           onClick={async () => {
@@ -1061,6 +1317,9 @@ function Flow() {
         >
           Share link
         </button>
+        <button className={panel === 'collab' ? 'active' : ''} onClick={() => togglePanel('collab')} title={collab ? `Working together: ${peerCount + 1} in the session` : 'Work on this project together, in real time, browser to browser'}>
+          <Users {...IC} /> {collab ? `Together · ${peerCount + 1}` : 'Collaborate'}
+        </button>
         <button className={finding ? 'active' : ''} onClick={() => setFinding(true)} title="Find a node on the canvas by its name or type (Ctrl+F)">
           <Search {...IC} /> Find node
         </button>
@@ -1076,6 +1335,8 @@ function Flow() {
           <option value="light">Theme: light</option>
           <option value="dark">Theme: dark</option>
         </select>
+        <ColorChoice value={colors.select} shown="var(--select)" label="Selection" title="Selection colour (around the selected nodes)" onChange={(c) => setColors((p) => ({ ...p, select: c }))} />
+        <ColorChoice value={colors.accent} shown="var(--accent)" label="Accent" title="Accent colour (active buttons, tabs)" same onChange={(c) => setColors((p) => ({ ...p, accent: c }))} />
         <input
           ref={openFile}
           type="file"
@@ -1093,7 +1354,15 @@ function Flow() {
         <ProjectInfoContext.Provider value={projectInfo}>
         <EngineContext.Provider value={engine}>
           <GroupNavContext.Provider value={{ open: openGroup, current: currentGroup }}>
-          <div className="canvas" ref={canvasRef} onDragOver={onDragOver} onDrop={onDrop}>
+          <div
+            className="canvas"
+            ref={canvasRef}
+            onDragOver={onDragOver}
+            onDrop={onDrop}
+            // working together: the mouse on the canvas shown to the others (in the canvas' coordinates)
+            onMouseMove={collab ? (e) => collab.presence.set({ cursor: screenToFlowPosition({ x: e.clientX, y: e.clientY }) }) : undefined}
+            onMouseLeave={collab ? () => collab.presence.set({ cursor: null }) : undefined}
+          >
             {stack.length > 0 && (
               <div className="group-bar">
                 <button className="btn-run" onClick={closeGroup} title="Back to the level above">
@@ -1106,7 +1375,7 @@ function Flow() {
                     .map((l) => (l.nodes.find((n) => n.id === l.groupId)?.data as { name?: string } | undefined)?.name || 'Group')
                     .join(' › ')}
                 </b>
-                <span className="hint">The Group input and Group output nodes are its ports.</span>
+                <span className="hint">{currentGroup?.batch ? 'These steps run on every file; shown here on the first one. Connect to “+ keep” what to keep from each file.' : 'The Group input and Group output nodes are its ports.'}</span>
               </div>
             )}
             <ReactFlow
@@ -1200,6 +1469,7 @@ function Flow() {
                 </ControlButton>
               </Controls>
               {prefs.minimap && <MiniMap pannable zoomable nodeColor={miniColor} nodeStrokeColor={miniStroke} nodeBorderRadius={3} />}
+              {collab && <PresenceLayer presence={collab.presence} level={level} />}
             </ReactFlow>
             {/* an empty project: where to start */}
             {nodes.length === 0 && !stack.length && (
@@ -1209,6 +1479,8 @@ function Flow() {
                 or click Import in the Nodes panel, or open one of the Examples.
               </div>
             )}
+            {RECORD && <RecordLayer api={tourApi} extra={recordExtra} />}
+            {tour && tourDef && <TourPanel tour={tourDef} step={tour.step} onStep={tourStep} nodes={root.nodes} edges={root.edges} value={(id, h = 'out') => engine.results.get(id)?.outputs[h]} api={tourApi} onClose={closeTour} />}
             <div className={`panel-host${panelClosing ? ' leaving' : ''}`}>
             <Suspense fallback={null}>
               {shownPanel === 'projects' && (
@@ -1228,11 +1500,55 @@ function Flow() {
                   }}
                 />
               )}
+              {shownPanel === 'collab' && <CollabPanel onClose={() => setPanel(null)} session={collab} answer={answerInfo} joinCode={joinCode} onStart={(name) => void startSession(name)} onJoin={joinSession} onRejoin={rejoinSession} onLeave={leaveSession} />}
               {shownPanel === 'docs' && <DocumentPanel onClose={() => setPanel(null)} current={projectInfo.current} id={projectId} results={rootEngine.results} />}
-              {shownPanel === 'help' && <HelpPanel onClose={() => setPanel(null)} examples={examples} focus={helpAt} />}
+              {shownPanel === 'help' && (
+                <HelpPanel
+                  onClose={() => setPanel(null)}
+                  examples={examples}
+                  focus={helpAt}
+                  onWelcome={() => {
+                    setPanel(null);
+                    setWelcome(true);
+                  }}
+                />
+              )}
             </Suspense>
             </div>
             {finding && <FindNode onClose={() => setFinding(false)} />}
+            {welcome && (
+              <Welcome
+                examples={examples}
+                current={{ name: projectName, nodes: root.nodes.length }}
+                onClose={() => setWelcome(false)}
+                onImport={(files) => {
+                  setWelcome(false);
+                  // data files: an Import node in the middle of the canvas; a project or a figure: opened
+                  const data = files.filter((f) => DATA_FILE.test(f.name));
+                  const r = canvasRef.current?.getBoundingClientRect();
+                  if (data.length) void importFiles(data, screenToFlowPosition(r ? { x: r.left + r.width / 3, y: r.top + r.height / 4 } : { x: 200, y: 150 }));
+                  else void openAnyFile(files[0], false);
+                }}
+                onOpenFile={() => {
+                  setWelcome(false);
+                  openFile.current?.click();
+                }}
+                onNew={() => {
+                  setWelcome(false);
+                  load(EMPTY);
+                }}
+                onExample={(i) => {
+                  const ex = examples[i];
+                  setWelcome(false);
+                  if (ex) load(ex.make(), ex.name);
+                }}
+                onTour={startTour}
+                onProject={(e) => {
+                  setWelcome(false);
+                  void libGet(e.id).then((p) => (typeof p === 'string' ? alert(p) : load(p, e.name)));
+                }}
+              />
+            )}
             {plotFrom && plotSource && (
               <PlotColumnsDialog
                 name={plotSource.book?.name || plotSource.shown.name}

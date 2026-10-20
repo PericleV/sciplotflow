@@ -4,7 +4,7 @@
 // bottom-right corner changes its width and height (kept in the project).
 import { lazy, Suspense, useState } from 'react';
 import { NodeResizeControl, useReactFlow, useStore, type NodeProps } from '@xyflow/react';
-import type { AppNode, NoteNode } from '../types.ts';
+import type { AppNode, NoteData, NoteNode } from '../types.ts';
 import { NodeOptions } from './NodeOptions.tsx';
 import { RichView } from './RichView.tsx';
 import type { RichDoc } from './richDoc.ts';
@@ -23,12 +23,14 @@ export function NoteNodeView({ id, data }: NodeProps<NoteNode>) {
   });
   // the document and its plain text kept together (a plain document: the text alone)
   const change = (doc: RichDoc | undefined, text: string) => updateNodeData(id, { doc, text });
+  // the font of its formulas (absent: automatic)
+  const font = { mathFont: data.mathFont, onMathFont: (mathFont: NoteData['mathFont'] | 'auto') => updateNodeData(id, { mathFont: mathFont === 'auto' ? undefined : mathFont }) };
   return (
     <div className={`node node-note${sized ? ' sized' : ''}`}>
       {data.doc ? (
         <div className="note-rich nodrag nowheel" title="Type here; the toolbar, figures, pictures, tables and the export: in the options panel">
           <Suspense fallback={<RichView doc={data.doc} limit={12} />}>
-            <RichEditor doc={data.doc} text={data.text} onChange={change} compact />
+            <RichEditor doc={data.doc} text={data.text} onChange={change} compact {...font} />
           </Suspense>
         </div>
       ) : (
@@ -43,12 +45,12 @@ export function NoteNodeView({ id, data }: NodeProps<NoteNode>) {
       )}
       <NodeOptions>
         <Suspense fallback={<div className="muted">Loading the editor…</div>}>
-          <RichEditor doc={data.doc} text={data.text} onChange={change} onLarge={() => setPage(true)} />
+          <RichEditor doc={data.doc} text={data.text} onChange={change} onLarge={() => setPage(true)} {...font} />
         </Suspense>
       </NodeOptions>
       {page && (
         <Suspense fallback={null}>
-          <RichPage doc={data.doc} text={data.text} onChange={change} onClose={() => setPage(false)} />
+          <RichPage doc={data.doc} text={data.text} onChange={change} onClose={() => setPage(false)} {...font} />
         </Suspense>
       )}
     </div>

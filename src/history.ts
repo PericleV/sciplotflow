@@ -36,7 +36,8 @@ const keyOf = (s: Snap) =>
     s.edges.map((e) => [e.id, e.source, e.sourceHandle, e.target, e.targetHandle]),
   ]);
 
-export function useHistory(nodes: AppNode[], edges: Edge[], setNodes: (f: (ns: AppNode[]) => AppNode[]) => void, setEdges: (es: Edge[]) => void) {
+// external: while it is set (working together), undo and redo are its own (only the changes made here)
+export function useHistory(nodes: AppNode[], edges: Edge[], setNodes: (f: (ns: AppNode[]) => AppNode[]) => void, setEdges: (es: Edge[]) => void, external?: { current: { undo: () => void; redo: () => void } | null }) {
   const h = useRef({ past: [] as Snap[], future: [] as Snap[], current: null as Snap | null, key: '', timer: 0 as ReturnType<typeof setTimeout> | 0 });
   const latest = useRef<Snap>({ nodes, edges });
   const [flags, setFlags] = useState({ canUndo: false, canRedo: false });
@@ -87,22 +88,24 @@ export function useHistory(nodes: AppNode[], edges: Edge[], setNodes: (f: (ns: A
   );
 
   const undo = useCallback(() => {
+    if (external?.current) return external.current.undo();
     commit();
     const s = h.current;
     const prev = s.past.pop();
     if (!prev || !s.current) return;
     s.future.push(s.current);
     apply(prev);
-  }, [commit, apply]);
+  }, [commit, apply, external]);
 
   const redo = useCallback(() => {
+    if (external?.current) return external.current.redo();
     commit();
     const s = h.current;
     const next = s.future.pop();
     if (!next || !s.current) return;
     s.past.push(s.current);
     apply(next);
-  }, [commit, apply]);
+  }, [commit, apply, external]);
 
   // a loaded project starts a new history
   const reset = useCallback(() => {

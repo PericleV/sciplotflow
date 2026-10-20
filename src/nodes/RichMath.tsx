@@ -1,8 +1,10 @@
 // The formula panel of a Note's editor (Σ, or a click on a formula): its LaTeX, drawn as it is typed, in the line or on
-// a line of its own; a palette — structures, Greek letters, operators and relations, units — each button drawn by KaTeX
-// and put in at the cursor (its “a”, “x” … to be replaced).
+// a line of its own; a palette (structures, Greek letters, operators and relations, units), each button drawn by
+// MathJax and put in at the cursor (its “a”, “x” … to be replaced); the font of the note's formulas.
 import { useRef } from 'react';
-import katex from 'katex';
+import { MathSvg } from '../math/MathSvg.tsx';
+import { MATH_FACE_NAMES, mathFace, type MathFace, type MathFontChoice } from '../math/sizes.ts';
+import { RICH_BASE } from './richDoc.ts';
 
 export type MathEdit = { latex: string; display: boolean; pos: number | null; was?: boolean };
 
@@ -13,9 +15,8 @@ const PALETTE: [string, string[]][] = [
   ['Units', [String.raw`\,\mathrm{nm}`, String.raw`\,\mu\mathrm{m}`, String.raw`\,\mathrm{eV}`, String.raw`^{\circ}\mathrm{C}`, String.raw`\,\mathrm{K}`, String.raw`\,\mathrm{cm^{-1}}`, String.raw`\,\mathrm{mol\,L^{-1}}`, String.raw`\,\mathrm{\mathring{A}}`]],
 ];
 
-const draw = (latex: string, display = false) => katex.renderToString(latex, { throwOnError: false, displayMode: display, strict: 'ignore' });
-
-export function MathPanel({ edit, onChange, onApply, onRemove, onClose }: { edit: MathEdit; onChange: (e: MathEdit) => void; onApply: () => void; onRemove?: () => void; onClose: () => void }) {
+// face: the font the formulas are drawn in; font: the note's choice (onFont: it changed)
+export function MathPanel({ edit, face, font, onFont, onChange, onApply, onRemove, onClose }: { edit: MathEdit; face: MathFace; font: MathFontChoice; onFont?: (f: MathFontChoice) => void; onChange: (e: MathEdit) => void; onApply: () => void; onRemove?: () => void; onClose: () => void }) {
   const ta = useRef<HTMLTextAreaElement>(null);
   // a template at the cursor (in place of the selection)
   const put = (snippet: string) => {
@@ -52,18 +53,32 @@ export function MathPanel({ edit, onChange, onApply, onRemove, onClose }: { edit
           if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) onApply();
         }}
       />
-      {/* KaTeX's own drawing of the formula (its markup only, no HTML of the note) */}
-      <div className="rt-math-preview rich-doc" dangerouslySetInnerHTML={{ __html: edit.latex.trim() ? draw(edit.latex, edit.display) : '<span class="muted">the formula appears here</span>' }} />
+      <div className="rt-math-preview rich-doc">{edit.latex.trim() ? <MathSvg tex={edit.latex} display={edit.display} face={face} /> : <span className="muted">the formula appears here</span>}</div>
       {PALETTE.map(([group, items]) => (
         <div key={group} className="rt-math-group">
           <span className="muted">{group}</span>
           <span className="rt-math-items">
             {items.map((s) => (
-              <button key={s} className="nodrag rt-math-btn" title={s} onMouseDown={(e) => e.preventDefault()} onClick={() => put(s)} dangerouslySetInnerHTML={{ __html: draw(s) }} />
+              <button key={s} className="nodrag rt-math-btn" title={s} onMouseDown={(e) => e.preventDefault()} onClick={() => put(s)}>
+                <MathSvg tex={s} face={face} />
+              </button>
             ))}
           </span>
         </div>
       ))}
+      {onFont && (
+        <label className="row" title="The font of every formula of this note. Automatic picks the one that looks like the note's text">
+          <span className="muted">Font of the formulas</span>
+          <select className="nodrag" value={font} onChange={(e) => onFont(e.target.value as MathFontChoice)}>
+            <option value="auto">automatic ({MATH_FACE_NAMES[mathFace(RICH_BASE.font, 'auto')]})</option>
+            {(['sans', 'serif', 'latex'] as const).map((f) => (
+              <option key={f} value={f}>
+                {MATH_FACE_NAMES[f]}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <div className="row">
         <button className="nodrag btn-run" disabled={!edit.latex.trim()} onClick={onApply} title="Ctrl+Enter">
           {edit.pos === null ? 'Insert' : 'Update'}

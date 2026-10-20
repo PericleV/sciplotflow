@@ -7,11 +7,13 @@
 // merged with what is stored (curveStyle, axesStyle, … below).
 import type { Column, Series } from '../engine/table.ts';
 import type { Elbow, StickSide } from './shapes.ts';
+import type { MathFontChoice } from '../math/sizes.ts';
 
 // ---- text ----
 // An empty field = the canvas default (font, size, bold, italic, colour of the whole figure).
 export type TextStyle = { font?: string; size?: number; bold?: boolean; italic?: boolean; color?: string };
-export type TextDefaults = { font: string; size: number; bold: boolean; italic: boolean; color: string };
+// mathFont: the font of the formulas ($…$), the page's choice (absent: chosen from the text's font)
+export type TextDefaults = { font: string; size: number; bold: boolean; italic: boolean; color: string; mathFont?: MathFontChoice };
 export type ResolvedText = TextDefaults;
 export const resolveText = (s: TextStyle | undefined, d: TextDefaults): ResolvedText => ({
   font: s?.font || d.font,
@@ -19,6 +21,7 @@ export const resolveText = (s: TextStyle | undefined, d: TextDefaults): Resolved
   bold: s?.bold ?? d.bold,
   italic: s?.italic ?? d.italic,
   color: s?.color || d.color,
+  ...(d.mathFont && { mathFont: d.mathFont }),
 });
 
 // ---- curves ----

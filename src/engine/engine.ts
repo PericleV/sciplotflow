@@ -7,6 +7,8 @@ import { evaluateGraph, logicalData, newCache, type NodeResult } from './evaluat
 import type { EvalNode, EvalReply, EvalRequest } from './evalWorker.ts';
 import type { PyResult } from './python.ts';
 import { requestRun } from '../python/runner.ts';
+import { allMathSizes, mathSizesVersion } from '../math/sizes.ts';
+import { onMathDrawn } from '../math/store.ts';
 
 export type EngineState = { results: Map<string, NodeResult> };
 export const EngineContext = createContext<EngineState>({ results: new Map() });
@@ -52,7 +54,11 @@ function engineClient(onResults: (r: Map<string, NodeResult>) => void) {
   let seq = 0;
   // the results of Python scripts to send with the next evaluation
   let pyPending: [string, PyResult][] = [];
+  // the formulas whose sizes the worker has (the figures measured with them)
+  const mathSent = new Set<string>();
+  let mathHere = mathSizesVersion();
   const here = (nodes: AppNode[], edges: Edge[]) => {
+    mathHere = mathSizesVersion();
     last = { nodes, edges };
     for (const [id, result] of pyPending) cache.py.set(id, { seq: (cache.py.get(id)?.seq ?? 0) + 1, result });
     pyPending = [];
@@ -77,7 +83,9 @@ function engineClient(onResults: (r: Map<string, NodeResult>) => void) {
       return has ? { id: n.id, type: n.type, ver } : { id: n.id, type: n.type, ver, data: n.data };
     });
     for (const id of [...held.keys()]) if (!ids.has(id)) held.delete(id);
-    const req: EvalRequest = { seq: ++seq, nodes: list, edges: edges.map((e) => ({ id: e.id, source: e.source, sourceHandle: e.sourceHandle, target: e.target, targetHandle: e.targetHandle })), ...(pyPending.length ? { py: pyPending } : {}) };
+    const math = allMathSizes().filter(([k]) => !mathSent.has(k));
+    for (const [k] of math) mathSent.add(k);
+    const req: EvalRequest = { seq: ++seq, nodes: list, edges: edges.map((e) => ({ id: e.id, source: e.source, sourceHandle: e.sourceHandle, target: e.target, targetHandle: e.targetHandle })), ...(pyPending.length ? { py: pyPending } : {}), ...(math.length ? { math } : {}) };
     pyPending = [];
     try {
       worker.postMessage(req);
@@ -106,6 +114,14 @@ function engineClient(onResults: (r: Map<string, NodeResult>) => void) {
     worker.onerror = fail;
     worker.onmessageerror = fail;
   }
+  // a formula drawn: the figures that measured it laid out again with its size
+  const offMath = onMathDrawn(() => {
+    const l = last;
+    if (!l) return;
+    if (worker ? allMathSizes().length === mathSent.size : mathSizesVersion() === mathHere) return;
+    if (busy) waiting = waiting ?? l;
+    else post(l.nodes, l.edges);
+  });
   return {
     submit(nodes: AppNode[], edges: Edge[]) {
       if (busy) waiting = { nodes, edges };
@@ -119,7 +135,10 @@ function engineClient(onResults: (r: Map<string, NodeResult>) => void) {
       if (busy) waiting = waiting ?? l;
       else post(l.nodes, l.edges);
     },
-    dispose: () => worker?.terminate(),
+    dispose: () => {
+      offMath();
+      worker?.terminate();
+    },
   };
 }
 

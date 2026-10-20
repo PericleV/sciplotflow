@@ -2,7 +2,7 @@
 // numpy / by hand), axis ticks, and every example graph evaluated without errors.
 import { noteMarkdown } from '../src/nodes/noteMd.ts';
 import { noteDocx } from '../src/nodes/noteDocx.ts';
-import { latexToOmml } from '../src/nodes/noteMath.ts';
+import { latexToMathml, latexToOmml } from '../src/nodes/noteMath.ts';
 import { copiedFigure, figureCopied } from '../src/nodes/figureClip.ts';
 import { docFromText, isPlain, plainOf } from '../src/nodes/richDoc.ts';
 import { NODE_HELP, NODE_SHORT } from '../src/help.ts';
@@ -27,9 +27,10 @@ import { parseCsv, CSV_DEFAULTS, plainNumber } from '../src/engine/csv.ts';
 import { compile } from '../src/engine/expr.ts';
 import { describe } from '../src/engine/stats.ts';
 import { axisRange, formatLabels, inBreak, parseBreaks, ticks } from '../src/figure/ticks.ts';
-import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, axesStyle, CURVE_STYLE_DEFAULTS, SIDE_DEFAULTS, curveStyle, toPt, type AxesStyle, type Curve, type Figure, LEGEND_STYLE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, type Annotation } from '../src/figure/spec.ts';
+import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, axesStyle, CURVE_STYLE_DEFAULTS, SIDE_DEFAULTS, curveStyle, toPt, type AxesStyle, type Curve, type Figure, LEGEND_STYLE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, FONTS, type Annotation } from '../src/figure/spec.ts';
 import { BUILTIN_STYLES, styledData } from '../src/nodes/styles.ts';
-import { parseRich, plainText } from '../src/figure/draw.ts';
+import { parseRich, plainText, richMetrics } from '../src/figure/draw.ts';
+import { mathFace, mathKey, setMathSizes } from '../src/math/sizes.ts';
 import { plotMapping, stuckLines } from '../src/engine/evaluate.ts';
 import { canvasFigure, collapseGroups, evaluateGraph, legendCurves, newCache, packCells, parseRows, plotRows, shapeSpec } from '../src/engine/evaluate.ts';
 import { autoFrame, axesGeometry, turnedExtent, wrapLabel, autoTitle, axisNeeds, legendPlace, endLabels, placeLegends } from '../src/figure/axes.ts';
@@ -92,11 +93,22 @@ import { figureNodes } from '../src/mplPlot.ts';
 import { bothWithin, dunnett, dunnettProb, factorCols, interCols, mixedDesign, mixedModel } from '../src/engine/rmstats.ts';
 import { makeGroup, ungroupNode } from '../src/engine/subgraph.ts';
 import { EXAMPLES } from '../src/examples.ts';
+import * as Y from 'yjs';
+import { mergeEdges, mergeNodes, ProjectBinding, readProject, writeProject, yProject } from '../src/collab/yproject.ts';
+import { chunked, Joiner, SyncHub, ZIP_MIN, type Link } from '../src/collab/sync.ts';
+import { Presence, SEND_MS, STALE_MS } from '../src/collab/presence.ts';
+import { candidatesIn, decodeSignal, encodeSignal, isAddress, splitCandidates, withAddress } from '../src/collab/links.ts';
+import { darkShade, loadColors, SWATCHES } from '../src/theme.ts';
+import { doStep, figureSaved, importWithData, plotOfImport, stepsOf, TOURS, uvVisText, type TourState } from '../src/tour/tours.ts';
+import { groupNodes } from '../src/groups.ts';
+import { asBatch, GROUP_IN, GROUP_OUT } from '../src/engine/subgraph.ts';
+import { patternOf, readName } from '../src/engine/batch.ts';
+import type { GroupData } from '../src/types.ts';
 import { fileProject, isPng, makeEmbedded, openEmbedded, pngProject, pngWithProject, projectRevision, svgProject, svgWithProject, withoutImported } from '../src/figure/embed.ts';
 import { EMU_PER_PT, readOffice, writeOffice } from '../src/figure/office.ts';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
-import { mergedNodes, parseProject, PROJECT_VERSION, stringifyProject, toProject } from '../src/project.ts';
-import { combine, labelRuns, unstack } from '../src/engine/reshape.ts';
+import { mergedNodes, parseProject, PROJECT_VERSION, stringifyProject, toProject, type Project } from '../src/project.ts';
+import { combine, keptBlocks, labelRuns, unstack } from '../src/engine/reshape.ts';
 import { JOHNSON_AU } from '../src/data/johnsonGold.ts';
 import { CALCULUS_DEFAULTS, newSheet, PEAK_DEFAULTS as PEAK_NEW, PICK_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS } from '../src/defaults.ts';
 // the Peak analyzer as before Run analysis: fitted at every change (the tests of the fit)
@@ -109,7 +121,7 @@ import { zoomAt } from '../src/nodes/plotZoom.ts';
 import { pickPoints, pickValues, type PickRule } from '../src/engine/pick.ts';
 import { findPeaksIn, peakRunKey, regionPeak } from '../src/engine/peaks.ts';
 import { findSpec } from '../src/engine/fit.ts';
-import { cleanData, filterRows, findOutliers } from '../src/engine/cleaning.ts';
+import { cleanData, filterRows, findOutliers, sortKeysOf } from '../src/engine/cleaning.ts';
 import { curveMath } from '../src/engine/curvemath.ts';
 import { averageNode } from '../src/engine/signalnodes.ts';
 import { AVERAGE_DEFAULTS, BARCHART_DEFAULTS, DIGITIZER_DEFAULTS, HISTOGRAM_DEFAULTS } from '../src/defaults.ts';
@@ -792,6 +804,35 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   ok(l[1][0].bold && l[1][0].t === 'B' && l[1].some((r) => r.size === 12 && r.t === 'big'), 'rich text: bold, size');
   ok(plainText('\\Delta n') === 'Δn', 'rich text: plain (the space after a command ends it)');
   ok(parseRich('line one\nline two').length === 2, 'rich text: a real new line');
+  // formulas between $ signs; a $ that opens nothing stays a $
+  const f = parseRich('Energy $\\Delta E^{2}$ (eV) and $$\\frac{a}{b}$$')[0];
+  ok(f[0].t === 'Energy ' && f[1].math?.display === false && f[1].t === '\\Delta E^{2}' && f[2].t === ' (eV) and ' && f[3].math?.display === true && f[3].t === '\\frac{a}{b}', 'rich text: $…$ a formula, $$…$$ one drawn larger');
+  const lit = (s: string) => parseRich(s)[0].every((r) => !r.math) && plainText(s).includes('$');
+  ok(lit('Cost ($)') && lit('from $5 to $10') && lit('\\$x$') && lit('a $ b $ c'), 'rich text: a $ with no formula (a price, an escaped \\$, spaces inside) stays as it is');
+  const st = { font: TEXT_DEFAULTS.font, size: 10, bold: false, italic: false, color: '#000000' };
+  const k = mathKey('x_{test}', false, 'sans');
+  const w0 = richMetrics('a $x_{test}$', st).width;
+  setMathSizes([[k, { w: 3, h: 0.7, d: 0.2 }]]);
+  ok(richMetrics('a $x_{test}$', st).width > w0 && Math.abs(richMetrics('$x_{test}$', st).width - 30) < 1e-9, 'rich text: a formula measured by its size once drawn (a guess before)');
+  ok(richMetrics('$$\\sum_{k=1}^{n} k$$', st).lineHeight > st.size * 1.2, 'rich text: a tall formula makes its line taller');
+  // the math font chosen from the text's
+  const faces = FONTS.map(([f]) => mathFace(f, undefined)).join(',');
+  ok(faces === 'sans,sans,serif,sans,serif,sans,serif,sans' && mathFace('CMU Serif', undefined) === 'latex' && mathFace("'Times New Roman', serif", 'latex') === 'latex', `rich text: the math font follows the text's (sans, serif, LaTeX) or the choice (${faces})`);
+  // a Plot whose title has a formula: laid out again when the formula's size is known (the rest kept as computed)
+  const cache = newCache();
+  const graph = (): [AppNode[], Parameters<typeof evaluateGraph>[1]] => [
+    [
+      { id: 'mi', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, text: 'x;y\n0;0\n1;1\n', textId: 'mi' } } as AppNode,
+      { id: 'mp', type: 'plot1d', position: { x: 0, y: 0 }, data: { ...structuredClone(PLOT1D_DEFAULTS), cols: { x: 'x', y: 'y' }, axes: { ...AXES_STYLE_DEFAULTS, sides: { ...AXES_STYLE_DEFAULTS.sides, left: { ...SIDE_DEFAULTS, title: '$$\\sum_{k=1}^{n} y_k$$' } } } } } as AppNode,
+    ],
+    [{ id: 'e', source: 'mi', sourceHandle: 'out', target: 'mp', targetHandle: 'dataset' }],
+  ];
+  const left = (r: ReturnType<typeof evaluateGraph>) => (r.get('mp')!.outputs.figure as { v: Figure }).v.axes[0].style.pos.x;
+  const r1 = evaluateGraph(...graph(), cache);
+  setMathSizes([[mathKey('\\sum_{k=1}^{n} y_k', true, 'sans'), { w: 3, h: 4, d: 3 }]]);
+  const r2 = evaluateGraph(...graph(), cache);
+  const r3 = evaluateGraph(...graph(), cache);
+  ok(left(r2) > left(r1) + 5 && r2.get('mi')!.rev === r1.get('mi')!.rev && r3.get('mp')!.rev === r2.get('mp')!.rev, `rich text: a figure laid out again with a formula's size once known, nothing else computed again (${left(r1).toFixed(1)} → ${left(r2).toFixed(1)})`);
 }
 
 // ---- formulas with conditions ----
@@ -982,6 +1023,53 @@ for (const ex of EXAMPLES) {
   ok(typeof lb2 !== 'string' && lb2.blocks.length === 2 && lb2.dataset.columns.map((c) => c.name).join() === 'Qx,I · Sample = S1,I · Sample = S2', 'split: auto by a column of labels beside X');
   ok(labelRuns(lab) && !labelRuns({ ...lab, text: ['S1', 'S2', 'S1', 'S2', 'S1', 'S2'] }) && !labelRuns({ ...lab, text: ['a', 'a', 'a', 'a', 'a', 'a'] }) && !labelRuns(qx), 'labels in runs: each label in one run, two labels or more, no numbers');
   ok(typeof unstack({ name: 's', columns: [t] }, UNSTACK_DEFAULTS) === 'string', 'split: only X → a message');
+
+  // a scan as a cyclic voltammogram is saved: from 0 up to 1, down to −1, up to 1, down to −1, up to 0 (step 0.1) —
+  // turns at rows 11 (top), 31 (bottom), 51 (top), 71 (bottom); 81 rows; Y = the row index, the time t = 2 × row
+  const cvE = [...Array.from({ length: 11 }, (_, i) => i / 10), ...Array.from({ length: 20 }, (_, i) => 0.9 - i / 10), ...Array.from({ length: 20 }, (_, i) => -0.9 + i / 10), ...Array.from({ length: 20 }, (_, i) => 0.9 - i / 10), ...Array.from({ length: 10 }, (_, i) => -0.9 + i / 10)].map((v) => Math.round(v * 10) / 10);
+  const cv = { name: 'cv', columns: [{ ...column('E (V)', Float64Array.from(cvE)), role: 'x' as const }, { ...column('I (A)', Float64Array.from(cvE, (_, i) => i)), role: 'y' as const }, { ...column('t (s)', Float64Array.from(cvE, (_, i) => 2 * i)), role: 'none' as const }] };
+  const cvs = (p: Partial<typeof UNSTACK_DEFAULTS>) => unstack(cv, { ...UNSTACK_DEFAULTS, by: 'cycles', xs: 'each', ...p });
+  // the blocks as "first-last" rows (from 1), * when not whole, ! when left out
+  const spans = (r: ReturnType<typeof unstack>) => (typeof r === 'string' ? r : r.blocks.map((b) => `${b.first}-${b.last}${b.part ? '*' : ''}${b.kept === false ? '!' : ''}`).join(' '));
+  ok(cvE.length === 81 && spans(cvs({})) === '1-41 41-81', `split ▸ cycles from where the scan started: 0 → 1 → −1 → 0, twice, both whole (${spans(cvs({}))})`);
+  ok(spans(cvs({ cycleStart: 'top' })) === '1-11* 11-51 51-81*', `split ▸ cycles from every upper turn: the start and the end not whole (${spans(cvs({ cycleStart: 'top' }))})`);
+  ok(spans(cvs({ cycleStart: 'bottom' })) === '1-31* 31-71 71-81*', `split ▸ cycles from every lower turn (${spans(cvs({ cycleStart: 'bottom' }))})`);
+  ok(spans(cvs({ cycleStart: 'value', cycleAt: 0.5, cycleDir: 'down' })) === '1-16* 16-56 56-81*', `split ▸ cycles from where E crosses 0.5 going down (${spans(cvs({ cycleStart: 'value', cycleAt: 0.5, cycleDir: 'down' }))})`);
+  ok(typeof cvs({ cycleStart: 'value' }) === 'string', 'split ▸ cycles from a value: no value → a message');
+  ok(spans(cvs({ cycleStart: 'top', partial: 'drop' })) === '11-51' && spans(cvs({ cycleStart: 'top', partial: 'join' })) === '1-81', 'split ▸ cycles: the pieces not whole left out, or joined to the cycle next to them');
+  const hv = cvs({ halves: true });
+  ok(spans(hv) === '1-11 11-31 31-41 41-51 51-71 71-81' && typeof hv !== 'string' && hv.dataset.columns.filter((c) => c.role === 'y').map((c) => c.name).join() === 'I (A) · cycle 1 · up 1,I (A) · cycle 1 · down,I (A) · cycle 1 · up 2,I (A) · cycle 2 · up 1,I (A) · cycle 2 · down,I (A) · cycle 2 · up 2', `split ▸ cycles cut into their ways up and down (${spans(hv)})`);
+  ok(spans(cvs({ by: 'direction' })) === '1-11* 11-31 31-51 51-71 71-81*' && spans(cvs({ by: 'direction', partial: 'drop' })) === '11-31 31-51 51-71', 'split ▸ where X changes direction: the first and last segments not whole, left out');
+  // from another column: X is the time, the cycles found on the potential
+  const fr = cvs({ x: 't (s)', from: 'E (V)', ys: 'I (A)' });
+  ok(spans(fr) === '1-41 41-81' && typeof fr !== 'string' && fr.dataset.columns[0].name === 't (s)' && fr.dataset.columns[2].values[0] === 80, `split ▸ From: the cycles of E while X is the time (${spans(fr)})`);
+  // where a column jumps: by more than 5 × its usual change (0 here: any change), or by more than a value written
+  const stp = { name: 'st', columns: [column('x', Float64Array.from([1, 2, 3, 4, 5, 6, 7, 8])), column('run', Float64Array.from([0, 0, 0, 5, 5, 5, 9, 9])), column('y', Float64Array.from([1, 2, 3, 4, 5, 6, 7, 8]))] };
+  const jp = (p: Partial<typeof UNSTACK_DEFAULTS>) => spans(unstack(stp, { ...UNSTACK_DEFAULTS, by: 'jump', from: 'run', ys: 'y', ...p }));
+  ok(jp({}) === '1-3 4-6 7-8' && jp({ jump: 4.5 }) === '1-3 4-8', `split ▸ where a column jumps: automatic, or by more than 4.5 (${jp({})}; ${jp({ jump: 4.5 })})`);
+  const js = splitRows({ mode: 'jump' }, column('x', Float64Array.from([0, 1, 2, 3, 20, 21, 22])), [0, 1, 2, 3, 4, 5, 6], undefined, []);
+  ok(!!js && typeof js !== 'string' && js.rows.map((r) => r.length).join() === '4,3' && js.how.includes('5'), 'split ▸ jump in a sweep: more than 5 × the usual step (1 → 5)');
+  // the blocks kept, the rows used
+  const kb = (t: string, n: number) => {
+    const k = keptBlocks(t, n);
+    return typeof k === 'string' ? 'error' : [...k].join();
+  };
+  ok(kb('2:end', 5) === '1,2,3,4' && kb('!1, !last', 5) === '1,2,3' && kb('first, 3', 5) === '0,2' && kb('', 3) === '0,1,2' && kb('x', 3) === 'error', 'split ▸ Keep: 2:end, !1, !last, first, a list');
+  const kp = cvs({ by: 'direction', keep: '2:4' });
+  ok(spans(kp) === '1-11*! 11-31 31-51 51-71 71-81*!' && typeof kp !== 'string' && kp.dataset.columns.filter((c) => c.role === 'y').map((c) => c.name).join() === 'I (A) · segment 2,I (A) · segment 3,I (A) · segment 4', 'split ▸ Keep: the blocks left out keep their numbers');
+  ok(spans(cvs({ by: 'direction', rows: '1-41' })) === '1-11* 11-31 31-41*', 'split ▸ Rows: only the rows used are cut');
+  // cuts by hand: a cut at row 21 (the point in both blocks of a scan), a cut of the rule taken away, the rows changed
+  ok(spans(cvs({ cuts: [21], cutRows: 81 })) === '1-21 21-41 41-81' && spans(cvs({ uncut: [41] })) === '1-81', 'split ▸ cuts by hand: added (shared point), taken away');
+  const cw = cvs({ cuts: [21], cutRows: 60 });
+  ok(typeof cw !== 'string' && cw.warnings.some((w) => w.includes('60')) && cw.graph?.cuts.map((c) => `${c.row}${c.hand ? 'h' : ''}`).join() === '21h,41', 'split ▸ cuts by hand: a warning when the table changed; the graph tells them from the rule’s');
+  // then: by a column, then the cycles inside each block
+  const two = { name: 'two', columns: [...cv.columns.slice(0, 2).map((c) => ({ ...c, values: Float64Array.from([...c.values, ...c.values]) })), column('run', Float64Array.from({ length: 162 }, (_, i) => (i < 81 ? 1 : 2)))] };
+  const th = unstack(two, { ...UNSTACK_DEFAULTS, by: 'column', column: 'run', then: 'cycles', xs: 'each' });
+  ok(typeof th !== 'string' && th.blocks.length === 4 && th.blocks.map((b) => b.name).join() === 'I (A) · run = 1 · cycle 1,I (A) · run = 1 · cycle 2,I (A) · run = 2 · cycle 1,I (A) · run = 2 · cycle 2', `split ▸ Then: by run, then the cycles in each (${typeof th === 'string' ? th : th.blocks.map((b) => b.name).join()})`);
+  // the long table: every row once, with its block, its cycle and the way the potential goes there
+  const lg = cvs({});
+  const lc = (nm: string) => (typeof lg === 'string' ? undefined : lg.long.columns.find((c) => c.name === nm));
+  ok(typeof lg !== 'string' && lg.long.columns.length === 6 && lc('block')?.values.length === 81 && lc('block')?.values[40] === 2 && lc('cycle')?.values[80] === 2 && lc('direction')?.text?.[5] === 'up' && lc('direction')?.text?.[20] === 'down', 'split ▸ the long table: block, cycle, direction (the shared point in the later block)');
   // combine
   const A = { name: 'a', columns: [column('x', Float64Array.from([1, 3])), column('y', Float64Array.from([10, 30]))] };
   const B = { name: 'b', columns: [column('x', Float64Array.from([2, 3])), column('y', Float64Array.from([20, 40]))] };
@@ -1372,7 +1460,7 @@ for (const ex of EXAMPLES) {
   const res = r.get('f')?.outputs.resid;
   ok(data?.t === 'dataset' && data.v.columns.map((c) => c.role).join() === 'x,y' && near(r.get('f')?.view.fit?.runs[0].params.find((q) => q.name === 'b')?.value ?? 0, 2, 0.05), 'a Plot curve’s data: a dataset (X, Y designated), fitted');
   ok(res?.t === 'dataset' && res.v.columns.length === 2 && res.v.columns[1].values.length === 6 && r.get('q')?.view.curves?.[0]?.series.y.values.length === 6, 'the residuals: a dataset, drawn from a Plot curve’s data port');
-  ok(sourcePort({ id: 'u', type: 'unstack', position: { x: 0, y: 0 }, data: UNSTACK_DEFAULTS } as AppNode, 'values') === 'dataset' && Object.keys(evaluateGraph([imp, { id: 'u', type: 'unstack', position: { x: 0, y: 0 }, data: { ...UNSTACK_DEFAULTS, by: 'every', every: 3 } } as AppNode], [{ id: '1', source: 'i', sourceHandle: 'out', target: 'u', targetHandle: 'in' }]).get('u')?.outputs ?? {}).join() === 'out', 'Split into columns: only the dataset out');
+  ok(sourcePort({ id: 'u', type: 'unstack', position: { x: 0, y: 0 }, data: UNSTACK_DEFAULTS } as AppNode, 'values') === 'dataset' && Object.keys(evaluateGraph([imp, { id: 'u', type: 'unstack', position: { x: 0, y: 0 }, data: { ...UNSTACK_DEFAULTS, by: 'every', every: 3 } } as AppNode], [{ id: '1', source: 'i', sourceHandle: 'out', target: 'u', targetHandle: 'in' }]).get('u')?.outputs ?? {}).join() === 'out,long', 'Split into columns: the dataset out and the long table');
   // format 7 → 8: the “block values” connection goes, a group's series port becomes a dataset port
   const old = JSON.stringify({
     app: 'graph-flow',
@@ -1954,6 +2042,16 @@ for (const ex of EXAMPLES) {
   ok(vals(filterRows(ds, { ...FILTER_DEFAULTS, rows: { mode: 'list', list: '2-4' } })) === '1/2/2 10/20/22', 'Filter rows: a list of rows');
   const t = filterRows(ds, { ...FILTER_DEFAULTS, sortBy: 't' });
   ok(typeof t !== 'string' && t.dataset.columns[2].text!.join(' ') === 'a1 a2 a3 a10 b', 'Filter rows: text sorted in its natural order');
+  // sorted by several columns: X from the smallest, rows of the same X by Y from the largest; the first N kept
+  ok(vals(filterRows(ds, { ...FILTER_DEFAULTS, sorts: [{ col: 'x', desc: false }, { col: 'y', desc: true }] })) === '1/2/2/3/5 10/22/20/30/50', 'Filter rows: sorted by X, then by Y (largest first)');
+  const top = filterRows(ds, { ...FILTER_DEFAULTS, sortBy: 't', sorts: [{ col: 'x', desc: true }, { col: 'y', desc: true }], top: 3 });
+  ok(vals(top) === '5/3/2 50/30/22' && typeof top !== 'string' && top.report === '5 → 3 rows: sorted by x (largest first), then y (largest first); the first 3 rows kept.', `Filter rows: the 3 largest by X then Y (the old one-column sort left aside) (${typeof top === 'string' ? top : top.report})`);
+  ok(vals(filterRows(ds, { ...FILTER_DEFAULTS, sorts: [{ col: 'y', desc: false }], top: 2, topFrom: 'end' })) === '3/5 30/50', 'Filter rows: the last 2 rows kept (the 2 largest Y)');
+  // repeated in two columns together: (x, g) equal → one row; x alone repeated but g different → both kept
+  const two = { name: 'r', columns: [{ ...column('x', Float64Array.from([1, 1, 1, 2])), role: 'x' as const }, column('g', Float64Array.from([7, 7, 8, 7])), column('y', Float64Array.from([10, 20, 30, 40]))] };
+  const rep = filterRows(two, { ...FILTER_DEFAULTS, dup: 'mean', dupCol: 'x, g' });
+  ok(typeof rep !== 'string' && Array.from(rep.dataset.columns[2].values).join('/') === '15/30/40' && rep.report.includes('of x + g averaged'), `Filter rows: repeated in two columns together, averaged (${typeof rep === 'string' ? rep : rep.report})`);
+  ok(sortKeysOf({ sortBy: 'x', desc: true }).length === 1 && sortKeysOf({ sortBy: 'x', desc: true, sorts: [] }).length === 0 && filterRows(ds, { ...FILTER_DEFAULTS, sorts: [{ col: 'nope', desc: false }] }) === 'No column “nope” to sort by.', 'Filter rows: an older project keeps its one sort column; an unknown column is said');
 }
 
 {
@@ -4745,6 +4843,8 @@ for (const ex of EXAMPLES) {
   const om = (l: string) => latexToOmml(l, false);
   ok(om(String.raw`\frac{a}{b}`).includes('<m:f><m:num>') && om(String.raw`\sqrt[3]{x}`).includes('<m:deg>') && om(String.raw`\int_0^1 f`).includes('<m:chr m:val="∫"/>') && om(String.raw`\hat{x}`).includes('<m:acc>') && om(String.raw`\bar{y}`).includes('<m:bar>') && om(String.raw`\begin{pmatrix} a & b \\ c & d \end{pmatrix}`).includes('<m:mr>') && om(String.raw`\binom{n}{k}`).includes('noBar') && om('x_i^2').includes('<m:sSubSup>'), 'Note ▸ formulas: fractions, roots, integrals, accents, bars, matrices, binomials, sub- and superscripts as Word equations');
   ok(plainOf({ type: 'doc', content: [p([t('a '), { type: 'inlineMath', attrs: { latex: 'x^2' } }]), { type: 'blockMath', attrs: { latex: 'E=mc^2' } }] }) === 'a $x^2$\n$$E=mc^2$$', 'Note: the plain text of formulas (their LaTeX)');
+  // MathJax's MathML: chemistry without its hidden spacers, a wrong formula as its LaTeX in red
+  ok(om(String.raw`\ce{H2O}`).includes('<m:sSub>') && !om(String.raw`\ce{H2O}`).includes('>A<') && latexToMathml(String.raw`\frac{a`, false).includes('mathcolor="#cc0000"') && !latexToMathml('x', false).includes('data-'), 'Note ▸ formulas: chemistry (mhchem) as Word equations, a wrong formula shown as its LaTeX, no MathJax markers left');
   // a figure copied under its node: pasted (an image of its size) into a note, the live figure
   figureCopied('plot-a', 1004, 768);
   ok(copiedFigure(1004, 768) === 'plot-a' && copiedFigure(1003, 768) === null, 'Note: a figure just copied is known by the size of its picture');
@@ -4754,6 +4854,452 @@ for (const ex of EXAMPLES) {
   const types = Object.keys(NODE_HELP) as (keyof typeof NODE_HELP)[];
   const long = types.filter((t) => !NODE_SHORT[t] || NODE_SHORT[t].length > 260);
   ok(types.length === Object.keys(NODE_SHORT).length && long.length === 0, `Help: a short text for every node, none too long (${long.join(', ')})`);
+}
+
+// ---- Working together: the project as a shared document (Yjs) ----
+{
+  // a project as text with its keys sorted (the document keeps the fields of a node's data in its own order)
+  const canon = (v: unknown): string =>
+    JSON.stringify(v, (_, x) => (typeof x === 'number' && !Number.isFinite(x) ? `#${x}` : x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x));
+  const projText = (p: Project) => canon({ nodes: p.nodes, edges: p.edges, name: p.name ?? '' });
+  // every example: into a document and back, the very same project (its nodes in their order, data, connections)
+  const lost = EXAMPLES.filter((ex) => {
+    const m = ex.make();
+    const p = toProject(m.nodes, m.edges, m.name);
+    const y = yProject(new Y.Doc());
+    writeProject(y, p);
+    return projText(readProject(y)) !== projText(p);
+  });
+  ok(lost.length === 0, `collaboration: every example into a shared document and back, unchanged (${lost.map((e) => e.name).join('; ')})`);
+
+  // two peers: what one sends the other gets (the transport: here, the updates handed over directly)
+  const sync = (a: Y.Doc, b: Y.Doc) => {
+    Y.applyUpdate(b, Y.encodeStateAsUpdate(a, Y.encodeStateVector(b)), 'remote');
+    Y.applyUpdate(a, Y.encodeStateAsUpdate(b, Y.encodeStateVector(a)), 'remote');
+  };
+  const note = (id: string, data: Record<string, unknown>, x = 0): AppNode => ({ id, type: 'note', position: { x, y: 0 }, data }) as unknown as AppNode;
+  const start: Project = { app: 'graph-flow', version: PROJECT_VERSION, nodes: [note('n1', { text: 'a', a: 1 }), note('n2', { text: 'b' }, 200)], edges: [] };
+  const dA = new Y.Doc();
+  const dB = new Y.Doc();
+  const A = new ProjectBinding(dA, start);
+  const B = new ProjectBinding(dB);
+  sync(dA, dB);
+  ok(projText(B.state) === projText(start), 'collaboration: a peer joining gets the project');
+  const n2B = B.state.nodes.find((n) => n.id === 'n2');
+  // at the same time: A changes a field of n1, B another field of n1 → both kept, everywhere; n2 the same object on B
+  A.local({ ...A.state, nodes: A.state.nodes.map((n) => (n.id === 'n1' ? { ...n, data: { ...n.data, a: 2 } } : n)) });
+  B.local({ ...B.state, nodes: B.state.nodes.map((n) => (n.id === 'n1' ? { ...n, data: { ...n.data, text: 'B wrote' } } : n)) });
+  sync(dA, dB);
+  const n1 = (p: Project) => p.nodes.find((n) => n.id === 'n1')?.data as Record<string, unknown> | undefined;
+  ok(n1(A.state)?.a === 2 && n1(A.state)?.text === 'B wrote' && projText(A.state) === projText(B.state), 'collaboration: two fields of one node changed at the same time — both kept, on both peers');
+  ok(B.state.nodes.find((n) => n.id === 'n2') === n2B, 'collaboration: a node nobody changed stays the same object (no recomputing, no redrawing)');
+  // the same field at the same time: one value, the same on both
+  A.local({ ...A.state, nodes: A.state.nodes.map((n) => (n.id === 'n1' ? { ...n, data: { ...n.data, a: 10 } } : n)) });
+  B.local({ ...B.state, nodes: B.state.nodes.map((n) => (n.id === 'n1' ? { ...n, data: { ...n.data, a: 20 } } : n)) });
+  sync(dA, dB);
+  ok((n1(A.state)?.a === 10 || n1(A.state)?.a === 20) && projText(A.state) === projText(B.state), 'collaboration: one field changed by both at once — one value, the same everywhere');
+  // A removes n2 while B connects n1 → n2: the connection does not survive, the project stays whole on both
+  A.local({ ...A.state, nodes: A.state.nodes.filter((n) => n.id !== 'n2') });
+  B.local({ ...B.state, edges: [...B.state.edges, { id: 'e1', source: 'n1', sourceHandle: 'out', target: 'n2', targetHandle: 'in' }] });
+  sync(dA, dB);
+  ok(A.state.edges.length === 0 && B.state.edges.length === 0 && A.state.nodes.length === 1 && projText(A.state) === projText(B.state), 'collaboration: a node removed while another peer connects to it — no broken connection');
+  // writing the project as it is sends nothing (the first write after the removal takes the broken connection out of
+  // the document too; the reading had only left it out)
+  let updates = 0;
+  A.local({ ...A.state });
+  ok(A.y.edges.size === 0, 'collaboration: the broken connection taken out of the document at the next change');
+  dA.on('update', () => updates++);
+  A.local({ ...A.state });
+  ok(updates === 0, 'collaboration: nothing changed, nothing sent');
+  // NaN and ±Infinity kept (as in the project files)
+  A.local({ ...A.state, nodes: A.state.nodes.map((n) => ({ ...n, data: { ...n.data, lim: [NaN, Infinity, -Infinity] } })) });
+  sync(dA, dB);
+  const lim = n1(B.state)?.lim as number[] | undefined;
+  ok(!!lim && Number.isNaN(lim[0]) && lim[1] === Infinity && lim[2] === -Infinity, 'collaboration: NaN and ±Infinity kept');
+
+  // fuzz: three peers, random changes (nodes added, removed, moved, framed, brought to the front; fields set and removed;
+  // connections added and removed; the name), synchronised in random pairs; at the end every peer the same project,
+  // and a whole one (no connection to a missing node, no missing frame, frames before their nodes, no id twice)
+  let seed = 7;
+  const rnd = () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const pick = <T,>(a: T[]): T | undefined => a[Math.floor(rnd() * a.length)];
+  const values = [1, 2.5, -3, NaN, 'x', 'longer text', [1, 2, 3], { a: 1, b: [2] }, true, null];
+  const whole = (p: Project) => {
+    const ids = p.nodes.map((n) => n.id);
+    const seen = new Set<string>();
+    return (
+      new Set(ids).size === ids.length &&
+      p.edges.every((e) => ids.includes(e.source) && ids.includes(e.target)) &&
+      p.nodes.every((n) => {
+        seen.add(n.id);
+        return !n.parentId || seen.has(n.parentId);
+      })
+    );
+  };
+  let bad = '';
+  for (let run = 0; run < 12 && !bad; run++) {
+    const docs = [new Y.Doc(), new Y.Doc(), new Y.Doc()];
+    const peers = docs.map((d, k) => new ProjectBinding(d, k === 0 ? start : undefined));
+    docs.forEach((d) => sync(docs[0], d));
+    let made = 0;
+    for (let step = 0; step < 150; step++) {
+      const k = Math.floor(rnd() * 3);
+      const P = peers[k];
+      const s = P.state;
+      const r = rnd();
+      let next: Project = s;
+      if (r < 0.18) {
+        const frame = rnd() < 0.3;
+        const parent = pick(s.nodes.filter((n) => n.type === 'frame'));
+        const id = `${frame ? 'f' : 'n'}${k}-${made++}`;
+        const n = { id, type: frame ? 'frame' : 'note', position: { x: rnd() * 500, y: rnd() * 500 }, data: { text: id }, ...(parent && !frame && rnd() < 0.5 ? { parentId: parent.id } : {}), ...(frame ? { width: 300, height: 200 } : {}) } as unknown as AppNode;
+        next = { ...s, nodes: frame ? [n, ...s.nodes] : [...s.nodes, n] };
+      } else if (r < 0.3) {
+        const gone = pick(s.nodes);
+        if (gone) next = { ...s, nodes: s.nodes.filter((n) => n !== gone).map((n) => (n.parentId === gone.id ? (({ parentId: _p, ...rest }) => rest as AppNode)(n) : n)), edges: s.edges.filter((e) => e.source !== gone.id && e.target !== gone.id) };
+      } else if (r < 0.45) {
+        const m = pick(s.nodes);
+        if (m) next = { ...s, nodes: s.nodes.map((n) => (n === m ? { ...n, position: { x: rnd() * 500, y: rnd() * 500 } } : n)) };
+      } else if (r < 0.65) {
+        const m = pick(s.nodes);
+        const key = pick(['a', 'b', 'c', 'text'])!;
+        if (m) next = { ...s, nodes: s.nodes.map((n) => (n === m ? { ...n, data: { ...n.data, [key]: rnd() < 0.15 ? undefined : pick(values) } } : n)) };
+      } else if (r < 0.8) {
+        const [a, b] = [pick(s.nodes), pick(s.nodes)];
+        if (a && b && a !== b) next = { ...s, edges: [...s.edges, { id: `e${k}-${made++}`, source: a.id, sourceHandle: 'out', target: b.id, targetHandle: pick(['in', 'in-0', 'in-1']) ?? 'in' }] };
+      } else if (r < 0.9) {
+        const e = pick(s.edges);
+        if (e) next = { ...s, edges: s.edges.filter((q) => q !== e) };
+      } else if (r < 0.96) {
+        // to the front: drawn last (a frame stays before its nodes)
+        const m = pick(s.nodes.filter((n) => n.type !== 'frame' && !n.parentId));
+        if (m) next = { ...s, nodes: [...s.nodes.filter((n) => n !== m), m] };
+      } else next = { ...s, name: `name ${k}-${step}` };
+      if (next !== s) P.local(next);
+      if (rnd() < 0.3) {
+        const [i, j] = [Math.floor(rnd() * 3), Math.floor(rnd() * 3)];
+        if (i !== j) sync(docs[i], docs[j]);
+      }
+    }
+    for (let pass = 0; pass < 2; pass++) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) if (i !== j) sync(docs[i], docs[j]);
+    const texts = peers.map((p) => projText(p.state));
+    const fresh = docs.map((d) => projText(readProject(yProject(d))));
+    if (new Set([...texts, ...fresh]).size !== 1) bad = `run ${run}: the peers differ`;
+    else if (!peers.every((p) => whole(p.state))) bad = `run ${run}: a project not whole`;
+  }
+  ok(!bad, `collaboration: three peers, 12 × 150 random changes synchronised in random pairs — the same whole project everywhere ${bad}`);
+
+  // as in the page: each peer shows its own copy (the canvas) and puts the others' changes into it only now and then
+  // (a render later); meanwhile it changes what it shows and writes it on the base it was made on — the others'
+  // changes not yet shown are never written back over, a change made here and not yet sent is never lost
+  let bad2 = '';
+  for (let run = 0; run < 12 && !bad2; run++) {
+    const docs = [new Y.Doc(), new Y.Doc(), new Y.Doc()];
+    const peers = docs.map((d, k) => new ProjectBinding(d, k === 0 ? start : undefined));
+    docs.forEach((d) => sync(docs[0], d));
+    peers.forEach((P) => P.takeChanged());
+    const view = peers.map((P) => ({ canvas: P.state, base: P.state }));
+    // a render: the document as it is now merged into what is shown, against the base (only the nodes the others changed)
+    const render = (k: number) => {
+      const v = view[k];
+      const now = peers[k].state;
+      v.canvas = { ...v.canvas, nodes: mergeNodes(v.canvas.nodes, now, v.base, peers[k].takeChanged()), edges: mergeEdges(v.canvas.edges, now, v.base), ...((now.name ?? '') !== (v.base.name ?? '') ? { name: now.name } : {}) };
+      v.base = now;
+    };
+    let made = 0;
+    for (let step = 0; step < 150; step++) {
+      const k = Math.floor(rnd() * 3);
+      const v = view[k];
+      const s = v.canvas;
+      const r = rnd();
+      let next: Project = s;
+      if (r < 0.2) {
+        const id = `n${k}-${made++}`;
+        next = { ...s, nodes: [...s.nodes, note(id, { text: id }, rnd() * 500)] };
+      } else if (r < 0.32) {
+        const gone = pick(s.nodes);
+        if (gone) next = { ...s, nodes: s.nodes.filter((n) => n !== gone), edges: s.edges.filter((e) => e.source !== gone.id && e.target !== gone.id) };
+      } else if (r < 0.45) {
+        const m = pick(s.nodes);
+        if (m) next = { ...s, nodes: s.nodes.map((n) => (n === m ? { ...n, position: { x: rnd() * 500, y: rnd() * 500 } } : n)) };
+      } else if (r < 0.7) {
+        const m = pick(s.nodes);
+        const key = pick(['a', 'b', 'c', 'text'])!;
+        if (m) next = { ...s, nodes: s.nodes.map((n) => (n === m ? { ...n, data: { ...n.data, [key]: rnd() < 0.15 ? undefined : pick(values) } } : n)) };
+      } else if (r < 0.85) {
+        const [a, b] = [pick(s.nodes), pick(s.nodes)];
+        if (a && b && a !== b) next = { ...s, edges: [...s.edges, { id: `e${k}-${made++}`, source: a.id, sourceHandle: 'out', target: b.id, targetHandle: 'in' }] };
+      } else {
+        const e = pick(s.edges);
+        if (e) next = { ...s, edges: s.edges.filter((q) => q !== e) };
+      }
+      if (next !== s) {
+        // what this peer writes: its canvas, on the base it last showed (the others' changes it has not shown yet are
+        // not in it); the canvas then is what it knows of the document
+        peers[k].local(next, v.base);
+        v.canvas = next;
+        v.base = next;
+      }
+      if (rnd() < 0.3) render(Math.floor(rnd() * 3));
+      if (rnd() < 0.3) {
+        const [i, j] = [Math.floor(rnd() * 3), Math.floor(rnd() * 3)];
+        if (i !== j) sync(docs[i], docs[j]);
+      }
+    }
+    for (let pass = 0; pass < 2; pass++) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) if (i !== j) sync(docs[i], docs[j]);
+    [0, 1, 2].forEach(render);
+    const texts = new Set([...view.map((v) => projText({ ...v.canvas, edges: v.canvas.edges.filter((e) => v.canvas.nodes.some((n) => n.id === e.source) && v.canvas.nodes.some((n) => n.id === e.target)) })), ...docs.map((d) => projText(readProject(yProject(d))))]);
+    if (texts.size !== 1) bad2 = `run ${run}: what the peers show differs from the document`;
+  }
+  ok(!bad2, `collaboration: peers that show the others' changes late and write on what they show — no change lost or written back over ${bad2}`);
+
+  // the transport: a host and two guests joined only to it (so the host passes their changes on), links that deliver
+  // later (a queue), a long message (an imported file) cut into chunks and put back together
+  const queue: (() => void)[] = [];
+  const pump = () => {
+    for (let n = 0; n < 100000 && queue.length; n++) queue.shift()!();
+  };
+  const linkPair = (a: string, b: string): [Link, Link] => {
+    const side = (id: string) => ({ id, bytes: [] as ((u: Uint8Array) => void)[], close: [] as (() => void)[], other: null as null | { bytes: ((u: Uint8Array) => void)[] } });
+    const [x, y2] = [side(`${a}-${b}`), side(`${b}-${a}`)];
+    const mk = (s: typeof x, o: typeof x): Link => ({ id: s.id, send: (u) => queue.push(() => o.bytes.forEach((f) => f(u))), onBytes: (f) => void s.bytes.push(f), onClose: (f) => void s.close.push(f), close: () => s.close.forEach((f) => f()) });
+    return [mk(x, y2), mk(y2, x)];
+  };
+  const [hD, g1D, g2D] = [new Y.Doc(), new Y.Doc(), new Y.Doc()];
+  const H = new ProjectBinding(hD, start);
+  const G1 = new ProjectBinding(g1D);
+  const G2 = new ProjectBinding(g2D);
+  const [hH, g1H, g2H] = [new SyncHub(hD, 'host'), new SyncHub(g1D, 'g1'), new SyncHub(g2D, 'g2')];
+  let joined = 0;
+  g1H.onSynced(() => joined++);
+  const [h1, g1] = linkPair('h', 'g1');
+  const [h2, g2] = linkPair('h', 'g2');
+  hH.add(h1);
+  g1H.add(g1);
+  hH.add(h2);
+  g2H.add(g2);
+  pump();
+  ok(joined === 1 && projText(G1.state) === projText(start) && projText(G2.state) === projText(start) && hH.peers.get(h1.id)?.name === 'g1', 'collaboration: guests joining a host get the project (and their names)');
+  const big = 'x'.repeat(300 * 1024);
+  G1.local({ ...G1.state, nodes: [...G1.state.nodes, note('imp', { text: big })] });
+  pump();
+  const imp = G2.state.nodes.find((n) => n.id === 'imp');
+  ok((imp?.data as { text?: string } | undefined)?.text === big && chunked(new Uint8Array(big.length), 1).length > 1, 'collaboration: a 300 kB file from one guest reaches the other through the host, in chunks');
+  G2.local({ ...G2.state, nodes: G2.state.nodes.filter((n) => n.id !== 'n1') });
+  pump();
+  ok(!G1.state.nodes.some((n) => n.id === 'n1') && !H.state.nodes.some((n) => n.id === 'n1'), 'collaboration: a node removed by a guest is gone everywhere');
+  // a connection lost (a network that dropped): both go on working apart, then a new link (a new invitation, in the
+  // same session) brings them in step — the work of both kept
+  h1.close();
+  g1.close();
+  ok(!hH.peers.has(h1.id) && !g1H.peers.has(g1.id), 'collaboration: a lost link leaves the session on both sides');
+  G1.local({ ...G1.state, nodes: [...G1.state.nodes, note('offline-g1', { text: 'made while cut off' })] });
+  H.local({ ...H.state, nodes: H.state.nodes.map((n) => (n.id === 'n2' ? { ...n, data: { ...n.data, text: 'host meanwhile' } } : n)) });
+  pump();
+  ok(!H.state.nodes.some((n) => n.id === 'offline-g1'), 'collaboration: nothing passes while the link is lost');
+  const [h1b, g1b] = linkPair('h', 'g1-again');
+  hH.add(h1b);
+  g1H.add(g1b);
+  pump();
+  const n2Text = (p: Project) => (p.nodes.find((n) => n.id === 'n2')?.data as { text?: string } | undefined)?.text;
+  ok(H.state.nodes.some((n) => n.id === 'offline-g1') && G2.state.nodes.some((n) => n.id === 'offline-g1') && n2Text(G1.state) === 'host meanwhile' && projText(G1.state) === projText(H.state) && projText(G2.state) === projText(H.state), 'collaboration: joined again — what both did while cut off is merged, everywhere');
+  // leaving on purpose: the others are told (its closing is not a lost connection)
+  g2H.close(0);
+  pump();
+  ok(hH.left.has(h2.id), 'collaboration: a peer that leaves says so (not shown as a lost connection)');
+  // presence: a host and two guests joined only to it; a guest's mouse reaches the other through the host; only those
+  // at the level shown; someone who leaves goes at once, someone not heard for a while goes too, a link gone takes
+  // with it whoever was heard through it (a clock of our own: no waiting)
+  {
+    let clock = 0;
+    const tick = () => clock;
+    const [ph, pa, pb] = [new SyncHub(new Y.Doc(), 'Host'), new SyncHub(new Y.Doc(), 'Ana'), new SyncHub(new Y.Doc(), 'Bob')];
+    const PH = new Presence(ph, 'Host', '#111111', tick);
+    const PA = new Presence(pa, 'Ana', '#E69F00', tick);
+    const PB = new Presence(pb, 'Bob', '#0072B2', tick);
+    const [ha, ah] = linkPair('ph', 'pa');
+    const [hb, bh] = linkPair('ph', 'pb');
+    ph.add(ha);
+    pa.add(ah);
+    ph.add(hb);
+    pb.add(bh);
+    pump();
+    PA.set({ cursor: { x: 10, y: 20 }, selected: ['n7'] });
+    await new Promise((r) => setTimeout(r, SEND_MS + 30));
+    pump();
+    const ana = PB.list('').find((o) => o.name === 'Ana');
+    ok(!!ana && ana.cursor?.x === 10 && ana.selected[0] === 'n7' && ana.color === '#E69F00' && PB.list().some((o) => o.name === 'Host'), 'collaboration: presence — a guest’s mouse and selection reach the other guest through the host');
+    PA.set({ level: 'group-1' });
+    await new Promise((r) => setTimeout(r, SEND_MS + 30));
+    pump();
+    ok(!PB.list('').some((o) => o.name === 'Ana') && PB.list('group-1').some((o) => o.name === 'Ana'), 'collaboration: presence — only those at the level shown');
+    PA.leave();
+    pump();
+    ok(!PB.list().some((o) => o.name === 'Ana') && !PH.list().some((o) => o.name === 'Ana'), 'collaboration: presence — someone who leaves goes at once');
+    clock += STALE_MS + 1;
+    PB.prune();
+    ok(PB.list().length === 0, 'collaboration: presence — someone not heard for a while is no longer shown');
+    clock = 0;
+    PH.set({ cursor: { x: 1, y: 1 } });
+    await new Promise((r) => setTimeout(r, SEND_MS + 30));
+    pump();
+    const heard = PB.list().length;
+    bh.close();
+    ok(heard === 1 && PB.list().length === 0, 'collaboration: presence — a link gone takes with it whoever was heard through it');
+    PH.destroy();
+    PB.destroy();
+  }
+  // between computers: a long message goes compressed (a file of numbers: a fraction of its size on the network)
+  {
+    const [zA, zB] = [new Y.Doc(), new Y.Doc()];
+    const ZA = new ProjectBinding(zA, start);
+    const ZB = new ProjectBinding(zB);
+    const [hza, hzb] = [new SyncHub(zA, 'a'), new SyncHub(zB, 'b')];
+    const [la, lb] = linkPair('za', 'zb');
+    let wire = 0;
+    const counted = (l: Link): Link => ({ ...l, compress: true, send: (u) => ((wire += u.length), l.send(u)) });
+    hza.add(counted(la));
+    hzb.add(counted(lb));
+    pump();
+    const rowsZ: string[] = [];
+    for (let i = 0; i < 60000; i++) rowsZ.push(`${(i * 0.001).toFixed(3)},${Math.sin(i / 100).toFixed(6)}`);
+    const csvZ = rowsZ.join('\n');
+    wire = 0;
+    ZA.local({ ...ZA.state, nodes: [...ZA.state.nodes, note('zip', { text: csvZ })] });
+    for (let k = 0; k < 400 && !ZB.state.nodes.some((n) => n.id === 'zip'); k++) {
+      pump();
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    const got = (ZB.state.nodes.find((n) => n.id === 'zip')?.data as { text?: string } | undefined)?.text;
+    ok(got === csvZ && csvZ.length > ZIP_MIN && wire < csvZ.length / 2, `collaboration: a long message between computers goes compressed and arrives whole (${(csvZ.length / 1e6).toFixed(2)} MB → ${(wire / 1e6).toFixed(2)} MB on the wire)`);
+  }
+  // the chunks in any order
+  const parts = chunked(Uint8Array.from({ length: 50000 }, (_, i) => i % 251), 9);
+  const jn = new Joiner();
+  const back = [...parts].reverse().map((c) => jn.add(c)).filter(Boolean)[0];
+  ok(!!back && back.length === 50000 && back[49999] === 49999 % 251, 'collaboration: chunks put back together in any order');
+  // the codes of WebRTC: compressed and read back
+  const sig = { t: 'offer' as const, sdp: 'v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\n'.repeat(20), room: 'abc', name: 'Ana' };
+  const code = encodeSignal(sig);
+  const read = decodeSignal(`https://x/#join=${code}`);
+  // the ways to reach a side in its code, by kind (a hidden local name apart), with no address shown
+  const sdpC = ['v=0', 'a=candidate:1 1 udp 2122260223 4f2a-9b.local 54321 typ host generation 0', 'a=candidate:2 1 tcp 1518280447 4f2a-9b.local 9 typ host tcptype active', 'a=candidate:3 1 udp 1686052607 86.120.1.2 54321 typ srflx raddr 0.0.0.0 rport 0', 'a=candidate:4 1 udp 2122260223 192.168.1.5 5000 typ host'].join('\r\n');
+  const ci = candidatesIn(sdpC);
+  ok(ci === 'host (hidden .local name)/udp×1, host (hidden .local name)/tcp×1, srflx/udp×1, host (address)/udp×1' && !ci.includes('86.120') && !ci.includes('192.168') && candidatesIn('v=0') === 'none', `collaboration: the kinds of addresses in a code, none shown (${ci})`);
+  // the synchronized start: a description without its ways (kept apart, each with its section), the start in the answer
+  const offerSdp = ['v=0', 'o=- 1 2 IN IP4 127.0.0.1', 's=-', 't=0 0', 'a=group:BUNDLE 0', 'm=application 9 UDP/DTLS/SCTP webrtc-datachannel', 'c=IN IP4 0.0.0.0', 'a=candidate:1 1 udp 2122260223 4f2a-9b.local 54321 typ host generation 0', 'a=candidate:3 1 udp 1686052607 86.120.1.2 54321 typ srflx raddr 0.0.0.0 rport 0', 'a=ice-ufrag:abcd', 'a=mid:0', 'a=end-of-candidates', ''].join('\r\n');
+  const sc = splitCandidates(offerSdp);
+  ok(sc.candidates.length === 2 && sc.candidates.every((c) => c.sdpMid === '0' && c.sdpMLineIndex === 0) && sc.candidates[1].candidate?.startsWith('candidate:3 ') && !sc.sdp.includes('a=candidate') && !sc.sdp.includes('end-of-candidates') && sc.sdp.includes('a=ice-ufrag:abcd') && sc.sdp.includes('a=mid:0'), 'collaboration: the ways to reach a side kept apart from its description (each with its section), for the synchronized start');
+  // the same network: the other computer's local address typed — beside each made-up name, on the same port
+  const wa = withAddress(sc.candidates, ' 192.168.1.140 ');
+  ok(wa.length === 3 && wa[1].candidate === 'candidate:19 1 udp 2122260223 192.168.1.140 54321 typ host generation 0' && wa[1].sdpMid === '0' && withAddress(sc.candidates, 'nonsense').length === 2 && withAddress(sc.candidates, '').length === 2, 'collaboration: a local address typed is tried beside the made-up name, on the same port');
+  {
+    // the guided tours: every step with a title and text; the first tour's steps see the import, the plot, the changes
+    const all = TOURS.flatMap(stepsOf);
+    ok(TOURS.length >= 1 && new Set(TOURS.map((t) => t.id)).size === TOURS.length && all.every((s) => s.title && s.text && s.chapterNo >= 1), 'tours: distinct ids, every step titled and written');
+    const csv = parseCsv(uvVisText(), CSV_DEFAULTS).dataset;
+    ok(csv.columns.length === 3 && csv.columns[0].name === 'Wavelength (nm)' && csv.columns[0].values.length === 251 && csv.columns[1].values.every((v) => v > 0 && v < 1), 'tours: the example spectrum reads as 3 columns of 251 rows, absorbances in 0 … 1');
+    const imp = { id: 'i', type: 'import', position: { x: 0, y: 0 }, data: { ...structuredClone(IMPORT_DEFAULTS), text: uvVisText() } } as AppNode;
+    const plotData = { ...structuredClone(PLOT1D_DEFAULTS), rows: [{ label: '', style: { color: '#000000' } }] } as Plot1DData;
+    const plt = { id: 'p', type: 'plot1d', position: { x: 0, y: 0 }, data: plotData } as AppNode;
+    const edge = { id: 'e', source: 'i', sourceHandle: 'out', target: 'p', targetHandle: 'dataset' };
+    const st = (nodes: AppNode[], start = nodes, downloads: string[] = []): TourState => ({ nodes, edges: nodes.length > 1 ? [edge] : [], start, downloads });
+    const steps = stepsOf(TOURS[0]);
+    const recolored = { ...plt, data: { ...plotData, style: { ...plotData.style, color: '#c0392b' } } } as AppNode;
+    const titled = { ...plt, data: { ...plotData, axes: { sides: { left: { title: 'A' } } } } } as unknown as AppNode;
+    ok(
+      !importWithData(st([])) && !!importWithData(st([imp])) && steps[0].done!(st([imp])) && !steps[2].done!(st([imp])) && steps[2].done!(st([imp, plt])) && !!plotOfImport(st([imp, plt])),
+      'tours: the first steps are done by an Import with data, then a Plot connected to it',
+    );
+    ok(!steps[3].done!(st([imp, plt])) && steps[3].done!(st([imp, { ...plt, selected: true } as AppNode])), 'tours: the plot clicked (selected) opens its options');
+    ok(!steps[4].done!(st([imp, plt])) && steps[4].done!(st([imp, recolored], [imp, plt])) && !steps[5].done!(st([imp, recolored], [imp, plt])) && steps[5].done!(st([imp, titled], [imp, plt])), 'tours: a curve restyled, an axis titled, each against how its step found the Plot');
+    ok(!figureSaved(st([imp, plt], undefined, ['data.csv'])) && figureSaved(st([imp, plt], undefined, ['figure.svg'])), 'tours: a figure saved (svg, png, pdf, tiff), not any file');
+  }
+  {
+    // Batch: the steps (Pick points: the maximum) run on three files, their names read by a pattern, ordered by it
+    const peakAt = (c: number) => ['x\ty', ...Array.from({ length: 101 }, (_, i) => `${i}\t${Math.exp(-(((i - c) / 8) ** 2)).toFixed(6)}`)].join('\n');
+    const imp = { id: 'files', type: 'import', position: { x: 0, y: 0 }, data: { ...structuredClone(IMPORT_DEFAULTS), text: '', fileName: '3 files', sheets: [{ name: 'sample_40C', text: peakAt(70), excel: true }, { name: 'sample_20C', text: peakAt(30), excel: true }, { name: 'sample_30C', text: peakAt(50), excel: true }] } } as AppNode;
+    const inner: AppNode[] = [
+      { id: GROUP_IN, type: 'groupin', position: { x: 0, y: 0 }, data: {} },
+      { id: 'pk', type: 'pick', position: { x: 0, y: 0 }, data: { ...structuredClone(PICK_DEFAULTS), rules: [{ kind: 'max', value: '' }] } },
+      { id: GROUP_OUT, type: 'groupout', position: { x: 0, y: 0 }, data: {} },
+    ] as AppNode[];
+    const innerE = [
+      { id: 'a', source: GROUP_IN, sourceHandle: 'in-0', target: 'pk', targetHandle: 'in' },
+      { id: 'b', source: 'pk', sourceHandle: 'out', target: GROUP_OUT, targetHandle: 'out-0' },
+    ];
+    const batch = { id: 'b1', type: 'subgraph', position: { x: 0, y: 0 }, data: { name: 'Batch', nodes: inner, edges: innerE, inputs: [{ id: 'in-0', label: 'files', type: 'dataset' }], outputs: [{ id: 'out-0', label: 'peak', type: 'dataset' }], batch: { pattern: 'sample_{T}C', order: 'value' } } } as AppNode;
+    const g = { nodes: [imp, batch], edges: [{ id: 'f', source: 'files', sourceHandle: 'book', target: 'b1', targetHandle: 'in-0' }] };
+    const cache = newCache();
+    const res = evaluateGraph(g.nodes, g.edges, cache);
+    const r = res.get('b1')!;
+    const t = r.outputs.table?.t === 'dataset' ? r.outputs.table.v : undefined;
+    const col = (name: string) => t?.columns.find((c) => c.name === name);
+    ok(!!t && col('File')?.text?.join(' ') === 'sample_20C sample_30C sample_40C' && Array.from(col('T')!.values).join(' ') === '20 30 40' && Array.from(col('x')?.values ?? []).join(' ') === '30 50 70', `Batch: a row per file, in the order of the value its name gives, the maximum of each (${t?.columns.map((c) => c.name).join(', ')}; ${r.errors.join(' ')} ${r.warnings.join(' ')})`);
+    const sh = r.outputs.sheets?.t === 'workbook' ? r.outputs.sheets.v : undefined;
+    const st = r.outputs.stacked?.t === 'dataset' ? r.outputs.stacked.v : undefined;
+    ok(sh?.sheets.length === 3 && sh.sheets[0].name === 'sample_20C' && st?.columns[0].name === 'File' && st.columns[0].values.length === 3 && res.get('b1/pk')?.outputs.out?.t === 'dataset', 'Batch: a sheet per file, every row with its file, the steps shown on the first file');
+    // the same files again: nothing computed again (the cache of every file kept)
+    const again = evaluateGraph(g.nodes, g.edges, cache);
+    ok(again.get('b1')!.rev === r.rev, 'Batch: the same files, the same result (not computed again)');
+    ok(typeof patternOf('a{b') === 'string' && readName('run_7_x', patternOf('run_{n}_{k:text}') as Exclude<ReturnType<typeof patternOf>, string>)?.join('|') === '7|x', 'Batch: a pattern reads numbers and words, a wrong one is said');
+    // a group made a batch: its first input the files, its last step kept when nothing left the group
+    const sm = { id: 's', type: 'smooth', position: { x: 0, y: 0 }, data: structuredClone(SMOOTH_DEFAULTS) } as AppNode;
+    const made = makeGroup([imp, sm], [{ id: 'e', source: 'files', sourceHandle: 'out', target: 's', targetHandle: 'in' }], ['s'], () => 'x', () => 'dataset')!;
+    const asB = asBatch(made.nodes, made.edges, made.groupId, () => 'smoothed', (n, h) => sourcePort(n, h));
+    const bd = asB.nodes.find((n) => n.id === made.groupId)!.data as GroupData;
+    ok(!!bd.batch && bd.inputs[0].label === 'files' && bd.outputs.map((p) => p.label).join() === 'smoothed' && bd.edges.some((e) => e.target === GROUP_OUT && e.source === 's'), 'Batch: made from a group, it keeps what its last step gives');
+  }
+  {
+    // tour 2 done by Show me alone: every step done, no node in error, the data as the steps say
+    const t2 = TOURS.find((t) => t.id === 'prepare-data')!;
+    let g = t2.project!();
+    const stateOf = (gr: { nodes: AppNode[]; edges: Edge[] }, start = gr.nodes): TourState => {
+      const res = evaluateGraph(gr.nodes, gr.edges);
+      return { nodes: gr.nodes, edges: gr.edges, start, downloads: [], value: (id, h = 'out') => res.get(id)?.outputs[h] };
+    };
+    const notDone: string[] = [];
+    stepsOf(t2).forEach((st, k) => {
+      const before = stateOf(g);
+      let framed: string[] = [];
+      g = doStep(st, g, before, (type) => `t2-${k}-${type}`, { frame: (ids) => (framed = ids) });
+      if (framed.length) g = { ...g, nodes: groupNodes(g.nodes, framed, 'Cleaning', '#8a93a6').nodes };
+      if (st.done && !st.done(stateOf(g, before.nodes))) notDone.push(st.title);
+    });
+    ok(notDone.length === 0, `tours: tour 2 done step by step by Show me${notDone.length ? ` (not done: ${notDone.join(', ')})` : ''}`);
+    const res = evaluateGraph(g.nodes, g.edges);
+    const errs = g.nodes.flatMap((n) => (res.get(n.id)?.errors ?? []).map((e) => `${n.type}: ${e}`));
+    ok(errs.length === 0, `tours: tour 2 leaves no node in error${errs.length ? ` (${errs.join('; ')})` : ''}`);
+    const out = (type: string, h = 'out') => {
+      const n = g.nodes.find((q) => q.type === type);
+      const v = n && res.get(n.id)?.outputs[h];
+      return v?.t === 'dataset' ? v.v : undefined;
+    };
+    const cleaned = out('clean');
+    const sig = cleaned?.columns[1].values ?? new Float64Array();
+    ok(!!cleaned && cleaned.columns[0].values.length === 123 && [...sig].every(Number.isFinite) && Math.max(...sig) < 70, 'tours: tour 2 — Clean data fills the gaps and replaces the spike, every row kept');
+    const fil = out('filterrows');
+    ok(fil?.columns[0].values.length === 114, 'tours: tour 2 — the first 3 s of every run left out (3 × 38 rows)');
+    const cols = out('columns');
+    ok(!!cols && cols.columns.map((c) => c.name).join('|') === 'Time (s)|Run 1|Run 2|Run 3' && cols.columns[1].values.length === 38, `tours: tour 2 — the runs side by side, named (${cols?.columns.map((c) => c.name).join(', ')})`);
+    const tr = out('translate');
+    const run1 = tr?.columns[1].values;
+    ok(!!run1 && Math.abs(run1[0] - 50 * (1 - Math.exp(-3 / 8))) < 1 && Number.isNaN(run1[17]) === false, 'tours: tour 2 — the offset taken away (run 1 starts near the model)');
+    const comb = out('combine');
+    ok(!!comb && comb.columns.map((c) => c.name).join('|') === 'Time (s)|Run 2|Model (mV)' && comb.columns.every((c) => c.values.length === 38), `tours: tour 2 — Time, Run 2 and the model side by side (${comb?.columns.map((c) => `${c.name}:${c.values.length}`).join(', ')})`);
+    const ax = out('autoextract');
+    ok(!!ax && ax.columns.length === 4 && ax.columns[0].values.length === 6, `tours: tour 2 — both days of the calibration in one table (${ax?.columns.map((c) => c.name).join(', ')})`);
+  }
+  ok(darkShade('#14b8a6') === '#2dd4bf' && darkShade('#7B5BD6') === '#a590f3' && darkShade('#000000') === '#4d4d4d' && loadColors().accent === 'same' && SWATCHES.every((s) => /^#[0-9a-f]{6}$/.test(s.light) && /^#[0-9a-f]{6}$/.test(s.dark)), 'interface colours: the dark shade of a listed colour is its own, of another one lighter; the accent follows the selection');
+  ok(isAddress('192.168.1.132') && isAddress('fe80::1') && !isAddress('192.168.1') && !isAddress('300.1.1.1') && !isAddress('abc'), 'collaboration: an address typed is IPv4 or IPv6');
+  const ans = decodeSignal(encodeSignal({ t: 'answer', sdp: 'v=0', room: 'r', name: 'B', at: 1792000040000, clock: 1792000000000 }));
+  ok(typeof ans !== 'string' && ans.at === 1792000040000 && ans.clock === 1792000000000, 'collaboration: the answer carries when both sides start');
+  ok(typeof read !== 'string' && read.sdp === sig.sdp && read.name === 'Ana' && /^[A-Za-z0-9_-]+$/.test(code) && typeof decodeSignal('garbage') === 'string', 'collaboration: an invitation code (also inside a link) read back; anything else refused');
 }
 
 console.log(`${passed} passed, ${failed} failed`);

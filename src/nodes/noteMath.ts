@@ -1,16 +1,16 @@
-// The formulas of a Note: LaTeX, drawn by KaTeX — as MathML for the exports (HTML, PDF: the browser draws it, no fonts
+// The formulas of a Note: LaTeX, read by MathJax, as MathML for the exports (HTML, PDF: the browser draws it, no fonts
 // to carry) and, from that MathML, as Word's own equations (OMML) in a .docx, editable there. The MathML read here by a
-// small reader of its own (KaTeX writes plain XML), so this also runs in the scripts. Covered: rows, identifiers,
+// small reader of its own (MathJax writes plain XML), so this also runs in the scripts. Covered: rows, identifiers,
 // numbers, operators, text, superscripts and subscripts, fractions (and binomials), roots, sums / products / integrals
 // with their limits, limits under and over, accents and bars, matrices; the rest as its text.
-import katex from 'katex';
+import { texToMathml } from '../math/mathml.ts';
 
 type El = { tag: string; attrs: Record<string, string>; kids: (El | string)[] };
 
 const ENT: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
 const unent = (s: string) => s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e: string) => (e[0] === '#' ? String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)) : (ENT[e] ?? m)));
 
-// a small XML reader (elements, attributes, text; no comments or CDATA — KaTeX writes none)
+// a small XML reader (elements, attributes, text; no comments or CDATA: MathJax writes none)
 function parseXml(xml: string): El {
   const root: El = { tag: '#root', attrs: {}, kids: [] };
   const stack = [root];
@@ -40,7 +40,11 @@ const els = (e: El) => e.kids.filter((k): k is El => typeof k !== 'string');
 
 // LaTeX as MathML (an error: the LaTeX shown as it is, in red)
 export function latexToMathml(latex: string, display: boolean): string {
-  return katex.renderToString(latex || '\\,', { output: 'mathml', displayMode: display, throwOnError: false, trust: false, strict: 'ignore' });
+  try {
+    return texToMathml(latex, display);
+  } catch {
+    return `<math xmlns="http://www.w3.org/1998/Math/MathML"${display ? ' display="block"' : ''}><mtext mathcolor="#cc0000">${esc(latex)}</mtext></math>`;
+  }
 }
 
 const NARY = new Set(['∑', '∏', '∐', '∫', '∬', '∭', '∮', '⋃', '⋂', '⋁', '⋀']);
@@ -61,11 +65,11 @@ function omml(e: El | string): string {
     case 'mrow':
     case 'mstyle':
     case 'mpadded':
-    case 'mphantom':
     case 'menclose':
     case '#root':
       return k.filter((x) => x.tag !== 'annotation').map(omml).join('');
     case 'annotation':
+    case 'mphantom':
       return '';
     case 'mi':
       return run(textOf(e), e.attrs.mathvariant === 'normal' || textOf(e).length > 1);

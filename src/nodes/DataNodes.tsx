@@ -77,6 +77,7 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
   const set = (patch: Partial<ImportData>) => updateNodeData(id, patch);
   const setCsv = (patch: Partial<CsvOptions>) => set({ csv: { ...data.csv, ...patch } });
   const file = useRef<HTMLInputElement>(null);
+  const folder = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   // another file: the changes made by hand to the old one are dropped (after asking)
   const changed = hasEdits(data.edits) || Object.values(data.sheetEdits ?? {}).some(hasEdits);
@@ -121,6 +122,9 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
     <>
       <button className="nodrag" onClick={() => file.current?.click()} title="A text table (.csv, .txt, .tsv, .dat …), a spreadsheet workbook (.xlsx, .xls, .ods); several files at once make a workbook (each a sheet)">
         Open file
+      </button>
+      <button className="nodrag" onClick={() => folder.current?.click()} title="Every data file of a folder, each a sheet (in the order of their names): ready for a Batch">
+        Open a folder
       </button>
       <button
         className="nodrag"
@@ -178,6 +182,20 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
             const fs = [...(e.target.files ?? [])];
             e.target.value = '';
             void load(fs);
+          }}
+        />
+        {/* a folder: its data files (the others left out), in the natural order of their names */}
+        <input
+          ref={folder}
+          type="file"
+          hidden
+          {...{ webkitdirectory: '' }}
+          onChange={(e) => {
+            const exts = ACCEPT.split(',').map((x) => x.trim().toLowerCase());
+            const fs = [...(e.target.files ?? [])].filter((f) => exts.some((x) => f.name.toLowerCase().endsWith(x))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+            e.target.value = '';
+            if (fs.length) void load(fs);
+            else alert('No data file in that folder.');
           }}
         />
       </div>

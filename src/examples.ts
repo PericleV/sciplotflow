@@ -518,6 +518,43 @@ function runsWorkbook(): ImportSheet[] {
   });
 }
 
+// Photoluminescence of one sample at six temperatures, a file each (the names say the temperature): the peak moves to
+// longer wavelengths as it warms (the band gap shrinks) and broadens.
+function plSeries(): ImportSheet[] {
+  const r = rng(23);
+  return [300, 100, 250, 150, 200, 50].map((T) => {
+    const eV = 1.52 - (5.4e-4 * T * T) / (T + 204);
+    const c = 1239.84 / eV;
+    const w = 9 + 0.03 * T;
+    const lines = ['Wavelength (nm)\tIntensity (a.u.)'];
+    for (let l = 760; l <= 900; l += 0.5) lines.push(`${l}\t${((1 - T / 600) * Math.exp(-(((l - c) / w) ** 2)) + 0.03 * gauss(r)).toFixed(4)}`);
+    return { name: `PL_${T}K`, text: lines.join('\n'), excel: true };
+  });
+}
+
+// Batch: the same steps on every file (Smooth, then the maximum by Pick points); the temperature read from the file
+// names; the peak against the temperature in a Plot.
+function batchExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'pl-files', 0, 0, { ...IMPORT_DEFAULTS, name: 'PL spectra', fileName: '6 files', textId: 'pl-series', sheets: plSeries(), sheet: 0 });
+  const inner: AppNode[] = [
+    { id: 'group-in', type: 'groupin', position: { x: -380, y: 0 }, data: {} },
+    { id: 'sm', type: 'smooth', position: { x: 0, y: 0 }, data: { ...SMOOTH_DEFAULTS, points: 15 } },
+    { id: 'pk', type: 'pick', position: { x: 620, y: 0 }, data: { ...PICK_DEFAULTS, rules: [{ kind: 'max', value: '' }] } },
+    { id: 'group-out', type: 'groupout', position: { x: 1240, y: 0 }, data: {} },
+  ] as AppNode[];
+  const innerEdges = [
+    { id: 'b-in', source: 'group-in', sourceHandle: 'in-0', target: 'sm', targetHandle: 'in' },
+    { id: 'b-sm', source: 'sm', sourceHandle: 'out', target: 'pk', targetHandle: 'in' },
+    { id: 'b-out', source: 'pk', sourceHandle: 'out', target: 'group-out', targetHandle: 'out-0' },
+  ];
+  const bt = add(b, 'subgraph', 'pl-batch', 640, 0, { name: 'The peak of every spectrum', nodes: inner, edges: innerEdges, inputs: [{ id: 'in-0', label: 'files', type: 'dataset' }], outputs: [{ id: 'out-0', label: 'peak', type: 'dataset' }], batch: { pattern: 'PL_{T}K', order: 'value' } });
+  link(b, imp, bt, 'in-0', 'book');
+  const pl = add(b, 'plot1d', 'pl-shift', 1120, 0, plot({ label: 'peak', style: curve(0, { mode: 'linesymbol', symbolSize: 5 }), cols: { x: 'T', y: 'Wavelength (nm)' } }, { axes: { sides: { ...axes().sides, bottom: side({ title: 'Temperature (K)' }), left: side({ title: 'Peak wavelength (nm)' }) } }, page: { name: 'pl_peak_vs_T' } }));
+  link(b, bt, pl, 'dataset', 'table');
+  return project(b, 'Batch: the peak of every spectrum in a folder');
+}
+
 function workbookExample(): Project {
   const b = builder();
   const imp = add(b, 'import', 'runs', 0, 0, { ...IMPORT_DEFAULTS, name: 'Runs', fileName: 'runs.xlsx', textId: 'runs-1', sheets: runsWorkbook(), sheet: 0, csv: { ...IMPORT_DEFAULTS.csv, nameLine: 1, unitLine: 2 } });
@@ -2319,6 +2356,7 @@ const LIST: { group: string; name: string; desc: string; make: () => Project }[]
   { group: 'Getting started', name: 'Generated data: a damped oscillation and noisy samples', desc: 'Generate column (linspace, random), Math column, one Plot with three curves (one with its own X), legend.', make: generatedExample },
   { group: 'Getting started', name: 'Gold n, k: two blocks in one file (Split into columns)', desc: 'A file of optical constants with wl, n and then wl, k written under it: Split into columns lays the blocks side by side (wl, n, k) and one Plot draws n on the left axis, k on its own right axis.', make: nkExample },
   { group: 'Getting started', name: 'Four runs in a workbook: Auto-extract', desc: 'A spreadsheet workbook (a sheet per run), Auto-extract rules (Time = X, Signal = Y, column D = ±Y in every sheet, each Y named by its sheet), one Plot from the designations; Extract column from one sheet.', make: workbookExample },
+  { group: 'Data preparation', name: 'Batch: the peak of every spectrum in a folder', desc: 'Six photoluminescence spectra, a file each (PL_50K … PL_300K, opened together as from a folder): a Batch smooths every spectrum and picks its maximum; the temperature read from the file names, the files in its order; the peak wavelength against the temperature in a Plot. Open the batch to see its steps on the first file.', make: batchExample },
   { group: 'Data preparation', name: 'Cleaning a sensor log: order, repeats, gaps, spikes', desc: 'A logger file as it comes: Columns leaves the battery out, Filter & sort rows puts the rows in time order and merges the times written twice, Clean data fills the missing temperatures and replaces the spikes (moving median), Data manipulation masks two humidity readings by hand; the raw and the cleaned data in one Plot, the changes in a Workbook.', make: loggerExample },
   { group: 'Data preparation', name: 'Replicate scans: mean ± SD on a common X', desc: 'Three scans on different wavelength grids: Average curves gives their mean ± SD on a common grid (a band in the Plot); Combine columns puts every point of the three scans in one table, in the order of the wavelength.', make: scansExample },
   { group: 'Data preparation', name: 'Difference spectrum: sample minus reference', desc: 'A sample measured 2 nm off: Translate moves it back, Curve math gives sample − reference and sample / reference on a common grid; the difference on its own axis shows the band the sample has more.', make: differenceExample },

@@ -3,7 +3,7 @@
 // subscript, text colour and highlight; alignment, lists, indent, line spacing, the space before and after a paragraph;
 // links; undo. Blocks: a live figure of the project (the Figure list, or Copy under a figure then Ctrl+V here), pictures
 // (a file, pasted, dropped), tables, text boxes. Loaded only when opened (not in the app's first download).
-import { useContext, useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { Extension } from '@tiptap/core';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
@@ -14,8 +14,6 @@ import Highlight from '@tiptap/extension-highlight';
 import Subscript from '@tiptap/extension-subscript';
 import Superscript from '@tiptap/extension-superscript';
 import { TableKit } from '@tiptap/extension-table';
-import { Mathematics } from '@tiptap/extension-mathematics';
-import 'katex/dist/katex.min.css';
 import { useReactFlow } from '@xyflow/react';
 import {
   Bold,
@@ -50,7 +48,7 @@ import {
 import { FONTS } from '../figure/spec.ts';
 import { IC } from './iconProps.ts';
 import { OptColor } from './fields.tsx';
-import { INDENT_STEP, docFromText, isPlain, plainOf, type RichDoc } from './richDoc.ts';
+import { INDENT_STEP, RICH_BASE, docFromText, isPlain, plainOf, type RichDoc } from './richDoc.ts';
 import { FigureRef, ImageBlock, PlacedTable, TextBox, pictureFromFile } from './richBlocks.ts';
 import { placeOf } from './richDoc.ts';
 import { PlaceTools } from './RichPlace.tsx';
@@ -59,7 +57,10 @@ import { copiedFigure } from './figureClip.ts';
 import { downloadDocx, downloadHtml, downloadMarkdown, printNote } from './noteExport.tsx';
 import { latexToMathml, latexToOmml } from './noteMath.ts';
 import { MathPanel, type MathEdit } from './RichMath.tsx';
+import { mathNodes, mathViews, type MathViews } from './richMathNodes.ts';
+import { mathFace, type MathFontChoice } from '../math/sizes.ts';
 import { EngineContext } from '../engine/engine.ts';
+import { applyNotePage, getNotePage, subscribeNotePage, type NotePage } from '../theme.ts';
 import { nodeDisplayName } from '../nodeColors.ts';
 import type { AppNode } from '../types.ts';
 
@@ -83,15 +84,8 @@ const ParagraphFormat = Extension.create({
   },
 });
 
-// the extensions of an editor: a click on one of its formulas opens it in the formula panel
-const extensionsFor = (onMath: (e: MathEdit) => void) => [
-  ...EXTENSIONS,
-  Mathematics.configure({
-    katexOptions: { throwOnError: false, strict: 'ignore' },
-    inlineOptions: { onClick: (node, pos) => onMath({ latex: String(node.attrs.latex ?? ''), display: false, pos, was: false }) },
-    blockOptions: { onClick: (node, pos) => onMath({ latex: String(node.attrs.latex ?? ''), display: true, pos, was: true }) },
-  }),
-];
+// the extensions of an editor: its formulas (a click on one opens it in the formula panel)
+const extensionsFor = (views: MathViews) => [...EXTENSIONS, ...mathNodes(views)];
 
 const EXTENSIONS = [
   StarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false, autolink: true, protocols: ['http', 'https', 'mailto'] } }),
@@ -131,6 +125,7 @@ function Toolbar({ editor, onLarge, large, figures, onExport, onMath }: { editor
   const box = editor.isActive('textBox') ? editor.getAttributes('textBox') : null;
   const inTable = editor.isActive('table');
   const [figMenu, setFigMenu] = useState(false);
+  const page = useSyncExternalStore(subscribeNotePage, getNotePage);
   const { style, attrs } = blockOf(editor);
   const ts = editor.getAttributes('textStyle');
   const font = (ts.fontFamily as string | undefined) ?? '';
@@ -343,6 +338,13 @@ function Toolbar({ editor, onLarge, large, figures, onExport, onMath }: { editor
           MD
         </button>
       </span>
+      <span className="rt-group">
+        <select className="nodrag" title="The page on screen: dark with light text, or white (kept in this browser; the exports are always on white, the figures shown as they will be there)" value={page} onChange={(e) => applyNotePage(e.target.value as NotePage)}>
+          <option value="theme">Page: as the theme</option>
+          <option value="light">Page: light</option>
+          <option value="dark">Page: dark</option>
+        </select>
+      </span>
       {link !== null && (
         <span className="rt-group rt-link">
           <input
@@ -368,12 +370,13 @@ function Toolbar({ editor, onLarge, large, figures, onExport, onMath }: { editor
 }
 
 // compact: in the node itself — the text typed there, no toolbar (that is in the panel), the blocks small
-type Props = { doc: RichDoc | undefined; text: string; onChange: (doc: RichDoc | undefined, text: string) => void; onLarge?: () => void; large?: boolean; compact?: boolean };
+// mathFont: the font of the note's formulas (absent: the one that looks like the note's text)
+type Props = { doc: RichDoc | undefined; text: string; onChange: (doc: RichDoc | undefined, text: string) => void; onLarge?: () => void; large?: boolean; compact?: boolean; mathFont?: MathFontChoice; onMathFont?: (f: MathFontChoice | undefined) => void };
 
 // the editor bound to a note: its content from the note (a plain note as paragraphs), every change given back — the
 // document, or none when it is only plain paragraphs (the note stays a plain text) — and the note changed elsewhere
 // (the node, the other editor) taken in when this one is not being typed in
-export function RichEditor({ doc, text, onChange, onLarge, large, compact }: Props) {
+export function RichEditor({ doc, text, onChange, onLarge, large, compact, mathFont, onMathFont }: Props) {
   // the figures of the project, by name
   const { results } = useContext(EngineContext);
   const { getNodes } = useReactFlow<AppNode>();
@@ -403,7 +406,11 @@ export function RichEditor({ doc, text, onChange, onLarge, large, compact }: Pro
   });
   // the formula being written (Σ, or a formula clicked)
   const [math, setMath] = useState<MathEdit | null>(null);
-  const [extensions] = useState(() => extensionsFor((e) => setMath(e)));
+  const face = mathFace(RICH_BASE.font, mathFont);
+  const [views] = useState(() => mathViews(face, (node, pos, display) => setMath({ latex: String(node.attrs.latex ?? ''), display, pos, was: display })));
+  const [extensions] = useState(() => extensionsFor(views));
+  // the note's math font changed: its formulas drawn again
+  useEffect(() => views.setFace(face), [face, views]);
   const editor = useEditor({
     extensions,
     content: doc ?? docFromText(text),
@@ -442,9 +449,9 @@ export function RichEditor({ doc, text, onChange, onLarge, large, compact }: Pro
   const exportAs = (k: ExportKind) => {
     const json = editor.getJSON() as RichDoc;
     if (k === 'docx') void downloadDocx(json, figureOf, latexToOmml).catch((e: Error) => alert(`The Word file could not be made: ${e.message}`));
-    else if (k === 'pdf') printNote(json, figureOf, latexToMathml);
+    else if (k === 'pdf') void printNote(json, figureOf, latexToMathml);
     else if (k === 'md') void downloadMarkdown(json, figureOf).catch((e: Error) => alert(`The Markdown could not be made: ${e.message}`));
-    else downloadHtml(json, figureOf, latexToMathml);
+    else void downloadHtml(json, figureOf, latexToMathml);
   };
   return (
     <div className={`rich-editor${large ? ' large' : ''}${compact ? ' compact' : ''}`}>
@@ -452,6 +459,9 @@ export function RichEditor({ doc, text, onChange, onLarge, large, compact }: Pro
       {math && !compact && (
         <MathPanel
           edit={math}
+          face={face}
+          font={mathFont ?? 'auto'}
+          onFont={onMathFont}
           onChange={setMath}
           onClose={() => setMath(null)}
           onApply={() => {
@@ -477,7 +487,17 @@ export function RichEditor({ doc, text, onChange, onLarge, large, compact }: Pro
           }
         />
       )}
-      <div className="rich-paper nowheel">
+      <div
+        className="rich-paper nowheel"
+        onMouseDown={(e) => {
+          // the text is only as tall as its lines: a click on the page around it (an empty note — the whole page) puts
+          // the cursor at the end of the text (never on its scroll bar)
+          const page = e.currentTarget;
+          if ((e.target as HTMLElement).closest('.ProseMirror') || e.clientX - page.getBoundingClientRect().left > page.clientLeft + page.clientWidth) return;
+          e.preventDefault();
+          editor.commands.focus('end');
+        }}
+      >
         <EditorContent editor={editor} className="rich-doc" />
       </div>
     </div>
@@ -493,7 +513,7 @@ export function RichPage(props: Omit<Props, 'onLarge' | 'large'> & { onClose: ()
   }, [props]);
   return createPortal(
     <div className="rich-backdrop nokey" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()} onKeyDown={(e) => e.stopPropagation()}>
-      <RichEditor doc={props.doc} text={props.text} onChange={props.onChange} onLarge={props.onClose} large />
+      <RichEditor doc={props.doc} text={props.text} onChange={props.onChange} mathFont={props.mathFont} onMathFont={props.onMathFont} onLarge={props.onClose} large />
     </div>,
     document.body,
   );

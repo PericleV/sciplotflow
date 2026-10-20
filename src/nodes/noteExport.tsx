@@ -11,6 +11,7 @@ import { noteDocx, type DocxMath, type DocxPicture } from './noteDocx.ts';
 import { noteMarkdown } from './noteMd.ts';
 import { PICTURES, plainOf, RICH_BASE, type RichDoc } from './richDoc.ts';
 import { RichView } from './RichView.tsx';
+import { mathReady } from '../math/store.ts';
 
 // the look of a document on paper (as in the app, without its theme)
 const DOC_CSS = `
@@ -59,12 +60,26 @@ export function noteHtml(doc: RichDoc, figure: (node: string) => Figure | undefi
   return `<!doctype html><html><head><meta charset="utf-8"><title>${t}</title><style>@page { size: A4; margin: 20mm } body { margin: 0; background: #ffffff } @media screen { body { max-width: 170mm; margin: 20mm auto } }${DOC_CSS}</style></head><body>${body}</body></html>`;
 }
 
-export function printNote(doc: RichDoc, figure: (node: string) => Figure | undefined, math?: MathHtml) {
+// the formulas of the note's live figures drawn (each figure drawn once to ask for them)
+async function figuresReady(doc: RichDoc, figure: (node: string) => Figure | undefined) {
+  const walk = (n: RichDoc) => {
+    if (n.type === 'figureRef') {
+      const fig = figure(String(n.attrs?.node ?? ''));
+      if (fig) renderToStaticMarkup(<FigureSvg fig={fig} display={{ width: 100, height: 100 }} idPrefix="ask" />);
+    }
+    for (const k of n.content ?? []) walk(k);
+  };
+  walk(doc);
+  await mathReady();
+}
+
+export async function printNote(doc: RichDoc, figure: (node: string) => Figure | undefined, math?: MathHtml) {
   const w = window.open('', '_blank');
   if (!w) {
     alert('The browser blocked the print window: allow pop-ups for this page.');
     return;
   }
+  await figuresReady(doc, figure);
   w.document.write(noteHtml(doc, figure, noteTitle(doc), math));
   w.document.close();
   w.focus();
@@ -72,7 +87,8 @@ export function printNote(doc: RichDoc, figure: (node: string) => Figure | undef
   setTimeout(() => w.print(), 500);
 }
 
-export function downloadHtml(doc: RichDoc, figure: (node: string) => Figure | undefined, math?: MathHtml) {
+export async function downloadHtml(doc: RichDoc, figure: (node: string) => Figure | undefined, math?: MathHtml) {
+  await figuresReady(doc, figure);
   const title = noteTitle(doc);
   download(noteHtml(doc, figure, title, math), `${fileName(title)}.html`, 'text/html');
 }
@@ -84,6 +100,9 @@ async function pictureBytes(n: RichDoc, figure: (node: string) => Figure | undef
     const fig = figure(String(a.node ?? ''));
     if (!fig) return null;
     const [W, H] = [toPt(fig.width, fig.unit), toPt(fig.height, fig.unit)];
+    // (drawn twice: the first asks for its formulas)
+    renderToStaticMarkup(<FigureSvg fig={fig} display={{ width: W, height: H }} idPrefix="docx" />);
+    await mathReady();
     const markup = renderToStaticMarkup(<FigureSvg fig={fig} display={{ width: W, height: H }} idPrefix="docx" />);
     const svg = new DOMParser().parseFromString(markup, 'image/svg+xml').documentElement as unknown as SVGSVGElement;
     return { bytes: await pngBytes(svg, fig, 300), ext: 'png', w: W, h: H };

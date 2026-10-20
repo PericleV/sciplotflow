@@ -1249,35 +1249,35 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
                 {gridLines}
                 {selected.map((it) => {
                   const b = boxPt(it);
-                  return b ? <rect key={it.id} x={b.x} y={b.y} width={Math.max(b.w, 0.01)} height={Math.max(b.h, 0.01)} fill="none" stroke="#14b8a6" strokeWidth={1 / zoom} strokeDasharray={`${4 / zoom} ${3 / zoom}`} /> : null;
+                  return b ? <rect key={it.id} x={b.x} y={b.y} width={Math.max(b.w, 0.01)} height={Math.max(b.h, 0.01)} fill="none" stroke="var(--select)" strokeWidth={1 / zoom} strokeDasharray={`${4 / zoom} ${3 / zoom}`} /> : null;
                 })}
-                {selected.length > 1 && selBox && <rect x={selBox.x * MM} y={selBox.y * MM} width={selBox.w * MM} height={selBox.h * MM} fill="none" stroke="#14b8a6" strokeOpacity={0.6} strokeWidth={1.5 / zoom} />}
+                {selected.length > 1 && selBox && <rect x={selBox.x * MM} y={selBox.y * MM} width={selBox.w * MM} height={selBox.h * MM} fill="none" stroke="var(--select)" strokeOpacity={0.6} strokeWidth={1.5 / zoom} />}
                 {guides.x !== null && <line x1={guides.x} x2={guides.x} y1={0} y2={H} stroke="#e6007e" strokeWidth={1 / zoom} />}
                 {guides.y !== null && <line y1={guides.y} y2={guides.y} x1={0} x2={W} stroke="#e6007e" strokeWidth={1 / zoom} />}
-                {marquee && <rect x={marquee.x} y={marquee.y} width={marquee.w} height={marquee.h} fill="#14b8a6" fillOpacity={0.08} stroke="#14b8a6" strokeWidth={1 / zoom} />}
+                {marquee && <rect x={marquee.x} y={marquee.y} width={marquee.w} height={marquee.h} fill="var(--select)" fillOpacity={0.08} stroke="var(--select)" strokeWidth={1 / zoom} />}
                 {preview &&
                   (BOXED.has(tool) ? (
-                    <rect x={Math.min(preview.a[0], preview.b[0])} y={Math.min(preview.a[1], preview.b[1])} width={Math.abs(preview.b[0] - preview.a[0])} height={Math.abs(preview.b[1] - preview.a[1])} fill="none" stroke="#14b8a6" strokeWidth={1 / zoom} strokeDasharray={`${4 / zoom} ${3 / zoom}`} />
+                    <rect x={Math.min(preview.a[0], preview.b[0])} y={Math.min(preview.a[1], preview.b[1])} width={Math.abs(preview.b[0] - preview.a[0])} height={Math.abs(preview.b[1] - preview.a[1])} fill="none" stroke="var(--select)" strokeWidth={1 / zoom} strokeDasharray={`${4 / zoom} ${3 / zoom}`} />
                   ) : (
-                    <line x1={preview.a[0]} y1={preview.a[1]} x2={preview.b[0]} y2={preview.b[1]} stroke="#14b8a6" strokeWidth={1 / zoom} strokeDasharray={`${4 / zoom} ${3 / zoom}`} />
+                    <line x1={preview.a[0]} y1={preview.a[1]} x2={preview.b[0]} y2={preview.b[1]} stroke="var(--select)" strokeWidth={1 / zoom} strokeDasharray={`${4 / zoom} ${3 / zoom}`} />
                   ))}
-                {poly.length > 0 && <polyline points={[...poly, ...(hover ? [hover] : [])].map((p) => p.join(',')).join(' ')} fill="none" stroke="#14b8a6" strokeWidth={1 / zoom} strokeDasharray={`${4 / zoom} ${3 / zoom}`} />}
+                {poly.length > 0 && <polyline points={[...poly, ...(hover ? [hover] : [])].map((p) => p.join(',')).join(' ')} fill="none" stroke="var(--select)" strokeWidth={1 / zoom} strokeDasharray={`${4 / zoom} ${3 / zoom}`} />}
                 {poly.map((p, k) => (
-                  <circle key={k} cx={p[0]} cy={p[1]} r={3 / zoom} fill="#14b8a6" />
+                  <circle key={k} cx={p[0]} cy={p[1]} r={3 / zoom} fill="var(--select)" />
                 ))}
                 {tool === 'corner' &&
                   one &&
                   cornerNodes(one).map((q) => {
                     const on = picked?.item === one.id && picked.nodes.includes(q.i);
-                    return <circle key={q.i} cx={q.p[0]} cy={q.p[1]} r={4 / zoom} fill={on ? '#14b8a6' : '#ffffff'} stroke="#14b8a6" strokeWidth={1.2 / zoom} />;
+                    return <circle key={q.i} cx={q.p[0]} cy={q.p[1]} r={4 / zoom} fill={on ? 'var(--select)' : '#ffffff'} stroke="var(--select)" strokeWidth={1.2 / zoom} />;
                   })}
                 {pen.length > 0 && (
-                  <g fill="none" stroke="#14b8a6" strokeWidth={1 / zoom}>
+                  <g fill="none" stroke="var(--select)" strokeWidth={1 / zoom}>
                     <path d={pen.map((q, k) => (k === 0 ? `M${q.p[0]},${q.p[1]}` : `C${(pen[k - 1].cout ?? pen[k - 1].p).join(',')} ${(q.cin ?? q.p).join(',')} ${q.p.join(',')}`)).join('') + (hover ? `L${hover[0]},${hover[1]}` : '')} />
                     {pen.map((q, k) => (
                       <g key={k}>
                         {q.cout && q.cin && <path d={`M${q.cin.join(',')}L${q.cout.join(',')}`} strokeDasharray={`${2 / zoom} ${2 / zoom}`} />}
-                        <rect x={q.p[0] - 2.5 / zoom} y={q.p[1] - 2.5 / zoom} width={5 / zoom} height={5 / zoom} fill={k === 0 ? '#14b8a6' : '#ffffff'} />
+                        <rect x={q.p[0] - 2.5 / zoom} y={q.p[1] - 2.5 / zoom} width={5 / zoom} height={5 / zoom} fill={k === 0 ? 'var(--select)' : '#ffffff'} />
                       </g>
                     ))}
                   </g>

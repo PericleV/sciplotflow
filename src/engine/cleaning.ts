@@ -19,14 +19,23 @@ function takeRows(ds: Dataset, rows: number[]): Column[] {
 const designatedX = (ds: Dataset) => ds.columns.find((_, j) => roleOf(ds.columns, j) === 'x');
 
 // ---- Filter & sort rows ----
+// a sort key: a column, from the largest value down (desc) or from the smallest up
+export type SortKey = { col: string; desc: boolean };
 export type FilterData = {
   rows: RowSelect; // the rows kept: all, ranges (by row or X), a list, a rule (a condition of x, A, B …, i, n)
   dup: 'keep' | 'first' | 'mean'; // rows with the same value of dupCol: kept, the first one, or merged (the numbers averaged)
-  dupCol: string; // '' = the designated X
-  sortBy: string; // '' = not sorted
+  dupCol: string; // '' = the designated X; a list (2, B-D, names): repeated in all of them together
+  sortBy: string; // '' = not sorted (older projects; `sorts` when present)
   desc: boolean;
+  // sorted by several columns: by the first, rows equal in it by the second, and so on
+  sorts?: SortKey[];
+  // after sorting: only the first N rows kept (absent or 0: all), as the 5 largest values; or the last N
+  top?: number;
+  topFrom?: 'start' | 'end';
   every: number; // one row in every N (1: all)
 };
+// the sort keys of a filter (an older project: its one column)
+export const sortKeysOf = (d: Pick<FilterData, 'sorts' | 'sortBy' | 'desc'>): SortKey[] => d.sorts ?? (d.sortBy ? [{ col: d.sortBy, desc: d.desc }] : []);
 export function filterRows(ds: Dataset, d: FilterData): { dataset: Dataset; report: string; text: string } | string {
   const n = Math.max(0, maxOf(ds.columns.map((c) => c.values.length)));
   const X = designatedX(ds);
@@ -38,11 +47,23 @@ export function filterRows(ds: Dataset, d: FilterData): { dataset: Dataset; repo
   if (sel.text) steps.push(`kept ${sel.text}`);
   // duplicates
   if (d.dup !== 'keep') {
-    const key = d.dupCol ? findColumn(cols, d.dupCol) : (designatedX({ name: '', columns: cols }) ?? cols[0]);
-    if (!key) return d.dupCol ? `No column “${d.dupCol}”.` : 'No column to find duplicates in.';
+    // repeated in one column, or in several together (a list: the same sample on the same day)
+    let keys: Column[];
+    if (!d.dupCol) {
+      const x = designatedX({ name: '', columns: cols }) ?? cols[0];
+      if (!x) return 'No column to find duplicates in.';
+      keys = [x];
+    } else {
+      const one = findColumn(cols, d.dupCol);
+      const p = one ? null : pick(d.dupCol, cols.map((c) => c.name), true);
+      if (p && (p.missing.length || !p.found.length)) return `No column ${(p.missing.length ? p.missing : [d.dupCol]).map((m) => `“${m}”`).join(', ')}.`;
+      keys = one ? [one] : p!.found.map((j) => cols[j]);
+    }
+    const key = { name: keys.map((c) => c.name).join(' + ') };
+    const cell = (c: Column, i: number) => (c.text?.[i]?.trim() ? `t:${c.text[i]}` : `v:${c.values[i]}`);
     const groups = new Map<string, number[]>();
     for (let i = 0; i < rows.length; i++) {
-      const k = key.text?.[i]?.trim() ? `t:${key.text[i]}` : `v:${key.values[i]}`;
+      const k = keys.map((c) => cell(c, i)).join('\u0001');
       const g = groups.get(k);
       if (g) g.push(i);
       else groups.set(k, [i]);
@@ -67,22 +88,42 @@ export function filterRows(ds: Dataset, d: FilterData): { dataset: Dataset; repo
     rows = firsts.map((g) => g[0]);
     if (merged) steps.push(`${merged} repeated value${merged > 1 ? 's' : ''} of ${key.name} ${d.dup === 'first' ? 'kept once' : 'averaged'}`);
   }
-  // sorting (stable; missing values last)
-  if (d.sortBy) {
-    const s = findColumn(cols, d.sortBy);
-    if (!s) return `No column “${d.sortBy}” to sort by.`;
+  // sorting by every key in turn (stable; missing values last in each)
+  const keys = sortKeysOf(d).filter((k) => k.col);
+  if (keys.length) {
+    const by: { s: Column; desc: boolean }[] = [];
+    for (const k of keys) {
+      const s = findColumn(cols, k.col);
+      if (!s) return `No column “${k.col}” to sort by.`;
+      by.push({ s, desc: k.desc });
+    }
     const len = Math.max(0, maxOf(cols.map((c) => c.values.length)));
     const idx = Array.from({ length: len }, (_, i) => i);
-    const val = (i: number) => (s.text?.[i]?.trim() ? s.text[i] : s.values[i]);
-    idx.sort((a, b) => {
+    const bad = (w: string | number) => typeof w === 'number' && !Number.isFinite(w);
+    const one = (s: Column, desc: boolean, a: number, b: number) => {
+      const val = (i: number) => (s.text?.[i]?.trim() ? s.text[i] : s.values[i]);
       const [u, v] = [val(a), val(b)];
-      const bad = (w: string | number) => typeof w === 'number' && !Number.isFinite(w);
-      if (bad(u) || bad(v)) return bad(u) === bad(v) ? a - b : bad(u) ? 1 : -1;
+      if (bad(u) || bad(v)) return bad(u) === bad(v) ? 0 : bad(u) ? 1 : -1;
       const c = typeof u === 'string' || typeof v === 'string' ? String(u).localeCompare(String(v), undefined, { numeric: true }) : (u as number) - (v as number);
-      return (d.desc ? -c : c) || a - b;
+      return desc ? -c : c;
+    };
+    idx.sort((a, b) => {
+      for (const k of by) {
+        const c = one(k.s, k.desc, a, b);
+        if (c) return c;
+      }
+      return a - b;
     });
     cols = cols.map((c) => ({ ...c, values: Float64Array.from(idx, (i) => c.values[i]), ...(c.text ? { text: idx.map((i) => c.text![i]) } : {}), ...(c.mask ? { mask: Uint8Array.from(idx, (i) => c.mask![i]) } : {}) }));
-    steps.push(`sorted by ${s.name}${d.desc ? ' (descending)' : ''}`);
+    steps.push(`sorted by ${by.map((k) => `${k.s.name}${k.desc ? ' (largest first)' : ''}`).join(', then ')}`);
+  }
+  // only the first (or the last) N rows
+  const top = Math.max(0, Math.floor(d.top ?? 0) || 0);
+  const len0 = Math.max(0, maxOf(cols.map((c) => c.values.length)));
+  if (top > 0 && top < len0) {
+    const [a, b] = d.topFrom === 'end' ? [len0 - top, len0] : [0, top];
+    cols = cols.map((c) => ({ ...c, values: c.values.slice(a, b), ...(c.text ? { text: c.text.slice(a, b) } : {}), ...(c.mask ? { mask: c.mask.slice(a, b) } : {}) }));
+    steps.push(`the ${d.topFrom === 'end' ? 'last' : 'first'} ${top} row${top > 1 ? 's' : ''} kept`);
   }
   // one in every N
   const every = Math.max(1, Math.floor(d.every) || 1);

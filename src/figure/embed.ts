@@ -8,6 +8,9 @@ import { decodeProject, encodeProject, stringifyProject, type Project } from '..
 export type FigureRef = { node: string; path: string[]; name: string };
 export type Embedded = { app: 'graph-flow'; kind: 'figure'; v: 1; projectId: string; revision: string; figure: FigureRef; exported: string; data: 'full' | 'nodata'; projectName?: string; project: string };
 export const EMBED_KEY = 'graph-flow';
+// Editable figures hidden for now (the user, 2026-10-19): the exports carry no project, “project inside” and Update
+// document… are not shown; a file exported before still opens at its figure. true shows them again.
+export const EDITABLE_FIGURES = false;
 
 export const newProjectId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 

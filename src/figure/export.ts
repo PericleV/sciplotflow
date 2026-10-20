@@ -11,6 +11,8 @@ export function download(content: Blob | string, filename: string, type = 'text/
   a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  // a guided tour may wait for a file saved
+  window.dispatchEvent(new CustomEvent('graph-flow:downloaded', { detail: filename }));
 }
 
 export const safeName = (s: string, fallback: string) => s.replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || fallback;

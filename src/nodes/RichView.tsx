@@ -4,7 +4,9 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { FigureSvg } from '../figure/render.tsx';
 import { toPt, type Figure } from '../figure/spec.ts';
-import { INDENT_STEP, PICTURES, boxCss, placeCss, placeOf, type RichDoc, type RichMark } from './richDoc.ts';
+import { INDENT_STEP, PICTURES, RICH_BASE, boxCss, placeCss, placeOf, type RichDoc, type RichMark } from './richDoc.ts';
+import { MathSvg } from '../math/MathSvg.tsx';
+import { mathFace, type MathFontChoice } from '../math/sizes.ts';
 
 const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
@@ -14,7 +16,7 @@ const safeHref = (v: unknown) => (typeof v === 'string' && /^(https?:|mailto:)/i
 const safeSrc = (v: unknown) => (typeof v === 'string' && /^data:image\//.test(v) ? v : undefined);
 
 // full: the whole document (the export), with the figures of the project (by node)
-export type RichFull = { figure: (node: string) => Figure | undefined; math?: (latex: string, display: boolean) => string };
+export type RichFull = { figure: (node: string) => Figure | undefined; math?: (latex: string, display: boolean) => string; mathFont?: MathFontChoice };
 
 function marked(text: ReactNode, marks: RichMark[] | undefined, key: number): ReactNode {
   let out = text;
@@ -34,17 +36,16 @@ function marked(text: ReactNode, marks: RichMark[] | undefined, key: number): Re
   return <span key={key}>{out}</span>;
 }
 
-// a formula: drawn (the export: KaTeX's MathML, its own markup), else its LaTeX
+// a formula: drawn (the export: MathJax's MathML, its own markup; in the app: MathJax's drawing), else its LaTeX
 function formula(latex: string, display: boolean, k: number, full?: RichFull): ReactNode {
   if (full?.math) return display ? <div key={k} className="rich-math-block" dangerouslySetInnerHTML={{ __html: full.math(latex, true) }} /> : <span key={k} dangerouslySetInnerHTML={{ __html: full.math(latex, false) }} />;
+  const face = mathFace(RICH_BASE.font, full?.mathFont);
   return display ? (
     <p key={k} className="rich-math-block">
-      <code className="rich-math">{latex}</code>
+      <MathSvg tex={latex} display face={face} />
     </p>
   ) : (
-    <code key={k} className="rich-math">
-      {latex}
-    </code>
+    <MathSvg key={k} tex={latex} face={face} />
   );
 }
 

@@ -8,7 +8,8 @@ import { maxOf, minOf } from './minmax.ts';
 export const GROUP_IN = 'group-in';
 export const GROUP_OUT = 'group-out';
 
-const isGroup = (n: AppNode): n is Extract<AppNode, { type: 'subgraph' }> => n.type === 'subgraph';
+// (a Batch is a group too, but not opened in place: it runs its steps once per file, evaluate.ts)
+const isGroup = (n: AppNode): n is Extract<AppNode, { type: 'subgraph' }> => n.type === 'subgraph' && !n.data.batch;
 
 // The whole graph with every group opened in place (recursively).
 export function flattenGroups(nodes: AppNode[], edges: Edge[], prefix = ''): { nodes: AppNode[]; edges: Edge[] } {
@@ -92,6 +93,31 @@ export function makeGroup(nodes: AppNode[], edges: Edge[], ids: string[], label:
   ];
   const group = { id: gid, type: 'subgraph', position: { x: minX, y: minY }, selected: true, data: { name: 'Group', nodes: innerNodes, edges: innerEdges, inputs, outputs } } as AppNode;
   return { nodes: [...nodes.filter((n) => !sel.has(n.id)).map((n) => ({ ...n, selected: false }) as AppNode), group], edges: outerEdges, groupId: gid };
+}
+
+// The port a Group output offers to add an output: what is connected to it becomes a new output of the group
+export const NEW_OUT = 'new-out';
+
+// A group just made, as a Batch: its first input the files (inside: one file, a dataset); what it keeps, its outputs
+// as they were (inside, what left the selection) or, when nothing left it, what the last nodes of its steps give
+// (those whose output goes nowhere inside); outside, its own outputs (a row per file, a sheet per file, all rows), the
+// connections from its old outputs dropped.
+export function asBatch(nodes: AppNode[], edges: Edge[], gid: string, label: (n: AppNode, handle: string) => string, typeOf: (n: AppNode, handle: string) => string | null): { nodes: AppNode[]; edges: Edge[] } {
+  const out = nodes.map((n) => {
+    if (n.id !== gid || n.type !== 'subgraph') return n;
+    const d = n.data;
+    const inputs = d.inputs.map((p, k) => (k === 0 ? { ...p, label: 'files', type: 'dataset' } : p));
+    let outputs = d.outputs;
+    let inner = d.edges;
+    if (!outputs.length) {
+      const steps = d.nodes.filter((q) => q.type !== 'groupin' && q.type !== 'groupout');
+      const ends = steps.filter((q) => !d.edges.some((e) => e.source === q.id) && typeOf(q, 'out'));
+      outputs = ends.map((q, k) => ({ id: `out-${k}`, label: label(q, 'out'), type: typeOf(q, 'out') ?? 'any' }));
+      inner = [...d.edges, ...ends.map((q, k) => ({ id: `e-out-${q.id}-out-out-${k}`, source: q.id, sourceHandle: 'out', target: GROUP_OUT, targetHandle: `out-${k}` }))];
+    }
+    return { ...n, data: { ...d, name: 'Batch', inputs, outputs, edges: inner, batch: {} } } as AppNode;
+  });
+  return { nodes: out, edges: edges.filter((e) => e.source !== gid) };
 }
 
 // Its nodes back in the graph (with new ids, so a template used twice does not collide), its connections joined.

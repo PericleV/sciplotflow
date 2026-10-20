@@ -121,6 +121,18 @@ export function allowProject() {
   heldJobs.clear();
   start();
 }
+// code changed by someone else (working together): nothing more runs until it is allowed again (Allow and run); the
+// runs waiting are held
+export function distrustProject() {
+  try {
+    localStorage.setItem(TRUST_KEY, JSON.stringify(allowedIds().filter((x) => x !== projectId)));
+  } catch {
+    // storage unavailable: held for this visit
+  }
+  for (const [id, q] of queue) heldJobs.set(id, { job: q.job, done: q.done });
+  queue.clear();
+  set({ allowed: false, held: heldJobs.size });
+}
 
 // the run under way ended (its node gets “Stopped”), and those waiting dropped
 export function stopPython() {

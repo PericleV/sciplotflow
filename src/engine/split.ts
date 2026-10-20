@@ -6,11 +6,18 @@
 import { fmtNum, valueText, type Column } from './table.ts';
 import { maxOf, minOf } from './minmax.ts';
 
-export type SplitMode = 'none' | 'auto' | 'column' | 'repeat' | 'every' | 'cycles' | 'direction';
+export type SplitMode = 'none' | 'auto' | 'column' | 'repeat' | 'every' | 'cycles' | 'direction' | 'jump';
+// The cycles of a scan: where one starts — where the scan started (going its first way), at every upper or lower
+// turn, or where the column crosses a value going up or down; the pieces that are not a whole cycle (the scan started
+// or stopped in the middle of one) kept, left out or joined to the cycle next to them; every cycle cut into its way up
+// and its way down (halves). tol: the turn tolerance, % of the column's range (0.5).
+export type CycleOpts = { start?: 'start' | 'top' | 'bottom' | 'value'; at?: number; dir?: 'up' | 'down'; partial?: 'keep' | 'drop' | 'join'; halves?: boolean; tol?: number };
 export type CurveSplit = {
   mode: SplitMode;
   column?: string; // 'column': the column whose equal values make a curve (the dataset's, or the group port)
   every?: number; // 'every': rows per curve
+  jump?: number; // 'jump': a new block where the column changes by more than this (absent: 5 × its usual step)
+  cycle?: CycleOpts; // 'cycles', 'direction' (tol, partial)
   groups?: string; // the curves drawn, by number: "1-10, 20, 1:5:end" ('' = all)
   color?: 'map' | 'palette' | 'same'; // the colour map of the curve's style over the group values, the palette, one colour
 };
@@ -20,19 +27,27 @@ export type RowGroups = {
   texts?: string[]; // text values of a text column
   name: string; // what the values are ('' = the group number)
   word?: string; // without a name: “cycle 2” instead of “curve 2”
+  labels?: string[]; // the name of every group in full, when the word and its number do not say it (“cycle 2 · up”)
+  parts?: boolean[]; // the groups that are not a whole cycle (segment)
   how: string; // how they were found, for the node
 };
 
 export const MAX_GROUPS = 5000;
 
-// The turning points of X along the rows `idx` (positions in idx): where it goes back by more than a small tolerance
-// (0.5 % of its range), so the noise of a measured potential does not turn it.
-export function turns(x: ArrayLike<number>, idx: number[]): number[] {
+function rangeOf(x: ArrayLike<number>, idx: number[]): [number, number] {
   let lo = Infinity;
   let hi = -Infinity;
   for (const i of idx) if (Number.isFinite(x[i])) [lo, hi] = [Math.min(lo, x[i]), Math.max(hi, x[i])];
-  const tol = 0.005 * (hi - lo || 1);
-  const out: number[] = [];
+  return [lo, hi];
+}
+
+// The turning points of X along the rows `idx` (positions in idx) and whether each is an upper one: where it goes back
+// by more than a small tolerance (tol: a fraction of its range, 0.5 %), so the noise of a measured potential does not
+// turn it.
+export function turnPoints(x: ArrayLike<number>, idx: number[], tolFrac = 0.005): { k: number; top: boolean }[] {
+  const [lo, hi] = rangeOf(x, idx);
+  const tol = tolFrac * (hi - lo || 1);
+  const out: { k: number; top: boolean }[] = [];
   let dir = 0;
   let ext = 0;
   for (let k = 1; k < idx.length; k++) {
@@ -42,17 +57,18 @@ export function turns(x: ArrayLike<number>, idx: number[]): number[] {
       if (Math.abs(d) > tol) [dir, ext] = [Math.sign(d), k];
     } else if (d * dir > 0) ext = k;
     else if (-d * dir > tol) {
-      out.push(ext);
+      out.push({ k: ext, top: dir > 0 });
       dir = -dir;
       ext = k;
     }
   }
   return out;
 }
+export const turns = (x: ArrayLike<number>, idx: number[], tolFrac = 0.005) => turnPoints(x, idx, tolFrac).map((t) => t.k);
 
 // The pieces of a curve where X goes one way (up or down) between two turns; the turning point in both pieces.
-export function segmentRows(x: ArrayLike<number>, idx: number[]): number[][] {
-  const t = turns(x, idx);
+export function segmentRows(x: ArrayLike<number>, idx: number[], tolFrac = 0.005): number[][] {
+  const t = turns(x, idx, tolFrac);
   const cuts = [0, ...t, idx.length - 1];
   const out: number[][] = [];
   for (let j = 0; j + 1 < cuts.length; j++) {
@@ -62,34 +78,127 @@ export function segmentRows(x: ArrayLike<number>, idx: number[]): number[][] {
   return out;
 }
 
-// The cycles of a scan: a cycle ends where X, after turning twice, comes back to where it started going the first way;
-// the point where one ends is the first of the next.
-function cycleRows(x: ArrayLike<number>, idx: number[]): number[][] | null {
-  const t = new Set(turns(x, idx));
-  if (!t.size) return null;
-  let lo = Infinity;
-  let hi = -Infinity;
-  for (const i of idx) if (Number.isFinite(x[i])) [lo, hi] = [Math.min(lo, x[i]), Math.max(hi, x[i])];
-  const tol = 0.005 * (hi - lo || 1);
-  const xs = x[idx[0]];
-  let d0 = 0;
-  for (let k = 1; k < idx.length && !d0; k++) if (Math.abs(x[idx[k]] - xs) > tol) d0 = Math.sign(x[idx[k]] - xs);
-  const out: number[][] = [];
-  let start = 0;
-  let seen = 0;
-  for (let k = 1; k < idx.length; k++) {
-    if (t.has(k - 1)) seen++;
-    const [a, b] = [x[idx[k - 1]], x[idx[k]]];
-    if (seen >= 2 && (b - a) * d0 > 0 && (a - xs) * d0 <= tol && (b - xs) * d0 > 0) {
-      // the point nearest the start closes this cycle and opens the next (both have it: whole loops, aligned X)
-      const c = Math.abs(a - xs) <= Math.abs(b - xs) ? k - 1 : k;
-      out.push(idx.slice(start, c + 1));
-      start = c;
-      seen = 0;
+// The blocks between cuts (positions in idx), each cut point in both blocks (whole loops, aligned X): the first and
+// last position of each.
+function between(idx: number[], cuts: number[]): [number, number][] {
+  const at = [...new Set(cuts.filter((c) => c > 0 && c < idx.length - 1))].sort((a, b) => a - b);
+  const b = [0, ...at, idx.length - 1];
+  const out: [number, number][] = [];
+  for (let j = 0; j + 1 < b.length; j++) if (b[j + 1] > b[j]) out.push([b[j], b[j + 1]]);
+  return out;
+}
+
+// Two blocks made one (a point both have counted once).
+export const joined = (a: number[], b: number[]) => (a.length && b.length && a[a.length - 1] === b[0] ? [...a, ...b.slice(1)] : [...a, ...b]);
+
+// The cycles of a scan. A cycle starts where the scan started (it ends where X, after turning twice, comes back there
+// going the first way), at every upper (lower) turn, or where X crosses a value going up (down) after turning twice;
+// the point where one ends is the first of the next. parts: the pieces that are not whole — fewer turns inside than a
+// cycle has, or not back where they started (2 % of the range, or the tolerance when larger).
+function cycleRows(x: ArrayLike<number>, idx: number[], o: CycleOpts = {}): { rows: number[][]; parts: boolean[]; how: string } | string | null {
+  const tolFrac = (o.tol ?? 0.5) / 100;
+  const tp = turnPoints(x, idx, tolFrac);
+  if (!tp.length) return null;
+  const [lo, hi] = rangeOf(x, idx);
+  const tol = tolFrac * (hi - lo || 1);
+  const start = o.start ?? 'start';
+  let cuts: number[];
+  let how: string;
+  if (start === 'top' || start === 'bottom') {
+    cuts = tp.filter((t) => t.top === (start === 'top')).map((t) => t.k);
+    how = `from every ${start === 'top' ? 'upper' : 'lower'} turn`;
+  } else {
+    const v = start === 'value' ? (o.at ?? NaN) : x[idx[0]];
+    if (!Number.isFinite(v)) return 'Cycles ▸ Starts at a value: write the value.';
+    let d = start === 'value' ? (o.dir === 'down' ? -1 : 1) : 0;
+    for (let k = 1; k < idx.length && !d; k++) if (Math.abs(x[idx[k]] - v) > tol) d = Math.sign(x[idx[k]] - v);
+    const t = new Set(tp.map((q) => q.k));
+    cuts = [];
+    // from where it started: a cycle after two turns; at a value: the first crossing at once, then after two turns
+    let seen = start === 'value' ? 2 : 0;
+    for (let k = 1; k < idx.length; k++) {
+      if (t.has(k - 1)) seen++;
+      const [a, b] = [x[idx[k - 1]], x[idx[k]]];
+      if (seen >= 2 && (b - a) * d > 0 && (a - v) * d <= tol && (b - v) * d > 0) {
+        // the point nearest the value closes this cycle and opens the next
+        cuts.push(Math.abs(a - v) <= Math.abs(b - v) ? k - 1 : k);
+        seen = 0;
+      }
     }
+    how = start === 'value' ? `from where it crosses ${fmtNum(v)} going ${d > 0 ? 'up' : 'down'}` : '(up, down, back)';
   }
-  out.push(idx.slice(start));
-  return out.length > 1 || t.size ? out.filter((r) => r.length > 1) : null;
+  const spans = between(idx, cuts);
+  const close = Math.max(tol, 0.02 * (hi - lo || 1));
+  const need = start === 'top' || start === 'bottom' ? 1 : 2;
+  const parts = spans.map(([a, b]) => {
+    let inner = 0;
+    for (const t of tp) if (t.k > a && t.k < b) inner++;
+    return inner < need || !(Math.abs(x[idx[b]] - x[idx[a]]) <= close);
+  });
+  return { rows: spans.map(([a, b]) => idx.slice(a, b + 1)), parts, how };
+}
+
+// The segments where X goes one way; parts: those that start or end neither at a turn nor at the end of X's range
+// (the scan started or stopped on the way).
+function segmentGroups(x: ArrayLike<number>, idx: number[], tolFrac: number): { rows: number[][]; parts: boolean[] } {
+  const rows = segmentRows(x, idx, tolFrac);
+  const t = new Set(turns(x, idx, tolFrac).map((k) => idx[k]));
+  const [lo, hi] = rangeOf(x, idx);
+  const close = Math.max(tolFrac, 0.02) * (hi - lo || 1);
+  const atEnd = (i: number) => t.has(i) || Math.abs(x[i] - lo) <= close || Math.abs(x[i] - hi) <= close;
+  return { rows, parts: rows.map((r) => !atEnd(r[0]) || !atEnd(r[r.length - 1])) };
+}
+
+// The pieces that are not whole left out, or joined to the next one (the first) or to the one before (the others).
+function partsDone(rows: number[][], parts: boolean[], how: 'keep' | 'drop' | 'join' | undefined): { rows: number[][]; parts: boolean[] } {
+  if (!how || how === 'keep') return { rows, parts };
+  if (how === 'drop') {
+    const keep = rows.map((_, k) => !parts[k]);
+    return { rows: rows.filter((_, k) => keep[k]), parts: parts.filter((_, k) => keep[k]) };
+  }
+  // a whole block takes in the pieces next to it; with none, the pieces stay one block (still not whole)
+  const out: number[][] = [];
+  const outParts: boolean[] = [];
+  let carry: number[] | null = null;
+  rows.forEach((r0, k) => {
+    const r: number[] = carry ? joined(carry, r0) : r0;
+    carry = null;
+    if (parts[k] && !out.length && k < rows.length - 1) carry = r;
+    else if (parts[k] && out.length) out[out.length - 1] = joined(out[out.length - 1], r);
+    else {
+      out.push(r);
+      outParts.push(!!parts[k]);
+    }
+  });
+  if (carry) {
+    out.push(carry);
+    outParts.push(true);
+  }
+  return { rows: out, parts: outParts };
+}
+
+// Where the column jumps: a new block where it changes by more than `by` from one row to the next (absent: 5 × the
+// median change — any change when most rows repeat the value before).
+export function jumpRows(x: ArrayLike<number>, idx: number[], by?: number): { rows: number[][]; thr: number; auto: boolean } {
+  const d: number[] = [];
+  for (let k = 1; k < idx.length; k++) {
+    const v = Math.abs(x[idx[k]] - x[idx[k - 1]]);
+    if (Number.isFinite(v)) d.push(v);
+  }
+  d.sort((a, b) => a - b);
+  const auto = !(by !== undefined && by > 0);
+  const thr = auto ? 5 * (d.length ? d[Math.floor(d.length / 2)] : 0) : by!;
+  const rows: number[][] = [];
+  let cur: number[] = idx.length ? [idx[0]] : [];
+  for (let k = 1; k < idx.length; k++) {
+    if (Math.abs(x[idx[k]] - x[idx[k - 1]]) > thr) {
+      rows.push(cur);
+      cur = [];
+    }
+    cur.push(idx[k]);
+  }
+  if (cur.length) rows.push(cur);
+  return { rows, thr, auto };
 }
 
 // Where X starts again: a sweep repeated in the same direction (sawtooth), or back and forth (zigzag).
@@ -200,17 +309,58 @@ export function splitRows(s: CurveSplit, x: Column, idx: number[], groupCol: Col
     if (g.rows.length > MAX_GROUPS) return `“${groupCol.name}” has ${g.rows.length} different values: too many curves (at most ${MAX_GROUPS}).`;
     return { ...g, name: groupCol.name, how: `by ${groupCol.name}` };
   }
+  const o = s.cycle ?? {};
+  const tolFrac = (o.tol ?? 0.5) / 100;
+  // gone: how many pieces were left out or joined to a block next to them
+  const partWord = (parts: boolean[], gone: number) => {
+    const p = parts.filter(Boolean).length;
+    const left = p ? `; ${p} not whole` : '';
+    return gone ? `${left}; ${gone} piece${gone > 1 ? 's' : ''} not whole ${o.partial === 'join' ? 'joined to the block next to them' : 'left out'}` : left;
+  };
   if (s.mode === 'direction') {
-    const segs = segmentRows(x.values, idx);
-    if (segs.length < 2) return `${x.name || 'X'} never changes direction: one block.`;
-    if (segs.length > MAX_GROUPS) return `${segs.length} pieces: too many (at most ${MAX_GROUPS}).`;
-    return { rows: segs, values: segs.map((_, k) => k + 1), name: '', word: 'segment', how: `where ${x.name || 'X'} changes direction` };
+    const g = segmentGroups(x.values, idx, tolFrac);
+    if (g.rows.length < 2) return `${x.name || 'X'} never changes direction: one block.`;
+    const d = partsDone(g.rows, g.parts, o.partial);
+    if (!d.rows.length) return 'No whole segment: every one starts or stops on the way (Incomplete ▸ keep them).';
+    if (d.rows.length > MAX_GROUPS) return `${d.rows.length} pieces: too many (at most ${MAX_GROUPS}).`;
+    return { rows: d.rows, values: d.rows.map((_, k) => k + 1), name: '', word: 'segment', parts: d.parts, how: `where ${x.name || 'X'} changes direction${partWord(d.parts, g.rows.length - d.rows.length)}` };
   }
   if (s.mode === 'cycles') {
-    const c = cycleRows(x.values, idx);
+    const c = cycleRows(x.values, idx, o);
+    if (typeof c === 'string') return c;
     if (!c) return `${x.name || 'X'} does not go back: no cycles.`;
-    if (c.length > MAX_GROUPS) return `${c.length} cycles: too many (at most ${MAX_GROUPS}).`;
-    return { rows: c, values: c.map((_, k) => k + 1), name: '', word: 'cycle', how: `the cycles of ${x.name || 'X'} (up, down, back)` };
+    const d = partsDone(c.rows, c.parts, o.partial);
+    if (!d.rows.length) return 'No whole cycle: the scan never comes back where a cycle starts (Incomplete ▸ keep them, or another start).';
+    const how = `the cycles of ${x.name || 'X'} ${c.how}${partWord(d.parts, c.rows.length - d.rows.length)}`;
+    if (!o.halves) {
+      if (d.rows.length > MAX_GROUPS) return `${d.rows.length} cycles: too many (at most ${MAX_GROUPS}).`;
+      return { rows: d.rows, values: d.rows.map((_, k) => k + 1), name: '', word: 'cycle', parts: d.parts, how };
+    }
+    // every cycle cut where it turns: its way up and its way down, each named by the cycle
+    const rows: number[][] = [];
+    const values: number[] = [];
+    const labels: string[] = [];
+    const parts: boolean[] = [];
+    d.rows.forEach((r, k) => {
+      const segs = segmentRows(x.values, r, tolFrac);
+      const ways = segs.map((g) => (x.values[g[g.length - 1]] >= x.values[g[0]] ? 'up' : 'down'));
+      segs.forEach((g, j) => {
+        rows.push(g);
+        values.push(k + 1);
+        // a way met twice in a cycle (a piece of the start joined to it): numbered
+        labels.push(`cycle ${k + 1} · ${ways[j]}${ways.filter((w) => w === ways[j]).length > 1 ? ` ${ways.slice(0, j + 1).filter((w) => w === ways[j]).length}` : ''}`);
+        parts.push(!!d.parts[k]);
+      });
+    });
+    if (rows.length > MAX_GROUPS) return `${rows.length} halves: too many (at most ${MAX_GROUPS}).`;
+    return { rows, values, name: '', word: 'cycle', labels, parts, how: `${how}; each cut into its way up and down` };
+  }
+  if (s.mode === 'jump') {
+    const j = jumpRows(x.values, idx, s.jump);
+    const t = `${fmtNum(j.thr, 4)}${j.auto ? ' (5 × its usual step)' : ''}`;
+    if (j.rows.length < 2) return `${x.name || 'X'} never changes by more than ${t}: one block.`;
+    if (j.rows.length > MAX_GROUPS) return `${j.rows.length} blocks: too many (at most ${MAX_GROUPS}).`;
+    return { rows: j.rows, values: j.rows.map((_, k) => k + 1), name: '', how: `where ${x.name || 'X'} jumps by more than ${t}` };
   }
   if (s.mode === 'every') {
     const n = Math.floor(s.every ?? 0);
