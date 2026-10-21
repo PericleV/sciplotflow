@@ -27,7 +27,7 @@ import { parseCsv, CSV_DEFAULTS, plainNumber } from '../src/engine/csv.ts';
 import { compile } from '../src/engine/expr.ts';
 import { describe } from '../src/engine/stats.ts';
 import { axisRange, formatLabels, inBreak, parseBreaks, ticks } from '../src/figure/ticks.ts';
-import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, axesStyle, CURVE_STYLE_DEFAULTS, SIDE_DEFAULTS, curveStyle, toPt, type AxesStyle, type Curve, type Figure, LEGEND_STYLE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, FONTS, type Annotation, COLORBAR_DEFAULTS, type ColorbarSpec } from '../src/figure/spec.ts';
+import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, axesStyle, CURVE_STYLE_DEFAULTS, SIDE_DEFAULTS, curveStyle, toPt, type AxesStyle, type Curve, type Figure, LEGEND_STYLE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, FONTS, type Annotation, COLORBAR_DEFAULTS, type ColorbarSpec, legendBox, legendBoxPatch, type LegendSpec } from '../src/figure/spec.ts';
 import { BUILTIN_STYLES, styledData } from '../src/nodes/styles.ts';
 import { parseRich, plainText, richMetrics } from '../src/figure/draw.ts';
 import { mathFace, mathKey, setMathSizes } from '../src/math/sizes.ts';
@@ -81,7 +81,7 @@ import { yorkLine } from '../src/engine/fitcompare.ts';
 import { compile as compileExpr, compileComplex } from '../src/engine/expr.ts';
 import { axisValues, placeColumn } from '../src/engine/axiskinds.ts';
 import { countGrid, densityGrid, streamlines, vectorArrows } from '../src/engine/fields2d.ts';
-import { arcPath, bendPoints, bendText, bentLine, bracketBase, bracketPath, bracketTextPlace, niceLength, starPoints, throughLine } from '../src/figure/shapes.ts';
+import { arcPath, bendPoints, bendText, bentLine, bracketBase, bracketPath, bracketTextPlace, niceLength, piePath, starPoints, throughLine } from '../src/figure/shapes.ts';
 import { columnsOf, formulaShown, formulaStored, type ColumnsSpec } from '../src/engine/columns.ts';
 import { area, centroid, extremum, peakWidth, xAtLevel, yAtX } from '../src/engine/measure.ts';
 import { curveFormulas } from '../src/engine/curvemath.ts';
@@ -1074,6 +1074,31 @@ for (const ex of EXAMPLES) {
   ok(near(stat('sd')[0], Math.sqrt(((a[0] - m) ** 2 + (b[0] - m) ** 2 + (c[0] - m) ** 2) / 2)), 'example: SD of the replicates');
   ok(stat('x').length === 61 && stat('x')[60] === 700, 'example: 61 wavelengths, 400–700 nm');
 }
+{
+  // a legend's box: older looks read as boxes (a line; a white box with a sharp shadow; corners of 4 pt; a fill without a
+  // line), the new one with its gradient and a soft shadow (a gradient without a fill: none)
+  const L: LegendSpec = { ...LEGEND_STYLE_DEFAULTS, key: 'l', curves: [] };
+  const line = legendBox({ ...L, frame: 'line' });
+  const sh = legendBox({ ...L, frame: 'shadow' });
+  const rnd = legendBox({ ...L, frame: 'round' });
+  const fillOnly = legendBox({ ...L, frame: 'none', background: '#eeeeee', bgOpacity: 0.5 });
+  const box = legendBox({ ...L, frame: 'box', background: '#ffffff', backgroundGrad: { grad: 'radial' }, shadow: true, shadowBlur: 2 });
+  ok(
+    line.line && !line.fill && !line.shadow && line.radius === 0 && sh.line && sh.fill === '#ffffff' && sh.shadow?.blur === 0 && sh.shadow.opacity === 0.35 && sh.shadow.dx === 1.5 && rnd.radius === 4 && rnd.line &&
+      !fillOnly.line && fillOnly.fill === '#eeeeee' && fillOnly.fillOpacity === 0.5 && !fillOnly.shadow && box.grad?.grad === 'radial' && box.shadow?.blur === 2 && box.shadow.opacity === 0.3 &&
+      legendBox({ ...L, frame: 'box', backgroundGrad: { grad: 'linear' } }).grad === undefined && JSON.stringify(legendBoxPatch({ ...L, frame: 'round', radius: 2 })) === '{"frame":"box","radius":2}' && JSON.stringify(legendBoxPatch({ ...L, frame: 'box' })) === '{}',
+    `legend box: older looks as boxes, a gradient fill, a soft shadow (${JSON.stringify([sh, box])})`,
+  );
+  // the page's gradient reaches the figure; a transparent page, or one without a gradient, has none
+  const p = EXAMPLES[0].make();
+  const withPage = (page: object) => p.nodes.map((n) => (n.id === 'plot-mean' ? ({ ...n, data: { ...n.data, page: { ...(n.data as { page: object }).page, ...page } } } as typeof n) : n));
+  const figOf = (page: object) => {
+    const f = evaluateGraph(withPage(page), p.edges).get('plot-mean')?.outputs.figure;
+    return f?.t === 'figure' ? f.v : null;
+  };
+  const g = figOf({ background: '#eeeeee', backgroundGrad: { grad: 'linear', fill2: '#3366cc' } });
+  ok(g?.background === '#eeeeee' && g.backgroundGrad?.fill2 === '#3366cc' && !figOf({ background: 'none', backgroundGrad: { grad: 'linear' } })?.backgroundGrad && !figOf({ background: '#eeeeee', backgroundGrad: { grad: undefined } })?.backgroundGrad, 'page: its gradient in the figure (none on a transparent page)');
+}
 
 // ---- Split into columns / Combine columns ----
 {
@@ -1856,6 +1881,36 @@ for (const ex of EXAMPLES) {
   const star = starPoints(0, 0, 10, 10, 5, 0.4);
   ok(star.length === 10 && near(star[0][1], -10, 1e-12) && near(Math.hypot(...star[1]), 4, 1e-12) && starPoints(0, 0, 1, 1, 6, null).length === 6, 'star: 5 points and 5 inner corners, a point at the top; a regular hexagon');
   ok(arcPath(0, 0, 10, 10, 0, 90, true).startsWith('M0,0L10,0A10 10 0 0 0 0,-10') && arcPath(0, 0, 10, 10, 0, 270, false).includes(' 0 1 0 ') && bentLine([0, 0], [10, 0], 0, 0, 0).d === 'M0,0L10,0' && bentLine([0, 0], [10, 0], 0.5, 0, 0).mid.join() === '5,2.5' && niceLength(37) === 20 && niceLength(0.07) === 0.05, 'arc and sector, a bent line (its middle), a round scale length');
+  {
+    // pie and donut slices: an old sector as it was; the hole (the inner arc back the other way); a whole ring; rounded
+    // corners (two on the outline, the point of a pie, two on the hole), as much as there is room for; an ellipse
+    const count = (d: string, s: string) => d.split(s).length - 1;
+    const donut = piePath(0, 0, 10, 10, 0, 90, 0.5, 0);
+    const ring = piePath(0, 0, 10, 10, 30, 30 + 360, 0.5, 0);
+    const pieR = piePath(0, 0, 10, 10, 0, 90, 0, 2);
+    const donutR = piePath(0, 0, 10, 10, 0, 90, 0.5, 1);
+    const huge = piePath(0, 0, 10, 10, 0, 90, 0, 100);
+    const radii = [...huge.matchAll(/A([\d.]+) /g)].map((m) => Number(m[1]));
+    // a rounded pie's points: none beyond the outline, the first and last arcs tangent where the rounds meet the outline
+    const pts = parsePath(pieR).flatMap((g) => (g.p.length ? [[g.p[g.p.length - 2], g.p[g.p.length - 1]]] : []));
+    ok(
+      piePath(0, 0, 10, 10, 0, 90, 0, 0) === arcPath(0, 0, 10, 10, 0, 90, true) &&
+        donut === 'M5,0L10,0A10 10 0 0 0 0,-10L0,-5A5 5 0 0 1 5,0Z' &&
+        count(ring, 'M') === 2 && count(ring, ' 1 0 ') === 2 && count(ring, ' 1 1 ') === 2 &&
+        count(pieR, 'A2 2 0 0 0') === 3 && count(donutR, 'A1 1 0 0 0') === 4 &&
+        pts.every(([x, y]) => Math.hypot(x, y) <= 10 + 1e-9) &&
+        radii.length === 4 && radii.every(Number.isFinite) && radii[0] > 3 && radii[0] < 5 &&
+        piePath(0, 0, 10, 5, 0, 120, 0.5, 0).includes('A10 5 ') && piePath(0, 0, 10, 5, 0, 120, 0.5, 0).includes('A5 2.5 '),
+      `pie and donut: an old sector unchanged, the hole, a ring, rounded corners within the slice, an ellipse (${donut} · ${radii.join(', ')})`,
+    );
+    const asPath = shapeToPath({ ...SHAPE_DEFAULTS, kind: 'arc', x1: 0, y1: 0, x2: 20, y2: 20, a1: 0, a2: 90, sector: true, hole: 50, radius: 1 });
+    ok(!!asPath && asPath.startsWith('M') && asPath.includes('C') && asPath.endsWith('Z') && !asPath.includes('NaN') && !asPath.includes('A'), `a donut's slice as a path: curves only (${asPath?.slice(0, 60)}…)`);
+    // a bracket turned about the middle of its base: its ends and the side of its legs; turned with others (Figure Drawing)
+    const t = bracketBase({ ...sp, rotation: 90 }, id, id);
+    const r = rotateItem({ id: 'k', type: 'shape', spec: { kind: 'bracket', orient: 'down', x1: 10, x2: 50, y1: 20 } }, [0, 0], 90);
+    const rs = r.type === 'shape' ? r.spec : {};
+    ok(near(t.p1[0], 30) && near(t.p1[1], 0) && near(t.p2[0], 30) && near(t.p2[1], 40) && near(t.n[0], -1) && near(t.n[1], 0, 1e-9) && rs.x1 === -40 && rs.x2 === 0 && rs.y1 === 30 && rs.rotation === 90, `bracket: turned about the middle of its base; turned with other objects (${JSON.stringify(t)} ${JSON.stringify(rs)})`);
+  }
   {
     // a line through bends: its pieces end on every bend (a smooth curve through them), its ends moved in for the heads
     // along the tangents; the bends written and read back

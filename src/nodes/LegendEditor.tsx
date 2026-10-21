@@ -3,10 +3,11 @@
 import { ActionIcon, Select as MSelect, Tooltip } from '@mantine/core';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import { plainText } from '../figure/draw.ts';
-import { LEGEND_STYLE_DEFAULTS, type Anchor, type Curve, type LegendEntry } from '../figure/spec.ts';
+import { LEGEND_SHADOW, LEGEND_STYLE_DEFAULTS, legendBoxPatch, type Anchor, type Curve, type LegendEntry } from '../figure/spec.ts';
 import type { PlotLegend } from '../types.ts';
 import { RichInput } from './fields.tsx';
-import { AnchorField, Choice, ColorField, LayerRow, OpacityField, PictureGrid, Row, Section, Sections, SliderField, TextStyleRows, Toggle, WidthField } from '../ui/props.tsx';
+import { AnchorField, Choice, ColorField, LayerRow, OpacityField, PictureGrid, Row, Section, Sections, SliderField, ShadowRows, TextStyleRows, Toggle, WidthField } from '../ui/props.tsx';
+import { GradientRows } from '../ui/GradientRows.tsx';
 import { DASH_PICS } from '../ui/dashPics.tsx';
 
 // keys pressed in the panel are its own
@@ -18,6 +19,10 @@ export function LegendEditor({ value, onChange, curves }: { value: PlotLegend | 
   const d = { ...LEGEND_STYLE_DEFAULTS, ...value, show: !!value?.show };
   const set = onChange;
   const num = (v: number, min = 0) => Math.max(min, Number.isFinite(v) ? v : min);
+  // its box: an older look (a line, a shadow, rounded) read as a box (b), and written so at its first change
+  const b = { ...d, ...legendBoxPatch(d) };
+  const boxed = b.frame !== 'none' || !!b.background || !!b.shadow;
+  const setBox = (p: Partial<PlotLegend>) => set({ ...legendBoxPatch(d), ...p });
   // every curve, in the order chosen (new ones at the end), shown or not, with its own text
   const entries: LegendEntry[] = [
     ...d.entries.filter((e) => curves.some((c) => c.key === e.key)),
@@ -155,45 +160,62 @@ export function LegendEditor({ value, onChange, curves }: { value: PlotLegend | 
             </Row>
             <TextStyleRows value={d.text} onChange={(text) => set({ text })} />
           </Section>
-          <Section value="frame" title="Frame and background" aside={d.frame === 'none' ? 'no frame' : d.frame}>
-            <Row label="Frame">
-              <Choice
-                value={d.frame}
-                onChange={(frame) => set({ frame })}
+          <Section value="frame" title="Frame and background" aside={boxed ? 'box' : 'no box'}>
+            <Row label="Frame" hint="None, or a box: its line, corners, fill (a colour or a gradient) and shadow">
+              <Choice<'none' | 'box'>
+                value={boxed ? 'box' : 'none'}
+                onChange={(m) => set(m === 'none' ? { frame: 'none', background: '', shadow: undefined } : { ...legendBoxPatch(d), frame: 'box' })}
                 options={[
                   ['none', 'None'],
-                  ['line', 'Line'],
-                  ['shadow', 'Shadow'],
-                  ['round', 'Rounded'],
+                  ['box', 'Box'],
                 ]}
               />
             </Row>
-            {d.frame !== 'none' && (
+            {boxed && (
               <div className="prop-sub">
-                <Row label="Colour">
-                  <ColorField value={d.frameColor} onChange={(c) => set({ frameColor: c || '#000000' })} />
+                <Row label="Line" hint="Its colour (none: no line)">
+                  <ColorField value={b.frame === 'none' ? '' : d.frameColor} none onChange={(c) => setBox(c ? { frame: 'box', frameColor: c } : { frame: 'none' })} />
                 </Row>
-                <Row label="Width">
-                  <WidthField value={d.frameWidth} onChange={(v) => set({ frameWidth: num(v) })} max={3} />
-                </Row>
-                <Row label="Style">
-                  <PictureGrid value={d.frameDash ?? 'solid'} onChange={(frameDash) => set({ frameDash })} options={DASH_PICS} cols={4} />
-                </Row>
+                {b.frame !== 'none' && (
+                  <>
+                    <Row label="Width">
+                      <WidthField value={d.frameWidth} onChange={(v) => setBox({ frameWidth: num(v) })} max={3} />
+                    </Row>
+                    <Row label="Style">
+                      <PictureGrid value={d.frameDash ?? 'solid'} onChange={(frameDash) => setBox({ frameDash })} options={DASH_PICS} cols={4} />
+                    </Row>
+                    <Row label="Opacity">
+                      <OpacityField value={d.frameOpacity ?? 1} onChange={(v) => setBox({ frameOpacity: Math.min(1, num(v)) })} />
+                    </Row>
+                  </>
+                )}
                 <Row label="Corners" hint="Rounded corners">
-                  <SliderField value={d.radius ?? (d.frame === 'round' ? 4 : 0)} onChange={(v) => set({ radius: num(v) })} min={0} max={15} step={0.5} unit="pt" />
+                  <SliderField value={b.radius ?? 0} onChange={(v) => setBox({ radius: num(v) })} min={0} max={15} step={0.5} unit="pt" />
                 </Row>
-                <Row label="Opacity">
-                  <OpacityField value={d.frameOpacity ?? 1} onChange={(v) => set({ frameOpacity: Math.min(1, num(v)) })} />
+                <Row label="Fill" hint="Its colour (none: not filled)">
+                  <ColorField value={b.background} none onChange={(background) => setBox({ background })} />
                 </Row>
+                {!!b.background && (
+                  <>
+                    <Row label="Its opacity">
+                      <OpacityField value={d.bgOpacity} onChange={(v) => setBox({ bgOpacity: Math.min(1, num(v)) })} />
+                    </Row>
+                    <GradientRows
+                      g={d.backgroundGrad ?? {}}
+                      from={b.background}
+                      of="the legend"
+                      set={(p) => {
+                        const g = { ...d.backgroundGrad, ...p };
+                        setBox({ backgroundGrad: g.grad ? g : undefined });
+                      }}
+                    />
+                  </>
+                )}
+                <Row label="Shadow" hint="A shadow under the box">
+                  <Toggle value={!!b.shadow} onChange={(shadow) => setBox({ shadow: shadow || undefined })} />
+                </Row>
+                {b.shadow && <ShadowRows v={b} def={LEGEND_SHADOW} set={setBox} />}
               </div>
-            )}
-            <Row label="Background">
-              <ColorField value={d.background} none onChange={(background) => set({ background })} />
-            </Row>
-            {d.background && (
-              <Row label="Its opacity">
-                <OpacityField value={d.bgOpacity} onChange={(v) => set({ bgOpacity: Math.min(1, num(v)) })} />
-              </Row>
             )}
             <Row label="Sample line" hint="The length of the line drawn before each text">
               <SliderField value={d.lineLen} onChange={(v) => set({ lineLen: num(v) })} min={0} max={40} step={1} unit="pt" />

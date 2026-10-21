@@ -1,22 +1,36 @@
 // The geometry of the annotation shapes, in pt on the page (y down): brackets and braces in any direction, stars and
-// regular polygons, arcs and sectors, bent lines. Pure: the drawing (render.tsx) and the checks use it.
+// regular polygons, arcs, pie and donut slices, bent lines. Pure: the drawing (render.tsx) and the checks use it.
 import type { ShapeSpec } from './spec.ts';
 
 export type Pt = [number, number];
 const n2 = (v: number) => (Number.isFinite(v) ? +v.toFixed(2) : 0);
 const P = (p: Pt) => `${n2(p[0])},${n2(p[1])}`;
 
+// p turned by deg degrees (clockwise on the page, as an SVG rotate) about c
+export function turnPt(p: Pt, c: Pt, deg: number): Pt {
+  const a = (deg * Math.PI) / 180;
+  const [dx, dy] = [p[0] - c[0], p[1] - c[1]];
+  return [c[0] + dx * Math.cos(a) - dy * Math.sin(a), c[1] + dx * Math.sin(a) + dy * Math.cos(a)];
+}
+
 // A bracket: the ends of its base (p1, p2) and the direction of its legs (n, a unit vector), from its spec and the
-// mapping of its coordinates to the page.
+// mapping of its coordinates to the page; turned by its rotation about the middle of its base.
 export function bracketBase(s: ShapeSpec, X: (v: number) => number, Y: (v: number) => number): { p1: Pt; p2: Pt; n: Pt } {
   const o = s.orient ?? 'down';
-  if (o === 'down' || o === 'up') return { p1: [X(s.x1), Y(s.y1)], p2: [X(s.x2), Y(s.y1)], n: [0, o === 'down' ? 1 : -1] };
-  if (o === 'left' || o === 'right') return { p1: [X(s.x1), Y(s.y1)], p2: [X(s.x1), Y(s.y2)], n: [o === 'left' ? -1 : 1, 0] };
-  const p1: Pt = [X(s.x1), Y(s.y1)];
-  const p2: Pt = [X(s.x2), Y(s.y2)];
-  const len = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) || 1;
-  const f = s.flip ? -1 : 1;
-  return { p1, p2, n: [(-(p2[1] - p1[1]) / len) * f, ((p2[0] - p1[0]) / len) * f] };
+  let b: { p1: Pt; p2: Pt; n: Pt };
+  if (o === 'down' || o === 'up') b = { p1: [X(s.x1), Y(s.y1)], p2: [X(s.x2), Y(s.y1)], n: [0, o === 'down' ? 1 : -1] };
+  else if (o === 'left' || o === 'right') b = { p1: [X(s.x1), Y(s.y1)], p2: [X(s.x1), Y(s.y2)], n: [o === 'left' ? -1 : 1, 0] };
+  else {
+    const p1: Pt = [X(s.x1), Y(s.y1)];
+    const p2: Pt = [X(s.x2), Y(s.y2)];
+    const len = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) || 1;
+    const f = s.flip ? -1 : 1;
+    b = { p1, p2, n: [(-(p2[1] - p1[1]) / len) * f, ((p2[0] - p1[0]) / len) * f] };
+  }
+  const deg = s.rotation || 0;
+  if (!deg) return b;
+  const c: Pt = [(b.p1[0] + b.p2[0]) / 2, (b.p1[1] + b.p2[1]) / 2];
+  return { p1: turnPt(b.p1, c, deg), p2: turnPt(b.p2, c, deg), n: turnPt(b.n, [0, 0], deg) };
 }
 
 // The path of a bracket over p1 → p2, its legs l1, l2 along n: square ⊓, a curly brace (as deep as l1: its ends towards
@@ -84,6 +98,69 @@ export function arcPath(cx: number, cy: number, rx: number, ry: number, a1: numb
   }
   const arc = `A${n2(rx)} ${n2(ry)} 0 ${span > 180 ? 1 : 0} 0 ${P(at(a1 + span))}`;
   return sector ? `M${n2(cx)},${n2(cy)}L${P(at(a1))}${arc}Z` : `M${P(at(a1))}${arc}`;
+}
+
+// A pie slice, or a donut's: the ellipse (radii rx, ry around (cx, cy)) without its middle (hole × its size, 0 – 0.95),
+// from a1 to a2 degrees (0: to the right, counter-clockwise); its corners rounded by `round` (in the units of rx, as on
+// the circle of radius rx squeezed to the ellipse; at most what the slice has room for). A whole turn: the ellipse (a
+// ring: the hole cut out, drawn the other way round). No hole and no rounding: the sector of arcPath. f: how its numbers
+// are written (pt on the page: 2 decimals; a shape's own units: all of them).
+export function piePath(cx: number, cy: number, rx: number, ry: number, a1: number, a2: number, hole: number, round: number, f: (v: number) => number = n2): string {
+  const h = Math.max(0, Math.min(0.95, Number.isFinite(hole) ? hole : 0));
+  if (!h && !(round > 0)) return arcPath(cx, cy, rx, ry, a1, a2, true);
+  const R = rx;
+  if (!(R > 0)) return '';
+  const k = ry / rx;
+  const r0 = h * R;
+  // circle space (y up, about the centre) to the page
+  const map = (p: Pt): Pt => [cx + p[0], cy - k * p[1]];
+  const at = (rho: number, a: number): Pt => [rho * Math.cos(a), rho * Math.sin(a)];
+  const Q = (p: Pt) => `${f(p[0])},${f(p[1])}`;
+  const A = (rad: number, large: boolean, sweep: 0 | 1, to: Pt) => `A${f(rad)} ${f(rad * k)} 0 ${large ? 1 : 0} ${sweep} ${Q(map(to))}`;
+  let span = (((a2 - a1) % 360) + 360) % 360;
+  if (span === 0 && a1 !== a2) span = 360;
+  const b1 = (a1 * Math.PI) / 180;
+  if (span >= 359.999) {
+    const ring = (rho: number, sweep: 0 | 1) => `M${Q(map(at(rho, b1)))}${A(rho, true, sweep, at(rho, b1 + Math.PI))}${A(rho, true, sweep, at(rho, b1))}Z`;
+    return ring(R, 0) + (r0 > 0 ? ring(r0, 1) : '');
+  }
+  const s = (span * Math.PI) / 180;
+  const b2 = b1 + s;
+  const half = Math.min(s / 2, Math.PI / 2);
+  // the rounding the slice has room for: each corner's arc within its half of the slice, and within its thickness
+  const fits = (r: number) => {
+    if (r <= 0) return true;
+    if (R - r <= 0 || r / (R - r) > Math.sin(half)) return false;
+    if (r0 > 0) return 2 * r <= R - r0 && r / (r0 + r) <= Math.sin(half);
+    if (s < Math.PI - 1e-9) return r / Math.tan(s / 2) <= (R - r) * Math.cos(Math.asin(r / (R - r)));
+    return true;
+  };
+  let r = Math.max(0, Number.isFinite(round) ? round : 0);
+  if (!fits(r)) {
+    let [lo, hi] = [0, r];
+    for (let j = 0; j < 40; j++) {
+      const mid = (lo + hi) / 2;
+      if (fits(mid)) lo = mid;
+      else hi = mid;
+    }
+    r = lo;
+  }
+  // the outer corners: the round's centre (R − r) from the middle; where it meets the side and the outline
+  const fo = r > 0 ? Math.asin(r / (R - r)) : 0;
+  const dOut = (R - r) * Math.cos(fo);
+  const fillet = (to: Pt) => (r > 0 ? A(r, false, 0, to) : '');
+  const outer = `L${Q(map(at(dOut, b1)))}${fillet(at(R, b1 + fo))}${A(R, s - 2 * fo > Math.PI, 0, at(R, b2 - fo))}${fillet(at(dOut, b2))}`;
+  if (r0 > 0) {
+    const fi = r > 0 ? Math.asin(r / (r0 + r)) : 0;
+    const dIn = (r0 + r) * Math.cos(fi);
+    return `M${Q(map(at(dIn, b1)))}${outer}L${Q(map(at(dIn, b2)))}${fillet(at(r0, b2 - fi))}${A(r0, s - 2 * fi > Math.PI, 1, at(r0, b1 + fi))}${fillet(at(dIn, b1))}Z`;
+  }
+  // a pie: its point rounded too when it is a corner (less than half a turn)
+  if (r > 0 && s < Math.PI - 1e-9) {
+    const t = r / Math.tan(s / 2);
+    return `M${Q(map(at(t, b1)))}${outer}L${Q(map(at(t, b2)))}${fillet(at(t, b1))}Z`;
+  }
+  return `M${Q(map([0, 0]))}${outer}Z`;
 }
 
 // A line from p1 to p2 bent by `curve` (its middle pushed aside by curve × half its length; 0: straight), stopped a and

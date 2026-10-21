@@ -71,8 +71,10 @@ export function rotateItem(it: AnnotationItem, c: Pt, deg: number): AnnotationIt
   }
   if (it.type !== 'shape') return it;
   const s = full(it.spec);
-  if (['rect', 'ellipse', 'star', 'regular', 'arc', 'image', 'component'].includes(s.kind)) {
-    const m: Pt = [(s.x1 + s.x2) / 2, (s.y1 + s.y2) / 2];
+  if (['rect', 'ellipse', 'star', 'regular', 'arc', 'image', 'component', 'bracket'].includes(s.kind)) {
+    // (a bracket turns about the middle of its base)
+    const o = s.orient ?? 'down';
+    const m: Pt = s.kind !== 'bracket' || o === 'free' ? [(s.x1 + s.x2) / 2, (s.y1 + s.y2) / 2] : o === 'down' || o === 'up' ? [(s.x1 + s.x2) / 2, s.y1] : [s.x1, (s.y1 + s.y2) / 2];
     const n = turn(m);
     const moved = mapItem(it, ([x, y]) => [x + n[0] - m[0], y + n[1] - m[1]]);
     return s.kind === 'component' || moved.type !== 'shape' ? moved : { ...moved, spec: { ...moved.spec, rotation: wrap((s.rotation || 0) + deg) } };

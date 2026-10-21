@@ -147,7 +147,7 @@ export function toPathItem(it: AnnotationItem): AnnotationItem | null {
   const d = pathOf(it);
   if (!d || it.type !== 'shape') return null;
   const s = shapeSpec(it.spec);
-  const keep = Object.fromEntries(Object.entries(it.spec).filter(([k]) => !['x1', 'y1', 'x2', 'y2', 'points', 'bends', 'curve', 'route', 'elbowAt', 'body', 'n', 'inner', 'a1', 'a2', 'sector', 'smooth', 'closed', 'rotation', 'radius', 'from', 'to', 'fromAt', 'toAt', 'text', 'text2', 'orient', 'bstyle', 'offset', 'dec', 'unit', 'href', 'ref'].includes(k)));
+  const keep = Object.fromEntries(Object.entries(it.spec).filter(([k]) => !['x1', 'y1', 'x2', 'y2', 'points', 'bends', 'curve', 'route', 'elbowAt', 'body', 'n', 'inner', 'a1', 'a2', 'sector', 'hole', 'smooth', 'closed', 'rotation', 'radius', 'from', 'to', 'fromAt', 'toAt', 'text', 'text2', 'orient', 'bstyle', 'offset', 'dec', 'unit', 'href', 'ref'].includes(k)));
   const open = !isClosed(parsePath(d));
   return { ...it, spec: { ...keep, kind: 'path', d, ...(open ? { head1: s.head1, head2: s.head2 } : { head1: 'none', head2: 'none' }) } } as AnnotationItem;
 }

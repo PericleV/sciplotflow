@@ -49,7 +49,7 @@ import type { PhaseDiagramData } from './engine/phasenode.ts';
 import type { Baseline as WidthBaseline, WidthKind } from './engine/measure.ts';
 import type { ModelSpec } from './engine/fitModels.ts';
 import type { FitBand, FitParamSpec, FitWeight } from './engine/fit.ts';
-import type { AxesStyle, ColorbarSpec, ColorMapName, CurveStyle, Dash, InsetItem, LegendSpec, LengthUnit, PanelScheme, Placement, ShapeSpec, TextSpec, TextStyle } from './figure/spec.ts';
+import type { AxesStyle, ColorbarSpec, ColorMapName, CurveStyle, Dash, GradFill, InsetItem, LegendSpec, LengthUnit, PanelScheme, Placement, ShapeSpec, TextSpec, TextStyle } from './figure/spec.ts';
 
 // Common to every node: a free label shown above it and the collapsed state (only the title bar shown).
 export type NodeMeta = { caption?: string; collapsed?: boolean };
@@ -304,6 +304,7 @@ export type PageData = {
   italic?: boolean;
   textColor?: string;
   background: string; // 'white' | 'none' (transparent) | a colour
+  backgroundGrad?: GradFill; // a colour going to another (its gradient)
   border?: number;
   borderColor?: string;
   borderDash?: Dash;

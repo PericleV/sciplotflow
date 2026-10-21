@@ -43,6 +43,11 @@ export const Retro = (p: LucideProps) => (
     <path d="m15 5 6 7-6 7" />
   </Own>
 );
+export const Arc = (p: LucideProps) => (
+  <Own {...p}>
+    <path d="M4.5 17a8.5 8.5 0 1 1 15 0" />
+  </Own>
+);
 export const Bracket = (p: LucideProps) => (
   <Own {...p}>
     <path d="M4 17V8h16v9" />

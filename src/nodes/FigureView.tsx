@@ -33,6 +33,7 @@ import { Crosshair, Maximize2, MoveHorizontal, Rotate3d, X } from 'lucide-react'
 import { IC } from './iconProps.ts';
 import { Select as MSelect, UnstyledButton } from '@mantine/core';
 import { Choice, ColorField, NumPair, OpacityField, PictureGrid, Row, SliderField, TextStyleRows, Toggle, WidthField } from '../ui/props.tsx';
+import { GradientRows } from '../ui/GradientRows.tsx';
 import { DASH_PICS } from '../ui/dashPics.tsx';
 
 // keys pressed in the page settings are their own
@@ -621,6 +622,17 @@ export function PageControls({ page, set, fixed }: { page: PageData; set: (p: Pa
         />
         {bgMode === 'color' && <ColorField value={page.background} onChange={(background) => set({ background: background || '#f4f4f4' })} />}
       </Row>
+      {bgMode === 'color' && (
+        <GradientRows
+          g={page.backgroundGrad ?? {}}
+          from={page.background}
+          of="the page"
+          set={(p) => {
+            const g = { ...page.backgroundGrad, ...p };
+            set({ backgroundGrad: g.grad ? g : undefined });
+          }}
+        />
+      )}
       <Row label="Border" hint="A border around the page (in a Merge: around this Plot's place); 0: none">
         <WidthField value={page.border ?? 0} onChange={(v) => set({ border: Math.max(0, Number.isFinite(v) ? v : 0) })} max={4} />
       </Row>

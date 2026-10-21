@@ -71,7 +71,7 @@ import { baseParams, buildModel, peakAt, peaksModel, percentResults, shapeSize, 
 import { findSpec, runFits, totalStats, type FitParamSpec, type FitRunData, type RunResult, parseLinks } from './fit.ts';
 import { compare, compareTable, modelName, yorkRuns, type Scored } from './fitcompare.ts';
 import { parseRowHandle, rowHandle } from './ports.ts';
-import { AXIS_DEFAULTS, COLORBAR_DEFAULTS, SIDE_DEFAULTS, curveStyle, axesStyle, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, toPt, type Annotation, type AxesFig, type AxesStyle, type AxisSpec, type Curve, type CurveStyle, type Figure, type FigureBox, type LegendEntry, type LegendSpec, type LengthUnit, type Placement, type ShapeSpec, type TextDefaults, resolveText, type Side, INSET_DEFAULTS, insetBackground, scaledSize } from '../figure/spec.ts';
+import { hasGrad, type GradFill, AXIS_DEFAULTS, COLORBAR_DEFAULTS, SIDE_DEFAULTS, curveStyle, axesStyle, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, toPt, type Annotation, type AxesFig, type AxesStyle, type AxisSpec, type Curve, type CurveStyle, type Figure, type FigureBox, type LegendEntry, type LegendSpec, type LengthUnit, type Placement, type ShapeSpec, type TextDefaults, resolveText, type Side, INSET_DEFAULTS, insetBackground, scaledSize } from '../figure/spec.ts';
 import { CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, DRAWING_DEFAULTS, MATRIX_PLOT_DEFAULTS, PLOT_PAGE_DEFAULTS, REPORT_DEFAULTS } from '../defaults.ts';
 import { figurePng, imageFigure, imageMatrix, processImage, scaleBarPlace, type ImageAnalysisData } from '../image/node.ts';
 import { STEP_DEFS } from '../image/steps.ts';
@@ -1543,6 +1543,7 @@ function scatterMatrixNode(n: { id: string; data: ScatterMatrixData }, inputs: I
     textColor: page.textColor || '#000000',
     mathFont: page.mathFont,
     background: page.background || 'white',
+    ...pageGrad(page),
     panels: 'none',
     name: page.name || 'scatter_matrix',
     layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: r.k, cols: r.k, sizing: 'fit', hgap: Math.max(0, d.gap ?? 2), vgap: Math.max(0, d.gap ?? 2), shareX: 'column', shareY: 'row', inner: false, legend: r.groups.length > 1 && d.legend?.show !== false ? 'right' : 'none' },
@@ -2156,6 +2157,8 @@ function layers3dNode(n: { id: string; data: Plot3DData }, inputs: Inputs): Out 
 export const pageText =(p: Partial<PageData> | undefined): TextDefaults =>
   p ? { font: p.font || TEXT_DEFAULTS.font, size: p.size && p.size > 0 ? p.size : TEXT_DEFAULTS.size, bold: !!p.bold, italic: !!p.italic, color: p.textColor || '#000000', ...(p.mathFont && { mathFont: p.mathFont }) } : TEXT_DEFAULTS;
 const pageBackground = (b: string | undefined) => (b === 'none' ? 'none' : !b || b === 'white' ? '#ffffff' : b);
+// its gradient, when it has one (a transparent page has none)
+const pageGrad = (p: { background?: string; backgroundGrad?: GradFill }): { backgroundGrad?: GradFill } => (p.background !== 'none' && hasGrad(p.backgroundGrad) ? { backgroundGrad: p.backgroundGrad } : {});
 
 // The annotations kept in a Plot or a Merge, as drawn; a colour bar explains the first curve coloured by a map.
 export function annotationsOf(items: AnnotationItem[] | undefined, node: string, curves: Curve[], warnings: string[]): Annotation[] {
@@ -2211,6 +2214,7 @@ function plotFigure(n: { id: string; data: Plot1DData }, curves: Curve[], warnin
     unit: page.unit,
     text,
     background: pageBackground(page.background),
+    ...pageGrad(page),
     border: page.border ?? 0,
     borderColor: page.borderColor ?? '#000000',
     borderDash: page.borderDash,
@@ -2312,6 +2316,7 @@ export function drawingFigure(id: string, d: DrawingData, shiftOf?: (it: Annotat
     unit: d.unit,
     text,
     background: pageBackground(d.background),
+    ...pageGrad(d),
     border: d.border ?? 0,
     borderColor: d.borderColor ?? '#000000',
     borderDash: d.borderDash,
@@ -2622,7 +2627,7 @@ export function canvasFigure(id: string, d: CanvasData, figsIn: Figure[], warnin
     const seen = new Set<string>();
     const curves = figs.flatMap((f) => f.axes.flatMap((a) => (a.legends.length ? a.legends.flatMap((lg) => lg.curves) : a.curves.filter((c) => c.style.show !== false && !c.noLegend)))).filter((c) => !seen.has(c.label) && !!seen.add(c.label));
     const look = first?.legends[0];
-    const base = { ...LEGEND_STYLE_DEFAULTS, ...(look ? { text: look.text, frame: look.frame, frameColor: look.frameColor, frameWidth: look.frameWidth, frameDash: look.frameDash, radius: look.radius, background: look.background, bgOpacity: look.bgOpacity, padding: look.padding, spacing: look.spacing, lineLen: look.lineLen } : {}) };
+    const base = { ...LEGEND_STYLE_DEFAULTS, ...(look ? { text: look.text, frame: look.frame, frameColor: look.frameColor, frameWidth: look.frameWidth, frameDash: look.frameDash, radius: look.radius, frameOpacity: look.frameOpacity, background: look.background, bgOpacity: look.bgOpacity, backgroundGrad: look.backgroundGrad, shadow: look.shadow, shadowX: look.shadowX, shadowY: look.shadowY, shadowBlur: look.shadowBlur, shadowColor: look.shadowColor, shadowOpacity: look.shadowOpacity, padding: look.padding, spacing: look.spacing, lineLen: look.lineLen } : {}) };
     common = { ...base, key: `${id}:legend`, curves, attach: '', z: 3, arrange: L.legend === 'right' ? 'column' : 'row', entries: [] };
     const size = legendLayout(common, text);
     if (L.legend === 'right') extra.r += size.w + 4;
@@ -2690,7 +2695,7 @@ export function canvasFigure(id: string, d: CanvasData, figsIn: Figure[], warnin
     // its page, so the drawing stays on its data
     const pictured = f.axes.some((a) => a.overlay);
     if (pictured) box = keepAspect(box, W, H, toPt(f.width, f.unit) / toPt(f.height, f.unit));
-    boxes.push({ key: f.key ?? String(k), box, free: !c, ...(!c && f.background && f.background !== 'none' ? { background: f.background } : {}), ...(f.border > 0 ? { border: { width: f.border, color: f.borderColor, dash: f.borderDash ?? 'solid', radius: f.borderRadius ?? 0, opacity: f.borderOpacity ?? 1, inset: f.borderInset ?? 0 } } : {}) });
+    boxes.push({ key: f.key ?? String(k), box, free: !c, ...(!c && f.background && f.background !== 'none' ? { background: f.background, ...(f.backgroundGrad ? { backgroundGrad: f.backgroundGrad } : {}) } : {}), ...(f.border > 0 ? { border: { width: f.border, color: f.borderColor, dash: f.borderDash ?? 'solid', radius: f.borderRadius ?? 0, opacity: f.borderOpacity ?? 1, inset: f.borderInset ?? 0 } } : {}) });
     for (const ax of f.axes) {
       // a frame placed by hand keeps its place in its page, now the box
       const p = ax.style.pos;
@@ -2815,6 +2820,7 @@ export function canvasFigure(id: string, d: CanvasData, figsIn: Figure[], warnin
     unit: d.unit,
     text: pageText(d),
     background: pageBackground(d.background),
+    ...pageGrad(d),
     border: d.border ?? 0,
     borderColor: d.borderColor ?? '#000000',
     borderDash: d.borderDash,

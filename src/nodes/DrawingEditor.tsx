@@ -60,7 +60,7 @@ import type { Pt, StickSide } from '../figure/shapes.ts';
 import { IMAGE_ACCEPT, imageUrl } from '../imageFile.ts';
 import { ask, notify } from '../ui/dialogStore.ts';
 
-type Tool = 'select' | 'corner' | 'pen' | 'image' | 'text' | 'line' | 'arrow' | 'double' | 'curved' | 'elbow' | 'equilibrium' | 'retro' | 'dimension' | 'rect' | 'ellipse' | 'polygon' | 'polyline' | 'star' | 'regular' | 'arc' | 'bracket' | 'brace' | 'callout';
+type Tool = 'select' | 'corner' | 'pen' | 'image' | 'text' | 'line' | 'arrow' | 'double' | 'curved' | 'elbow' | 'equilibrium' | 'retro' | 'dimension' | 'rect' | 'ellipse' | 'polygon' | 'polyline' | 'star' | 'regular' | 'arc' | 'pie' | 'bracket' | 'brace' | 'callout';
 // what each tool draws: its first look (the points come from the drag)
 const TOOLS: { tool: Tool; title: string; key?: string; spec?: Partial<ShapeSpec> }[] = [
   { tool: 'select', title: 'Select and move (V): click an object, Shift / Ctrl + click more, or drag a box around them', key: 'v' },
@@ -81,12 +81,13 @@ const TOOLS: { tool: Tool; title: string; key?: string; spec?: Partial<ShapeSpec
   { tool: 'polygon', title: 'Polygon (P): click its corners, double-click (or Enter) to close it', key: 'p', spec: { kind: 'polygon', closed: true, fill: '#56B4E9', fillOpacity: 0.3, color: '#0072B2' } },
   { tool: 'polyline', title: 'Polyline: click its points, double-click (or Enter) to end it', spec: { kind: 'polygon', closed: false } },
   { tool: 'star', title: 'Star or regular polygon: drag its box (Shift: as wide as high) — which of the two, its points or sides: in its options (Variant)', spec: { kind: 'star', n: 5, inner: 0.382, fill: '#E69F00', fillOpacity: 1, width: 0.5 } },
-  { tool: 'arc', title: 'Arc / sector: drag the box of its ellipse', spec: { kind: 'arc', a1: 0, a2: 90, sector: true, fill: '#009E73', fillOpacity: 0.5, width: 0.5 } },
+  { tool: 'arc', title: 'Arc: drag the box of its ellipse (an open line; From, To in its options)', spec: { kind: 'arc', a1: 0, a2: 270 } },
+  { tool: 'pie', title: 'Pie / donut: drag the box of its ellipse (Shift: a circle) — a pie slice or a donut’s: in its options (Kind; the hole, rounded corners)', spec: { kind: 'arc', a1: 0, a2: 90, sector: true, fill: '#009E73', fillOpacity: 0.5, width: 0.5 } },
   { tool: 'bracket', title: 'Bracket: drag from one end to the other', spec: { kind: 'bracket', orient: 'free', bstyle: 'square', headSize: 4, text: '*' } },
   { tool: 'brace', title: 'Curly brace: drag from one end to the other', spec: { kind: 'bracket', orient: 'free', bstyle: 'curly', headSize: 6, text: '' } },
   { tool: 'callout', title: 'Callout: drag from the box of its text to the point it shows', spec: { kind: 'callout', text: 'Note', fill: '#ffffff', fillOpacity: 1, width: 0.5, head2: 'triangle', headSize: 4, pad: 2, radius: 2 } },
 ];
-const BOXED = new Set<Tool>(['rect', 'ellipse', 'star', 'regular', 'arc']);
+const BOXED = new Set<Tool>(['rect', 'ellipse', 'star', 'regular', 'arc', 'pie']);
 // the tools that draw lines whose ends stick to the shapes they start or end on
 const LINES = new Set<Tool>(['line', 'arrow', 'double', 'curved', 'elbow', 'equilibrium', 'retro']);
 const lineLike = (it: AnnotationItem | undefined) => it?.type === 'shape' && ['line', 'arrow', 'dimension', 'bracket', 'scalebar', 'vline', 'hline'].includes(shapeSpec(it.spec).kind);

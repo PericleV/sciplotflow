@@ -70,7 +70,7 @@ export function axesPlot(ax: MplAxes, fig: MplFigure, pid: string): Plot1DData {
   ];
   const lg = ax.legend;
   const entries = ax.curves.flatMap((c, i) => (c.label ? [] : [{ key: `${pid}:${i}`, show: false, label: '' }]));
-  const legend = lg?.show ? { ...PLOT1D_DEFAULTS.legend!, show: true, ...(lg.loc === 'auto' ? { auto: true } : { auto: false, anchor: lg.loc as Anchor, ...LEGEND_AT[lg.loc] }), frame: lg.frame ? ('line' as const) : ('none' as const), entries } : { show: false, entries };
+  const legend = lg?.show ? { ...PLOT1D_DEFAULTS.legend!, show: true, ...(lg.loc === 'auto' ? { auto: true } : { auto: false, anchor: lg.loc as Anchor, ...LEGEND_AT[lg.loc] }), frame: lg.frame ? ('box' as const) : ('none' as const), entries } : { show: false, entries };
   const [head, ...rest] = rows.length ? rows : [{ label: '', style: {} }];
   return {
     ...structuredClone(PLOT1D_DEFAULTS),

@@ -465,7 +465,9 @@ export type LegendSpec = Placed & {
   reverse: boolean;
   title: string;
   text: TextStyle;
-  frame: 'none' | 'line' | 'shadow' | 'round';
+  // its box: none, or a box — its line (none: frame 'none' with a fill or a shadow), corners, fill (a colour or a
+  // gradient from it) and shadow. Older looks (line, shadow, round) are read as boxes: legendBox
+  frame: 'none' | 'box' | 'line' | 'shadow' | 'round';
   frameColor: string;
   frameWidth: number;
   frameDash?: Dash;
@@ -473,11 +475,23 @@ export type LegendSpec = Placed & {
   frameOpacity?: number;
   background: string; // '' = none
   bgOpacity: number;
+  backgroundGrad?: GradFill;
+  // a shadow under the box: moved shadowX, shadowY pt, blurred shadowBlur pt, its colour and opacity
+  shadow?: boolean;
+  shadowX?: number;
+  shadowY?: number;
+  shadowBlur?: number;
+  shadowColor?: string;
+  shadowOpacity?: number;
   padding: number; // pt
   spacing: number; // line spacing, × font size
   lineLen: number; // pt, the sample line
   auto?: boolean; // placed by itself inside the frame where it covers the least of the data (x, y, anchor found)
 };
+// A fill going from its colour to a second one, as a shape's gradient (src/figure/gradient.ts): linear or radial, placed
+// in % of the box it fills (a page, a legend's box)
+export type GradFill = Pick<ShapeSpec, 'grad' | 'fill2' | 'fill2Opacity' | 'gradAngle' | 'gradX1' | 'gradY1' | 'gradX2' | 'gradY2' | 'gradCx' | 'gradCy' | 'gradR' | 'gradR2' | 'gradSpread'>;
+export const hasGrad = (g: GradFill | undefined): g is GradFill => !!g && !!g.grad && g.grad !== 'none';
 export type ShapeKind = 'line' | 'arrow' | 'rect' | 'ellipse' | 'polygon' | 'xband' | 'yband' | 'vline' | 'hline' | 'bracket' | 'star' | 'regular' | 'arc' | 'callout' | 'scalebar' | 'dimension' | 'path' | 'image' | 'component';
 // the body of a line or arrow: one line, two, tapered, a wave, a zigzag, a chemical equilibrium ⇌ (even, or favouring
 // the right / the left), a retrosynthetic arrow ⇒
@@ -601,9 +615,11 @@ export type ShapeSpec = Placed & {
   n?: number;
   inner?: number;
   // arc: of the ellipse in the box, from a1 to a2 degrees (0: to the right, counter-clockwise); sector: closed to the centre
+  // (a pie slice), or a donut's with a hole (% of its size, absent: none); a slice's corners rounded by `radius` pt
   a1?: number;
   a2?: number;
   sector?: boolean;
+  hole?: number;
   // callout: its text in a box at (x1, y1) (pad pt around it), a line to the point (x2, y2) with head2 there
   pad?: number;
   // scale bar: from (x1, y1), len in the units of the data along x (vertical: along y), its text (empty: the length)
@@ -707,7 +723,7 @@ export const insetBackground = (chosen: string | undefined, page: string | undef
 // distance in from the edge (pt).
 export type PageBorder = { width: number; color: string; dash: Dash; radius: number; opacity: number; inset: number };
 // background: of a Plot placed by hand over the others (an inset in the Merge) — its page's ground under it
-export type FigureBox = { key: string; box: Placement; free: boolean; border?: PageBorder; background?: string };
+export type FigureBox = { key: string; box: Placement; free: boolean; border?: PageBorder; background?: string; backgroundGrad?: GradFill };
 
 export type LengthUnit = 'mm' | 'cm' | 'in';
 export type PanelScheme = 'none' | 'a' | '(a)' | 'a)' | 'A' | '(A)' | 'A)';
@@ -717,6 +733,7 @@ export type Figure = {
   unit: LengthUnit;
   text: TextDefaults;
   background: string; // 'none' = transparent, else a colour
+  backgroundGrad?: GradFill; // the background going from its colour to another
   border: number; // pt, 0 = none
   borderColor: string;
   borderDash?: Dash;
@@ -860,6 +877,27 @@ export const CURVE_STYLE_DEFAULTS: CurveStyle = {
   axisX: 'bottom',
   axisY: 'left',
 };
+// A legend's box as drawn: its line (on unless frame is 'none'), corners, fill ('' none: a colour, its opacity, its
+// gradient), shadow (null: none). Older looks read as boxes — a line; a shadow: a white box, its shadow 1.5 pt down and
+// right, sharp; rounded: corners of 4 pt.
+export const LEGEND_SHADOW = { x: 1.5, y: 1.5, blur: 1, opacity: 0.3 };
+export function legendBoxPatch(lg: Pick<LegendSpec, 'frame' | 'radius' | 'background' | 'shadow' | 'shadowX' | 'shadowY' | 'shadowBlur' | 'shadowOpacity'>): Partial<LegendSpec> {
+  if (lg.frame === 'line') return { frame: 'box' };
+  if (lg.frame === 'round') return { frame: 'box', radius: lg.radius ?? 4 };
+  if (lg.frame === 'shadow') return { frame: 'box', background: lg.background || '#ffffff', shadow: true, shadowX: lg.shadowX ?? 1.5, shadowY: lg.shadowY ?? 1.5, shadowBlur: lg.shadowBlur ?? 0, shadowOpacity: lg.shadowOpacity ?? 0.35 };
+  return {};
+}
+export function legendBox(lg0: LegendSpec): { line: boolean; radius: number; fill: string; fillOpacity: number; grad?: GradFill; shadow: { dx: number; dy: number; blur: number; color: string; opacity: number } | null } {
+  const lg = { ...lg0, ...legendBoxPatch(lg0) };
+  return {
+    line: lg.frame !== 'none',
+    radius: Math.max(0, lg.radius ?? 0),
+    fill: lg.background,
+    fillOpacity: lg.bgOpacity,
+    ...(lg.background && hasGrad(lg.backgroundGrad) ? { grad: lg.backgroundGrad } : {}),
+    shadow: lg.shadow ? { dx: lg.shadowX ?? LEGEND_SHADOW.x, dy: lg.shadowY ?? LEGEND_SHADOW.y, blur: Math.max(0, lg.shadowBlur ?? LEGEND_SHADOW.blur), color: lg.shadowColor || '#000000', opacity: lg.shadowOpacity ?? LEGEND_SHADOW.opacity } : null,
+  };
+}
 export const LEGEND_STYLE_DEFAULTS: Omit<LegendSpec, 'key' | 'curves'> = {
   x: 4,
   y: 4,

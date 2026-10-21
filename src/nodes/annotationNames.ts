@@ -35,7 +35,7 @@ export function shapeName(s: ShapeSpec): string {
     case 'regular':
       return 'Regular polygon';
     case 'arc':
-      return s.sector ? 'Sector' : 'Arc';
+      return !s.sector ? 'Arc' : (s.hole ?? 0) > 0 ? 'Donut' : 'Pie';
     case 'xband':
       return 'Band in x';
     case 'yband':

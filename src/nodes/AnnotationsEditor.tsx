@@ -1,6 +1,6 @@
 // The annotations of a Plot (on its frame: in the units of the data or % of the frame) or of a Merge (% of the page),
 // as a list: texts and callouts, lines and arrows (straight or bent), shapes (rectangles, ellipses, polygons, stars,
-// regular polygons, arcs and sectors), bands, brackets and braces (in any direction), scale bars, colour bars. What each
+// regular polygons, arcs, pie and donut slices), bands, brackets and braces (in any direction), scale bars, colour bars. What each
 // one is comes from the button that added it (only its close variants can be chosen after). Each has its own layer;
 // they are dragged on the figure, with handles for their points, bends, legs and turning.
 // The settings of one (also of an object of a Figure Drawing): the same sections in the same order for every kind —
@@ -16,13 +16,12 @@ import type { AnnotationItem, PageData } from '../types.ts';
 import { HATCHES } from './figureOptions.ts';
 import { setShapePlacing, useShapePlacing } from './placeStore.ts';
 import { RichInput } from './fields.tsx';
-import { GradientPad } from '../ui/GradientPad.tsx';
+import { GradientRows } from '../ui/GradientRows.tsx';
 import { HatchRows } from '../ui/HatchRows.tsx';
 import { ArrowRightLeft, ChevronDown, ChevronRight, ImageUp, Link, Minus, MousePointerClick, Plus, Unlink } from 'lucide-react';
 import { describe } from './annotationNames.ts';
 import { bendPoints, bendText, bentLine, type Elbow, type Pt } from '../figure/shapes.ts';
-import { Copy, RotateCcw, X } from 'lucide-react';
-import { linearEnds, NO_GRAD_PLACE, radialPlace } from '../figure/gradient.ts';
+import { Copy, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
 import { IMAGE_ACCEPT, imageUrl } from '../imageFile.ts';
 import { AnchorField, AngleField, Choice, ColorField, LayerRow, ListField, NumField, NumPair, OpacityField, PictureGrid, PicturePick, Row, Section, Sections, ShadowRows, SliderField, TextStyleRows, Toggle, WidthField } from '../ui/props.tsx';
@@ -77,6 +76,14 @@ const VARIANTS: Partial<Record<ShapeKind, [ShapeKind, string][]>> = {
   ],
 };
 const variantsOf = (k: ShapeKind) => VARIANTS[k] ?? Object.values(VARIANTS).find((v) => v.some(([x]) => x === k));
+// an arc's variants: the open arc, a pie slice (a sector, as older projects have it), a donut's (a sector with a hole)
+const arcKind = (s: ShapeSpec) => (!s.sector ? 'arc' : (s.hole ?? 0) > 0 ? 'donut' : 'pie');
+// how far it opens from a1 (degrees, counter-clockwise; a whole turn 360)
+const arcSpan = (s: ShapeSpec) => {
+  const [a1, a2] = [s.a1 ?? 0, s.a2 ?? 90];
+  const span = (((a2 - a1) % 360) + 360) % 360;
+  return span === 0 && a1 !== a2 ? 360 : span;
+};
 
 // the title of a kind's own section
 const KIND_TITLE: Record<ShapeKind, string> = {
@@ -330,7 +337,7 @@ export function ShapeEditor({ s, set, where, placing, onPlace }: { s: ShapeSpec;
   const open = k === 'polygon' && s.closed === false;
   const closed = k === 'rect' || k === 'ellipse' || k === 'star' || k === 'regular' || (k === 'arc' && !!s.sector) || (k === 'polygon' && !open) || k === 'callout' || k === 'path';
   const band = k === 'xband' || k === 'yband';
-  const turns = k === 'rect' || k === 'ellipse' || k === 'star' || k === 'regular' || k === 'arc' || k === 'polygon' || k === 'path' || k === 'image';
+  const turns = k === 'rect' || k === 'ellipse' || k === 'star' || k === 'regular' || k === 'arc' || k === 'polygon' || k === 'path' || k === 'image' || k === 'bracket';
   const unit = unitOf(s.coords, where);
   const variants = variantsOf(k);
   const o = s.orient ?? 'down';
@@ -391,15 +398,36 @@ export function ShapeEditor({ s, set, where, placing, onPlace }: { s: ShapeSpec;
       )}
       {k === 'arc' && (
         <>
+          <Row label="Kind" hint="An arc (an open line), a pie slice (closed to the centre) or a donut's (a hole in its middle)">
+            <Choice<'arc' | 'pie' | 'donut'>
+              value={arcKind(s)}
+              onChange={(v) => set(v === 'arc' ? { sector: undefined } : v === 'pie' ? { sector: true, hole: undefined } : { sector: true, hole: s.hole || 50 })}
+              options={[
+                ['arc', 'Arc'],
+                ['pie', 'Pie'],
+                ['donut', 'Donut'],
+              ]}
+            />
+          </Row>
           <Row label="From" hint="Degrees, 0 to the right, counter-clockwise">
             <SliderField value={s.a1 ?? 0} onChange={(v) => set({ a1: Number.isFinite(v) ? v : 0 })} min={-360} max={360} step={1} unit="°" marks={[0]} />
           </Row>
           <Row label="To" hint="Degrees, 0 to the right, counter-clockwise">
             <SliderField value={s.a2 ?? 90} onChange={(v) => set({ a2: Number.isFinite(v) ? v : 90 })} min={-360} max={360} step={1} unit="°" marks={[0]} />
           </Row>
-          <Row label="Sector" hint="Closed to the centre (a slice)">
-            <Toggle value={!!s.sector} onChange={(sector) => set({ sector: sector || undefined })} />
+          <Row label="Opening" hint="From From, counter-clockwise (sets To)">
+            <SliderField value={arcSpan(s)} onChange={(v) => set({ a2: (s.a1 ?? 0) + (Number.isFinite(v) ? Math.max(0, Math.min(360, v)) : 90) })} min={0} max={360} step={1} unit="°" />
           </Row>
+          {arcKind(s) === 'donut' && (
+            <Row label="Hole" hint="Its middle left out, % of its size">
+              <SliderField value={s.hole ?? 50} onChange={(v) => set({ hole: Math.max(1, Math.min(95, Number.isFinite(v) ? v : 50)) })} min={1} max={95} step={1} unit="%" />
+            </Row>
+          )}
+          {s.sector && (
+            <Row label="Corners" hint="Rounded corners, pt (at most what the slice has room for)">
+              <SliderField value={s.radius} onChange={(v) => set({ radius: num(v) })} min={0} max={20} step={0.5} unit="pt" />
+            </Row>
+          )}
         </>
       )}
       {k === 'polygon' && (
@@ -629,22 +657,7 @@ export function ShapeEditor({ s, set, where, placing, onPlace }: { s: ShapeSpec;
     </>
   );
 
-  // ---- fill: its colour and opacity; a gradient (its kind, second colour and its opacity, its angle (linear), where it
-  // is in the shape's box (% of it, as its handles on the figure place it), what is beyond its ends); a hatching ----
-  const gradOn = !!s.grad && s.grad !== 'none';
-  const [g1, g2] = linearEnds(s);
-  const rp = radialPlace(s);
-  const placed = [s.gradX1, s.gradY1, s.gradX2, s.gradY2, s.gradCx, s.gradCy, s.gradR, s.gradR2].some((v) => v != null);
-  const gradAngle = placed && s.grad === 'linear' ? Math.round((Math.atan2(g2[1] - g1[1], g2[0] - g1[0]) * 180) / Math.PI) : (s.gradAngle ?? 90);
-  // a new angle: placed ends turned about their middle (their length kept), else the angle across the box
-  const turnGrad = (deg: number) => {
-    if (!placed) return set({ gradAngle: deg });
-    const [mx, my] = [(g1[0] + g2[0]) / 2, (g1[1] + g2[1]) / 2];
-    const h = Math.hypot(g2[0] - g1[0], g2[1] - g1[1]) / 2;
-    const [c, sn] = [Math.cos((deg * Math.PI) / 180) * h, Math.sin((deg * Math.PI) / 180) * h];
-    const r = (v: number) => Math.round(v * 100) / 100;
-    set({ gradAngle: deg, gradX1: r(mx - c), gradY1: r(my - sn), gradX2: r(mx + c), gradY2: r(my + sn) });
-  };
+  // ---- fill: its colour and opacity; a gradient (GradientRows); a hatching ----
   const fill = (closed || band) && (
     <>
       {band && (
@@ -658,60 +671,7 @@ export function ShapeEditor({ s, set, where, placing, onPlace }: { s: ShapeSpec;
       <Row label="Opacity">
         <OpacityField value={s.fillOpacity} onChange={(v) => set({ fillOpacity: Math.min(1, num(v)) })} />
       </Row>
-      <Row label="Gradient" hint="The fill going to a second colour: across, from a start to an end (linear), or from a centre out (radial)">
-        <Choice<NonNullable<ShapeSpec['grad']>>
-          value={s.grad ?? 'none'}
-          onChange={(grad) => set({ grad: grad === 'none' ? undefined : grad })}
-          options={[
-            ['none', 'None'],
-            ['linear', 'Linear'],
-            ['radial', 'Radial'],
-          ]}
-        />
-      </Row>
-      {gradOn && (
-        <div className="prop-sub">
-          <Row label="To colour" hint="The gradient's second colour">
-            <ColorField value={s.fill2 ?? ''} auto="#ffffff" onChange={(c) => set({ fill2: c || undefined })} />
-          </Row>
-          <Row label="Its opacity" hint="The second colour's opacity (0: it fades out)">
-            <OpacityField value={s.fill2Opacity ?? 1} onChange={(v) => set({ fill2Opacity: Number.isFinite(v) && v < 1 ? Math.max(0, v) : undefined })} />
-          </Row>
-          {s.grad === 'linear' && (
-            <Row label="Angle" hint="In the shape's box: 0° left to right, 90° top to bottom, 45° corner to corner">
-              <AngleField value={gradAngle} onChange={(v) => turnGrad(Number.isFinite(v) ? v : 90)} />
-            </Row>
-          )}
-          <Row label="Place" hint={s.grad === 'radial' ? 'Drag its centre, and its radii across and down (Shift: a circle); the square is the box of the shape' : 'Drag its start and its end; the square is the box of the shape'}>
-            <GradientPad
-              place={s.grad === 'radial' ? { kind: 'radial', cx: rp.cx, cy: rp.cy, rx: rp.rx, ry: rp.ry } : { kind: 'linear', x1: g1[0], y1: g1[1], x2: g2[0], y2: g2[1] }}
-              onChange={(p) => (p.kind === 'linear' ? set({ gradX1: p.x1, gradY1: p.y1, gradX2: p.x2, gradY2: p.y2 }) : set({ gradCx: p.cx, gradCy: p.cy, gradR: p.rx, gradR2: p.ry }))}
-              from={s.fill || s.color}
-              to={s.fill2 || '#ffffff'}
-              toOpacity={s.fill2Opacity ?? 1}
-              spread={s.gradSpread ?? 'pad'}
-            />
-          </Row>
-          {placed && (
-            <Row label="">
-              <Button variant="default" leftSection={<RotateCcw size={13} />} onClick={() => set({ ...NO_GRAD_PLACE, ...(s.grad === 'linear' ? { gradAngle } : {}) })}>
-                {s.grad === 'radial' ? 'Back to the middle' : 'Back across the box'}
-              </Button>
-            </Row>
-          )}
-          <Row label="Beyond ends" hint="Past its end (or its ellipse): the end colour kept, the gradient mirrored back and forth, or repeated">
-            <Choice<NonNullable<ShapeSpec['gradSpread']>>
-              value={s.gradSpread ?? 'pad'}
-              onChange={(v) => set({ gradSpread: v === 'pad' ? undefined : v })}
-              options={[
-                ['pad', 'End colour'],
-                ['reflect', 'Mirrored'],
-                ['repeat', 'Repeated'],
-              ]}
-            />
-          </Row>
-        </div>
-      )}
+      <GradientRows g={s} from={s.fill || s.color} set={set} />
       <Row label="Hatching" hint="A hatching over the fill: its kind and colour">
         <MSelect value={s.hatch ?? 'none'} data={HATCHES.map(([v, l]) => ({ value: v, label: l }))} onChange={(h) => h && set({ hatch: h as Hatch })} />
       </Row>
@@ -798,7 +758,7 @@ export function ShapeEditor({ s, set, where, placing, onPlace }: { s: ShapeSpec;
       </Row>
     </>
   );
-  const title = k === 'polygon' && open ? 'Polyline' : KIND_TITLE[k];
+  const title = k === 'polygon' && open ? 'Polyline' : k === 'arc' ? { arc: 'Arc', pie: 'Pie', donut: 'Donut' }[arcKind(s)] : KIND_TITLE[k];
   return (
     <div className="props-panel props-embed nodrag" onKeyDown={ownKeys}>
       <Sections key={k} panel={`shape:${k}`} open={['own', 'text', 'line', 'fill']}>
@@ -1096,7 +1056,8 @@ const SHAPES: AddButton[] = [
   { label: 'Polygon', title: 'A polygon or a polyline: its points placed with the mouse on the figure (or written)', spec: { kind: 'polygon', points: '', closed: true, fill: '#56B4E9', fillOpacity: 0.3, color: '#0072B2' }, placePoints: true },
   { label: 'Star', spec: { kind: 'star', x1: 42, y1: 38, x2: 54, y2: 54, n: 5, inner: 0.382, fill: '#E69F00', fillOpacity: 1, width: 0.5 } },
   { label: 'Regular polygon', spec: { kind: 'regular', x1: 42, y1: 38, x2: 56, y2: 56, n: 6, fill: '#56B4E9', fillOpacity: 0.6, width: 0.5 } },
-  { label: 'Arc / sector', spec: { kind: 'arc', x1: 40, y1: 35, x2: 60, y2: 60, a1: 0, a2: 90, sector: true, fill: '#009E73', fillOpacity: 0.5, width: 0.5 } },
+  { label: 'Arc', title: 'An arc of an ellipse (an open line)', spec: { kind: 'arc', x1: 40, y1: 35, x2: 60, y2: 60, a1: 0, a2: 270 } },
+  { label: 'Pie / donut', title: 'A pie slice, or a donut’s (Kind: Pie or Donut; the hole and rounded corners in its options)', spec: { kind: 'arc', x1: 40, y1: 35, x2: 60, y2: 60, a1: 0, a2: 90, sector: true, fill: '#009E73', fillOpacity: 0.5, width: 0.5 } },
 ];
 const REGIONS: AddButton[] = [
   { label: 'Band in x', title: 'A band between two x (a range of the data, under the curves)', spec: { kind: 'xband', x1: 40, x2: 60, z: -1 } },

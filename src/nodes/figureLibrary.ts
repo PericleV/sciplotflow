@@ -61,7 +61,7 @@ export function saveStyles(list: SavedStyle[]) {
   }
 }
 // what a style is: everything but the points, the texts and the links to other objects
-const NOT_STYLE = new Set(['kind', 'coords', 'x1', 'y1', 'x2', 'y2', 'points', 'bends', 'curve', 'd', 'href', 'ref', 'from', 'to', 'text', 'text2', 'x', 'y', 'onPath', 'pathD', 'attach', 'z', 'rotation', 'len', 'n', 'a1', 'a2', 'elbowAt']);
+const NOT_STYLE = new Set(['kind', 'coords', 'x1', 'y1', 'x2', 'y2', 'points', 'bends', 'curve', 'd', 'href', 'ref', 'from', 'to', 'text', 'text2', 'x', 'y', 'onPath', 'pathD', 'attach', 'z', 'rotation', 'len', 'n', 'a1', 'a2', 'hole', 'elbowAt']);
 export const styleOf = (spec: Record<string, unknown>): Record<string, unknown> => Object.fromEntries(Object.entries(spec).filter(([k, v]) => !NOT_STYLE.has(k) && v !== undefined));
 
 // the style copied (Copy style), pasted on other objects of its kind

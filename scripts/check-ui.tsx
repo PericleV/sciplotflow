@@ -58,7 +58,7 @@ const states = (k: ShapeKind): [string, Partial<ShapeSpec>][] => [
     : []),
   ...(k === 'bracket' ? (['down', 'up', 'left', 'right', 'free'] as const).flatMap((orient) => (['square', 'curly', 'bar'] as const).map((bstyle): [string, Partial<ShapeSpec>] => [`${orient} ${bstyle}`, { orient, bstyle, textDir: 'angle', textAngle: 30, flip: true }])) : []),
   ...(k === 'polygon' ? ([['open smooth', { closed: false, smooth: true, points: '1 1; 2 2; 3 1' }]] as [string, Partial<ShapeSpec>][]) : []),
-  ...(k === 'arc' ? ([['sector', { sector: true, a1: -45, a2: 200 }]] as [string, Partial<ShapeSpec>][]) : []),
+  ...(k === 'arc' ? ([['pie', { sector: true, a1: -45, a2: 200, radius: 4 }], ['donut', { sector: true, hole: 40, radius: 2 }]] as [string, Partial<ShapeSpec>][]) : []),
   ...(k === 'rect' ? ([['own corners', { radii: '1 2 3 4' }]] as [string, Partial<ShapeSpec>][]) : []),
   ...(k === 'dimension' ? ([['decimals', { dec: 6, unit: 'nm', offset: -12 }]] as [string, Partial<ShapeSpec>][]) : []),
   ...(k === 'scalebar' ? ([['set', { len: 100, vertical: true }]] as [string, Partial<ShapeSpec>][]) : []),
@@ -88,7 +88,8 @@ for (const k of KINDS) {
           ...(k === 'bracket' ? ['Direction', 'Style', 'Text', 'Gap'] : []),
           ...(k === 'star' ? ['Points', 'Inner size', 'Rotation'] : []),
           ...(k === 'regular' ? ['Sides'] : []),
-          ...(k === 'arc' ? ['From', 'To', 'Sector'] : []),
+          ...(k === 'arc' ? ['Kind', 'From', 'To', 'Opening', ...(s.sector ? ['Corners'] : []), ...(s.sector && s.hole ? ['Hole'] : [])] : []),
+          ...(k === 'bracket' ? ['Rotation'] : []),
           ...(k === 'callout' ? ['Head', 'Padding', 'Corners', 'Text'] : []),
           ...(k === 'scalebar' ? ['Length', 'Vertical', 'End ticks', 'Label'] : []),
           ...(k === 'dimension' ? ['Offset', 'Decimals', 'Unit', 'Heads'] : []),
@@ -179,20 +180,28 @@ for (const where of WHERE) {
 // the legend, a curve's style (its first tab), the page
 {
   let err = '';
-  const check = (name: string, el: React.ReactElement, must: string[]) => {
+  const check = (name: string, el: React.ReactElement, must: string[], not: string[] = []) => {
     try {
       const t = text(draw(el));
       const lost = must.filter((w) => !t.includes(w));
-      if (lost.length) err ||= `${name}: no ${lost.join(', ')}`;
+      const extra = not.filter((w) => t.includes(w));
+      if (lost.length || extra.length) err ||= `${name}: ${lost.length ? `no ${lost.join(', ')}` : ''}${extra.length ? ` but ${extra.join(', ')}` : ''}`;
     } catch (e) {
       err ||= `${name}: ${(e as Error).message}`;
     }
   };
   const curve = { key: 'c1', label: 'Absorbance', series: { x: { name: 'x', values: [1] }, y: { name: 'y', values: [1] } }, style: { ...CURVE_STYLE_DEFAULTS } } as never;
   check('legend', <LegendEditor value={{ show: true, frame: 'round', background: '#ffffff', arrange: 'grid' }} curves={[curve]} onChange={() => {}} />, ['Show the legend', 'Place', 'Left', 'Top', 'Anchor', 'Arrange', 'Columns', 'Fill', 'Reverse order', 'Layer', 'Entries', 'Title', 'Frame', 'Width', 'Corners', 'Its opacity', 'Sample line', 'Padding', 'Line spacing']);
+  // the frame: none, or a box (an older look read as one): its line, corners, fill and its gradient, shadow
+  check('legend, no box', <LegendEditor value={{ show: true, frame: 'none', background: '' }} curves={[curve]} onChange={() => {}} />, ['Frame', 'None', 'Box', 'Sample line'], ['Corners', 'Shadow', 'Rounded']);
+  check('legend, old shadow', <LegendEditor value={{ show: true, frame: 'shadow', background: '' }} curves={[curve]} onChange={() => {}} />, ['Box', 'Line', 'Width', 'Style', 'Corners', 'Fill', 'Its opacity', 'Gradient', 'Shadow', 'Direction', 'Distance', 'Softness'], ['Rounded']);
+  check('legend, box with a gradient', <LegendEditor value={{ show: true, frame: 'box', background: '#ffffff', backgroundGrad: { grad: 'linear', fill2: '#cccccc' } }} curves={[curve]} onChange={() => {}} />, ['Line', 'Corners', 'Fill', 'Gradient', 'To colour', 'Angle', 'Place', 'Beyond ends', 'Shadow'], ['Direction']);
+  check('legend, fill without a line', <LegendEditor value={{ show: true, frame: 'none', background: '#ffffff' }} curves={[curve]} onChange={() => {}} />, ['Box', 'Line', 'Corners', 'Fill'], ['Width']);
   void LEGEND_STYLE_DEFAULTS;
   check('curve style', <CurveStyleEditor st={{ ...CURVE_STYLE_DEFAULTS, mode: 'linesymbol', fill: 'zero', fillHatch: 'x', widthBy: 'y', arrowEnd: 'triangle', halo: 1 }} set={() => {}} hasYErr hasXErr axes={{ x: [['bottom', 'X1']], y: [['left', 'Y1']], pick: () => {} }} />, ['Style', 'Connect', 'Colour', 'Width', 'Dashes', 'Opacity', 'Ends', 'Joins', 'Halo', 'Heads', 'Head size', 'Drop lines', 'Width from', 'Thinnest', 'Widest', 'Line is', 'Gap at symbols', 'Masked points', 'Fill under', 'Hatching', 'Its colour', 'Spacing']);
   check('page', <PageControls page={{ ...PLOT_PAGE_DEFAULTS, border: 1, title: 'T', background: '#eeeeee' }} set={() => {}} />, ['Size', 'Width, height', 'Text font', 'Text size', 'Text style', 'Title', 'Decimal comma', 'Formula font', 'Background', 'Border', 'Corners', 'Inset']);
+  check('page, a gradient', <PageControls page={{ ...PLOT_PAGE_DEFAULTS, background: '#eeeeee', backgroundGrad: { grad: 'radial' } }} set={() => {}} />, ['Background', 'Gradient', 'To colour', 'Place', 'Beyond ends'], ['Angle']);
+  check('page, white', <PageControls page={{ ...PLOT_PAGE_DEFAULTS }} set={() => {}} />, ['Background'], ['Gradient']);
   ok(!err, `the legend, a curve's style and the page panels${err ? ` — ${err}` : ''}`);
 }
 

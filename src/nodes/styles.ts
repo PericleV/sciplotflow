@@ -32,10 +32,10 @@ const BUILTINS: NamedStyle[] = [
   { name: 'Axes: box with a light grid', type: 'plot1d', data: { axes: { sides: { bottom: side({}), left: side({}), top: mirror(), right: mirror() }, grid: { x: { ...GRID_DEFAULTS, major: true }, y: { ...GRID_DEFAULTS, major: true } } } } },
   { name: 'Axes: thick lines (slides, posters)', type: 'plot1d', data: { axes: { sides: { bottom: side(thick), left: side(thick), top: mirror(thick), right: mirror(thick) } } } },
   // legends
-  { name: 'Legend: plain (no frame)', type: 'plot1d', data: { legend: { frame: 'none', background: '' } } },
-  { name: 'Legend: framed, white', type: 'plot1d', data: { legend: { frame: 'line', background: '#ffffff', bgOpacity: 1, frameWidth: 0.5 } } },
-  { name: 'Legend: shadow', type: 'plot1d', data: { legend: { frame: 'shadow', background: '#ffffff', frameWidth: 0.5 } } },
-  { name: 'Legend: rounded, see-through', type: 'plot1d', data: { legend: { frame: 'round', background: '#ffffff', bgOpacity: 0.8, frameWidth: 0.4 } } },
+  { name: 'Legend: plain (no frame)', type: 'plot1d', data: { legend: { frame: 'none', background: '', shadow: false } } },
+  { name: 'Legend: framed, white', type: 'plot1d', data: { legend: { frame: 'box', background: '#ffffff', bgOpacity: 1, frameWidth: 0.5, shadow: false } } },
+  { name: 'Legend: shadow', type: 'plot1d', data: { legend: { frame: 'box', background: '#ffffff', frameWidth: 0.5, shadow: true, shadowX: 1.5, shadowY: 1.5, shadowBlur: 0, shadowOpacity: 0.35 } } },
+  { name: 'Legend: rounded, see-through', type: 'plot1d', data: { legend: { frame: 'box', radius: 4, background: '#ffffff', bgOpacity: 0.8, frameWidth: 0.4, shadow: false } } },
   // curves (every curve of the Plot; their colours stay)
   { name: 'Curves: lines, 1 pt', type: 'plot1d', data: { curve: curve({ mode: 'line', lineWidth: 1, dash: 'solid', connect: 'straight' }) } },
   { name: 'Curves: smooth lines, 1.25 pt', type: 'plot1d', data: { curve: curve({ mode: 'line', lineWidth: 1.25, connect: 'spline' }) } },

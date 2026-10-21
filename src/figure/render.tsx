@@ -13,7 +13,7 @@ import { CORNERED, isClosed as pathClosed, mapSegs, parsePath, pathBox, pathPoly
 import { parseBreaks } from './ticks.ts';
 import { barOffset, barReach, barTitle } from './colorbar.ts';
 import { ThreeView } from './render3d.tsx';
-import { aboveOf, arcPath, boxHandleAt, resizeBox, type Box4, bendPoints, bendText, bentLine, bentPoints, bracketBase, bracketPath, bracketTextPlace, elbowCorners, endAngles, lineLength, niceLength, offsetLine, pointAlong, pointsD, pointsPath, roundedCorners, starPoints, taperOutline, throughLine, throughPoints, trimLine, waveLine, type Pt } from './shapes.ts';
+import { aboveOf, arcPath, piePath, turnPt, boxHandleAt, resizeBox, type Box4, bendPoints, bendText, bentLine, bentPoints, bracketBase, bracketPath, bracketTextPlace, elbowCorners, endAngles, lineLength, niceLength, offsetLine, pointAlong, pointsD, pointsPath, roundedCorners, starPoints, taperOutline, throughLine, throughPoints, trimLine, waveLine, type Pt } from './shapes.ts';
 import { compile } from '../engine/expr.ts';
 import { gradAttrs, inBox, linearEnds, radialPlace } from './gradient.ts';
 import { axesGeometry, axisNeeds, endLabels, labelReach, legendPlace, turnedExtent, validFor, type Box, type DrawnAxis, type Scale } from './axes.ts';
@@ -28,6 +28,9 @@ import {
   type Curve,
   type Figure,
   type FigureBox,
+  type GradFill,
+  hasGrad,
+  legendBox,
   type LegendSpec,
   type Owner,
   type PanelScheme,
@@ -1497,12 +1500,26 @@ function LegendDraw({ lg, box, defaults, place }: { lg: LegendSpec; box: Box; de
   if (!lg.curves.length && !lg.title) return null;
   const L = legendLayout(lg, defaults);
   const at = place ?? boxAt(lg.anchor, box.x + (lg.x / 100) * box.w, box.y + (lg.y / 100) * box.h, L.w, L.h);
-  const rx = Math.min(lg.radius ?? (lg.frame === 'round' ? 4 : 0), L.h / 2, L.w / 2);
-  const bg = lg.background || (lg.frame === 'shadow' ? '#ffffff' : '');
+  // its box: a shadow (sharp, or blurred), the fill (a colour or its gradient), the line
+  const B = legendBox(lg);
+  const rx = Math.min(B.radius, L.h / 2, L.w / 2);
+  const bid = `lg-${lg.key}`.replace(/[^\w-]/g, '_');
+  const rect = { x: n2(at.x), y: n2(at.y), width: n2(L.w), height: n2(L.h), rx: rx || undefined };
+  const sh = B.shadow;
   return (
     <g>
-      {lg.frame === 'shadow' && <rect x={n2(at.x + 1.5)} y={n2(at.y + 1.5)} width={n2(L.w)} height={n2(L.h)} rx={rx || undefined} fill="#000000" fillOpacity={0.35} />}
-      {(bg || lg.frame !== 'none') && <rect x={n2(at.x)} y={n2(at.y)} width={n2(L.w)} height={n2(L.h)} rx={rx || undefined} fill={bg || 'none'} fillOpacity={bg ? lg.bgOpacity : undefined} stroke={lg.frame === 'none' ? 'none' : lg.frameColor} strokeWidth={lg.frameWidth} strokeDasharray={lg.frame === 'none' ? undefined : dashArray(lg.frameDash ?? 'solid', lg.frameWidth)} strokeOpacity={lg.frameOpacity ?? undefined} />}
+      {(B.grad || (sh && sh.blur > 0)) && (
+        <defs>
+          {B.grad && <FillGradient id={`${bid}-g`} g={B.grad} from={B.fill} box={{ x: at.x, y: at.y, w: L.w, h: L.h }} />}
+          {sh && sh.blur > 0 && (
+            <filter id={`${bid}-sh`} x={n2(at.x + sh.dx - 3 * sh.blur)} y={n2(at.y + sh.dy - 3 * sh.blur)} width={n2(L.w + 6 * sh.blur)} height={n2(L.h + 6 * sh.blur)} filterUnits="userSpaceOnUse">
+              <feGaussianBlur stdDeviation={n2(sh.blur / 2)} />
+            </filter>
+          )}
+        </defs>
+      )}
+      {sh && <rect {...rect} x={n2(at.x + sh.dx)} y={n2(at.y + sh.dy)} fill={sh.color} fillOpacity={sh.opacity} filter={sh.blur > 0 ? `url(#${bid}-sh)` : undefined} />}
+      {(B.fill || B.line) && <rect {...rect} fill={B.fill ? (B.grad ? `url(#${bid}-g)` : B.fill) : 'none'} fillOpacity={B.fill ? B.fillOpacity : undefined} stroke={B.line ? lg.frameColor : 'none'} strokeWidth={lg.frameWidth} strokeDasharray={B.line ? dashArray(lg.frameDash ?? 'solid', lg.frameWidth) : undefined} strokeOpacity={lg.frameOpacity ?? undefined} />}
       {lg.title && <RichText x={at.x + L.w / 2} y={at.y + lg.padding} text={lg.title} st={L.titleT} anchor="middle" valign="top" />}
       {L.curves.map((c, k) => {
         const { col, row } = L.cell(k);
@@ -1642,42 +1659,59 @@ const shadowOf = (s: ShapeSpec) => (softShadow(s) ? { dx: s.shadowX ?? 1.5, dy: 
 // its outline — turned by `transform`.
 // box: the shape's box (pt, before it is turned) its gradient is placed in; gradTurn: the gradient turned with a shape
 // whose turn is in its outline
+// A fill's gradient (`id`) from the colour `from` to its second one, placed in `box` (pt, before it is turned; turn: the
+// gradient turned with it) — without a box: across the box of what it fills, at its angle.
+function FillGradient({ id, g, from, box, turn }: { id: string; g: GradFill; from: string; box?: Box | null; turn?: string }) {
+  const stops = (
+    <>
+      <stop offset="0" stopColor={from} />
+      <stop offset="1" stopColor={g.fill2 || '#ffffff'} stopOpacity={g.fill2Opacity != null && g.fill2Opacity < 1 ? g.fill2Opacity : undefined} />
+    </>
+  );
+  const spread = g.gradSpread && g.gradSpread !== 'pad' ? g.gradSpread : undefined;
+  if (box && box.w > 0 && box.h > 0)
+    return g.grad === 'radial' ? (
+      <radialGradient id={id} {...gradAttrs(g, box, turn)}>
+        {stops}
+      </radialGradient>
+    ) : (
+      <linearGradient id={id} {...gradAttrs(g, box, turn)}>
+        {stops}
+      </linearGradient>
+    );
+  return g.grad === 'radial' ? (
+    <radialGradient id={id} cx="0.5" cy="0.5" r="0.5" spreadMethod={spread}>
+      {stops}
+    </radialGradient>
+  ) : (
+    <linearGradient id={id} x1="0" y1="0" x2="1" y2="0" gradientTransform={`rotate(${n2(g.gradAngle ?? 90)} 0.5 0.5)`} spreadMethod={spread}>
+      {stops}
+    </linearGradient>
+  );
+}
+// A box (pt) filled with a colour or its gradient (a page, a legend's box); id: of its gradient
+function GroundRect({ id, b, fill, grad, opacity }: { id: string; b: Box; fill: string; grad?: GradFill; opacity?: number }) {
+  const g = hasGrad(grad) ? grad : null;
+  return (
+    <>
+      {g && (
+        <defs>
+          <FillGradient id={id} g={g} from={fill} box={b} />
+        </defs>
+      )}
+      <rect x={n2(b.x)} y={n2(b.y)} width={n2(b.w)} height={n2(b.h)} fill={g ? `url(#${id})` : fill} fillOpacity={opacity != null && opacity < 1 ? opacity : undefined} />
+    </>
+  );
+}
 function ClosedShape({ s, id, make, transform, color, outline = true, box, gradTurn }: { s: ShapeSpec; id: string; make: (p: Record<string, unknown>) => ReactNode; transform?: string; color?: string; outline?: boolean; box?: Box | null; gradTurn?: string }) {
   const fillC = s.fill || color || '';
   const grad = !!fillC && !!s.grad && s.grad !== 'none';
   const hatch = !!s.hatch && s.hatch !== 'none';
-  const g2 = s.fill2 || '#ffffff';
-  const stops = (
-    <>
-      <stop offset="0" stopColor={fillC} />
-      <stop offset="1" stopColor={g2} stopOpacity={s.fill2Opacity != null && s.fill2Opacity < 1 ? s.fill2Opacity : undefined} />
-    </>
-  );
-  const spread = s.gradSpread && s.gradSpread !== 'pad' ? s.gradSpread : undefined;
   return (
     <g transform={transform}>
       {(grad || hatch) && (
         <defs>
-          {grad &&
-            (box && box.w > 0 && box.h > 0 ? (
-              s.grad === 'radial' ? (
-                <radialGradient id={`${id}-g`} {...gradAttrs(s, box, gradTurn)}>
-                  {stops}
-                </radialGradient>
-              ) : (
-                <linearGradient id={`${id}-g`} {...gradAttrs(s, box, gradTurn)}>
-                  {stops}
-                </linearGradient>
-              )
-            ) : s.grad === 'radial' ? (
-              <radialGradient id={`${id}-g`} cx="0.5" cy="0.5" r="0.5" spreadMethod={spread}>
-                {stops}
-              </radialGradient>
-            ) : (
-              <linearGradient id={`${id}-g`} x1="0" y1="0" x2="1" y2="0" gradientTransform={`rotate(${n2(s.gradAngle ?? 90)} 0.5 0.5)`} spreadMethod={spread}>
-                {stops}
-              </linearGradient>
-            ))}
+          {grad && <FillGradient id={`${id}-g`} g={s} from={fillC} box={box} turn={gradTurn} />}
           {hatch && <HatchPattern id={`${id}-h`} h={s.hatch!} s={4} color={s.hatchColor || s.color} width={0.6} look={s.hatchLook} />}
         </defs>
       )}
@@ -1924,7 +1958,7 @@ function ShapeView({ s, m, defaults, id = 'shape' }: { s: ShapeSpec; m: Mapper; 
       return <ClosedShape s={s} id={id} box={gradFrame(s, m)?.box} transform={rot(cx, cy)} make={(p) => <path d={d} {...p} />} />;
     }
     case 'arc': {
-      const d = arcPath(cx, cy, rx, ry, s.a1 ?? 0, s.a2 ?? 90, !!s.sector);
+      const d = s.sector ? piePath(cx, cy, rx, ry, s.a1 ?? 0, s.a2 ?? 90, (s.hole ?? 0) / 100, s.radius || 0) : arcPath(cx, cy, rx, ry, s.a1 ?? 0, s.a2 ?? 90, false);
       if (s.sector) return <ClosedShape s={s} id={id} box={gradFrame(s, m)?.box} transform={rot(cx, cy)} make={(p) => <path d={d} {...p} />} />;
       return <path d={d} fill="none" {...stroke} transform={rot(cx, cy)} />;
     }
@@ -2609,11 +2643,44 @@ function ShapeHandles({ s, m, info, item }: { s: ShapeSpec; m: Mapper; info: (pa
       const { p1, p2, n } = bracketBase(s, X, Y);
       const end2: Patch = o === 'down' || o === 'up' ? (dx, dy) => ({ x2: mx(s.x2, dx), y1: my(s.y1, dy) }) : o === 'free' ? (dx, dy) => ({ x2: mx(s.x2, dx), y2: my(s.y2, dy) }) : (dx, dy) => ({ x1: mx(s.x1, dx), y2: my(s.y2, dy) });
       const leg = s.bstyle === 'bar' ? s.headSize / 2 : s.bstyle === 'curly' ? s.headSize / 2 : s.headSize;
+      // turned: an end dragged as it would be unturned (the drag turned back), the bracket then moved so that it turns
+      // about the same middle as before (what is not dragged stays where it is)
+      const deg = s.rotation || 0;
+      const turned = (patch: Patch): Patch => (dx, dy, shift) => {
+        if (!deg) return patch(dx, dy, shift);
+        const [ux, uy] = turnPt([dx, dy], [0, 0], -deg);
+        const p = patch(ux, uy, shift);
+        const s2 = { ...s, ...p };
+        const mid = (b: { p1: Pt; p2: Pt }): Pt => [(b.p1[0] + b.p2[0]) / 2, (b.p1[1] + b.p2[1]) / 2];
+        const [c0, c1] = [mid(bracketBase(s, X, Y)), mid(bracketBase(s2, X, Y))];
+        const back = turnPt([c0[0] - c1[0], c0[1] - c1[1]], [0, 0], deg);
+        const [tx, ty] = [c0[0] - c1[0] - back[0], c0[1] - c1[1] - back[1]];
+        return { ...p, x1: mx(s2.x1, tx), x2: mx(s2.x2, tx), y1: my(s2.y1, ty), y2: my(s2.y2, ty) };
+      };
+      const depth = s.bstyle === 'square' || !s.bstyle ? 0 : s.bstyle === 'bar' ? Math.max(s.headSize, s.leg2 ?? s.headSize) / 2 : s.headSize / 2;
+      const c: Pt = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2];
+      // the turning handle on its text side (away from its legs), as far as its legs reach the other way: where it
+      // points (degrees from up, clockwise), and that direction unturned
+      const up = (Math.atan2(-n[0], n[1]) * 180) / Math.PI;
+      const base = up - deg;
       return (
         <g>
-          {h(p1[0], p1[1], (dx, dy) => ({ x1: mx(s.x1, dx), y1: my(s.y1, dy) }), '1')}
-          {h(p2[0], p2[1], end2, '2')}
+          {h(p1[0], p1[1], turned((dx, dy) => ({ x1: mx(s.x1, dx), y1: my(s.y1, dy) })), '1')}
+          {h(p2[0], p2[1], turned(end2), '2')}
           {h(p1[0] + n[0] * leg, p1[1] + n[1] * leg, (dx, dy) => ({ headSize: Math.max(0, +(s.headSize + (dx * n[0] + dy * n[1]) * (s.bstyle === 'square' || !s.bstyle ? 1 : 2)).toFixed(1)) }), 'l')}
+          <RotateHandle
+            key="r"
+            cx={c[0]}
+            cy={c[1]}
+            r={depth + 16}
+            deg={up}
+            info={(patch) =>
+              info((dx, dy, shift) => {
+                const d = ((patch(dx, dy, shift) as { rotation: number }).rotation ?? up) - base;
+                return { rotation: ((((shift ? Math.round(d / 15) * 15 : Math.round(d)) % 360) + 540) % 360) - 180 };
+              })
+            }
+          />
         </g>
       );
     }
@@ -3312,7 +3379,7 @@ function FigureSvgView({ fig, display, idPrefix, crop }: { fig: Figure; display:
   return (
     <CommaContext.Provider value={!!fig.comma}>
     <svg xmlns="http://www.w3.org/2000/svg" width={display.width} height={display.height} viewBox={`${vb.x.toFixed(3)} ${vb.y.toFixed(3)} ${vb.w.toFixed(3)} ${vb.h.toFixed(3)}`} fontFamily={d.font} data-physical={`${fig.width}${fig.unit}x${fig.height}${fig.unit}`}>
-      {fig.background !== 'none' && <rect width={W} height={H} fill={fig.background || '#ffffff'} />}
+      {fig.background !== 'none' && <GroundRect id={`${idPrefix}-page-g`} b={{ x: 0, y: 0, w: W, h: H }} fill={fig.background || '#ffffff'} grad={fig.backgroundGrad} />}
       {byZ(items, true)}
       {drawOrder(fig).map((k) => {
         const ax = fig.axes[k];
@@ -3324,7 +3391,7 @@ function FigureSvgView({ fig, display, idPrefix, crop }: { fig: Figure; display:
         const ground = bx && bx.background && fig.axes.findIndex((a) => !a.inset && a.node === ax.node) === k ? bx : null;
         return (
           <Fragment key={ax.key + k}>
-            {ground && <rect x={n2((ground.box.x / 100) * W)} y={n2((ground.box.y / 100) * H)} width={n2((ground.box.w / 100) * W)} height={n2((ground.box.h / 100) * H)} fill={ground.background} />}
+            {ground && <GroundRect id={`${idPrefix}-a${k}-ground-g`} b={{ x: (ground.box.x / 100) * W, y: (ground.box.y / 100) * H, w: (ground.box.w / 100) * W, h: (ground.box.h / 100) * H }} fill={ground.background!} grad={ground.backgroundGrad} />}
             {ax.inset && <InsetUnder ax={ax} host={fig.axes.find((a) => a.key === ax.inset!.host)} W={W} H={H} defaults={d} />}
             <AxesView ax={ax} W={W} H={H} idPrefix={`${idPrefix}-a${k}`} defaults={d} beneath={under.length ? under : undefined} />
           </Fragment>

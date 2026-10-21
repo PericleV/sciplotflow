@@ -1,7 +1,7 @@
 // Paths (a Figure Drawing's free shapes): SVG path text read into absolute moves, lines and cubic curves (arcs and
 // quadratic curves turned into cubic ones), written back, moved point by point; every annotation shape as such a path
 // (to edit its nodes, combine it with others, cut with it, write along it); corners rounded or cut. Pure.
-import { bendPoints, elbowCorners, starPoints, type Pt } from './shapes.ts';
+import { bendPoints, elbowCorners, piePath, starPoints, type Pt } from './shapes.ts';
 import type { ShapeSpec } from './spec.ts';
 
 export type Seg = { c: 'M' | 'L' | 'C' | 'Z'; p: number[] };
@@ -304,6 +304,8 @@ function shapeOutline(s: ShapeSpec, unitPt = 1): string | null {
       // as the renderer: 0° to the right, counter-clockwise (y down: up the page)
       const at = (a: number): Pt => [c[0] + rx * Math.cos((a * Math.PI) / 180), c[1] - ry * Math.sin((a * Math.PI) / 180)];
       const a1 = s.a1 ?? 0;
+      // a donut's slice, or one with its corners rounded: its arcs (read as curves)
+      if (s.sector && ((s.hole ?? 0) > 0 || s.radius > 0)) return tr(pathText(parsePath(piePath(c[0], c[1], rx, ry, a1, s.a2 ?? 90, (s.hole ?? 0) / 100, (s.radius || 0) / unitPt, (v) => v))));
       let span = ((((s.a2 ?? 90) - a1) % 360) + 360) % 360;
       if (span === 0 && (s.a2 ?? 90) !== a1) span = 360;
       const n = Math.max(1, Math.ceil(span / 90));
