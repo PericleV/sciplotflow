@@ -10,6 +10,8 @@ import { AxesEditor } from '../src/nodes/AxesEditor.tsx';
 import { LegendEditor } from '../src/nodes/LegendEditor.tsx';
 import { CurveStyleEditor } from '../src/nodes/CurveStyleEditor.tsx';
 import { PageControls } from '../src/nodes/FigureView.tsx';
+import { QuickBar } from '../src/ui/QuickBar.tsx';
+import { RowsControls } from '../src/nodes/RowsPanel.tsx';
 import { CURVE_STYLE_DEFAULTS, LEGEND_STYLE_DEFAULTS } from '../src/figure/spec.ts';
 import { PLOT_PAGE_DEFAULTS } from '../src/defaults.ts';
 import { AXIS_DEFAULTS, SIDE_DEFAULTS as AXIS_SIDE } from '../src/figure/spec.ts';
@@ -194,8 +196,30 @@ for (const where of WHERE) {
   ok(!err, `the legend, a curve's style and the page panels${err ? ` — ${err}` : ''}`);
 }
 
+// the quick bar (width and opacity as lists), the rows: where conditions, the formula, ranges
+{
+  let err = '';
+  const check = (name: string, el: React.ReactElement, must: string[], not: string[] = []) => {
+    try {
+      const t = draw(el);
+      const lost = must.filter((w) => !t.includes(w));
+      const extra = not.filter((w) => t.includes(w));
+      if (lost.length || extra.length) err ||= `${name}: ${lost.length ? `no ${lost.join(', ')}` : ''}${extra.length ? ` but ${extra.join(', ')}` : ''}`;
+    } catch (e) {
+      err ||= `${name}: ${(e as Error).message}`;
+    }
+  };
+  const rect = { ...SHAPE_DEFAULTS, kind: 'rect', fill: '#cccccc', width: 0.75, opacity: 0.5, fillOpacity: 0.6 } as ShapeSpec;
+  check('quick bar', <QuickBar target={{ kind: 'shape', s: rect }} onShape={() => {}} onText={() => {}} />, ['aria-label="Width"', '0.75', 'aria-label="Line opacity"', '50%', 'aria-label="Fill opacity"', '60%'], ['class="chip']);
+  const names = ['Wavelength (nm)', 'Signal'];
+  check('where', <RowsControls value={{ mode: 'rule', conds: [{ col: '', op: '>', v: 600 }, { col: 'Signal', op: 'between', v: 1, v2: 2 }], join: 'any' }} onChange={() => {}} hasX names={names} />, ['Where', 'Keep if', 'Any is true', 'x (the X column)', 'Signal', '600', 'between', 'Add condition', 'Write it as a formula'], ['aria-label="Formula"']);
+  check('where, formula', <RowsControls value={{ mode: 'rule', rule: 'x > 3' }} onChange={() => {}} hasX names={names} />, ['aria-label="Formula"', 'x &gt; 3'], ['Add condition']);
+  check('ranges', <RowsControls value={{ mode: 'range', by: 'x', ranges: [{ from: 1, to: 2 }] }} onChange={() => {}} hasX names={names} />, ['From – to', 'X value', 'Add a range']);
+  ok(!err, `the quick bar and the rows (where, formula, ranges)${err ? ` — ${err}` : ''}`);
+}
+
 console.error = origError;
-const real = warnings.filter((w) => !/useLayoutEffect does nothing on the server/.test(w));
+const real =warnings.filter((w) => !/useLayoutEffect does nothing on the server/.test(w));
 ok(!real.length, `no React warnings${real.length ? `: ${real.slice(0, 3).join(' | ')}` : ''}`);
 console.log(`${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

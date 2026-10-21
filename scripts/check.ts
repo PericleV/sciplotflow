@@ -84,7 +84,7 @@ import { arcPath, bendPoints, bendText, bentLine, bracketBase, bracketPath, brac
 import { columnsOf, formulaShown, formulaStored, type ColumnsSpec } from '../src/engine/columns.ts';
 import { area, centroid, extremum, peakWidth, xAtLevel, yAtX } from '../src/engine/measure.ts';
 import { curveFormulas } from '../src/engine/curvemath.ts';
-import { selectRows } from '../src/engine/rowsel.ts';
+import { condsFormula, selectRows, type RowOp } from '../src/engine/rowsel.ts';
 import { rowHandle, sourcePort, targetAccepts } from '../src/engine/ports.ts';
 import { checkImage } from './check-image.ts';
 import { checkPhase } from './check-phase.ts';
@@ -722,6 +722,20 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   ok(sr({ mode: 'all' }) === '0,1,2,3,4,5' && sr({ mode: 'range', ranges: [{ from: 2, to: 3 }, { from: 6, to: NaN }] }) === '1,2,5', 'rows: ranges of row numbers with a break');
   ok(sr({ mode: 'range', by: 'x', ranges: [{ from: 600, to: 450 }] }) === '1,2,3,4' && sr({ mode: 'list', list: '1, 4-end' }) === '0,3,4,5', 'rows: a range of X values, a list');
   ok(sr({ mode: 'rule', rule: 'x > 450 and B < 6' }) === '2,3,4' && typeof selectRows({ mode: 'rule', rule: 'q > 1' }, 6, x, [x, a]) === 'string', 'rows: a rule of x and the columns; an unknown name reported');
+  // where: conditions chosen (no formula), all of them or any; the formula they make keeps the same rows
+  const cx = (op: RowOp, v?: number, v2?: number, col = '') => ({ col, op, v, v2 });
+  ok(sr({ mode: 'rule', conds: [cx('>', 450), cx('<', 6, undefined, 'a')] }) === '2,3,4', 'rows: where conditions, all of them (x > 450, a < 6)');
+  ok(sr({ mode: 'rule', join: 'any', conds: [cx('<', 450), cx('>', 600)] }) === '0,5' && sr({ mode: 'rule', conds: [cx('between', 600, 450)] }) === '1,2,3,4', 'rows: where any condition (x < 450 or x > 600); between (both ends, either order)');
+  ok(sr({ mode: 'rule', conds: [cx('=', 500), cx('<', NaN)] }) === '2' && sr({ mode: 'rule', conds: [cx('!=', 3, undefined, 'a')] }) === '0,1,3,4,5', 'rows: = and ≠; a condition without its value left aside');
+  ok(sr({ mode: 'rule', rule: 'x > 600', conds: [cx('<', 450)] }) === '0' && sr({ mode: 'rule', rule: 'x > 600', conds: [cx('<', 450)], formula: true }) === '5' && sr({ mode: 'rule', rule: 'x > 600' }) === '5', 'rows: the conditions, or the formula when chosen (an older project: its formula)');
+  const fz = condsFormula([cx('>', 450), cx('between', 2, 5, 'a'), cx('filled', undefined, undefined, 'a')], 'any', x, [x, a]);
+  ok(fz === 'x > 450 or (B >= 2 and B <= 5) or (not isnan(B))' && sr({ mode: 'rule', rule: fz!, formula: true }) === sr({ mode: 'rule', join: 'any', conds: [cx('>', 450), cx('between', 2, 5, 'a'), cx('filled', undefined, undefined, 'a')] }), `rows: the conditions written as a formula, the same rows (${fz})`);
+  const gap = column('g', Float64Array.from([0, NaN, 2, 0, NaN, 5]));
+  const sg = (op: RowOp) => {
+    const r = selectRows({ mode: 'rule', conds: [cx(op, undefined, undefined, 'g')] }, 6, x, [x, gap]);
+    return typeof r === 'string' ? r : r.rows.join(',');
+  };
+  ok(sg('empty') === '1,4' && sg('filled') === '0,2,3,5', 'rows: is empty / is not empty (a 0 is a value)');
   const text = 'λ;r1;r2;r3;note\n400;1;2;3;5\n410;2;4;6;5\n420;3;3;3;5\n';
   const imp = { id: 'i', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, text, textId: 'st' } } as AppNode;
   const rows = { id: 'r', type: 'stats', position: { x: 0, y: 0 }, data: { on: 'rows', cols: '2-4', x: '', err: 'sd', rows: { mode: 'range', ranges: [{ from: 1, to: 2 }] } } } as AppNode;
@@ -2098,6 +2112,14 @@ for (const ex of EXAMPLES) {
   ok(col(onlyY, 0) === '3/1/2/2/5' && col(onlyY, 1) === '50/30/20/22/10' && typeof onlyY !== 'string' && onlyY.report.includes('y sorted by x (largest first)'), `Filter rows: only Y moved, by X (largest first); X in place; the rules win over the older keys (${col(onlyY, 1)})`);
   const own = filterRows(ds, { ...FILTER_DEFAULTS, sortRules: [{ cols: 'x', how: 'own', desc: true }, { cols: 'y', how: 'reverse' }] });
   ok(col(own, 0) === '5/3/2/2/1' && col(own, 1) === '50/22/20/10/30', `Filter rows: X sorted on its own (largest first), then Y alone reversed (${col(own, 0)} ${col(own, 1)})`);
+  // reversed: the rows with data (an empty row at the end of a sheet stays at the end); the empty rows removed
+  const tail = { name: 'w', columns: [{ ...column('x', Float64Array.from([0, 1, 2, 3, NaN])), role: 'x' as const }, column('y', Float64Array.from([5, 6, 7, NaN, NaN]))] };
+  const revT = filterRows(tail, { ...FILTER_DEFAULTS, sortRules: [{ how: 'reverse' }] });
+  ok(col(revT, 0) === '3/2/1/0/NaN' && col(revT, 1) === 'NaN/7/6/5/NaN', `Filter rows: whole rows reversed, the empty last row left last, a 0 kept (${col(revT, 0)})`);
+  const revY = filterRows(tail, { ...FILTER_DEFAULTS, sortRules: [{ cols: 'y', how: 'reverse' }] });
+  ok(col(revY, 0) === '0/1/2/3/NaN' && col(revY, 1) === '7/6/5/NaN/NaN', `Filter rows: one column reversed over its own values (${col(revY, 1)})`);
+  const noEmpty = filterRows({ name: 'w', columns: [tail.columns[0], column('y', Float64Array.from([5, NaN, 7, NaN, NaN]))] }, { ...FILTER_DEFAULTS, empty: 'remove' });
+  ok(col(noEmpty, 0) === '0/1/2/3' && typeof noEmpty !== 'string' && noEmpty.report.includes('1 empty row removed'), `Filter rows: the rows empty in every column removed, a row with one value kept (${col(noEmpty, 0)})`);
   const rev = filterRows(ds, { ...FILTER_DEFAULTS, sortRules: [{ how: 'reverse' }] });
   ok(col(rev, 0) === '5/2/2/1/3' && col(rev, 1) === '50/22/20/10/30' && typeof rev !== 'string' && rev.dataset.columns[2].text!.join(' ') === 'a3 b a1 a2 a10', 'Filter rows: whole rows reversed (the text with them)');
   ok(filterRows(ds, { ...FILTER_DEFAULTS, sortRules: [{ cols: 'nope', how: 'own' }] }) === 'Sort: no column “nope”.', 'Filter rows: a sort rule on a missing column said');

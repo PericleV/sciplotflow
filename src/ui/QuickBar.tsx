@@ -1,18 +1,18 @@
 // The floating bar over an object clicked on a figure (an annotation of a Plot or a Merge, an object of a Figure
-// Drawing): its most used settings one click away — a shape's line colour, width, dashes, fill and end head; a text's
+// Drawing): its most used settings one click away — a shape's line colour, width, dashes, opacity, fill (and its
+// opacity) and end head; a text's
 // colour, size, bold, italic and box —, its layer, its removal, and × to hide the bar. Every other setting stays in its
 // panel. The changes go to every object given of the same kind as the first.
 import { ActionIcon, Tooltip, UnstyledButton } from '@mantine/core';
 import { ArrowDownToLine, ArrowUpToLine, Trash2, X } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { ArrowHead, ShapeSpec, TextSpec } from '../figure/spec.ts';
-import { ColorField, PicturePick } from './props.tsx';
+import { ColorField, OpacityPick, PicturePick, WidthPick } from './props.tsx';
 import { BoxIcon, HeadIcon } from './propIcons.tsx';
 import { DASH_PICS } from './dashPics.tsx';
 import { setQuickBar } from './quickBarStore.ts';
 
 const HEADS: ArrowHead[] = ['none', 'triangle', 'stealth', 'open', 'bar', 'circle', 'diamond', 'square', 'half'];
-const WIDTHS = [0.5, 0.75, 1, 1.5, 2];
 const closedOf = (s: ShapeSpec) => ['rect', 'ellipse', 'star', 'regular', 'callout', 'path'].includes(s.kind) || (s.kind === 'arc' && !!s.sector) || (s.kind === 'polygon' && s.closed !== false);
 
 // the keys pressed on the bar are its own (not the canvas's or the editor's)
@@ -37,12 +37,9 @@ export function QuickBar({ target, onShape, onText, front, back, remove, style }
         {!band && (
           <>
             {sep}
-            {WIDTHS.map((w) => (
-              <UnstyledButton key={w} className={`chip${s.width === w ? ' on' : ''}`} onClick={() => onShape({ width: w })} title={`Width ${w} pt`}>
-                {w}
-              </UnstyledButton>
-            ))}
+            <WidthPick value={s.width} onChange={(width) => onShape({ width })} />
             <PicturePick label="Line style" value={s.dashPattern ? ('' as typeof s.dash) : s.dash} onChange={(dash) => onShape({ dash, dashPattern: undefined })} options={DASH_PICS} cols={4} />
+            <OpacityPick label="Line opacity" value={s.opacity} onChange={(opacity) => onShape({ opacity })} />
           </>
         )}
         {headed && <PicturePick label="Head at the end" value={s.head2} onChange={(head2) => onShape({ head2 })} options={HEADS.map((h) => [h, <HeadIcon key={h} head={h} />, h])} cols={3} />}
@@ -51,6 +48,7 @@ export function QuickBar({ target, onShape, onText, front, back, remove, style }
             {sep}
             <span className="qb-word">Fill</span>
             <ColorField value={s.fill} none={!band} auto={band ? s.color : undefined} onChange={(fill) => onShape({ fill })} />
+            {(s.fill || band) && <OpacityPick label="Fill opacity" value={s.fillOpacity} onChange={(fillOpacity) => onShape({ fillOpacity })} />}
           </>
         )}
       </>

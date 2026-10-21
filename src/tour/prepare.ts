@@ -7,6 +7,7 @@
 import type { Edge } from '@xyflow/react';
 import { AUTOEXTRACT_DEFAULTS, CLEAN_DEFAULTS, COLUMNS_DEFAULTS, COMBINE_DEFAULTS, DATAMANIP_DEFAULTS, EXTRACT_DEFAULTS, FILTER_DEFAULTS, GENCOL_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, NOTE_SIZE, TRANSLATE_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS } from '../defaults.ts';
 import type { AppNode, ImportSheet, NodeType } from '../types.ts';
+import { condReady } from '../engine/rowsel.ts';
 import { fedBy, field, nodeEl, nodeOrPalette, ofType, optionButton, wiggle, type Act, type AddSpec, type Step, type Tour, type TourState, type Wire } from './kit.ts';
 
 // ---- the example data ----
@@ -148,10 +149,13 @@ export const PREPARE: Tour = {
         adds('Add Filter & sort rows', 'Filter & sort rows', 'The first 3 seconds of each run are the sensor warming up. Add **Filter & sort rows** and connect Clean data to it.', filter, (s) => ({ type: 'filterrows', data: structuredClone(FILTER_DEFAULTS), from: wire(last(s, clean)?.id ?? RUNS, 'in') })),
         sets<'filterrows'>(
           'Keep only t ≥ 3 s',
-          'In Options, set **Rows** to **rule** and write `x >= 3` in **Where**. Here x means the X column, which is Time.\n\nBelow it you can also sort the rows, by one column or several, and keep only the first few.',
+          'In Options, set **Rows** to **Where**. The condition starts with x, the X column (here Time): choose **≥** and type **3**.\n\nNo code needed; **Write it as a formula** shows the same condition as `x >= 3`. Below it you can also sort the rows and keep only the first few.',
           filter,
-          (n) => n.data.rows.mode === 'rule' && !!n.data.rows.rule?.trim(),
-          (n) => [put(n.id, 'Rows', 'rule', { rows: { mode: 'rule', rule: '' } }), put(n.id, 'Where', 'x >= 3', { rows: { mode: 'rule', rule: 'x >= 3' } })],
+          (n) => n.data.rows.mode === 'rule' && (!!n.data.rows.conds?.some(condReady) || !!n.data.rows.rule?.trim()),
+          (n) => [
+            put(n.id, 'Rows', 'Where', { rows: { mode: 'rule', conds: [{ col: '', op: '>=', v: NaN }] } }),
+            { kind: 'set', at: inOptions('.where-cond .num-field input'), text: '3', apply: { id: n.id, f: (d) => ({ ...d, rows: { mode: 'rule', conds: [{ col: '', op: '>=', v: 3 }] } }) } },
+          ],
           'Rows',
         ),
         adds('Add Data manipulation', 'Data manipulation', 'Some points are wrong for a reason only you know, like the open door in run 1. Add **Data manipulation** and connect the filter to it.', manip, (s) => ({ type: 'datamanip', data: structuredClone(DATAMANIP_DEFAULTS), from: wire(last(s, filter, clean)?.id ?? RUNS, 'in') })),

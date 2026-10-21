@@ -1,13 +1,15 @@
 // Filter & sort rows, Clean data: the settings, the report, the rows that come out.
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
-import { X } from 'lucide-react';
+import { useState } from 'react';
+import { ActionIcon, Button, TextInput, Tooltip } from '@mantine/core';
+import { Plus, X } from 'lucide-react';
 import type { AppNode, CleanData, CleanNode, FilterData, FilterNode } from '../types.ts';
 import { sortRulesOf, type SortKey, type SortRule } from '../engine/cleaning.ts';
-import { IC } from './iconProps.ts';
 import { DataPreview } from './DataNodes.tsx';
 import { Y_AUTO } from './xAuto.ts';
-import { RowSelectControls } from './StatsNodes.tsx';
+import { RowsControls } from './RowsPanel.tsx';
+import { Choice, ListField, NumField, Row, Section, Sections } from '../ui/props.tsx';
 import { Field, InPort, Messages, NumInput, OutPort, Select, ResultSummary } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
 import { ColumnsPicker } from './ColumnsPicker.tsx';
@@ -18,87 +20,121 @@ function useNode<T>(id: string) {
   return { r, names: (r?.view.available ?? []).map((c) => c.name), set: (p: Partial<T>) => updateNodeData(id, p as Record<string, unknown>) };
 }
 
+// keys pressed in the panel are its own
+const ownKeys = (e: React.KeyboardEvent) => {
+  if (!e.ctrlKey && !e.metaKey && !e.altKey) e.stopPropagation();
+};
+const LIST = '\u0000list';
+// columns: automatic (empty), one from the list, or several (a list written: 2, B-D, names, A*)
+function ColumnsField({ value, names, onChange, auto, hint }: { value: string; names: string[]; onChange: (v: string) => void; auto: string; hint: string }) {
+  const [list, setList] = useState(false);
+  const v = value.trim();
+  const mode = list || (v && !names.includes(v)) ? LIST : v;
+  return (
+    <>
+      <ListField
+        value={mode}
+        label={hint}
+        options={[['', auto], ...names.map((n): [string, string] => [n, n]), [LIST, 'several (a list)']]}
+        onChange={(m) => {
+          setList(m === LIST);
+          if (m !== LIST) onChange(m);
+        }}
+      />
+      {mode === LIST && <TextInput value={value} placeholder="2, B-D, names, A*" onChange={(e) => onChange(e.currentTarget.value)} aria-label={hint} />}
+    </>
+  );
+}
+
 // The sort rules, applied in turn: each moves whole rows or only some columns; by columns (the first, then the next for
 // rows equal in it), every column by its own values, or reversed. Older projects: their keys shown as one rule.
 const ORDER: [string, string][] = [
-  ['up', 'smallest first'],
-  ['down', 'largest first'],
+  ['up', 'Smallest first'],
+  ['down', 'Largest first'],
 ];
-function SortRules({ data, cols, set }: { data: FilterData; cols: [string, string][]; set: (p: Partial<FilterData>) => void }) {
+function SortRules({ data, names, set }: { data: FilterData; names: string[]; set: (p: Partial<FilterData>) => void }) {
   const rules = sortRulesOf(data);
   const put = (sortRules: SortRule[]) => set({ sortRules, sorts: undefined, sortBy: '', desc: false });
   const setRule = (i: number, p: Partial<SortRule>) => put(rules.map((q, j) => (j === i ? { ...q, ...p } : q)));
-  const names = cols.map(([c]) => c);
+  const cols: [string, string][] = names.map((n) => [n, n]);
   const first = names[0] ?? '';
   return (
-    <div className="sort-rules">
+    <>
+      {rules.length === 0 && <div className="hint">Not sorted.</div>}
       {rules.map((r, i) => {
         const keys = r.keys ?? [];
         const setKeys = (k: SortKey[]) => setRule(i, { keys: k });
         return (
-          <div key={i} className="col-added">
-            <div className="row">
+          <div key={i} className="sort-card">
+            <div className="sort-card-head">
               <b>Rule {i + 1}</b>
-              <button className="nodrag ts-btn" title="Remove this rule" aria-label="Remove" onClick={() => put(rules.filter((_, j) => j !== i))}>
-                <X {...IC} />
-              </button>
+              <Tooltip label="Remove this rule">
+                <ActionIcon variant="subtle" size="sm" onClick={() => put(rules.filter((_, j) => j !== i))} aria-label="Remove this rule">
+                  <X size={14} />
+                </ActionIcon>
+              </Tooltip>
             </div>
-            <div className="col-form">
-              <span title="What moves: whole rows (every column with them), or only some columns (the others stay as they are)">Move</span>
-              <ColumnsPicker value={r.cols ?? ''} names={names} auto="whole rows" title="Whole rows, or only these columns: one, or several (a list: 2, B-D, names)" onChange={(c) => setRule(i, { cols: c || undefined })} />
-              <span>How</span>
-              <Select<SortRule['how']>
+            <Row label="Move" hint="What moves: whole rows (every column with them), or only some columns (the others stay as they are)">
+              <ColumnsField value={r.cols ?? ''} names={names} auto="whole rows" hint="Whole rows, or only these columns: one, or several (a list: 2, B-D, names)" onChange={(c) => setRule(i, { cols: c || undefined })} />
+            </Row>
+            <Row label="How">
+              <Choice<SortRule['how']>
                 value={r.how}
-                options={[
-                  ['by', 'sorted by columns'],
-                  ['own', 'each by its own values'],
-                  ['reverse', 'reversed (last row first)'],
-                ]}
                 onChange={(how) => setRule(i, { how, ...(how === 'by' && !keys.length ? { keys: [{ col: first, desc: false }] } : {}) })}
+                options={[
+                  ['by', 'Sort by', 'Sorted by the values of columns'],
+                  ['own', 'Each own', 'Every column moved sorted by its own values'],
+                  ['reverse', 'Reverse', 'The last row with data first (empty rows at the end stay there)'],
+                ]}
               />
-              {r.how === 'own' && (
-                <>
-                  <span>Order</span>
-                  <Select value={r.desc ? 'down' : 'up'} options={ORDER} onChange={(o) => setRule(i, { desc: o === 'down' || undefined })} />
-                </>
-              )}
-              {r.how === 'by' && (
-                <>
-                  <span title="Rows equal in the first column are sorted by the next, and so on">By</span>
-                  <span className="sort-keys">
-                    {keys.map((k, q) => (
-                      <span key={q} className="row">
-                        {q > 0 && <span className="muted">then</span>}
-                        <Select value={k.col} options={cols.some(([c]) => c === k.col) ? cols : [[k.col, k.col], ...cols]} onChange={(col) => setKeys(keys.map((x, j) => (j === q ? { ...x, col } : x)))} />
-                        <Select value={k.desc ? 'down' : 'up'} options={ORDER} onChange={(o) => setKeys(keys.map((x, j) => (j === q ? { ...x, desc: o === 'down' } : x)))} />
-                        {keys.length > 1 && (
-                          <button className="nodrag ts-btn" title="Not sorted by this column" aria-label="Remove" onClick={() => setKeys(keys.filter((_, j) => j !== q))}>
-                            <X {...IC} />
-                          </button>
-                        )}
-                      </span>
-                    ))}
-                    <button className="nodrag" title="Rows equal in the columns above are sorted by one more column" onClick={() => setKeys([...keys, { col: names.find((c) => !keys.some((k) => k.col === c)) ?? first, desc: false }])}>
-                      + Then by
-                    </button>
-                  </span>
-                </>
-              )}
-            </div>
+            </Row>
+            {r.how === 'own' && (
+              <Row label="Order">
+                <Choice value={r.desc ? 'down' : 'up'} options={ORDER} onChange={(o) => setRule(i, { desc: o === 'down' || undefined })} />
+              </Row>
+            )}
+            {r.how === 'by' &&
+              keys.map((k, q) => (
+                <Row key={q} label={q ? 'then by' : 'By'} hint={q ? 'Rows equal in the columns above are sorted by this one' : 'The column the rows are sorted by'}>
+                  <div className="where-line">
+                    <ListField value={k.col} options={cols} onChange={(col) => setKeys(keys.map((x, j) => (j === q ? { ...x, col } : x)))} label="Column" />
+                    {keys.length > 1 && (
+                      <Tooltip label="Not sorted by this column">
+                        <ActionIcon variant="subtle" size="sm" onClick={() => setKeys(keys.filter((_, j) => j !== q))} aria-label="Remove">
+                          <X size={14} />
+                        </ActionIcon>
+                      </Tooltip>
+                    )}
+                  </div>
+                  <Choice value={k.desc ? 'down' : 'up'} options={ORDER} onChange={(o) => setKeys(keys.map((x, j) => (j === q ? { ...x, desc: o === 'down' } : x)))} />
+                </Row>
+              ))}
+            {r.how === 'by' && (
+              <Row label="">
+                <Tooltip label="Rows equal in the columns above are sorted by one more column">
+                  <Button variant="default" size="xs" leftSection={<Plus size={13} />} onClick={() => setKeys([...keys, { col: names.find((c) => !keys.some((x) => x.col === c)) ?? first, desc: false }])}>
+                    Then by
+                  </Button>
+                </Tooltip>
+              </Row>
+            )}
           </div>
         );
       })}
-      <button className="nodrag" title="One more sort, after the ones above (e.g. columns A and B by T, then C on its own)" onClick={() => put([...rules, { how: 'by', keys: [{ col: first, desc: false }] }])}>
-        + Sort rule
-      </button>
-    </div>
+      <Tooltip label="One more sort, after the ones above (e.g. columns A and B by T, then C on its own)">
+        <Button variant="default" size="xs" leftSection={<Plus size={13} />} onClick={() => put([...rules, { how: 'by', keys: [{ col: first, desc: false }] }])}>
+          Sort rule
+        </Button>
+      </Tooltip>
+    </>
   );
 }
 
 export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
   const { r, names, set } = useNode<FilterData>(id);
   const out = r?.outputs.out;
-  const cols: [string, string][] = names.map((n) => [n, n]);
+  const rules = sortRulesOf(data);
+  const sr = r?.view.statRows;
   return (
     <div className="node node-clean">
       <InPort label="dataset" port="dataset" id="in" title="The rows of this dataset (every column with them); a workbook: the sheet chosen, or every sheet" />
@@ -108,50 +144,62 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
         </div>
       ))}
       <NodeOptions>
-      <RowSelectControls value={data.rows} onChange={(rows) => set({ rows })} hasX result={r} />
-      <div className="col-form">
-        <span>Repeated</span>
-        <span className="row">
-          <Select<FilterData['dup']>
-            value={data.dup}
-            options={[
-              ['keep', 'kept'],
-              ['first', 'only the first'],
-              ['mean', 'merged (averaged)'],
-            ]}
-            onChange={(dup) => set({ dup })}
-          />
-          {data.dup !== 'keep' && (
-            <>
-              <span>Values of</span>
-              <ColumnsPicker value={data.dupCol} names={names} auto="the X" title="The column whose repeated values count; several (a list): rows repeated in all of them together, as the same sample on the same day" onChange={(dupCol) => set({ dupCol })} />
-            </>
-          )}
-        </span>
-        <span title="The sort rules, applied in turn">Sort</span>
-        <span className="muted">{sortRulesOf(data).length ? 'the rules in turn' : 'not sorted'}</span>
-        <SortRules data={data} cols={cols} set={set} />
-        <span title="After sorting: only this many rows, from the top or from the bottom (sorted largest first, the first 5 are the 5 largest values). Empty: all">Only the</span>
-        <span className="row">
-          <Select<'start' | 'end'>
-            value={data.topFrom ?? 'start'}
-            options={[
-              ['start', 'first'],
-              ['end', 'last'],
-            ]}
-            onChange={(topFrom) => set({ topFrom: topFrom === 'start' ? undefined : topFrom })}
-          />
-          <NumInput className="tiny" min={0} step={1} placeholder="all" value={data.top || NaN} onChange={(top) => set({ top: Math.max(0, Math.floor(top) || 0) || undefined })} />
-          <span className="muted">rows (empty: all)</span>
-        </span>
-        <span>Keep</span>
-        <span className="row">
-          <span>One row in every</span>
-          <NumInput className="tiny" min={1} step={1} value={data.every} onChange={(every) => set({ every: Math.max(1, Math.floor(every) || 1) })} />
-        </span>
-      </div>
-      {out?.t === 'dataset' && <DataPreview columns={out.v.columns} rows={5} />}
-      {out?.t === 'workbook' && out.v.sheets[0] && <DataPreview columns={out.v.sheets[0].columns} rows={5} />}
+        <div className="props-panel props-embed nodrag" onKeyDown={ownKeys}>
+          <Sections panel="filterrows" open={['rows', 'sort']}>
+            <Section value="rows" title="Rows" aside={sr ? `${sr.used} of ${sr.of}` : undefined}>
+              <RowsControls value={data.rows} onChange={(rows) => set({ rows })} hasX result={r} names={names} />
+              <Row label="Empty rows" hint="Rows empty in every column (as the end of a sheet longer than its data): kept, or removed. A 0 is a value, never empty">
+                <Choice<'keep' | 'remove'>
+                  value={data.empty ?? 'keep'}
+                  onChange={(e) => set({ empty: e === 'keep' ? undefined : e })}
+                  options={[
+                    ['keep', 'Kept'],
+                    ['remove', 'Removed'],
+                  ]}
+                />
+              </Row>
+            </Section>
+            <Section value="dup" title="Repeated values" aside={data.dup === 'keep' ? 'kept' : data.dup === 'first' ? 'the first' : 'averaged'}>
+              <Row label="Repeated" hint="Rows with the same value: all kept, only the first, or merged into one (the numbers averaged)">
+                <Choice<FilterData['dup']>
+                  value={data.dup}
+                  onChange={(dup) => set({ dup })}
+                  options={[
+                    ['keep', 'Kept'],
+                    ['first', 'First', 'Only the first of them'],
+                    ['mean', 'Merged', 'Merged into one row, the numbers averaged'],
+                  ]}
+                />
+              </Row>
+              {data.dup !== 'keep' && (
+                <Row label="Values of" hint="The column whose repeated values count; several (a list): rows repeated in all of them together, as the same sample on the same day">
+                  <ColumnsField value={data.dupCol} names={names} auto="the X" hint="The column whose repeated values count" onChange={(dupCol) => set({ dupCol })} />
+                </Row>
+              )}
+            </Section>
+            <Section value="sort" title="Sort" aside={rules.length ? `${rules.length} rule${rules.length > 1 ? 's' : ''}` : 'not sorted'}>
+              <SortRules data={data} names={names} set={set} />
+            </Section>
+            <Section value="keep" title="Keep" aside={data.top ? `${data.topFrom === 'end' ? 'last' : 'first'} ${data.top}` : data.every > 1 ? `1 in ${data.every}` : 'all'}>
+              <Row label="Only the" hint="After sorting: only this many rows, from the top or from the bottom (sorted largest first, the first 5 are the 5 largest values). Empty: all">
+                <Choice<'start' | 'end'>
+                  value={data.topFrom ?? 'start'}
+                  onChange={(topFrom) => set({ topFrom: topFrom === 'start' ? undefined : topFrom })}
+                  options={[
+                    ['start', 'First'],
+                    ['end', 'Last'],
+                  ]}
+                />
+                <NumField value={data.top || NaN} min={0} step={1} placeholder="all" unit="rows" onChange={(top) => set({ top: Math.max(0, Math.floor(top) || 0) || undefined })} />
+              </Row>
+              <Row label="One in every" hint="One row in every N (1: all)">
+                <NumField value={data.every} min={1} step={1} unit="rows" onChange={(every) => set({ every: Math.max(1, Math.floor(every) || 1) })} />
+              </Row>
+            </Section>
+          </Sections>
+        </div>
+        {out?.t === 'dataset' && <DataPreview columns={out.v.columns} rows={5} />}
+        {out?.t === 'workbook' && out.v.sheets[0] && <DataPreview columns={out.v.sheets[0].columns} rows={5} />}
       </NodeOptions>
       <ResultSummary result={r} />
       <Messages result={r} />

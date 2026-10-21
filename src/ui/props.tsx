@@ -184,6 +184,26 @@ export function Choice<T extends string>({ value, onChange, options, full = true
   );
 }
 
+// many choices in words: a list that opens under it (outside the panel, never cut by it)
+export function ListField<T extends string>({ value, onChange, options, label }: { value: T; onChange: (v: T) => void; options: [T, string][]; label?: string }) {
+  const data = options.some(([v]) => v === value) ? options : [[value, value] as [T, string], ...options];
+  // '' (auto, none) kept apart: the list takes it for no value
+  const enc = (v: string) => (v === '' ? '\u0000' : v);
+  return (
+    <Select
+      className="list-field"
+      aria-label={label}
+      value={enc(value)}
+      onChange={(v) => v !== null && onChange((v === '\u0000' ? '' : v) as T)}
+      data={data.map(([v, l]) => ({ value: enc(v), label: l }))}
+      allowDeselect={false}
+      checkIconPosition="right"
+      maxDropdownHeight={280}
+      comboboxProps={{ withinPortal: true }}
+    />
+  );
+}
+
 // many choices as a grid of pictures, each with its name on hover
 export function PictureGrid<T extends string>({ value, onChange, options, cols = 5 }: { value: T; onChange: (v: T) => void; options: [T, ReactNode, string][]; cols?: number }) {
   return (
@@ -225,6 +245,64 @@ export function PicturePick<T extends string>({ value, onChange, options, cols =
             </Tooltip>
           ))}
         </div>
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
+// a width in pt as a button showing it: the usual ones in a list under it (each line drawn as wide), a slider for any
+const PICK_WIDTHS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
+const widthLine = (w: number, len: number) => (
+  <svg width={len} height="10" aria-hidden="true">
+    <line x1="0" y1="5" x2={len} y2="5" stroke="currentColor" strokeWidth={Math.max(0.5, Math.min(w * 1.2, 6))} />
+  </svg>
+);
+export function WidthPick({ value, onChange, max = 6 }: { value: number; onChange: (v: number) => void; max?: number }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover opened={open} onChange={setOpen} position="bottom-start">
+      <Popover.Target>
+        <Tooltip label={`Width: ${value} pt`} disabled={open}>
+          <UnstyledButton className="pic-pick width-pick" onClick={() => setOpen(!open)} aria-label="Width">
+            {widthLine(value, 22)}
+            <span className="pick-value">{+value.toFixed(2)}</span>
+            <ChevronDown size={11} />
+          </UnstyledButton>
+        </Tooltip>
+      </Popover.Target>
+      <Popover.Dropdown p={6} className="width-list">
+        {PICK_WIDTHS.map((w) => (
+          <UnstyledButton key={w} className={`width-item${w === value ? ' on' : ''}`} onClick={() => (onChange(w), setOpen(false))}>
+            {widthLine(w, 48)}
+            <span>{w} pt</span>
+          </UnstyledButton>
+        ))}
+        <div className="width-other">
+          <SliderField value={value} onChange={onChange} min={0} max={max} step={0.05} unit="pt" />
+        </div>
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
+// an opacity (0 … 1) as a button showing it in %, its slider under it
+export function OpacityPick({ value, onChange, label }: { value: number; onChange: (v: number) => void; label: string }) {
+  const [open, setOpen] = useState(false);
+  const pct = Math.round((Number.isFinite(value) ? value : 1) * 100);
+  return (
+    <Popover opened={open} onChange={setOpen} position="bottom-start" width={200}>
+      <Popover.Target>
+        <Tooltip label={`${label}: ${pct}%`} disabled={open}>
+          <UnstyledButton className="pic-pick opacity-pick" onClick={() => setOpen(!open)} aria-label={label}>
+            <span className="opacity-dot" style={{ opacity: Math.max(0.08, pct / 100) }} />
+            <span className="pick-value">{pct}%</span>
+            <ChevronDown size={11} />
+          </UnstyledButton>
+        </Tooltip>
+      </Popover.Target>
+      <Popover.Dropdown p={8}>
+        <Text size="xs" c="dimmed" mb={4}>{label}</Text>
+        <OpacityField value={Number.isFinite(value) ? value : 1} onChange={onChange} />
       </Popover.Dropdown>
     </Popover>
   );

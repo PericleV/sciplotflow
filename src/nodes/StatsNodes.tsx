@@ -11,10 +11,11 @@ import { Field, InPort, Messages, NumInput, OutPort, Select, TextInput } from '.
 import { NodeOptions } from './NodeOptions.tsx';
 import { X } from 'lucide-react';
 import { IC } from './iconProps.ts';
+import { WhereConds } from './RowsPanel.tsx';
 
 const NO_RANGE: RowRange = { from: NaN, to: NaN };
 
-// Rows: all, ranges (by row number or X value; “+ break” adds a range), a list, or a rule.
+// Rows: all, ranges (by row number or X value; “+ break” adds a range), a list, or where (conditions, or a formula).
 export function RowSelectControls({ value, onChange, hasX, result }: { value: RowSelect | undefined; onChange: (v: RowSelect) => void; hasX: boolean; result?: NodeResult }) {
   const v = value ?? { mode: 'all' };
   const ranges = v.ranges?.length ? v.ranges : [NO_RANGE];
@@ -24,16 +25,16 @@ export function RowSelectControls({ value, onChange, hasX, result }: { value: Ro
   return (
     <div className="rowsel">
       <div className="row">
-        <Field label="Rows" title="The rows used: all, ranges, a list, or a rule (a condition)">
+        <Field label="Rows" title="The rows used: all, ranges, a list, or where conditions are true">
           <Select<RowSelect['mode']>
             value={v.mode}
             options={[
               ['all', 'all'],
               ['range', 'range'],
               ['list', 'list'],
-              ['rule', 'rule'],
+              ['rule', 'where'],
             ]}
-            onChange={(mode) => onChange({ ...v, mode })}
+            onChange={(mode) => onChange({ ...v, mode, ...(mode === 'rule' && !v.conds?.length && !v.rule?.trim() ? { conds: [{ col: hasX ? '' : ((result?.view.available ?? [])[0]?.name ?? ''), op: '>', v: NaN }] } : {}) })}
           />
         </Field>
         {v.mode === 'range' && (
@@ -78,11 +79,7 @@ export function RowSelectControls({ value, onChange, hasX, result }: { value: Ro
           <TextInput value={v.list ?? ''} placeholder="3, 7-12, 50-end" onChange={(list) => onChange({ ...v, list })} />
         </Field>
       )}
-      {v.mode === 'rule' && (
-        <Field label="Where" title={`A condition, true on the rows used: ${hasX ? 'x (the X column), ' : ''}the columns A, B, C … (their letters), i (the row, 1 … n), n; < > <= >= == !=, and, or, not, mod, isnan …`}>
-          <TextInput value={v.rule ?? ''} placeholder={hasX ? 'x >= 500 and x <= 600' : 'mod(i, 2) == 0'} onChange={(rule) => onChange({ ...v, rule })} />
-        </Field>
-      )}
+      {v.mode === 'rule' && <WhereConds value={v} onChange={onChange} names={(result?.view.available ?? []).map((c) => c.name)} hasX={hasX} />}
       {sr && v.mode !== 'all' && (
         <div className="hint ellipsis">
           {sr.used} of {sr.of} rows{sr.text ? `: ${sr.text}` : ''}

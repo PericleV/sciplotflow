@@ -38,6 +38,8 @@ export type FilterData = {
   top?: number;
   topFrom?: 'start' | 'end';
   every: number; // one row in every N (1: all)
+  // the rows empty in every column: kept (absent) or removed
+  empty?: 'keep' | 'remove';
 };
 // the sort keys of a filter (an older project: its one column)
 export const sortKeysOf = (d: Pick<FilterData, 'sorts' | 'sortBy' | 'desc'>): SortKey[] => d.sorts ?? (d.sortBy ? [{ col: d.sortBy, desc: d.desc }] : []);
@@ -100,12 +102,18 @@ function applySortRule(cols: Column[], r: SortRule): { cols: Column[]; text: str
   const which = whole ? 'rows' : moved.map((j) => cols[j].name).join(', ');
   const out = [...cols];
   if (r.how === 'reverse') {
+    // the rows with data reversed; the empty rows after them (a sheet longer than its data) stay at the end
+    const filled = (cs: Column[]) => {
+      let k = len(cs);
+      while (k > 0 && cs.every((c) => !(k - 1 < c.values.length && Number.isFinite(c.values[k - 1])) && !c.text?.[k - 1]?.trim())) k--;
+      return k;
+    };
+    const order = (m: number, total: number) => [...Array.from({ length: m }, (_, i) => m - 1 - i), ...Array.from({ length: total - m }, (_, i) => m + i)];
     if (whole) {
-      const n = len(cols);
-      const idx = Array.from({ length: n }, (_, i) => n - 1 - i);
+      const idx = order(filled(cols), len(cols));
       return { cols: cols.map((c) => reordered(c, idx)), text: 'the rows reversed' };
     }
-    for (const j of moved) out[j] = reordered(cols[j], Array.from({ length: cols[j].values.length }, (_, i) => cols[j].values.length - 1 - i));
+    for (const j of moved) out[j] = reordered(cols[j], order(filled([cols[j]]), cols[j].values.length));
     return { cols: out, text: `${which} reversed` };
   }
   if (r.how === 'own') {
@@ -133,6 +141,15 @@ export function filterRows(ds: Dataset, d: FilterData): { dataset: Dataset; repo
   let cols = takeRows(ds, rows);
   const steps: string[] = [];
   if (sel.text) steps.push(`kept ${sel.text}`);
+  // the rows empty in every column removed
+  if (d.empty === 'remove') {
+    const keep = rows.map((_, k) => k).filter((k) => cols.some((c) => Number.isFinite(c.values[k]) || !!c.text?.[k]?.trim()));
+    if (keep.length < rows.length) {
+      steps.push(`${rows.length - keep.length} empty row${rows.length - keep.length > 1 ? 's' : ''} removed`);
+      rows = keep.map((k) => rows[k]);
+      cols = cols.map((c) => reordered(c, keep));
+    }
+  }
   // duplicates
   if (d.dup !== 'keep') {
     // repeated in one column, or in several together (a list: the same sample on the same day)

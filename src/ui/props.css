@@ -47,6 +47,13 @@
 :is(.props-panel, body) .pic.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--input)); color: color-mix(in srgb, var(--accent) 70%, var(--text)); }
 :is(.props-panel, body) .pic-pick { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--input); color: var(--text); }
 :is(.props-panel, body) .pic-pick:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+:is(.props-panel, body) .pick-value { font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.opacity-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--text); }
+.width-list { display: flex; flex-direction: column; gap: 1px; min-width: 150px; }
+:is(.props-panel, body) .width-item { display: flex; align-items: center; gap: 10px; padding: 3px 8px; border-radius: 5px; color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; }
+:is(.props-panel, body) .width-item:hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
+:is(.props-panel, body) .width-item.on { background: color-mix(in srgb, var(--accent) 14%, transparent); font-weight: 600; }
+.width-other { border-top: 1px solid var(--border); margin-top: 4px; padding: 6px 4px 0; }
 .seg-label { display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
 .mantine-SegmentedControl-root { background: var(--input); }
 
@@ -163,3 +170,20 @@
 .mantine-SegmentedControl-label:not([data-active]):hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .mantine-SegmentedControl-label[data-active] { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--border), 0 1px 2px rgb(0 0 0 / 0.1); }
 [data-mantine-color-scheme='dark'] .mantine-SegmentedControl-label[data-active] { background: color-mix(in srgb, var(--text) 12%, var(--panel)); }
+
+/* the rows: where conditions, ranges, the sort rules (Filter & sort rows, statistics) */
+.where { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; align-items: stretch; }
+.where > .mantine-Button-root { align-self: flex-start; }
+.where-cond { display: flex; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid var(--border); border-radius: 6px; background: color-mix(in srgb, var(--text) 3%, transparent); }
+.where-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.where-line > .list-field, .where-line > .num-field { flex: 1; min-width: 0; }
+.where-word { flex: none; width: 38px; color: var(--muted); font-size: 11.5px; }
+.where-line > .where-word + .num-field { flex: 1; }
+.where-op { flex: none; width: 104px; }
+.where-cond .where-line:last-child { padding-left: 44px; }
+.range-line { display: flex; align-items: center; gap: 6px; }
+.range-line > .num-field { flex: 1; min-width: 0; }
+.rows-count { margin-top: 8px; }
+.sort-card { display: flex; flex-direction: column; padding: 4px 8px 8px; margin-bottom: 8px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 6px; }
+.sort-card-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
+.prop-ctl > .mantine-Button-root, .prop-ctl > .mantine-Tooltip-root { align-self: flex-start; }
