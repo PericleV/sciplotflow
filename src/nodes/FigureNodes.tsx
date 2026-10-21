@@ -9,7 +9,8 @@ import { curvesByRole, titleOf } from '../engine/table.ts';
 import type { ColInfo } from '../engine/evaluate.ts';
 import { CMAP_OPTIONS, PALETTES } from '../figure/colors.ts';
 import type { ColorMapName } from '../figure/spec.ts';
-import { curveStyle, type Curve, type CurveStyle, type PanelScheme } from '../figure/spec.ts';
+import { axesStyle, curveStyle, type Curve, type CurveStyle, type PanelScheme, type Side } from '../figure/spec.ts';
+import { addAxis, axisChoices } from '../figure/multiAxes.ts';
 import { CANVAS_LAYOUT_DEFAULTS, PLOT_PAGE_DEFAULTS } from '../defaults.ts';
 import type { AppNode, CanvasData, CanvasItem, CanvasLayout, CanvasNode, CurveCols, CurveRow, PageData, Plot1DData, Plot1DNode, PlotPage } from '../types.ts';
 import { nodeDisplayName } from '../nodeColors.ts';
@@ -107,6 +108,23 @@ export function Plot1DNodeView({ id, data }: NodeProps<Plot1DNode>) {
     if (m && !byRow.has(Number(m[1]))) byRow.set(Number(m[1]), c);
   }
   const connected = (h: string) => conns.some((c) => c.targetHandle === h);
+  // a curve put on an axis (its id), or on a new one ('+right', '+left', '+top', '+bottom'; the right / top axis made
+  // its own when it only mirrored): the curve and the axes changed at once
+  const pickAxis = (k: number, kind: 'x' | 'y', v: string) => {
+    const st = axesStyle(data.axes);
+    const side = v.startsWith('+') ? (v.slice(1) as Side) : (v === 'right' || v === 'top') && st[v].mode === 'mirror' ? v : null;
+    const made = side ? addAxis(st, side) : null;
+    const all = plotRows(data, Math.max(count, k + 1));
+    const key = kind === 'x' ? 'axisX' : 'axisY';
+    const style = { ...all[k].style, [key]: made ? made.id : v };
+    // the axis it left stays (removed only in Axes)
+    const axes = made ? { axes: made.st } : {};
+    if (k === 0) updateNodeData(id, { style, ...axes } as Partial<Plot1DData>);
+    else updateNodeData(id, { rows: all.slice(1).map((r, j) => (j === k - 1 ? { ...r, style } : r)), ...axes } as Partial<Plot1DData>);
+  };
+  const axesSt = axesStyle(data.axes);
+  const yChoices: [string, string][] = [...axisChoices(axesSt, 'y'), ['+right', '+ new Y right'], ['+left', '+ new Y left']];
+  const xChoices: [string, string][] = [...axisChoices(axesSt, 'x'), ['+top', '+ new X top'], ['+bottom', '+ new X bottom']];
   const setRow = (k: number, patch: Partial<CurveRow>) => {
     if (k === 0) {
       updateNodeData(id, patch as Partial<Plot1DData>);
@@ -402,6 +420,10 @@ export function Plot1DNodeView({ id, data }: NodeProps<Plot1DNode>) {
                 <span className="grow">
                   <RichInput value={row.label} placeholder={c?.series.y.name || 'legend text'} onChange={(label) => setRow(k, { label })} />
                 </span>
+                <span className="curve-axes">
+                  <Select<string> value={st.axisY} options={yChoices} title="Its Y axis (a new one: its own scale, coloured as the curve; its look in Axes)" onChange={(v) => pickAxis(k, 'y', v)} />
+                  <Select<string> value={st.axisX} options={xChoices} title="Its X axis (a new one: its own scale; its look in Axes)" onChange={(v) => pickAxis(k, 'x', v)} />
+                </span>
                 <button className="nodrag ts-btn" title="Copy this curve's style" onClick={() => copyCurveStyle(row.style)}>
                   <Copy {...IC} />
                 </button>
@@ -466,7 +488,7 @@ export function Plot1DNodeView({ id, data }: NodeProps<Plot1DNode>) {
                   }}
                 />
               )}
-              {open === k && <CurveStyleEditor st={st} set={setStyle} hasYErr={!!c?.series.yErr} hasXErr={!!c?.series.xErr} curves={rows.flatMap((q, j): [number, string][] => (j !== k && (q.cols?.y || byRow.get(j)) ? [[j + 1, `${j + 1}. ${q.label || q.cols?.y || byRow.get(j)?.series.y.name || ''}`]] : []))} placing={placing === k} onPlace={() => {
+              {open === k && <CurveStyleEditor st={st} set={setStyle} axes={{ x: xChoices, y: yChoices, pick: (kind, v) => pickAxis(k, kind, v) }} hasYErr={!!c?.series.yErr} hasXErr={!!c?.series.xErr} curves={rows.flatMap((q, j): [number, string][] => (j !== k && (q.cols?.y || byRow.get(j)) ? [[j + 1, `${j + 1}. ${q.label || q.cols?.y || byRow.get(j)?.series.y.name || ''}`]] : []))} placing={placing === k} onPlace={() => {
                     setPlacing(placing === k ? null : k);
                     setQfPlace(null);
                   }} />}
@@ -848,7 +870,7 @@ export function CanvasNodeView({ id, data }: NodeProps<CanvasNode>) {
           )}
         </>
       )}
-      {tab === 'annotate' && <AnnotationsEditor items={data.annotations} where="page" node={id} onChange={(annotations) => set({ annotations })} />}
+      {tab === 'annotate' && <AnnotationsEditor items={data.annotations} where="page" node={id} page={page} onChange={(annotations) => set({ annotations })} />}
       <Messages result={r} />
       </NodeOptions>
       <Messages result={r} />

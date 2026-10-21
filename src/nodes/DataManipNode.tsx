@@ -21,6 +21,7 @@ import { Maximize2, Move, Plus, SquareDashedMousePointer, X } from 'lucide-react
 import { IC } from './iconProps.ts';
 import { ReaderButton, ReaderLayer, ReaderOptions, type ReaderProp } from './CanvasReader.tsx';
 import { READER_OFF, type ReaderState } from './readerState.ts';
+import { ask, notify } from '../ui/dialogStore.ts';
 
 type Tool = 'select' | 'move' | 'add';
 type Box = { x0: number; x1: number; y0: number; y1: number };
@@ -408,7 +409,7 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
     }
     return null;
   })();
-  const applyToImport = () => {
+  const applyToImport = async () => {
     if (!m || !source || source.type !== 'import') return;
     const res = engine.results.get(source.id);
     const map = res?.view.sheet;
@@ -425,8 +426,8 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
       if (cy >= 0 && m.y[i] !== ds.columns[cy].values[i]) cells[`${map.rows[i]}:${map.cols[cy]}`] = String(m.y[i]);
     }
     const nCells = Object.keys(cells).length;
-    if (!deleted.size && !nCells) return alert('Nothing to write: masks stay in this node (the Import has no masks).');
-    if (!confirm(`Write into the worksheet of “${source.data.name || source.data.fileName || 'Import'}”: ${deleted.size} deleted row${deleted.size === 1 ? '' : 's'} and ${nCells} changed value${nCells === 1 ? '' : 's'}? (There they can be undone: Undo all changes, or Ctrl+Z.) The masks stay in this node.`)) return;
+    if (!deleted.size && !nCells) return notify('Nothing to write: masks stay in this node (the Import has no masks).');
+    if (!(await ask(`Write into the worksheet of “${source.data.name || source.data.fileName || 'Import'}”: ${deleted.size} deleted row${deleted.size === 1 ? '' : 's'} and ${nCells} changed value${nCells === 1 ? '' : 's'}? (There they can be undone: Undo all changes, or Ctrl+Z.) The masks stay in this node.`, { ok: 'Write' }))) return;
     const d0 = source.data as ImportData;
     const sheet = d0.sheets?.length ? d0.sheets[Math.min(d0.sheets.length - 1, Math.max(0, d0.sheet ?? 0))].name : null;
     const e0 = (sheet ? d0.sheetEdits?.[sheet] : d0.edits) ?? {};
@@ -643,7 +644,7 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
             ))}
             <div className="row wrap">
               {data.ops.length > 0 && (
-                <button className="nodrag" onClick={() => confirm('Undo every operation of this node?') && set({ ops: [] })}>
+                <button className="nodrag" onClick={() => void ask('Undo every operation of this node?', { ok: 'Undo all', danger: true }).then((yes) => yes && set({ ops: [] }))}>
                   Clear all
                 </button>
               )}

@@ -1,496 +1,486 @@
-// The style editor of one curve of a Plot (in tabs), and the palette picker.
+// The style editor of one curve of a Plot (in tabs: line and fill, symbols, errors, colour map, labels and axes).
 import { useState, type ReactNode } from 'react';
+import { Button, Select as MSelect, TextInput as MTextInput } from '@mantine/core';
+import { MousePointerClick } from 'lucide-react';
 import { CMAP_OPTIONS } from '../figure/colors.ts';
-import { PALETTE, type ArrowHead, type CurveStyle, type Hatch } from '../figure/spec.ts';
-import { DASHES, HATCHES, HEADS, SYMBOLS } from './figureOptions.ts';
-import { OptColor, Tabs, TextStyleControls } from './fields.tsx';
-import { HatchMore } from './HatchMore.tsx';
-import { Check, Field, NumInput, Select, TextInput } from './ui.tsx';
+import type { ArrowHead, CurveStyle, Hatch, SymbolShape } from '../figure/spec.ts';
+import { HATCHES, SYMBOLS } from './figureOptions.ts';
+import { Tabs } from './fields.tsx';
+import { AutoSlider, Choice, ColorField, NumField, NumPair, OpacityField, PictureGrid, PicturePick, Row, Section, Sections, SliderField, TextStyleRows, Toggle, WidthField } from '../ui/props.tsx';
+import { CapIcon, HeadIcon, JoinIcon, SymbolIcon } from '../ui/propIcons.tsx';
+import { DASH_PICS } from '../ui/dashPics.tsx';
+import { HatchRows } from '../ui/HatchRows.tsx';
 
-export function ColorPick({ value, onChange }: { value: string; onChange: (c: string) => void }) {
-  return (
-    <span className="color-pick">
-      {PALETTE.map((c) => (
-        <button key={c} className={`nodrag swatch-btn${c.toLowerCase() === value.toLowerCase() ? ' on' : ''}`} style={{ background: c }} title={c} onClick={() => onChange(c)} />
-      ))}
-      <input className="nodrag color" type="color" value={value} title="Any colour" onChange={(e) => onChange(e.target.value)} />
-    </span>
-  );
-}
+const HEADS: ArrowHead[] = ['none', 'triangle', 'stealth', 'open', 'bar', 'circle', 'diamond', 'square', 'half'];
+const headPics = (start: boolean) => HEADS.map((h): [ArrowHead, ReactNode, string] => [h, <HeadIcon key={h} head={h} start={start} />, h]);
+const SYMBOL_PICS = SYMBOLS.map(([s, n]): [SymbolShape, ReactNode, string] => [s, <SymbolIcon key={s} shape={s} />, n.replace(/^\S+\s/, '')]);
+// the sources of a size or a width from the data
+const BY: { value: NonNullable<CurveStyle['widthBy']>; label: string }[] = [
+  { value: 'none', label: 'No' },
+  { value: 'index', label: 'Position (row)' },
+  { value: 'x', label: 'x value' },
+  { value: 'y', label: 'y value' },
+  { value: 'column', label: 'A column (port size)' },
+];
+// keys pressed in the panel are its own
+const ownKeys = (e: React.KeyboardEvent) => {
+  if (!e.ctrlKey && !e.metaKey && !e.altKey) e.stopPropagation();
+};
 
 // The style editor of one curve, in tabs.
 // curves: the other curves of the Plot (number, name), for a fill down to one of them; placing / onPlace: the fill points
 // placed with the mouse on the figure; noErrors: no Errors tab (a quick fit's curve: its band set with the fit)
-export function CurveStyleEditor({ st, set, hasYErr, hasXErr, curves = [], placing = false, onPlace, noErrors = false }: { st: CurveStyle; set: (p: Partial<CurveStyle>) => void; hasYErr: boolean; hasXErr: boolean; curves?: [number, string][]; placing?: boolean; onPlace?: () => void; noErrors?: boolean }) {
+// axes: the Plot's axes a curve can be on (and new ones), chosen as in the curve's row (an axis made); without it, a
+// fixed list
+export function CurveStyleEditor({ st, set, hasYErr, hasXErr, curves = [], placing = false, onPlace, noErrors = false, axes }: { st: CurveStyle; set: (p: Partial<CurveStyle>) => void; hasYErr: boolean; hasXErr: boolean; curves?: [number, string][]; placing?: boolean; onPlace?: () => void; noErrors?: boolean; axes?: { x: [string, string][]; y: [string, string][]; pick: (kind: 'x' | 'y', v: string) => void } }) {
   const [tab, setTab] = useState<'line' | 'symbol' | 'errors' | 'colour' | 'more'>('line');
   const line = st.mode !== 'scatter';
   const symbols = st.mode === 'scatter' || st.mode === 'linesymbol';
   const num = (v: number, min = 0) => Math.max(min, Number.isFinite(v) ? v : min);
-  // the sources of a size or a width from the data
-  const BY: [NonNullable<CurveStyle['widthBy']>, string][] = [
-    ['none', 'no'],
-    ['index', 'position (row)'],
-    ['x', 'x value'],
-    ['y', 'y value'],
-    ['column', 'a column (port size)'],
-  ];
   let body: ReactNode;
   if (tab === 'line')
     body = (
-      <>
-        <div className="grid2">
-          <Field label="Style">
-            <Select
+      <Sections panel="curve-line" open={['line', 'fill']}>
+        <Section value="line" title="Line" aside={line ? `${st.lineWidth} pt` : 'none'}>
+          <Row label="Style">
+            <Choice
               value={st.mode}
-              options={[
-                ['line', 'line'],
-                ['scatter', 'scatter'],
-                ['linesymbol', 'line + symbols'],
-                ['step', 'steps'],
-              ]}
               onChange={(mode) => set({ mode })}
+              options={[
+                ['line', 'Line'],
+                ['scatter', 'Points'],
+                ['linesymbol', 'Both', 'Line and symbols'],
+                ['step', 'Steps'],
+              ]}
             />
-          </Field>
+          </Row>
           {st.mode === 'step' ? (
-            <Field label="Steps">
-              <Select
+            <Row label="Steps">
+              <Choice
                 value={st.stepKind}
-                options={[
-                  ['hv', 'across, then up'],
-                  ['vh', 'up, then across'],
-                  ['mid', 'centred'],
-                ]}
                 onChange={(stepKind) => set({ stepKind })}
+                options={[
+                  ['hv', 'Across, up'],
+                  ['vh', 'Up, across'],
+                  ['mid', 'Centred'],
+                ]}
               />
-            </Field>
+            </Row>
           ) : (
             line && (
-              <Field label="Connect" title="Straight lines between the points, or a smooth curve through them (monotone where x is ordered: no overshoot)">
-                <Select
+              <Row label="Connect" hint="Straight lines between the points, or a smooth curve through them (monotone where x is ordered: no overshoot)">
+                <Choice
                   value={st.connect}
-                  options={[
-                    ['straight', 'straight'],
-                    ['spline', 'smooth spline'],
-                  ]}
                   onChange={(connect) => set({ connect })}
+                  options={[
+                    ['straight', 'Straight'],
+                    ['spline', 'Smooth'],
+                  ]}
                 />
-              </Field>
+              </Row>
             )
           )}
-        </div>
-        <Field label="Colour">
-          <ColorPick value={st.color} onChange={(color) => set({ color })} />
-        </Field>
-        {line && (
-          <div className="grid2">
-            <Field label="Width" title="pt">
-              <NumInput className="tiny" min={0} step={0.25} value={st.lineWidth} onChange={(v) => set({ lineWidth: num(v) })} />
-            </Field>
-            <Field label="Dash">
-              <Select value={st.dash} options={DASHES} onChange={(dash) => set({ dash })} />
-            </Field>
-            <Field label="Opacity" title="0 … 1">
-              <NumInput className="tiny" min={0} max={1} step={0.05} value={st.lineOpacity} onChange={(v) => set({ lineOpacity: Math.min(1, num(v)) })} />
-            </Field>
-            <Field label="Ends, corners" title="The line's ends (butt, round, square) and how its pieces meet (sharp, round, cut)">
-              <span className="row">
-                <Select<NonNullable<CurveStyle['lineCap']>>
+          <Row label="Colour">
+            <ColorField value={st.color} onChange={(color) => set({ color: color || '#000000' })} />
+          </Row>
+          {line && (
+            <>
+              <Row label="Width">
+                <WidthField value={st.lineWidth} onChange={(v) => set({ lineWidth: num(v) })} />
+              </Row>
+              <Row label="Dashes">
+                <PictureGrid value={st.dash} onChange={(dash) => set({ dash })} options={DASH_PICS} cols={4} />
+              </Row>
+              <Row label="Opacity">
+                <OpacityField value={st.lineOpacity} onChange={(v) => set({ lineOpacity: Math.min(1, num(v)) })} />
+              </Row>
+              <Row label="Ends" hint="The line's ends">
+                <Choice<NonNullable<CurveStyle['lineCap']>>
                   value={st.lineCap ?? (st.dash === 'dot' ? 'round' : 'butt')}
-                  options={[
-                    ['butt', 'flat'],
-                    ['round', 'round'],
-                    ['square', 'square'],
-                  ]}
                   onChange={(lineCap) => set({ lineCap })}
+                  options={[
+                    ['butt', <span key="butt" className="seg-pic"><CapIcon cap="butt" />Flat</span>, 'The line stops at its end'],
+                    ['round', <span key="round" className="seg-pic"><CapIcon cap="round" />Round</span>, 'A half circle past its end'],
+                    ['square', <span key="square" className="seg-pic"><CapIcon cap="square" />Square</span>, 'Half its width past its end'],
+                  ]}
                 />
-                <Select<NonNullable<CurveStyle['lineJoin']>>
+              </Row>
+              <Row label="Joins" hint="How its pieces meet">
+                <Choice<NonNullable<CurveStyle['lineJoin']>>
                   value={st.lineJoin ?? 'round'}
-                  options={[
-                    ['round', 'round'],
-                    ['miter', 'sharp'],
-                    ['bevel', 'cut'],
-                  ]}
                   onChange={(lineJoin) => set({ lineJoin })}
-                />
-              </span>
-            </Field>
-            <Field label="Halo" title="A band around the line (pt each side; 0: none) in its colour: the line reads over other curves">
-              <span className="row">
-                <NumInput className="tiny" min={0} step={0.5} value={st.halo ?? 0} onChange={(v) => set({ halo: num(v) || undefined })} />
-                {(st.halo ?? 0) > 0 && <input className="nodrag color" type="color" value={st.haloColor || '#ffffff'} onChange={(e) => set({ haloColor: e.target.value })} />}
-              </span>
-            </Field>
-            <Field label="Heads" title="Arrow heads at the curve's start and end, and their size (pt; empty: from the line width)">
-              <span className="row">
-                <Select<ArrowHead> value={st.arrowStart ?? 'none'} title="At the start" options={HEADS} onChange={(arrowStart) => set({ arrowStart })} />
-                <Select<ArrowHead> value={st.arrowEnd ?? 'none'} title="At the end" options={HEADS} onChange={(arrowEnd) => set({ arrowEnd })} />
-                {((st.arrowStart ?? 'none') !== 'none' || (st.arrowEnd ?? 'none') !== 'none') && <NumInput className="tiny" min={1} step={0.5} value={st.arrowSize ?? NaN} placeholder="auto" onChange={(v) => set({ arrowSize: v > 0 ? v : undefined })} />}
-              </span>
-            </Field>
-            <Field label="Drop lines" title="Lines from every point to the bottom (vertical) or left (horizontal) axis">
-              <Select
-                value={st.drop}
-                options={[
-                  ['none', 'none'],
-                  ['vertical', 'vertical'],
-                  ['horizontal', 'horizontal'],
-                ]}
-                onChange={(drop) => set({ drop })}
-              />
-            </Field>
-            <Field label="Width from data" title="The line's width follows a value (the points' row, x, y, or a column on the port “size”), from the thinnest to the widest, pt">
-              <span className="row">
-                <Select value={st.widthBy ?? 'none'} options={BY} onChange={(widthBy) => set({ widthBy })} />
-                {(st.widthBy ?? 'none') !== 'none' && (
-                  <>
-                    <NumInput className="tiny" min={0} step={0.25} value={st.widthMin ?? 0.5} onChange={(v) => set({ widthMin: num(v) })} />–
-                    <NumInput className="tiny" min={0} step={0.25} value={st.widthMax ?? 3} onChange={(v) => set({ widthMax: num(v) })} />
-                  </>
-                )}
-              </span>
-            </Field>
-            {st.mode === 'linesymbol' && (
-              <Field label="Line and symbols" title="The line drawn under the symbols or over them">
-                <Select
-                  value={st.lineOver ? 'over' : 'under'}
                   options={[
-                    ['under', 'line behind'],
-                    ['over', 'line in front'],
+                    ['round', <span key="round" className="seg-pic"><JoinIcon join="round" />Round</span>, 'A rounded corner'],
+                    ['miter', <span key="miter" className="seg-pic"><JoinIcon join="miter" />Sharp</span>, 'A pointed corner'],
+                    ['bevel', <span key="bevel" className="seg-pic"><JoinIcon join="bevel" />Cut</span>, 'The corner cut off'],
                   ]}
-                  onChange={(v) => set({ lineOver: v === 'over' || undefined })}
                 />
-              </Field>
-            )}
-            {st.mode === 'linesymbol' && (
-              <Field label="Gap at symbols" title="The line stops this far (pt) from the edge of every symbol; 0: it reaches them">
-                <NumInput className="tiny" min={0} step={0.25} value={st.symbolGap ?? 0} onChange={(v) => set({ symbolGap: num(v) || undefined })} />
-              </Field>
-            )}
-          </div>
-        )}
-        <div className="grid2">
-          <Field label="Fill under" title="The area between the curve and y = 0, the bottom of the frame, a line y = f(x), another curve of this Plot (e.g. its baseline), or straight lines through points">
-            <Select
-              value={st.fill}
+              </Row>
+              <Row label="Halo" hint="A band around the line (each side; 0: none) in a colour of its own: the line reads over other curves">
+                <SliderField value={st.halo ?? 0} onChange={(v) => set({ halo: num(v) || undefined })} min={0} max={6} step={0.25} unit="pt" />
+                {(st.halo ?? 0) > 0 && <ColorField value={st.haloColor ?? ''} auto="#ffffff" onChange={(haloColor) => set({ haloColor: haloColor || undefined })} />}
+              </Row>
+              <Row label="Heads" hint="Arrow heads at the curve's start and end">
+                <div className="prop-btns">
+                  <PicturePick label="Head at the start" value={st.arrowStart ?? 'none'} onChange={(arrowStart) => set({ arrowStart })} options={headPics(true)} cols={3} />
+                  <PicturePick label="Head at the end" value={st.arrowEnd ?? 'none'} onChange={(arrowEnd) => set({ arrowEnd })} options={headPics(false)} cols={3} />
+                </div>
+              </Row>
+              {((st.arrowStart ?? 'none') !== 'none' || (st.arrowEnd ?? 'none') !== 'none') && (
+                <Row label="Head size" hint="auto: from the line's width">
+                  <AutoSlider value={st.arrowSize} def={undefined} onChange={(v) => set({ arrowSize: v !== undefined && v > 0 ? v : undefined })} min={1} max={15} step={0.5} unit="pt" />
+                </Row>
+              )}
+              <Row label="Drop lines" hint="Lines from every point to the bottom (vertical) or left (horizontal) axis">
+                <Choice
+                  value={st.drop}
+                  onChange={(drop) => set({ drop })}
+                  options={[
+                    ['none', 'None'],
+                    ['vertical', 'Down'],
+                    ['horizontal', 'Across'],
+                  ]}
+                />
+              </Row>
+              <Row label="Width from" hint="The line's width follows a value (the points' row, x, y, or a column on the port “size”), from the thinnest to the widest">
+                <MSelect value={st.widthBy ?? 'none'} data={BY} onChange={(v) => v && set({ widthBy: v as NonNullable<CurveStyle['widthBy']> })} />
+              </Row>
+              {(st.widthBy ?? 'none') !== 'none' && (
+                <>
+                  <Row label="Thinnest">
+                    <SliderField value={st.widthMin ?? 0.5} onChange={(v) => set({ widthMin: num(v) })} min={0} max={10} step={0.25} unit="pt" />
+                  </Row>
+                  <Row label="Widest">
+                    <SliderField value={st.widthMax ?? 3} onChange={(v) => set({ widthMax: num(v) })} min={0} max={10} step={0.25} unit="pt" />
+                  </Row>
+                </>
+              )}
+              {st.mode === 'linesymbol' && (
+                <>
+                  <Row label="Line is" hint="The line drawn under the symbols or over them">
+                    <Choice
+                      value={st.lineOver ? 'over' : 'under'}
+                      onChange={(v) => set({ lineOver: v === 'over' || undefined })}
+                      options={[
+                        ['under', 'Behind'],
+                        ['over', 'In front'],
+                      ]}
+                    />
+                  </Row>
+                  <Row label="Gap at symbols" hint="The line stops this far from the edge of every symbol; 0: it reaches them">
+                    <SliderField value={st.symbolGap ?? 0} onChange={(v) => set({ symbolGap: num(v) || undefined })} min={0} max={5} step={0.25} unit="pt" />
+                  </Row>
+                </>
+              )}
+            </>
+          )}
+          <Row label="Masked points" hint="Points masked in a Data manipulation node: drawn grey, or not drawn (the line goes on past them)">
+            <Choice
+              value={st.masked}
+              onChange={(masked) => set({ masked })}
               options={[
-                ['none', 'none'],
-                ['zero', 'down to y = 0'],
-                ['bottom', 'down to the frame'],
-                ['formula', 'to y = f(x)'],
-                ['curve', 'to another curve'],
-                ['points', 'to points'],
+                ['faded', 'Grey'],
+                ['hidden', 'Hidden'],
               ]}
-              onChange={(fill) => set({ fill })}
             />
-          </Field>
+          </Row>
+        </Section>
+        <Section value="fill" title="Fill under" aside={st.fill === 'none' ? 'none' : undefined}>
+          <Row label="Fill" hint="The area between the curve and y = 0, the bottom of the frame, a line y = f(x), another curve of this Plot (e.g. its baseline), or straight lines through points">
+            <MSelect
+              value={st.fill}
+              onChange={(v) => v && set({ fill: v as CurveStyle['fill'] })}
+              data={[
+                { value: 'none', label: 'None' },
+                { value: 'zero', label: 'Down to y = 0' },
+                { value: 'bottom', label: 'Down to the frame' },
+                { value: 'formula', label: 'To y = f(x)' },
+                { value: 'curve', label: 'To another curve' },
+                { value: 'points', label: 'To points' },
+              ]}
+            />
+          </Row>
           {st.fill === 'formula' && (
-            <Field label="y =" title="A number (y = 0.2) or a formula of x (0.1 + 0.002*x)">
-              <TextInput className="mono" value={st.fillFormula} placeholder="0.1 + 0.002*x" onChange={(fillFormula) => set({ fillFormula })} />
-            </Field>
+            <Row label="y =" hint="A number (y = 0.2) or a formula of x (0.1 + 0.002*x)">
+              <MTextInput className="mono-input" value={st.fillFormula} placeholder="0.1 + 0.002*x" onChange={(e) => set({ fillFormula: e.currentTarget.value })} />
+            </Row>
           )}
           {st.fill === 'curve' && (
-            <Field label="To curve" title="Another curve of this Plot, e.g. the baseline (between its points straight lines); it may be hidden">
-              <Select value={st.fillCurve} options={curves.length ? curves : [[st.fillCurve, String(st.fillCurve)]]} onChange={(fillCurve) => set({ fillCurve })} />
-            </Field>
+            <Row label="To curve" hint="Another curve of this Plot, e.g. the baseline (between its points straight lines); it may be hidden">
+              <MSelect
+                value={String(st.fillCurve)}
+                onChange={(v) => v && set({ fillCurve: Number(v) })}
+                data={(curves.length ? curves : ([[st.fillCurve, String(st.fillCurve)]] as [number, string][])).map(([n, l]) => ({ value: String(n), label: l }))}
+              />
+            </Row>
           )}
           {st.fill === 'points' && (
-            <Field label="Points" title="Placed on the figure with the mouse (click: a point, drag: move, double-click: remove), or typed: x, y; x, y … — joined by straight lines">
-              <span className="row">
-                <button className={`nodrag${placing ? ' on' : ''}`} title="Click on the figure to place the points (again: stop)" onClick={onPlace}>
-                  {placing ? '✓ Placing' : 'Place on the graph'}
-                </button>
-                <TextInput className="mono" value={st.fillPoints} placeholder="x, y; x, y …" onChange={(fillPoints) => set({ fillPoints })} />
-              </span>
-            </Field>
-          )}
-          <Field label="Masked points" title="Points masked in a Data manipulation node: drawn grey, or not drawn (the line goes on past them)">
-            <Select
-              value={st.masked}
-              options={[
-                ['faded', 'grey'],
-                ['hidden', 'hidden'],
-              ]}
-              onChange={(masked) => set({ masked })}
-            />
-          </Field>
-          {st.fill !== 'none' && (
-            <Field label="Fill colour, opacity">
-              <span className="row">
-                <OptColor value={st.fillColor} none="curve" onChange={(fillColor) => set({ fillColor })} />
-                <NumInput className="tiny" min={0} max={1} step={0.05} value={st.fillOpacity} onChange={(v) => set({ fillOpacity: Math.min(1, num(v)) })} />
-              </span>
-            </Field>
+            <Row label="Points" hint="Placed on the figure with the mouse (click: a point, drag: move, double-click: remove), or typed: x, y; x, y … joined by straight lines">
+              <Button variant={placing ? 'filled' : 'default'} leftSection={<MousePointerClick size={13} />} onClick={onPlace} title="Click on the figure to place the points (again: stop)">
+                {placing ? 'Placing: click to stop' : 'Place on the graph'}
+              </Button>
+              <MTextInput className="mono-input" value={st.fillPoints} placeholder="x, y; x, y …" onChange={(e) => set({ fillPoints: e.currentTarget.value })} />
+            </Row>
           )}
           {st.fill !== 'none' && (
-            <Field label="Fill hatching" title="A hatching over the fill: its kind and colour (⋯ more)">
-              <span className="row wrap">
-                <Select<Hatch> value={st.fillHatch ?? 'none'} options={HATCHES} onChange={(fillHatch) => set({ fillHatch })} />
-                {st.fillHatch && st.fillHatch !== 'none' && <OptColor value={st.fillHatchColor ?? ''} none="curve" onChange={(fillHatchColor) => set({ fillHatchColor })} />}
-                {st.fillHatch && <HatchMore h={st.fillHatch} look={st.fillHatchLook} onChange={(fillHatchLook) => set({ fillHatchLook })} />}
-              </span>
-            </Field>
+            <>
+              <Row label="Colour" hint="auto: the curve's colour">
+                <ColorField value={st.fillColor} auto={st.color} onChange={(fillColor) => set({ fillColor })} />
+              </Row>
+              <Row label="Opacity">
+                <OpacityField value={st.fillOpacity} onChange={(v) => set({ fillOpacity: Math.min(1, num(v)) })} />
+              </Row>
+              <Row label="Hatching" hint="A hatching over the fill">
+                <MSelect value={st.fillHatch ?? 'none'} data={HATCHES.map(([v, l]) => ({ value: v, label: l }))} onChange={(h) => h && set({ fillHatch: h as Hatch })} />
+              </Row>
+              {st.fillHatch && st.fillHatch !== 'none' && (
+                <>
+                  <Row label="Its colour" hint="auto: the curve's colour">
+                    <ColorField value={st.fillHatchColor ?? ''} auto={st.color} onChange={(fillHatchColor) => set({ fillHatchColor })} />
+                  </Row>
+                  <HatchRows h={st.fillHatch} look={st.fillHatchLook} onChange={(fillHatchLook) => set({ fillHatchLook })} />
+                </>
+              )}
+            </>
           )}
-        </div>
-      </>
+        </Section>
+      </Sections>
     );
   else if (tab === 'symbol')
     body = symbols ? (
-      <>
-        <div className="grid2">
-          <Field label="Symbol">
-            <Select value={st.symbol} options={SYMBOLS} onChange={(symbol) => set({ symbol })} />
-          </Field>
-          <Field label="Size" title="pt">
-            <NumInput className="tiny" min={0} step={0.5} value={st.symbolSize} onChange={(v) => set({ symbolSize: num(v) })} />
-          </Field>
-          <Field label="Fill">
-            <Select
+      <Sections panel="curve-symbol" open={['symbol', 'size']}>
+        <Section value="symbol" title="Symbol" aside={`${st.symbolSize} pt`}>
+          <Row label="Shape">
+            <PictureGrid value={st.symbol} onChange={(symbol) => set({ symbol })} options={SYMBOL_PICS} cols={6} />
+          </Row>
+          <Row label="Size">
+            <SliderField value={st.symbolSize} onChange={(v) => set({ symbolSize: num(v) })} min={0} max={20} step={0.5} unit="pt" />
+          </Row>
+          <Row label="Fill">
+            <Choice
               value={st.symbolFill}
-              options={[
-                ['filled', 'filled'],
-                ['open', 'open'],
-                ['white', 'white fill'],
-                ['dot', 'open, dot inside'],
-              ]}
               onChange={(symbolFill) => set({ symbolFill })}
+              options={[
+                ['filled', 'Filled'],
+                ['open', 'Open'],
+                ['white', 'White', 'Filled with white (hides the line behind it)'],
+                ['dot', 'Dot', 'Open, a dot inside'],
+              ]}
             />
-          </Field>
-          <Field label="Outline" title="Width of the outline, pt">
-            <NumInput className="tiny" min={0} step={0.1} value={st.symbolEdge} onChange={(v) => set({ symbolEdge: num(v) })} />
-          </Field>
-          <Field label="Outline colour">
-            <OptColor value={st.edgeColor} none="as fill" onChange={(edgeColor) => set({ edgeColor })} />
-          </Field>
-          <Field label="Opacity">
-            <NumInput className="tiny" min={0} max={1} step={0.05} value={st.symbolOpacity} onChange={(v) => set({ symbolOpacity: Math.min(1, num(v)) })} />
-          </Field>
-          <Field label="Every N-th" title="A symbol on every N-th point only (dense data)">
-            <NumInput className="tiny" min={1} step={1} value={st.every} onChange={(v) => set({ every: Math.max(1, Math.floor(v) || 1) })} />
-          </Field>
-          <Field label="Rug" title="Every value a short tick along the frame's edge: the x values at the bottom, the y values at the left (its length, pt); the line's colour and width">
-            <span className="row">
-              <Select<'' | 'x' | 'y'>
-                value={st.rug ?? ''}
-                options={[
-                  ['', 'none'],
-                  ['x', 'x values (bottom)'],
-                  ['y', 'y values (left)'],
-                ]}
-                onChange={(rug) => set({ rug: rug || undefined })}
-              />
-              {st.rug && <NumInput className="tiny" min={1} step={1} value={st.rugLength ?? 4} onChange={(v) => set({ rugLength: v > 0 ? v : undefined })} />}
-            </span>
-          </Field>
-        </div>
-        <div className="grid2">
-          <Field label="Size from data" title="The symbol size follows a value: the points' row, x, y, or a column on the port “size”">
-            <Select value={st.sizeBy} options={BY} onChange={(sizeBy) => set({ sizeBy })} />
-          </Field>
+          </Row>
+          <Row label="Outline" hint="The width of the outline">
+            <WidthField value={st.symbolEdge} onChange={(v) => set({ symbolEdge: num(v) })} max={3} />
+          </Row>
+          <Row label="Outline colour" hint="auto: as the fill">
+            <ColorField value={st.edgeColor} auto={st.color} onChange={(edgeColor) => set({ edgeColor })} />
+          </Row>
+          <Row label="Opacity">
+            <OpacityField value={st.symbolOpacity} onChange={(v) => set({ symbolOpacity: Math.min(1, num(v)) })} />
+          </Row>
+          <Row label="Every N-th" hint="A symbol on every N-th point only (dense data)">
+            <SliderField value={st.every} onChange={(v) => set({ every: Math.max(1, Math.floor(v) || 1) })} min={1} max={20} step={1} />
+          </Row>
+          <Row label="Rug" hint="Every value a short tick along the frame's edge: the x values at the bottom, the y values at the left; the line's colour and width">
+            <Choice<'' | 'x' | 'y'>
+              value={st.rug ?? ''}
+              onChange={(rug) => set({ rug: rug || undefined })}
+              options={[
+                ['', 'None'],
+                ['x', 'x (bottom)'],
+                ['y', 'y (left)'],
+              ]}
+            />
+            {st.rug && <SliderField value={st.rugLength ?? 4} onChange={(v) => set({ rugLength: v > 0 ? v : undefined })} min={1} max={15} step={0.5} unit="pt" />}
+          </Row>
+        </Section>
+        <Section value="size" title="Size from data" aside={st.sizeBy === 'none' ? 'no' : st.sizeBy}>
+          <Row label="Size from" hint="The symbol size follows a value: the points' row, x, y, or a column on the port “size”">
+            <MSelect value={st.sizeBy} data={BY} onChange={(v) => v && set({ sizeBy: v as CurveStyle['sizeBy'] })} />
+          </Row>
           {st.sizeBy !== 'none' && (
-            <Field label="Sizes" title="The smallest and the largest symbol, pt">
-              <span className="row">
-                <NumInput className="tiny" min={0} step={0.5} value={st.sizeMin} onChange={(v) => set({ sizeMin: num(v) })} />–
-                <NumInput className="tiny" min={0} step={0.5} value={st.sizeMax} onChange={(v) => set({ sizeMax: num(v) })} />
-              </span>
-            </Field>
+            <>
+              <Row label="Smallest">
+                <SliderField value={st.sizeMin} onChange={(v) => set({ sizeMin: num(v) })} min={0} max={30} step={0.5} unit="pt" />
+              </Row>
+              <Row label="Largest">
+                <SliderField value={st.sizeMax} onChange={(v) => set({ sizeMax: num(v) })} min={0} max={30} step={0.5} unit="pt" />
+              </Row>
+              <Row label="For values" hint="The values given the smallest and the largest size (empty: the data); values past them get the nearest size">
+                <NumPair a={st.sizeFrom ?? NaN} b={st.sizeTo ?? NaN} names={['from', 'to']} onA={(v) => set({ sizeFrom: Number.isFinite(v) ? v : undefined })} onB={(v) => set({ sizeTo: Number.isFinite(v) ? v : undefined })} />
+              </Row>
+              <Row label="Also">
+                <Toggle value={!!st.sizeLog} onChange={(sizeLog) => set({ sizeLog: sizeLog || undefined })} label="log scale" />
+                <Toggle value={!!st.sizeReverse} onChange={(sizeReverse) => set({ sizeReverse: sizeReverse || undefined })} label="reversed (largest values smallest)" />
+                <Toggle value={!!st.sizeArea} onChange={(sizeArea) => set({ sizeArea: sizeArea || undefined })} label="by area (as the eye reads bubbles)" />
+                <Toggle value={!!st.sizeKey} onChange={(sizeKey) => set({ sizeKey: sizeKey || undefined })} label="size key in the legend" />
+              </Row>
+            </>
           )}
-          {st.sizeBy !== 'none' && (
-            <Field label="Values" title="The values given the smallest and the largest size (empty: the data); values past them get the nearest size">
-              <span className="row">
-                <NumInput className="tiny" value={st.sizeFrom ?? NaN} placeholder="auto" onChange={(v) => set({ sizeFrom: Number.isFinite(v) ? v : undefined })} />–
-                <NumInput className="tiny" value={st.sizeTo ?? NaN} placeholder="auto" onChange={(v) => set({ sizeTo: Number.isFinite(v) ? v : undefined })} />
-              </span>
-            </Field>
-          )}
-        </div>
-        {st.sizeBy !== 'none' && (
-          <div className="row wrap">
-            <Check label="Log scale" value={!!st.sizeLog} onChange={(sizeLog) => set({ sizeLog: sizeLog || undefined })} />
-            <Check label="Reversed" title="The largest values get the smallest symbols" value={!!st.sizeReverse} onChange={(sizeReverse) => set({ sizeReverse: sizeReverse || undefined })} />
-            <Check label="By area" title="The area of the symbol (not its width) in proportion to the value: how the eye reads bubbles" value={!!st.sizeArea} onChange={(sizeArea) => set({ sizeArea: sizeArea || undefined })} />
-            <Check label="Size key in the legend" title="Three sizes with their values (the ends of the range and its middle) under the curve's entry" value={!!st.sizeKey} onChange={(sizeKey) => set({ sizeKey: sizeKey || undefined })} />
-          </div>
-        )}
-      </>
+        </Section>
+      </Sections>
     ) : (
-      <div className="hint">Symbols are drawn with the styles “scatter” and “line + symbols”.</div>
+      <div className="prop-note">Symbols are drawn with the styles Points and Both (line and symbols).</div>
     );
   else if (tab === 'errors') {
     const ex = st.errX;
     const setX = (p: Partial<typeof ex>) => set({ errX: { ...ex, ...p } });
+    const dirs: ['both' | 'plus' | 'minus', string][] = [
+      ['both', '±'],
+      ['plus', '+ only'],
+      ['minus', '− only'],
+    ];
     body = (
-      <>
-        <div className="grid2">
-          <Field label="±Y from" title="The ±Y column (port), the same value for every point, or a percentage of |y|">
-            <span className="row">
-              <Select
-                value={st.errFrom}
-                options={[
-                  ['column', 'its column'],
-                  ['value', 'a value'],
-                  ['percent', '% of y'],
-                ]}
-                onChange={(errFrom) => set({ errFrom })}
-              />
-              {st.errFrom !== 'column' && <NumInput className="tiny" min={0} step={0.5} value={st.errValue} onChange={(v) => set({ errValue: num(v) })} />}
-            </span>
-          </Field>
-          <Check label="− error: own column" title="Different + and − errors: ±Y is the + error, the port “−Y” the − error" value={st.errAsym} onChange={(errAsym) => set({ errAsym })} />
-        </div>
-        {hasYErr || hasXErr ? (
-          <>
-            <div className="grid2">
-              <Field label="Y error as">
-                <Select
+      <Sections panel="curve-errors" open={['y', 'x']}>
+        <Section value="y" title="Error bars" aside={st.errStyle === 'band' ? 'band' : 'bars'}>
+          <Row label="±Y from" hint="The ±Y column (port), the same value for every point, or a percentage of |y|">
+            <Choice
+              value={st.errFrom}
+              onChange={(errFrom) => set({ errFrom })}
+              options={[
+                ['column', 'Its column'],
+                ['value', 'A value'],
+                ['percent', '% of y'],
+              ]}
+            />
+            {st.errFrom !== 'column' && <NumField value={st.errValue} min={0} unit={st.errFrom === 'percent' ? '%' : undefined} onChange={(v) => set({ errValue: num(v) })} />}
+          </Row>
+          <Row label="− error" hint="Different + and − errors: ±Y is the + error, the port “−Y” the − error">
+            <Toggle value={st.errAsym} onChange={(errAsym) => set({ errAsym })} label="its own column" />
+          </Row>
+          {hasYErr || hasXErr ? (
+            <>
+              <Row label="Draw as">
+                <Choice
                   value={st.errStyle}
-                  options={[
-                    ['bars', 'error bars'],
-                    ['band', 'shaded band'],
-                  ]}
                   onChange={(errStyle) => set({ errStyle })}
-                />
-              </Field>
-              <Field label="Direction">
-                <Select
-                  value={st.errDir}
                   options={[
-                    ['both', '±'],
-                    ['plus', '+ only'],
-                    ['minus', '− only'],
+                    ['bars', 'Bars'],
+                    ['band', 'Band', 'A shaded band y ± error'],
                   ]}
-                  onChange={(errDir) => set({ errDir })}
                 />
-              </Field>
-              <Field label="Width" title="pt">
-                <NumInput className="tiny" min={0} step={0.1} value={st.errWidth} onChange={(v) => set({ errWidth: num(v) })} />
-              </Field>
-              <Field label="Dash">
-                <Select value={st.errDash} options={DASHES} onChange={(errDash) => set({ errDash })} />
-              </Field>
-              <Field label="Caps" title="Width of the caps, pt (0 = none)">
-                <NumInput className="tiny" min={0} step={0.5} value={st.errCap} onChange={(v) => set({ errCap: num(v) })} />
-              </Field>
-              <Field label="Cap line" title="Thickness of the caps, pt (empty: as the bar)">
-                <NumInput className="tiny" min={0} step={0.1} value={st.errCapWidth} placeholder="as bar" onChange={(v) => set({ errCapWidth: v })} />
-              </Field>
-              <Field label="Colour">
-                <OptColor value={st.errColor} none="curve" onChange={(errColor) => set({ errColor })} />
-              </Field>
-              <Field label={st.errStyle === 'band' ? 'Band opacity' : 'Opacity'}>
-                {st.errStyle === 'band' ? (
-                  <NumInput className="tiny" min={0} max={1} step={0.05} value={st.fillOpacity} onChange={(v) => set({ fillOpacity: Math.min(1, num(v)) })} />
-                ) : (
-                  <NumInput className="tiny" min={0} max={1} step={0.05} value={st.errOpacity} onChange={(v) => set({ errOpacity: Math.min(1, num(v)) })} />
-                )}
-              </Field>
+              </Row>
+              <Row label="Direction">
+                <Choice value={st.errDir} onChange={(errDir) => set({ errDir })} options={dirs} />
+              </Row>
+              <Row label="Width">
+                <WidthField value={st.errWidth} onChange={(v) => set({ errWidth: num(v) })} max={3} />
+              </Row>
+              <Row label="Dashes">
+                <PictureGrid value={st.errDash} onChange={(errDash) => set({ errDash })} options={DASH_PICS} cols={4} />
+              </Row>
+              <Row label="Caps" hint="The width of the caps (0: none)">
+                <SliderField value={st.errCap} onChange={(v) => set({ errCap: num(v) })} min={0} max={12} step={0.5} unit="pt" />
+              </Row>
+              <Row label="Cap line" hint="The thickness of the caps (auto: as the bar)">
+                <AutoSlider value={Number.isFinite(st.errCapWidth) ? st.errCapWidth : undefined} def={st.errWidth} onChange={(v) => set({ errCapWidth: v ?? NaN })} min={0} max={3} step={0.05} unit="pt" />
+              </Row>
+              <Row label="Colour" hint="auto: the curve's colour">
+                <ColorField value={st.errColor} auto={st.color} onChange={(errColor) => set({ errColor })} />
+              </Row>
               {st.errStyle === 'band' ? (
-                <Field label="Band edges" title="Lines along the edges of the band, pt (0 = none)">
-                  <NumInput className="tiny" min={0} step={0.1} value={st.errBandEdge} onChange={(v) => set({ errBandEdge: num(v) })} />
-                </Field>
+                <>
+                  <Row label="Band opacity">
+                    <OpacityField value={st.fillOpacity} onChange={(v) => set({ fillOpacity: Math.min(1, num(v)) })} />
+                  </Row>
+                  <Row label="Band edges" hint="Lines along the edges of the band (0: none)">
+                    <SliderField value={st.errBandEdge} onChange={(v) => set({ errBandEdge: num(v) })} min={0} max={3} step={0.05} unit="pt" />
+                  </Row>
+                </>
               ) : (
-                <Field label="Every N-th" title="A bar on every N-th point only (dense data)">
-                  <NumInput className="tiny" min={1} step={1} value={st.errEvery} onChange={(v) => set({ errEvery: Math.max(1, Math.floor(v) || 1) })} />
-                </Field>
+                <>
+                  <Row label="Opacity">
+                    <OpacityField value={st.errOpacity} onChange={(v) => set({ errOpacity: Math.min(1, num(v)) })} />
+                  </Row>
+                  <Row label="Every N-th" hint="A bar on every N-th point only (dense data)">
+                    <SliderField value={st.errEvery} onChange={(v) => set({ errEvery: Math.max(1, Math.floor(v) || 1) })} min={1} max={20} step={1} />
+                  </Row>
+                </>
               )}
-            </div>
-            <div className="row wrap">
-              <Check label="Stop at the symbol" title="The bars start at the edge of the symbol" value={st.errGap} onChange={(errGap) => set({ errGap })} />
-              <Check label="Over the symbols" title="The bars drawn over the symbols (else under them)" value={st.errAbove} onChange={(errAbove) => set({ errAbove })} />
-            </div>
-            {hasXErr && (
+              <Row label="Also">
+                <Toggle value={st.errGap} onChange={(errGap) => set({ errGap })} label="stop at the symbol" />
+                <Toggle value={st.errAbove} onChange={(errAbove) => set({ errAbove })} label="over the symbols" />
+              </Row>
+            </>
+          ) : (
+            <div className="prop-note">Connect a ±Y or ±X column to this curve (or take ±Y as a value or a % of y) to draw its errors.</div>
+          )}
+        </Section>
+        {hasXErr && (
+          <Section value="x" title="X error bars" aside={ex.same ? 'as the Y ones' : undefined}>
+            <Row label="Look">
+              <Toggle value={ex.same} onChange={(same) => setX({ same })} label="as the Y ones" />
+            </Row>
+            {!ex.same && (
               <>
-                <Check label="X error bars as the Y ones" value={ex.same} onChange={(same) => setX({ same })} />
-                {!ex.same && (
-                  <div className="grid2">
-                    <Field label="X: width" title="pt">
-                      <NumInput className="tiny" min={0} step={0.1} value={ex.width} onChange={(v) => setX({ width: num(v) })} />
-                    </Field>
-                    <Field label="X: caps" title="pt (0 = none)">
-                      <NumInput className="tiny" min={0} step={0.5} value={ex.cap} onChange={(v) => setX({ cap: num(v) })} />
-                    </Field>
-                    <Field label="X: colour">
-                      <OptColor value={ex.color} none="curve" onChange={(color) => setX({ color })} />
-                    </Field>
-                    <Field label="X: dash">
-                      <Select value={ex.dash} options={DASHES} onChange={(dash) => setX({ dash })} />
-                    </Field>
-                    <Field label="X: direction">
-                      <Select
-                        value={ex.dir}
-                        options={[
-                          ['both', '±'],
-                          ['plus', '+ only'],
-                          ['minus', '− only'],
-                        ]}
-                        onChange={(dir) => setX({ dir })}
-                      />
-                    </Field>
-                  </div>
-                )}
+                <Row label="Width">
+                  <WidthField value={ex.width} onChange={(v) => setX({ width: num(v) })} max={3} />
+                </Row>
+                <Row label="Caps" hint="0: none">
+                  <SliderField value={ex.cap} onChange={(v) => setX({ cap: num(v) })} min={0} max={12} step={0.5} unit="pt" />
+                </Row>
+                <Row label="Colour" hint="auto: the curve's colour">
+                  <ColorField value={ex.color} auto={st.color} onChange={(color) => setX({ color })} />
+                </Row>
+                <Row label="Dashes">
+                  <PictureGrid value={ex.dash} onChange={(dash) => setX({ dash })} options={DASH_PICS} cols={4} />
+                </Row>
+                <Row label="Direction">
+                  <Choice value={ex.dir} onChange={(dir) => setX({ dir })} options={dirs} />
+                </Row>
               </>
             )}
-          </>
-        ) : (
-          <div className="hint">Connect a ±Y or ±X column to this curve (or take ±Y as a value or a % of y) to draw its errors.</div>
+          </Section>
         )}
-      </>
+      </Sections>
     );
-  }
-  else if (tab === 'colour')
+  } else if (tab === 'colour')
     body = (
       <>
-        <div className="grid2">
-          <Field label="Colour by" title="Colour every point from a value">
-            <Select
-              value={st.colorBy}
-              options={[
-                ['none', 'one colour'],
-                ['index', 'position (row)'],
-                ['x', 'x value'],
-                ['y', 'y value'],
-                ['column', 'a column (port)'],
-              ]}
-              onChange={(colorBy) => set({ colorBy })}
-            />
-          </Field>
-          {st.colorBy !== 'none' && (
-            <Field label="Applies to">
-              <Select
-                value={st.colorTarget}
-                options={[
-                  ['both', 'line and symbols'],
-                  ['symbols', 'symbols'],
-                  ['line', 'line'],
-                ]}
-                onChange={(colorTarget) => set({ colorTarget })}
-              />
-            </Field>
-          )}
-        </div>
+        <Row label="Colour by" hint="Colour every point from a value">
+          <MSelect
+            value={st.colorBy}
+            onChange={(v) => v && set({ colorBy: v as CurveStyle['colorBy'] })}
+            data={[
+              { value: 'none', label: 'One colour' },
+              { value: 'index', label: 'Position (row)' },
+              { value: 'x', label: 'x value' },
+              { value: 'y', label: 'y value' },
+              { value: 'column', label: 'A column (port)' },
+            ]}
+          />
+        </Row>
         {st.colorBy !== 'none' && (
           <>
-            <Check label="Categories (integers or texts → one palette colour each)" value={st.categorical} onChange={(categorical) => set({ categorical })} />
+            <Row label="Applies to">
+              <Choice
+                value={st.colorTarget}
+                onChange={(colorTarget) => set({ colorTarget })}
+                options={[
+                  ['both', 'Both', 'Line and symbols'],
+                  ['symbols', 'Symbols'],
+                  ['line', 'Line'],
+                ]}
+              />
+            </Row>
+            <Row label="Categories" hint="Integers or texts: one palette colour each">
+              <Toggle value={st.categorical} onChange={(categorical) => set({ categorical })} />
+            </Row>
             {!st.categorical && (
               <>
-                <div className="grid2">
-                  <Field label="Colour map">
-                    <Select value={st.cmap} options={CMAP_OPTIONS} onChange={(cmap) => set({ cmap })} />
-                  </Field>
-                  <Field label="Range" title="Empty: the data">
-                    <span className="row">
-                      <NumInput className="tiny" value={st.cmapMin} placeholder="auto" onChange={(cmapMin) => set({ cmapMin })} />–
-                      <NumInput className="tiny" value={st.cmapMax} placeholder="auto" onChange={(cmapMax) => set({ cmapMax })} />
-                    </span>
-                  </Field>
-                </div>
+                <Row label="Colour map">
+                  <MSelect value={st.cmap} data={CMAP_OPTIONS.map(([v, l]) => ({ value: v, label: l }))} onChange={(v) => v && set({ cmap: v as CurveStyle['cmap'] })} />
+                </Row>
+                <Row label="Range" hint="Empty: the data">
+                  <NumPair a={st.cmapMin} b={st.cmapMax} names={['from', 'to']} onA={(cmapMin) => set({ cmapMin })} onB={(cmapMax) => set({ cmapMax })} />
+                </Row>
                 {st.cmap === 'custom' && (
-                  <Field label="Colours" title="Two or three colours: low – (middle) – high">
-                    <span className="row">
+                  <Row label="Colours" hint="Two or three colours: low, (middle), high">
+                    <div className="prop-btns">
                       {[0, 1, 2].map((k) => (
-                        <OptColor
+                        <ColorField
                           key={k}
                           value={st.cmapColors[k] ?? ''}
-                          none={k === 2 ? 'none' : '—'}
+                          none
                           onChange={(c) => {
                             const cs = [...st.cmapColors];
                             if (c) cs[k] = c;
@@ -499,13 +489,13 @@ export function CurveStyleEditor({ st, set, hasYErr, hasXErr, curves = [], placi
                           }}
                         />
                       ))}
-                    </span>
-                  </Field>
+                    </div>
+                  </Row>
                 )}
-                <div className="row">
-                  <Check label="Reversed" value={st.cmapReverse} onChange={(cmapReverse) => set({ cmapReverse })} />
-                  <Check label="Log scale" value={st.cmapLog} onChange={(cmapLog) => set({ cmapLog })} />
-                </div>
+                <Row label="Also">
+                  <Toggle value={st.cmapReverse} onChange={(cmapReverse) => set({ cmapReverse })} label="reversed" />
+                  <Toggle value={st.cmapLog} onChange={(cmapLog) => set({ cmapLog })} label="log scale" />
+                </Row>
               </>
             )}
           </>
@@ -514,78 +504,84 @@ export function CurveStyleEditor({ st, set, hasYErr, hasXErr, curves = [], placi
     );
   else
     body = (
-      <>
-        <div className="grid2">
-          <Field label="Labels at points">
-            <Select
+      <Sections panel="curve-more" open={['labels', 'axes']}>
+        <Section value="labels" title="Labels at points" aside={st.labels === 'none' ? 'none' : undefined}>
+          <Row label="Labels">
+            <Choice
               value={st.labels}
-              options={[
-                ['none', 'none'],
-                ['y', 'the y value'],
-                ['x', 'the x value'],
-                ['column', 'a column (port)'],
-              ]}
               onChange={(labels) => set({ labels })}
+              options={[
+                ['none', 'None'],
+                ['y', 'y'],
+                ['x', 'x'],
+                ['column', 'Column', 'A column (port)'],
+              ]}
             />
-          </Field>
+          </Row>
           {st.labels !== 'none' && (
-            <Field label="Where">
-              <Select
-                value={st.labelPos}
-                options={[
-                  ['above', 'above'],
-                  ['below', 'below'],
-                  ['left', 'left'],
-                  ['right', 'right'],
-                  ['aboveLeft', 'above, ending at it'],
-                  ['belowLeft', 'below, ending at it'],
-                  ['aboveRight', 'above, starting at it'],
-                  ['belowRight', 'below, starting at it'],
-                ]}
-                onChange={(labelPos) => set({ labelPos })}
-              />
-            </Field>
+            <>
+              <Row label="Where">
+                <MSelect
+                  value={st.labelPos}
+                  onChange={(v) => v && set({ labelPos: v as CurveStyle['labelPos'] })}
+                  data={[
+                    { value: 'above', label: 'Above' },
+                    { value: 'below', label: 'Below' },
+                    { value: 'left', label: 'Left' },
+                    { value: 'right', label: 'Right' },
+                    { value: 'aboveLeft', label: 'Above, ending at it' },
+                    { value: 'belowLeft', label: 'Below, ending at it' },
+                    { value: 'aboveRight', label: 'Above, starting at it' },
+                    { value: 'belowRight', label: 'Below, starting at it' },
+                  ]}
+                />
+              </Row>
+              <Row label="Digits" hint="Significant digits">
+                <SliderField value={st.labelDigits} onChange={(v) => set({ labelDigits: Math.max(1, Math.min(12, Math.floor(v) || 3)) })} min={1} max={12} step={1} />
+              </Row>
+              <TextStyleRows value={st.labelText} onChange={(labelText) => set({ labelText })} />
+            </>
           )}
-          {st.labels !== 'none' && (
-            <Field label="Digits">
-              <NumInput className="tiny" min={1} max={12} step={1} value={st.labelDigits} onChange={(v) => set({ labelDigits: Math.max(1, Math.min(12, Math.floor(v) || 3)) })} />
-            </Field>
-          )}
-        </div>
-        {st.labels !== 'none' && <TextStyleControls label="Label text" value={st.labelText} onChange={(labelText) => set({ labelText })} />}
-        <Check label="Name at the end of the line" title="The curve's name written right of its last point, in its colour (the frame makes room)" value={!!st.endLabel} onChange={(endLabel) => set({ endLabel: endLabel || undefined })} />
-        <div className="grid2">
-          <Field label="X axis" title="X2: the top axis when it has its own scale; X3 …: axes added in Axes ▸ Add an axis (else the bottom axis)">
-            <Select
+          <Row label="Name at end" hint="The curve's name written right of its last point, in its colour (the frame makes room)">
+            <Toggle value={!!st.endLabel} onChange={(endLabel) => set({ endLabel: endLabel || undefined })} />
+          </Row>
+        </Section>
+        <Section value="axes" title="Axes" aside={`${st.axisX}, ${st.axisY}`}>
+          <Row label="X axis" hint="The axis it is on: X1 bottom, X2 top, X3 … added ones; + new: an axis of its own (as in its row above)">
+            <MSelect
               value={st.axisX}
-              options={[
-                ['bottom', 'X1 bottom'],
-                ['top', 'X2 top'],
-                ['x3', 'X3'],
-                ['x4', 'X4'],
-                ['x5', 'X5'],
-              ]}
-              onChange={(axisX) => set({ axisX })}
+              onChange={(axisX) => axisX && (axes ? axes.pick('x', axisX) : set({ axisX }))}
+              data={(
+                axes?.x ?? [
+                  ['bottom', 'X1 bottom'],
+                  ['top', 'X2 top'],
+                  ['x3', 'X3'],
+                  ['x4', 'X4'],
+                  ['x5', 'X5'],
+                ]
+              ).map(([v, l]) => ({ value: v, label: l }))}
             />
-          </Field>
-          <Field label="Y axis" title="Y2: the right axis when it has its own scale; Y3 …: axes added in Axes ▸ Add an axis (else the left axis)">
-            <Select
+          </Row>
+          <Row label="Y axis" hint="The axis it is on: Y1 left, Y2 right, Y3 … added ones; + new: an axis of its own (as in its row above)">
+            <MSelect
               value={st.axisY}
-              options={[
-                ['left', 'Y1 left'],
-                ['right', 'Y2 right'],
-                ['y3', 'Y3'],
-                ['y4', 'Y4'],
-                ['y5', 'Y5'],
-              ]}
-              onChange={(axisY) => set({ axisY })}
+              onChange={(axisY) => axisY && (axes ? axes.pick('y', axisY) : set({ axisY }))}
+              data={(
+                axes?.y ?? [
+                  ['left', 'Y1 left'],
+                  ['right', 'Y2 right'],
+                  ['y3', 'Y3'],
+                  ['y4', 'Y4'],
+                  ['y5', 'Y5'],
+                ]
+              ).map(([v, l]) => ({ value: v, label: l }))}
             />
-          </Field>
-        </div>
-      </>
+          </Row>
+        </Section>
+      </Sections>
     );
   return (
-    <div className="curve-style">
+    <div className="curve-style props-panel props-embed nodrag" onKeyDown={ownKeys}>
       <Tabs
         tabs={(
           [

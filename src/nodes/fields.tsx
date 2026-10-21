@@ -1,6 +1,6 @@
 // Fields of the figure nodes: rich text with the Ω menu, text style (font, size, bold, italic, colour), tabs,
 // optional colours.
-import { useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { SYMBOL_GROUPS } from '../figure/draw.ts';
 import { FONTS, type TextStyle } from '../figure/spec.ts';
 import { NumInput } from './ui.tsx';
@@ -14,6 +14,16 @@ export function RichInput({ value, onChange, placeholder, title, multiline }: { 
   const input = useRef<HTMLInputElement>(null);
   const area = useRef<HTMLTextAreaElement>(null);
   const [open, setOpen] = useState(false);
+  // the menu kept inside the window: moved aside when it would stick out of it (a narrow panel at the window's edge)
+  const pop = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = pop.current;
+    if (!open || !el) return;
+    el.style.transform = '';
+    const r = el.getBoundingClientRect();
+    const dx = r.left < 4 ? 4 - r.left : r.right > window.innerWidth - 4 ? window.innerWidth - 4 - r.right : 0;
+    if (dx) el.style.transform = `translateX(${dx}px)`;
+  }, [open]);
   // the colour the A button gives the selection
   const [colour, setColour] = useState('#d62728');
   // inserts `before` + the selection + `after` at the cursor
@@ -40,7 +50,7 @@ export function RichInput({ value, onChange, placeholder, title, multiline }: { 
         Ω
       </button>
       {open && (
-        <div className="symbol-pop nodrag nowheel" onMouseDown={(e) => e.preventDefault()}>
+        <div ref={pop} className="symbol-pop nodrag nowheel" onMouseDown={(e) => e.preventDefault()}>
           <div className="sym-format">
             <button title="Superscript: ^{…}" onClick={() => wrap('^{', '}')}>
               x²

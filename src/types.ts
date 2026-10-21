@@ -44,6 +44,8 @@ import type { PeakShape } from './engine/fitModels.ts';
 import type { RowSelect } from './engine/rowsel.ts';
 import type { ColumnRole } from './engine/table.ts';
 import type { ColumnsSpec } from './engine/columns.ts';
+import type { ImageAnalysisData } from './image/node.ts';
+import type { PhaseDiagramData } from './engine/phasenode.ts';
 import type { Baseline as WidthBaseline, WidthKind } from './engine/measure.ts';
 import type { ModelSpec } from './engine/fitModels.ts';
 import type { FitBand, FitParamSpec, FitWeight } from './engine/fit.ts';
@@ -453,6 +455,12 @@ export type AverageNode = Node<AverageData, 'average'>;
 export type ReportNode = Node<ReportData, 'report'>;
 export type { ReportData };
 export type DigitizerNode = Node<DigitizerData, 'digitizer'>;
+// Image analysis: an image (8 / 16 bit, float; gray or RGB) edited by steps, calibrated; its matrix and figure
+export type ImageNode = Node<ImageAnalysisData, 'image'>;
+// Phase diagram: a binary diagram computed from a thermodynamic model, the lever rule at points, an alloy cooled
+export type PhaseDiagramNode = Node<PhaseDiagramData, 'phasediagram'>;
+export type { PhaseDiagramData };
+export type { ImageAnalysisData };
 // Histogram: its bins, bars and fits, and a whole figure as a Plot's (axes, legend, annotations, page, insets).
 export type HistogramData = HistSpec & Pick<Plot1DData, 'axes' | 'legend' | 'annotations' | 'page' | 'insets'>;
 export type HistogramNode = Node<HistogramData, 'histogram'>;
@@ -540,6 +548,8 @@ export type AppNode =
   | AverageNode
   | ReportNode
   | DigitizerNode
+  | ImageNode
+  | PhaseDiagramNode
   | HistogramNode
   | BarChartNode
   | BoxViolinNode

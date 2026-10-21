@@ -6,8 +6,9 @@ import { PanIcon, ZoomIcon } from './icons.tsx';
 import { RotateCcw } from 'lucide-react';
 import { IC } from './iconProps.ts';
 
-// onRescaleAxis: Rescale X and Rescale Y (only one direction automatic again), where the graph offers them
-export function ZoomTools({ mode, setMode, onRescale, onZoomOut, zoomed, onRescaleAxis }: { mode: ZoomMode; setMode: (m: ZoomMode) => void; onRescale: () => void; onZoomOut: () => void; zoomed: boolean; onRescaleAxis?: (which: 'x' | 'y') => void }) {
+// onRescaleAxis: Rescale X and Rescale Y (only one direction automatic again), where the graph offers them; fitNew:
+// they fit that direction to the curves as they come out (always on)
+export function ZoomTools({ mode, setMode, onRescale, onZoomOut, zoomed, onRescaleAxis, fitNew }: { mode: ZoomMode; setMode: (m: ZoomMode) => void; onRescale: () => void; onZoomOut: () => void; zoomed: boolean; onRescaleAxis?: (which: 'x' | 'y') => void; fitNew?: boolean }) {
   useEffect(() => {
     if (mode === 'none') return;
     const key = (e: KeyboardEvent) => e.key === 'Escape' && setMode('none');
@@ -30,10 +31,10 @@ export function ZoomTools({ mode, setMode, onRescale, onZoomOut, zoomed, onResca
       </button>
       {onRescaleAxis && (
         <>
-          <button className="nodrag" disabled={!zoomed} title="Only X: its limits automatic again (Y as it is)" onClick={() => onRescaleAxis('x')}>
+          <button className="nodrag" disabled={!zoomed && !fitNew} title={fitNew ? 'Rescale X: fitted to the new curves (Y as it is)' : 'Only X: its limits automatic again (Y as it is)'} onClick={() => onRescaleAxis('x')}>
             <RotateCcw {...IC} /> X
           </button>
-          <button className="nodrag" disabled={!zoomed} title="Only Y: its limits automatic again (X as it is)" onClick={() => onRescaleAxis('y')}>
+          <button className="nodrag" disabled={!zoomed && !fitNew} title={fitNew ? 'Rescale Y: fitted to the new curves (X as it is)' : 'Only Y: its limits automatic again (X as it is)'} onClick={() => onRescaleAxis('y')}>
             <RotateCcw {...IC} /> Y
           </button>
         </>

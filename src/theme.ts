@@ -167,7 +167,7 @@ export function applyColors(c: UiColors) {
 export type CanvasPrefs = { snap: boolean; step: number; arrows: boolean; shape: 'curved' | 'orthogonal'; minimap: boolean };
 export const STEPS = [10, 20, 40];
 const PREFS = 'graph-flow:canvas';
-const DEFAULT_PREFS: CanvasPrefs = { snap: false, step: 20, arrows: false, shape: 'curved', minimap: true };
+const DEFAULT_PREFS: CanvasPrefs = { snap: false, step: 20, arrows: false, shape: 'curved', minimap: false };
 
 export function loadPrefs(): CanvasPrefs {
   try {

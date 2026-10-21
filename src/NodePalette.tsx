@@ -3,7 +3,8 @@
 import { useMemo, useState, type CSSProperties, type DragEvent } from 'react';
 import { useLeaving } from './useLeaving.ts';
 import type { AppNode } from './types.ts';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, Search, X } from 'lucide-react';
+import { Tooltip } from '@mantine/core';
 import { IC } from './nodes/iconProps.ts';
 
 export type PaletteItem = { type: AppNode['type']; label: string; help?: string; color: string };
@@ -67,7 +68,15 @@ export function NodePalette({ groups, onAdd }: { groups: PaletteGroup[]; onAdd: 
               «
             </button>
           </div>
-          <input className="palette-search" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && setQuery('')} />
+          <label className="palette-search-box">
+            <Search size={14} aria-hidden="true" />
+            <input className="palette-search" placeholder="Search the nodes" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && setQuery('')} />
+            {query && (
+              <button className="palette-clear" title="Clear the search" aria-label="Clear the search" onClick={() => setQuery('')}>
+                <X size={13} />
+              </button>
+            )}
+          </label>
           <div className="palette-list">
             {shown.map((g) => {
               const folded = !q && state.folded.includes(g.name);
@@ -79,21 +88,29 @@ export function NodePalette({ groups, onAdd }: { groups: PaletteGroup[]; onAdd: 
                     aria-expanded={!folded}
                     onClick={() => update({ folded: folded ? state.folded.filter((x) => x !== g.name) : [...state.folded, g.name] })}
                   >
-                    <span className="chev">{folded ? <ChevronRight {...IC} /> : <ChevronDown {...IC} />}</span> {g.name}
+                    <span className="chev">{folded ? <ChevronRight {...IC} /> : <ChevronDown {...IC} />}</span>
+                    <span className="grow">{g.name}</span>
+                    <span className="palette-count">{g.items.length}</span>
                   </button>
                   {!folded &&
                     g.items.map((i) => (
-                      <button
+                      <Tooltip
                         key={i.type}
-                        className="palette-item"
-                        draggable
-                        onDragStart={(e) => drag(e, i.type)}
-                        onClick={() => onAdd(i.type)}
-                        title={`${i.help ?? i.label}\n\nDrag onto the canvas, or click to add it in the middle of the view.`}
-                        style={{ '--node-color': i.color } as CSSProperties}
+                        position="right"
+                        openDelay={500}
+                        label={
+                          <>
+                            <b>{i.label}</b>
+                            {i.help && <div>{i.help}</div>}
+                            <div className="palette-tip-hint">Drag it onto the canvas, or click to add it in the middle of the view.</div>
+                          </>
+                        }
                       >
-                        {i.label}
-                      </button>
+                        <button className="palette-item" draggable onDragStart={(e) => drag(e, i.type)} onClick={() => onAdd(i.type)} style={{ '--node-color': i.color } as CSSProperties}>
+                          <span className="pi-dot" aria-hidden="true" />
+                          <span className="ellipsis">{i.label}</span>
+                        </button>
+                      </Tooltip>
                     ))}
                 </section>
               );

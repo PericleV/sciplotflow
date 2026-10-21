@@ -314,15 +314,20 @@ export function axesGeometry(ax: AxesFig, frame: Box, defaults: TextDefaults) {
     if (!Number.isFinite(p)) return {};
     return { cross: side === 'bottom' || side === 'top' ? Math.min(frame.y + frame.h, Math.max(frame.y, p)) : Math.min(frame.x + frame.w, Math.max(frame.x, p)) };
   };
+  // an axis in the colour of its first curve (its line, ticks, numbers, title)
+  const tint = (s: SideStyle, id: string, axis: 'x' | 'y'): SideStyle => {
+    const c = s.curveColor ? on(id, axis)[0]?.style.color : undefined;
+    return c ? { ...s, color: c, labelText: { ...s.labelText, color: c }, titleText: { ...s.titleText, color: c } } : s;
+  };
   const drawn: DrawnAxis[] = [
-    { key: 'bottom', side: 'bottom', s: st.sides.bottom, pos: tb, f: sBottom.f, title: st.sides.bottom.title || autoTitle(on('bottom', 'x'), 'x'), ...crossOf('bottom') },
-    { key: 'left', side: 'left', s: st.sides.left, pos: tl, f: sLeft.f, title: st.sides.left.title || autoTitle(on('left', 'y'), 'y'), ...crossOf('left') },
-    { key: 'top', side: 'top', s: st.sides.top, pos: second('top'), f: scales.get('top')!.f, title: st.sides.top.title || (topOwn ? autoTitle(on('top', 'x'), 'x') : ''), ...crossOf('top') },
-    { key: 'right', side: 'right', s: st.sides.right, pos: second('right'), f: scales.get('right')!.f, title: st.sides.right.title || (rightOwn ? autoTitle(on('right', 'y'), 'y') : ''), ...crossOf('right') },
+    { key: 'bottom', side: 'bottom', s: tint(st.sides.bottom, 'bottom', 'x'), pos: tb, f: sBottom.f, title: st.sides.bottom.title || autoTitle(on('bottom', 'x'), 'x'), ...crossOf('bottom') },
+    { key: 'left', side: 'left', s: tint(st.sides.left, 'left', 'y'), pos: tl, f: sLeft.f, title: st.sides.left.title || autoTitle(on('left', 'y'), 'y'), ...crossOf('left') },
+    { key: 'top', side: 'top', s: topOwn ? tint(st.sides.top, 'top', 'x') : st.sides.top, pos: second('top'), f: scales.get('top')!.f, title: st.sides.top.title || (topOwn ? autoTitle(on('top', 'x'), 'x') : ''), ...crossOf('top') },
+    { key: 'right', side: 'right', s: rightOwn ? tint(st.sides.right, 'right', 'y') : st.sides.right, pos: second('right'), f: scales.get('right')!.f, title: st.sides.right.title || (rightOwn ? autoTitle(on('right', 'y'), 'y') : ''), ...crossOf('right') },
     ...st.extra.map((e): DrawnAxis => {
       const sc = scales.get(e.id)!;
       const kind = axisKind(e.side);
-      return { key: e.id, side: e.side, s: e.style, pos: roomyTicks(sc, e.style, kind === 'x' ? nx : ny, kind === 'x', defaults), f: sc.f, title: e.style.title || autoTitle(on(e.id, kind), kind) };
+      return { key: e.id, side: e.side, s: tint(e.style, e.id, kind), pos: roomyTicks(sc, e.style, kind === 'x' ? nx : ny, kind === 'x', defaults), f: sc.f, title: e.style.title || autoTitle(on(e.id, kind), kind) };
     }),
   ];
   return { scales, sBottom, sLeft, tb, tl, xOf, yOf, drawn };

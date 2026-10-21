@@ -1,0 +1,87 @@
+/* The UI lab page (#ui-lab): its layout, the figure with the selection and the quick bar, and the buttons and fields
+   as they are now (.ui-old, a copy of App.css) and as they would be (.ui-new: what App.css would become). */
+html, body { overflow: auto; }
+.lab { min-height: 100vh; background: var(--canvas); color: var(--text); padding: 0 16px 32px; font-size: var(--fs, 13px); }
+.lab-top { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 14px 0 12px; }
+.lab-title { font-weight: 700; font-size: 16px; }
+.lab-accent { width: 18px; height: 18px; border-radius: 50%; border: 1px solid color-mix(in srgb, var(--text) 20%, transparent); }
+.lab-accent.on { box-shadow: 0 0 0 2px var(--canvas), 0 0 0 3.5px var(--text); }
+.lab .mantine-Tabs-list { margin-bottom: 14px; }
+.lab-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+.lab-left { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.lab-right { position: sticky; top: 12px; }
+.lab-hint { padding: 0 2px; }
+@media (max-width: 860px) {
+  .lab-grid { grid-template-columns: minmax(0, 1fr); }
+  .lab-right { position: static; }
+}
+
+.fig-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 56px 16px 16px; }
+.fig-wrap { position: relative; max-width: 720px; margin: 0 auto; background: #fff; }
+.fig-wrap svg { display: block; }
+.sel-box { position: absolute; border: 1.5px dashed var(--select); border-radius: 3px; pointer-events: none; }
+
+.quick-bar { position: absolute; max-width: 100%; overflow-x: auto; scrollbar-width: none; z-index: 5; display: flex; align-items: center; gap: 6px; padding: 5px 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 6px 20px rgb(0 0 0 / 0.16), 0 1px 3px rgb(0 0 0 / 0.08); white-space: nowrap; color: var(--text); }
+.quick-bar .color-field { padding: 2px 6px 2px 3px; }
+.quick-bar .color-name { display: none; }
+.qb-sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 2px; }
+.qb-size { min-width: 16px; text-align: center; font-variant-numeric: tabular-nums; font-size: 12px; }
+
+.axis-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 560px) { .axis-pair { grid-template-columns: 1fr; } }
+.axis-head { padding: 8px 12px; font-weight: 600; font-size: 12.5px; border-bottom: 1px solid var(--border); }
+.axis-body { padding: 2px 12px 12px; }
+
+.obj-head { padding: 10px 12px 12px; border-bottom: 1px solid var(--border); }
+.obj-title { display: flex; align-items: center; gap: 2px; }
+.obj-title .mantine-TextInput-input { font-weight: 600; font-size: 14px; padding: 0 4px; height: 28px; border-radius: 5px; }
+.obj-title .mantine-TextInput-input:hover, .obj-title .mantine-TextInput-input:focus { background: var(--input); }
+.obj-icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 7px; background: color-mix(in srgb, var(--accent) 16%, transparent); color: color-mix(in srgb, var(--accent) 75%, var(--text)); flex: none; margin-right: 4px; }
+.obj-meta { display: flex; align-items: center; margin-top: 4px; padding-left: 34px; }
+
+/* ---- buttons and fields: now / new ---- */
+.ctl-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.ctl-compare section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px 16px; }
+.ctl-compare section.wide { grid-column: 1 / -1; }
+.ctl-compare h3 { margin: 0 0 10px; font-size: 13px; }
+@media (max-width: 760px) { .ctl-compare { grid-template-columns: 1fr; } }
+.demo-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.demo-check { display: inline-flex; align-items: center; gap: 4px; }
+.ctl-demo .num { width: 64px; }
+.ctl-demo .demo-group { display: inline-flex; }
+
+/* now: as App.css */
+.ui-old button, .ui-old select, .ui-old input { font: inherit; font-size: var(--fs); color: var(--text); background: var(--input); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; }
+.ui-old button { cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.ui-old button:hover { border-color: var(--accent); }
+.ui-old button:disabled { opacity: 0.5; cursor: default; }
+.ui-old button.danger { color: var(--err); }
+.ui-old button.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.ui-old button.active { border-color: var(--accent); color: var(--accent); }
+.ui-old button.btn-run { color: #fff; font-weight: 600; border-color: transparent; background: var(--run); }
+.ui-old .demo-group button { border-radius: 0; margin-left: -1px; }
+.ui-old .demo-group button:first-child { border-radius: 4px 0 0 4px; }
+.ui-old .demo-group button:last-child { border-radius: 0 4px 4px 0; }
+
+/* new: the same sizes, a calmer surface, a clear hover, active and focus; what App.css would get */
+.ui-new button, .ui-new select, .ui-new input { font: inherit; font-size: var(--fs); color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; transition: background-color 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s; }
+.ui-new button { cursor: pointer; display: inline-flex; align-items: center; gap: 4px; box-shadow: 0 1px 1px rgb(0 0 0 / 0.04); }
+.ui-new button:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 8%, var(--panel)); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.ui-new button:active:not(:disabled) { transform: translateY(0.5px); box-shadow: none; }
+.ui-new button:focus-visible, .ui-new select:focus-visible, .ui-new input:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 1px; }
+.ui-new input:focus, .ui-new select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); outline: none; }
+.ui-new input, .ui-new select { background: var(--input); }
+.ui-new button:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+.ui-new button.active { background: color-mix(in srgb, var(--accent) 15%, var(--panel)); border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); color: color-mix(in srgb, var(--accent) 70%, var(--text)); font-weight: 600; }
+.ui-new button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+.ui-new button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, var(--text)); border-color: transparent; }
+.ui-new button.danger { color: var(--err); }
+.ui-new button.danger:hover:not(:disabled) { background: var(--err-bg); border-color: color-mix(in srgb, var(--err) 40%, var(--border)); }
+.ui-new button.icon { padding: 4px; color: var(--muted); }
+.ui-new button.icon:hover:not(:disabled) { color: var(--text); }
+.ui-new button.btn-run { color: #fff; font-weight: 600; border-color: transparent; background: var(--run); }
+.ui-new button.btn-run:hover:not(:disabled) { background: var(--run-hover); }
+.ui-new .demo-group { padding: 2px; gap: 2px; background: var(--input); border: 1px solid var(--border); border-radius: 7px; }
+.ui-new .demo-group button { border-color: transparent; background: transparent; box-shadow: none; border-radius: 5px; }
+.ui-new .demo-group button.active { background: var(--panel); border-color: var(--border); color: var(--text); box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
+.ui-new input[type='checkbox'] { accent-color: var(--accent); }

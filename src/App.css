@@ -41,7 +41,7 @@
 .toolbar select.examples-menu { max-width: 15em; text-overflow: ellipsis; }
 /* a section of node buttons wraps onto more lines when it is wider than the window (its buttons keep one-line labels) */
 .toolbar .sep { width: 1px; align-self: stretch; background: var(--border); }
-.toolbar button.active { border-color: var(--accent); color: var(--accent); }
+.toolbar button.active { background: color-mix(in srgb, var(--accent) 15%, var(--panel)); border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); color: color-mix(in srgb, var(--accent) 70%, var(--text)); }
 /* the two colour squares (selection, accent): a square in a button as tall as the others, a small menu under it */
 .color-choice { position: relative; display: inline-flex; }
 .color-choice > button { display: inline-flex; align-items: center; gap: 5px; }
@@ -96,13 +96,19 @@ button, select, input {
   color: var(--text);
   background: var(--input);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 3px 6px;
 }
-button { cursor: pointer; }
-button:hover { border-color: var(--accent); }
-button:disabled { opacity: 0.5; cursor: default; }
+/* buttons: on the panel's colour with a light shadow; a tint of the accent under the mouse; a ring when reached with the
+   keyboard (the same sizes as before) */
+button { cursor: pointer; background: var(--panel); box-shadow: 0 1px 1px rgb(0 0 0 / 0.05); }
+button:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); background-color: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 1px; }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+button:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+button:disabled:hover { background-color: var(--panel); border-color: var(--border); }
 button.danger { color: var(--err); }
+button.danger:hover:not(:disabled) { background-color: var(--err-bg); border-color: color-mix(in srgb, var(--err) 40%, var(--border)); }
 input:disabled { opacity: 0.5; }
 
 /* Three node widths: small (inputs), medium (structure / computation / scalar analyses), large (nodes with a chart). */
@@ -120,9 +126,9 @@ tbody th, th.rowhead { font-weight: 400; }
 /* The width of every node, by what its body shows on the canvas (its settings are in Options):
    S, its ports and a line or two of summary; M, a few lines of text (a formula, a list of values, a test written out,
    a small table); L, a graph, a large table or an editor; XL, a whole figure. A new node takes its place here. */
-.node-extract, .node-gencol, .node-translate, .node-unstack, .node-columns, .node-combine, .node-clean, .node-pick, .node-groupio { width: var(--node-s); }
+.node-extract, .node-gencol, .node-unstack, .node-columns, .node-combine, .node-clean, .node-pick, .node-groupio { width: var(--node-s); }
 .node-mathcol, .node-autoextract, .node-stats, .node-matrix, .node-stattest, .node-group, .node-note { width: var(--node-m); }
-.node-import, .node-book, .node-signal, .node-curvemath, .node-datamanip, .node-digitizer, .node-peaks, .node-calculus, .node-fit, .node-matcomp, .node-python, .node-report { width: var(--node-l); }
+.node-import, .node-book, .node-signal, .node-translate, .node-curvemath, .node-datamanip, .node-digitizer, .node-peaks, .node-calculus, .node-fit, .node-matcomp, .node-python, .node-report { width: var(--node-l); }
 .node-plot1d, .node-canvas, .node-drawing { width: var(--node-xl); }
 
 .node-shell {
@@ -390,7 +396,8 @@ table.point td { padding: 2px 10px; }
 .fit-param .lock { font-size: var(--fs-tiny); }
 .fit-param .sigma { color: var(--muted); }
 .empty.small { width: 470px; height: 250px; }
-button.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, var(--text)); border-color: transparent; }
 /* Run / Start: green, Stop: red (filled, white text) */
 button.btn-run, button.btn-stop { color: #fff; font-weight: 600; border-color: transparent; }
 button.btn-run { background: var(--run); }
@@ -481,7 +488,7 @@ button.btn-stop:hover { background: var(--stop-hover); border-color: transparent
 .react-flow__edge .flow-halo { fill: none; stroke: var(--select); opacity: 0.35; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
 .react-flow__edge.selected .react-flow__edge-path { stroke-dasharray: none; animation: none; }
 svg.plot.paint { cursor: crosshair; touch-action: none; }
-button.active { border-color: var(--accent); color: var(--accent); }
+button.active { background: color-mix(in srgb, var(--accent) 15%, var(--panel)); border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); color: color-mix(in srgb, var(--accent) 70%, var(--text)); }
 .node .row.chart-head { justify-content: space-between; align-items: center; }
 /* group frames: only the title bar and the resize handles take the mouse */
 .react-flow__node-frame { pointer-events: none !important; }
@@ -529,7 +536,7 @@ button.active { border-color: var(--accent); color: var(--accent); }
 
 /* ---- Motion: small and short (120–200 ms), off when the system asks for reduced motion ---- */
 button, select, input { transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease; }
-button:active:not(:disabled) { transform: scale(0.97); }
+button:active:not(:disabled) { transform: translateY(0.5px); box-shadow: none; }
 /* nodes panel: an item slides a little, gets a shadow and a thicker stripe in the node colour (transform and shadows
    only: the other items do not move) */
 .palette-item:hover {
@@ -792,9 +799,11 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .ts-btn { padding: 0 6px; min-width: 22px; }
 .ts-btn.off { text-decoration: line-through; opacity: 0.8; }
 .ts-btn.auto { opacity: 0.55; }
-.tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--border); padding-bottom: 3px; }
-.tabs .tab { padding: 2px 8px; border-radius: 4px 4px 0 0; font-size: var(--fs-small); }
-.tabs .tab.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+/* tabs: one bar, the tab open raised on it */
+.tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 2px; background: var(--input); border: 1px solid var(--border); border-radius: 8px; }
+.tabs .tab { padding: 2px 8px; border-radius: 6px; font-size: var(--fs-small); background: transparent; border-color: transparent; box-shadow: none; color: var(--muted); }
+.tabs .tab:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); border-color: transparent; color: var(--text); }
+.tabs .tab.on { background: var(--panel); color: var(--text); border-color: var(--border); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
 .side-panel, .curve-style { display: flex; flex-direction: column; gap: 5px; padding: 4px 2px; }
 .opt-color { display: inline-flex; align-items: center; gap: 3px; }
 .curve-row { border: 1px solid var(--border); border-radius: 5px; padding: 4px 6px; display: flex; flex-direction: column; gap: 3px; }
@@ -802,6 +811,10 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .curve-head { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .curve-head .grow { flex: 1 1 calc(100% - 64px); min-width: 0; display: flex; }
 .curve-head .grow + button { margin-left: auto; }
+/* a curve's Y and X axes (Y1, Y2 … X1 …), beside its legend text */
+.curve-head .grow + .curve-axes { margin-left: auto; }
+.curve-axes { display: flex; gap: 2px; }
+.curve-axes select { width: 54px; }
 .curve-ports { display: flex; flex-direction: column; gap: 1px; }
 /* a folded curve: its ports on its head's line, hidden but for their handles (the connections stay drawn) */
 .curve-ports.collapsed { position: relative; height: 0; margin-top: -3px; }
@@ -1045,7 +1058,7 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .node-digitizer .hint.ok { color: #2a8a3a; }
 .node-digitizer .digi-hint { min-height: 2.7em; }
 /* a tool or a switch that is on (Points, Add a range, Residuals, Zoom …): plainly marked */
-.node button.on { background: color-mix(in srgb, var(--accent) 24%, var(--input)); border-color: var(--accent); color: var(--text); font-weight: 600; }
+.node button.on { background: color-mix(in srgb, var(--accent) 15%, var(--panel)); border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); color: color-mix(in srgb, var(--accent) 70%, var(--text)); font-weight: 600; }
 .node-digitizer .digitizer-board { touch-action: none; }
 .node-histogram .hist-fit { gap: 4px; }
 /* a fit: its model, then its range */
@@ -1148,6 +1161,47 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .py-fig { display: flex; flex-direction: column; gap: 4px; }
 
 /* ---- Figure Drawing: its node and its editor (over the whole window) ---- */
+/* Phase diagram: the two components side by side */
+.node-phase .section-title { font-weight: 600; margin-top: 6px; }
+.phase-grid { display: grid; grid-template-columns: auto 1fr 1fr; gap: 3px 6px; align-items: center; }
+/* ---- Image analysis: the node, its editor over the whole window (steps | image | histogram, view, calibration) ---- */
+.node-image .section-title { font-weight: 600; margin-top: 6px; }
+.image-editor { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; background: var(--canvas); color: var(--text); outline: none; font-size: 12px; }
+.image-editor .ie-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--panel); }
+.image-editor .ie-toolbar button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.image-editor .ie-zoom { min-width: 44px; text-align: center; }
+.image-editor .ie-body { flex: 1; display: grid; grid-template-columns: 300px minmax(0, 1fr) 280px; min-height: 0; }
+.image-editor .ie-steps, .image-editor .ie-side { overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; background: var(--panel); }
+.image-editor .ie-steps { border-right: 1px solid var(--border); }
+.image-editor .ie-side { border-left: 1px solid var(--border); }
+.image-editor .ie-step { border: 1px solid var(--border); border-left: 3px solid var(--border); border-radius: 4px; padding: 4px 6px; display: flex; flex-direction: column; gap: 4px; }
+.image-editor .ie-step.shown, .image-editor .ie-original.shown { border-left-color: var(--accent); }
+.image-editor .ie-step.off { opacity: 0.55; }
+.image-editor .ie-step.after { opacity: 0.7; }
+.image-editor .ie-step-head { gap: 4px; align-items: center; }
+.image-editor .ie-step-name, .image-editor .ie-original { text-align: left; border: none; background: none; padding: 2px 0; font-weight: 600; cursor: pointer; color: var(--text); }
+.image-editor .ie-original { border: 1px solid var(--border); border-left: 3px solid var(--border); border-radius: 4px; padding: 4px 6px; }
+.image-editor .ie-params { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 6px; align-items: center; }
+.image-editor .ie-label { color: var(--muted); }
+.image-editor .ie-err { color: var(--err); }
+.image-editor .ie-view { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; background: repeating-conic-gradient(var(--panel) 0 25%, var(--canvas) 0 50%) 0 0 / 16px 16px; cursor: grab; }
+.image-editor .ie-view.scale { cursor: crosshair; }
+.image-editor .ie-stage { position: relative; }
+.image-editor .ie-stage canvas { display: block; image-rendering: pixelated; }
+.image-editor .ie-overlay { position: absolute; left: 0; top: 0; pointer-events: none; }
+.image-editor .ie-scale-line { stroke: #ffd60a; stroke-width: 2; }
+.image-editor .ie-readout { position: absolute; left: 8px; bottom: 6px; padding: 2px 6px; border-radius: 3px; background: color-mix(in srgb, var(--panel) 85%, transparent); font-variant-numeric: tabular-nums; pointer-events: none; }
+.image-editor .ie-section { font-weight: 600; margin-top: 4px; }
+.image-editor .ie-hist { width: 100%; height: auto; }
+.image-editor .ie-hist-bars { stroke: var(--muted); stroke-width: 1; }
+.image-editor .ie-hist-mark { stroke: var(--accent); stroke-width: 1.5; }
+.image-editor .ie-hist-label { fill: var(--muted); font-size: 10px; }
+.image-editor .ie-close { margin-left: 6px; }
+.curve-editor { border: 1px solid var(--border); border-radius: 3px; touch-action: none; }
+.curve-editor .curve-bg { fill: var(--input); }
+.curve-editor .curve-diag { stroke: var(--border); stroke-dasharray: 3 3; }
+.curve-editor .curve-line { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.curve-editor .curve-pt { fill: var(--panel); stroke: var(--accent); stroke-width: 1.5; cursor: grab; }
 .drawing-editor { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; background: var(--canvas); color: var(--text); outline: none; font-size: 12px; }
 .de-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 6px 10px; background: var(--panel); border-bottom: 1px solid var(--border); }
 .de-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1385,3 +1439,82 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
   :root:not([data-note-page='light']):not([data-theme='light']) :is(.rich-doc:not(.rt-math-preview) > :not(.ProseMirror, .rich-pic), .rich-doc .ProseMirror > :not(.rich-pic, :has(> .rich-pic)), .rich-doc .rich-caption) { filter: invert(1) hue-rotate(180deg); }
   :root:not([data-note-page='light']):not([data-theme='light']) .rich-doc .rich-pic > :is(svg, img) { background: #ffffff; }
 }
+
+/* ---- Top bar: the buttons in groups (project, share, edit), help and the theme at the right ---- */
+.toolbar { gap: 8px 10px; }
+.tb-group { display: inline-flex; align-items: center; gap: 2px; padding: 2px; background: var(--input); border: 1px solid var(--border); border-radius: 8px; }
+.tb-group > button, .tb-group > select, .tb-group .undo-redo > button { background: transparent; border-color: transparent; box-shadow: none; display: inline-flex; align-items: center; gap: 5px; }
+.tb-group > button:hover:not(:disabled), .tb-group > select:hover, .tb-group .undo-redo > button:hover:not(:disabled) { background: var(--panel); border-color: var(--border); }
+.tb-group > button.active { background: var(--panel); border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
+.tb-group .undo-redo { display: inline-flex; gap: 2px; }
+.tb-group > select { cursor: pointer; }
+.tb-spacer { flex: 1; }
+.toolbar > button { display: inline-flex; align-items: center; gap: 5px; }
+.tb-theme > button { padding: 3px 5px; color: var(--muted); }
+.tb-theme > button.active { color: color-mix(in srgb, var(--accent) 70%, var(--text)); }
+
+/* ---- The side panels (Nodes, Options): the options of each node a card ---- */
+.palette-head strong { font-size: var(--fs-title); }
+.palette.inspector { background: color-mix(in srgb, var(--canvas) 55%, var(--panel)); }
+.inspector .palette-list { gap: 10px; padding: 2px 4px 2px 2px; }
+.inspector-section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 4px 8px 8px; box-shadow: 0 1px 2px rgb(0 0 0 / 0.05); }
+.inspector-section.pinned { border-left: 3px solid var(--node-color); padding-left: 8px; }
+.inspector-section-head { padding: 2px 0 4px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+.inspector-section-head .palette-group { font-size: var(--fs-title); box-shadow: none; }
+.inspector-section-head .palette-group:hover { background: transparent; }
+.inspector-pin { background: transparent; border-color: transparent; box-shadow: none; }
+.inspector-options details > summary { font-weight: 600; color: var(--text); padding: 3px 4px; border-radius: 6px; }
+.inspector-options details > summary:hover { background: var(--input); }
+
+/* ---- The Nodes panel: a search with its icon, sections with their colour and count, a node a row with its colour ---- */
+.palette-search-box { position: relative; display: flex; align-items: center; color: var(--muted); }
+.palette-search-box > svg { position: absolute; left: 8px; pointer-events: none; }
+.palette-search-box .palette-search { padding-left: 28px; padding-right: 24px; border-radius: 8px; }
+.palette-clear { position: absolute; right: 4px; padding: 2px; border: none; background: transparent; box-shadow: none; color: var(--muted); display: grid; place-items: center; }
+.palette-group { display: flex; align-items: center; gap: 4px; border-radius: 6px; box-shadow: none; }
+.palette-count { font-size: var(--fs-tiny); font-weight: 500; color: var(--muted); background: var(--input); border-radius: 999px; padding: 0 6px; letter-spacing: 0; }
+.palette-item { display: flex; align-items: center; gap: 8px; border: 1px solid transparent; border-left: 1px solid transparent; background: transparent; box-shadow: none; border-radius: 7px; padding: 4px 8px; }
+.palette-item .pi-dot { width: 9px; height: 9px; border-radius: 3px; background: var(--node-color); flex: none; }
+.palette-item:hover { transform: none; background: color-mix(in srgb, var(--node-color) 12%, var(--panel)); border-color: color-mix(in srgb, var(--node-color) 40%, transparent); box-shadow: none; }
+.palette-item:active { transform: scale(0.98); }
+.palette-tip-hint { margin-top: 4px; opacity: 0.75; font-size: 11px; }
+
+/* ---- The canvas controls: one bar at the bottom left, its buttons without borders ---- */
+.react-flow__controls { display: flex; gap: 1px; padding: 3px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 4px 14px rgb(0 0 0 / 0.12); }
+.react-flow__controls .react-flow__controls-button { width: 28px; height: 28px; border: none; border-radius: 7px; background: transparent; box-shadow: none; }
+.react-flow__controls .react-flow__controls-button:hover { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.react-flow__controls .react-flow__controls-button.on { background: color-mix(in srgb, var(--accent) 18%, var(--panel)); }
+
+/* ---- The context menu: a card, its items rounded, a tint under the mouse ---- */
+.ctx-menu { border-radius: 10px; padding: 4px; box-shadow: 0 10px 30px rgb(0 0 0 / 0.18), 0 1px 3px rgb(0 0 0 / 0.08); }
+.ctx-menu button { border-radius: 6px; box-shadow: none; }
+.ctx-menu button:hover:not(:disabled), .ctx-menu button.active { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.ctx-menu button.danger:hover:not(:disabled) { background: var(--err-bg); }
+
+/* ---- The Figure Drawing editor's bar: its tools in groups, as the top bar ---- */
+.de-group { padding: 2px; border-left: none; background: var(--input); border: 1px solid var(--border); border-radius: 8px; }
+.de-group > .de-tool, .de-group > button { border-color: transparent; background: transparent; box-shadow: none; }
+.de-group > .de-tool:hover:not(:disabled), .de-group > button:hover:not(:disabled) { background: var(--panel); border-color: var(--border); }
+.de-tool.on, .de-group > .de-tool.on { background: var(--panel); border-color: color-mix(in srgb, var(--select) 60%, var(--border)); color: var(--select); }
+
+/* ---- The older settings of the nodes (their fields, checks and sliders), in the same look as the new panels ---- */
+input[type='checkbox'], input[type='radio'], input[type='range'] { accent-color: var(--accent); }
+input[type='checkbox'], input[type='radio'] { box-shadow: none; }
+.inspector-options label:not(.radio):not(.slider-row):not([class*='mantine']) > span:first-child { color: var(--muted); font-size: var(--fs-small); }
+.inspector-options label.slider-row > span:first-child { color: var(--muted); font-size: var(--fs-small); }
+.inspector-options .hint { color: var(--muted); font-size: var(--fs-small); line-height: 1.4; }
+.inspector-options details.sub, .inspector-options details:not(.sub) { border-top: 1px solid var(--border); padding-top: 4px; margin-top: 4px; }
+.inspector-options select, .inspector-options input:not([type='checkbox']):not([type='radio']):not([type='range']):not([class*='mantine']) { border-radius: 6px; }
+
+/* a narrow window: the top bar's buttons as their icons only (their names in their hints), on one line where it fits */
+@media (max-width: 1180px) {
+  .toolbar .tb-label { display: none; }
+  .toolbar .project-name { width: 160px; }
+  .toolbar select.examples-menu { max-width: 9em; }
+}
+
+/* Translate & resize: the tools of its graph (Move, Resize, the zoom), its curves' own shifts */
+.translate-tools { margin: 4px 0; gap: 6px; }
+.translate-tools .tb-group > button { display: inline-flex; align-items: center; gap: 4px; }
+.translate-own { display: flex; align-items: center; gap: 4px; }
+.translate-own > :first-child { flex: 1; min-width: 0; }

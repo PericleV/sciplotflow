@@ -179,6 +179,10 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
     }
     case 'drawing':
       return handle === 'figure' ? 'figure' : null;
+    case 'image':
+      return handle === 'figure' ? 'figure' : handle === 'matrix' ? 'matrix' : handle === 'workbook' ? 'workbook' : null;
+    case 'phasediagram':
+      return handle === 'figure' || handle === 'cooling' ? 'figure' : handle === 'points' || handle === 'fractions' || handle === 'boundaries' ? 'dataset' : null;
     case 'canvas':
     case 'note':
     case 'frame':

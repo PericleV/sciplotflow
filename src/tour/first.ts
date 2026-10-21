@@ -102,7 +102,7 @@ export const FIRST: Tour = {
         },
         {
           title: 'Name an axis',
-          text: 'Further down, open the **Axes** tab and then **Y1 left**. Write the axis title in **Text**, for example Absorbance (a.u.).\n\nIf you leave it empty, the axis uses the column name. Tip: x_{2} gives a subscript and \\lambda gives λ.',
+          text: 'Further down, open the **Axes** tab and then **Y1 left**. Under **Title**, write the axis title in **Text**, for example Absorbance (a.u.).\n\nIf you leave it empty, the axis uses the column name. Tip: x_{2} gives a subscript and \\lambda gives λ.',
           target: (doc, s) => optionsOf(doc, s, plotOfImport(s)?.id, /^Axes$/),
           done: (s) => changed(s, axisTitles),
           demo: (s) => {

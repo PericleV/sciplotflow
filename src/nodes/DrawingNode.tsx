@@ -11,6 +11,8 @@ import { useFigureFocus } from './figureFocus.ts';
 import { FigureView, PageControls } from './FigureView.tsx';
 import { DrawingEditor } from './DrawingEditor.tsx';
 import { DrawingQuick } from './DrawingQuick.tsx';
+import { pageText } from '../engine/evaluate.ts';
+import { PageTextContext } from '../ui/pageText.ts';
 import { NodeOptions } from './NodeOptions.tsx';
 import { Check, Field, InPort, Messages, NumInput, OutPort, Select } from './ui.tsx';
 import { Pencil } from 'lucide-react';
@@ -56,7 +58,11 @@ export function DrawingNodeView({ id, data }: NodeProps<DrawingNode>) {
       {fig && <FigureView fig={fig} width={600} page={data} setPage={(p) => set(p)} layoutTitle="" noAxes onPick={(node, part) => node === id && setQuick(part.startsWith('ann:') ? part.slice(4) : null)} />}
       <OutPort label="figure" port="figure" id="figure" title="The drawing as a figure: to a Merge (a panel of its own) or to a Plot's insets — scaled there as a whole" />
       <NodeOptions>
-        {quick && <DrawingQuick items={data.annotations ?? []} id={quick} setItems={(annotations) => set({ annotations })} onClose={() => setQuick(null)} onEdit={() => setEditing({ first: quick })} over={under && data.under !== 'guide'} />}
+        {quick && (
+          <PageTextContext.Provider value={pageText(data)}>
+            <DrawingQuick items={data.annotations ?? []} id={quick} setItems={(annotations) => set({ annotations })} onClose={() => setQuick(null)} onEdit={() => setEditing({ first: quick })} over={under && data.under !== 'guide'} />
+          </PageTextContext.Provider>
+        )}
         <div className="row">
           <button className="nodrag btn-run" title="Open the drawing in its editor" onClick={() => setEditing({})}>
             <Pencil {...IC} /> Edit drawing

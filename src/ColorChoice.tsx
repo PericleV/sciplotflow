@@ -30,7 +30,7 @@ export function ColorChoice({ value, shown, label, title, same, onChange }: { va
     <span className="color-choice" ref={box}>
       <button className={open ? 'active' : ''} onClick={() => setOpen(!open)} title={title} aria-expanded={open}>
         <i style={{ background: shown }} />
-        {label}
+        <span className="tb-label">{label}</span>
       </button>
       {open && (
         <div className="color-menu">

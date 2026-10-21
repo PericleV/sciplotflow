@@ -86,7 +86,11 @@ import { area, centroid, extremum, peakWidth, xAtLevel, yAtX } from '../src/engi
 import { curveFormulas } from '../src/engine/curvemath.ts';
 import { selectRows } from '../src/engine/rowsel.ts';
 import { rowHandle, sourcePort, targetAccepts } from '../src/engine/ports.ts';
+import { checkImage } from './check-image.ts';
+import { checkPhase } from './check-phase.ts';
 import { buildFigure } from '../src/plotBuild.ts';
+import { addAxis, removeAxis, layoutAxes, type XLayout, type YLayout } from '../src/figure/multiAxes.ts';
+import { drawnLimits } from '../src/figure/drawnLimits.ts';
 import { backupText, readBackup } from '../src/library.ts';
 import { curveColumns, digest, figPort, outValue, toPy, validName, type MplFigure } from '../src/engine/python.ts';
 import { figureNodes } from '../src/mplPlot.ts';
@@ -269,6 +273,15 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
     return res.outputs.figure?.t === 'figure' ? res.outputs.figure.v : (null as unknown as Figure);
   };
   const fa = xy('a', [0, 4], [0, 1]);
+  // the limits as drawn (what auto is in the Axes settings): rounded out to the ticks, a limit typed kept, its step
+  {
+    const L = drawnLimits(fa, 'a');
+    const fm = xy('am', [0, 4], [0, 1], { axes: { x: { ...AXIS_DEFAULTS, min: 0.5, max: NaN } } });
+    const M = drawnLimits(fm, 'am');
+    const fl = xy('al', [1, 1000], [1, 2], { axes: { x: { ...AXIS_DEFAULTS, scale: 'log' } } });
+    const G = drawnLimits(fl, 'al');
+    ok(L.bottom?.lo === 0 && L.bottom.hi === 4 && L.bottom.step > 0 && L.left?.lo === 0 && L.left.hi === 1 && M.bottom?.lo === 0.5 && M.bottom.hi === 4 && L.top?.hi === 4 && G.bottom?.lo === 1 && G.bottom.hi === 1000 && Number.isNaN(G.bottom.step), `the axes' limits as drawn: X ${L.bottom?.lo} – ${L.bottom?.hi} every ${L.bottom?.step}, Y ${L.left?.lo} – ${L.left?.hi}; a start typed kept (${M.bottom?.lo}); a log axis without a step`);
+  }
   const p = fa.axes[0].style.pos;
   ok(fa.width === 85 && fa.unit === 'mm' && fa.axes.length === 1 && fa.axes[0].legends.length === 1, 'Plot: a page of 85 mm with its frame and legend');
   ok(p.x > 5 && p.x < 25 && p.y < 6 && p.x + p.w > 95 && p.y + p.h > 75 && p.y + p.h < 95, `Plot: automatic margins (${p.x.toFixed(1)} ${p.y.toFixed(1)} ${p.w.toFixed(1)} ${p.h.toFixed(1)})`);
@@ -1959,6 +1972,22 @@ for (const ex of EXAMPLES) {
     { id: '6', source: 'e3', sourceHandle: 'out', target: 't', targetHandle: 'in-2' },
   ]);
   ok(cols(viaPorts) === 'x:0/1/2 a:101/103/102 b:5/6/4', `Translate: columns on the ports, designated here (b: –, not moved) (${cols(viaPorts)})`);
+  // Resize (before the move): by a factor about a point, a range to another (each curve its own), two values to two
+  // others (a calibration); the move then on the resized curves; the errors resized with their values
+  const rz = (d: Partial<TranslateData>) => cols(tr(d));
+  ok(rz({ sx: { mode: 'factor', k: 2, anchor: 'zero' } }) === 'x:0/2/4 a:1/3/2 b:5/6/4', `Resize: X × 2 about 0 (${rz({ sx: { mode: 'factor', k: 2, anchor: 'zero' } })})`);
+  ok(rz({ sx: { mode: 'factor', k: 2, anchor: 'center' } }) === 'x:-1/1/3 a:1/3/2 b:5/6/4', 'Resize: X × 2 about the middle of the data');
+  ok(rz({ sy: { mode: 'factor', k: 2, anchor: 'zero' } }) === 'x:0/1/2 a:2/6/4 b:10/12/8', 'Resize: Y × 2 about 0, every curve');
+  ok(rz({ sy: { mode: 'range', from: [NaN, NaN], to: [0, 1] } }) === 'x:0/1/2 a:0/1/0.5 b:0.5/1/0', `Resize: every curve's Y range brought to 0 – 1 (${rz({ sy: { mode: 'range', from: [NaN, NaN], to: [0, 1] } })})`);
+  ok(rz({ sx: { mode: 'points', pts: [0, 2, 10, 20] } }) === 'x:10/15/20 a:1/3/2 b:5/6/4', 'Resize: two values of X brought to two others (0 → 10, 2 → 20)');
+  ok(rz({ sy: { mode: 'factor', k: 2, anchor: 'zero' }, mode: 'point', point: 'max', moveX: false, moveY: true, y0: 0 }) === 'x:0/1/2 a:-4/0/-2 b:-2/0/-4', 'Resize then move: the maximum of the resized curve brought to y = 0');
+  ok(rz({ sx: { mode: 'points', pts: [0, 0, 1, 2] } }) === 'x:0/1/2 a:1/3/2 b:5/6/4' && tr({ sx: { mode: 'points', pts: [0, 0, 1, 2] } }).warnings.length === 2, 'Resize: two equal values: not resized, said');
+  {
+    const eImp = { ...tImp, data: { ...IMPORT_DEFAULTS, text: 'x;a;sa\n0;1;0.1\n1;3;0.2\n', textId: 'tr-err' } } as AppNode;
+    const r = evaluateGraph([eImp, { id: 't', type: 'translate', position: { x: 0, y: 0 }, data: { ...TRANSLATE_DEFAULTS, roles: { sa: 'yerr' }, sy: { mode: 'factor', k: -2, anchor: 'zero' }, dy: 1 } } as AppNode], [{ id: '1', source: 'i', sourceHandle: 'out', target: 't', targetHandle: 'data' }]).get('t')!;
+    const sh = r.outputs.shifts?.t === 'dataset' ? r.outputs.shifts.v.columns.find((c) => c.name === 'Y factor')?.values[0] : NaN;
+    ok(cols(r) === 'x:0/1 a:-1/-5 sa:0.2/0.4' && sh === -2 && (r.view.translate?.plots?.[0].y.join() ?? '') === '-1,-5', `Resize: the ±Y resized as its Y (× |−2|), a move leaving it; the factors in the shifts; the curve before and after for the graph (${cols(r)})`);
+  }
 }
 
 {
@@ -4208,6 +4237,45 @@ for (const ex of EXAMPLES) {
       bar.edges,
     ).get(bar.nodes[0].id)!;
     ok(one.nodes.length === 1 && one.edges[0].sourceHandle === 'book' && pd.sheet === 'S1' && pd.rows?.map((r) => `${r.sheet}:${r.cols?.x}-${r.cols?.y}:${r.cols?.yerr ?? ''}`).join() === 'S2:D-F:,S1:A-C:B' && pd.legend?.show === true && per.nodes.map((q) => q.type).join() === 'plot1d,plot1d,canvas' && per.edges.filter((e) => e.targetHandle === 'figures').length === 2 && (per.nodes[1].data as Plot1DData).sheet === 'S2' && !add.edges.length && add.update?.data.rows?.[0]?.sheet === 'S2' && add.update.data.cols?.y === 'B' && bd.cat === 'D' && bd.ys === 'E, F' && bd.sheet === 'S2' && !g.errors.length && g.view.sheets?.join() === 'S1,S2' && targetAccepts(bar.nodes[0], 'dataset').includes('workbook'), 'Plot these columns: pairs from two sheets in one Plot; a Plot per sheet in a Merge; curves added to a Plot; a bar chart of one sheet of the workbook');
+    // several Y axes (as Origin's multi-Y): one left, the others right — the right axis its own, a third moved out; every
+    // axis coloured as its curve; double Y (the others together on the right); all on the left; X at the bottom and top
+    const tri = [{ sheet: 'S1', x: 'A', y: 'B', yerr: '', xerr: '' }, { sheet: 'S1', x: 'A', y: 'C', yerr: '', xerr: '' }, { sheet: 'S1', x: 'C', y: 'A', yerr: '', xerr: '' }];
+    const my = buildFigure(src, { graph: 'line', curves: tri, into: '', split: 'one', merge: false, yAxes: 'leftRight' }, cols, uid);
+    const md = my.nodes[0].data as Plot1DData;
+    const onY = [md.style, ...(md.rows ?? []).map((q) => q.style)].map((q) => q?.axisY).join();
+    const mf = evaluateGraph([{ id: 'w', type: 'book', position: { x: 0, y: 0 }, data: { ...WORKBOOK_DEFAULTS, sheets: [{ name: 'S1', text: 'A\tB\tC\n1\t2\t3\n2\t5\t1\n' }] } } as AppNode, ...my.nodes], my.edges).get(my.nodes[0].id)!.view.figure!;
+    const ma = mf.axes[0];
+    const mfr = { x: (ma.style.pos.x / 100) * toPt(mf.width, mf.unit), y: (ma.style.pos.y / 100) * toPt(mf.height, mf.unit), w: (ma.style.pos.w / 100) * toPt(mf.width, mf.unit), h: (ma.style.pos.h / 100) * toPt(mf.height, mf.unit) };
+    const md2 = axesGeometry(ma, mfr, mf.text).drawn;
+    const axisOf = (key: string) => md2.find((a) => a.key === key)!;
+    ok(onY === 'left,right,y3' && md.axes?.right?.mode === 'own' && md.axes.extra?.[0]?.side === 'right' && md.axes.extra[0].style.offset === 40 && axisOf('left').s.color === ma.curves[0].style.color && axisOf('right').s.titleText.color === ma.curves[1].style.color && axisOf('y3').s.color === ma.curves[2].style.color && axisOf('y3').title === 'A', `Plot these columns ▸ Y axes: one left, the others right — each its own axis, coloured and titled as its curve (${onY})`);
+    const lay = (n: number, y: YLayout, x: XLayout = 'one') => layoutAxes(n, y, x);
+    const dbl = lay(3, 'double');
+    const all = lay(3, 'allLeft');
+    const alt = lay(4, 'alternate');
+    const bt = lay(3, 'one', 'bottomTop');
+    ok(dbl.on.map((q) => q.axisY).join() === 'left,right,right' && !dbl.axes.extra.length && all.on.map((q) => q.axisY).join() === 'left,y3,y4' && all.axes.extra.map((e) => `${e.side}:${e.style.offset}`).join() === 'left:40,left:80' && alt.on.map((q) => q.axisY).join() === 'left,right,y3,y4' && alt.axes.extra.map((e) => `${e.side}:${e.style.offset}`).join() === 'left:40,right:40' && bt.on.map((q) => q.axisX).join() === 'bottom,top,x3' && bt.axes.top.mode === 'own' && bt.axes.extra[0].side === 'bottom', 'multi-axes layouts: double Y, all on the left (moved out in turn), left and right in turn, X at the bottom and top');
+    const fnRight = addAxis({ ...axesStyle(undefined), right: { ...axesStyle(undefined).right, mode: 'function', fn: '2*x' } }, 'right');
+    ok(fnRight.id === 'y3' && fnRight.st.right.mode === 'function' && addAxis(axesStyle(undefined), 'right').id === 'right', 'a new Y on the right: the right axis itself when it only mirrors; past a converting right axis, a third Y');
+    // three Y on the right, the middle one taken away (its curve moved): a new one goes in its place, not over the last
+    {
+      let st = axesStyle(undefined);
+      const ids: string[] = [];
+      for (let k = 0; k < 3; k++) {
+        const r = addAxis(st, 'right');
+        st = r.st;
+        ids.push(r.id);
+      }
+      const offs = () => st.extra.filter((e) => e.side === 'right').map((e) => e.style.offset).sort((a, b) => a - b);
+      const before = offs().join();
+      st = removeAxis(st, 'y3');
+      const r = addAxis(st, 'right');
+      st = r.st;
+      const after = offs();
+      ok(ids.join() === 'right,y3,y4' && before === '40,80' && r.id === 'y3' && after.join() === '40,80' && new Set(after).size === after.length, `axes added, one taken away, one added: in the free place (offsets ${before} → ${after.join()}), none over another`);
+    }
+    const three = lay(3, 'leftRight');
+    ok(!removeAxis(three.axes, 'y3').extra.length && removeAxis(three.axes, 'y9') === three.axes, 'an added axis removed (Axes ▸ Remove this axis); an axis that is not there: nothing changed');
     // a 3D plot: X, Y, Z of the first curve (a scatter), or X and the Y columns (a waterfall), of one sheet
     const s3 = buildFigure(src, { graph: 'scatter3d', curves: [{ x: 'D', y: 'E', z: 'F', yerr: '', xerr: '' }], sheet: 'S2', into: '', split: 'one', merge: false }, cols, uid);
     const w3 = buildFigure(src, { graph: 'waterfall3d', curves: [{ x: 'D', y: 'E', yerr: '', xerr: '' }, { x: 'D', y: 'F', yerr: '', xerr: '' }], sheet: 'S2', into: '', split: 'one', merge: false }, cols, uid);
@@ -4810,7 +4878,8 @@ for (const ex of EXAMPLES) {
   const seen = new Set<string>();
   const walk = (ns: AppNode[]) => ns.forEach((n) => (seen.add(n.type), Array.isArray((n.data as { nodes?: AppNode[] }).nodes) && walk((n.data as { nodes: AppNode[] }).nodes)));
   for (const e of EXAMPLES) walk(e.make().nodes);
-  const missing = (Object.keys(NODE_HELP) as string[]).filter((t) => !seen.has(t));
+  // the Image analysis and Phase diagram nodes are hidden (not offered) for now: no example of them
+  const missing = (Object.keys(NODE_HELP) as string[]).filter((t) => !seen.has(t) && t !== 'image' && t !== 'phasediagram');
   ok(!missing.length, `examples: every node in at least one (${missing.join(', ')})`);
 }
 {
@@ -5354,6 +5423,12 @@ for (const ex of EXAMPLES) {
   ok(typeof ans !== 'string' && ans.at === 1792000040000 && ans.clock === 1792000000000, 'collaboration: the answer carries when both sides start');
   ok(typeof read !== 'string' && read.sdp === sig.sdp && read.name === 'Ana' && /^[A-Za-z0-9_-]+$/.test(code) && typeof decodeSignal('garbage') === 'string', 'collaboration: an invitation code (also inside a link) read back; anything else refused');
 }
+
+// ---- Image analysis: the algorithms against scikit-image / scipy ----
+checkImage(ok);
+
+// ---- Phase diagram: against closed forms ----
+checkPhase(ok);
 
 console.log(`${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

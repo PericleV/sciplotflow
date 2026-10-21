@@ -4,6 +4,7 @@ import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, COLORBAR_DEFAULTS, CURVE_STYLE_DEFA
 import type { ReportData } from './engine/reportDoc.ts';
 import type { MatCompData, MatrixData, PickData, CalculusData, BookSheet, WorkbookData, ColumnsData, PeakWidthData, CombineData, UnstackData, AnnotationItem, AutoExtractData, CanvasData, DrawingData, DrawingGrid, CanvasLayout, DataManipData, ExtractData, FitNodeData, GenColData, ImportData, MathColData, PythonData, NoteData, Plot1DData, PlotPage, StatsData, PeakData, AnovaData, CorrData, NonparData, NormData, TTestData, CurveMathData, TranslateData, ConvData, FFTData, InterpData, NormalizeData, SmoothData, AverageData, CleanData, DigitizerData, FilterData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from './types.ts';
 import { SET_COLORS } from './engine/digitize.ts';
+import type { ImageAnalysisData } from './image/node.ts';
 import type { MatrixPlotSpec } from './engine/matrixplot.ts';
 
 export const IMPORT_DEFAULTS: ImportData = { name: '', fileName: '', text: '', textId: '', csv: CSV_DEFAULTS };
@@ -32,6 +33,8 @@ export const NONPAR_DEFAULTS: NonparData = { ...STAT_IN, test: 'kruskal', mu: 0,
 export const CORR_DEFAULTS: CorrData = { cols: '', method: 'pearson', alpha: 0.05 };
 export const CURVEMATH_DEFAULTS: CurveMathData = { ya: '', yb: '', op: 'dxAtY', values: '', crossing: 'first', abs: false, grid: 'a', from: NaN, to: NaN, points: 200 };
 export const TRANSLATE_DEFAULTS: TranslateData = { roles: {}, mode: 'value', dx: 0, dy: 0, own: {}, point: 'max', atx: 0, moveX: false, moveY: true, x0: 0, y0: 0 };
+export const IMAGE_DEFAULTS: ImageAnalysisData = { name: '', steps: [] };
+export { PHASE_DEFAULTS } from './engine/phasenode.ts';
 export const DIGITIZER_DEFAULTS: DigitizerData = {
   image: '',
   imageName: '',

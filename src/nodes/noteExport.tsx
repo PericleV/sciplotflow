@@ -12,6 +12,7 @@ import { noteMarkdown } from './noteMd.ts';
 import { PICTURES, plainOf, RICH_BASE, type RichDoc } from './richDoc.ts';
 import { RichView } from './RichView.tsx';
 import { mathReady } from '../math/store.ts';
+import { notify } from '../ui/dialogStore.ts';
 
 // the look of a document on paper (as in the app, without its theme)
 const DOC_CSS = `
@@ -76,7 +77,7 @@ async function figuresReady(doc: RichDoc, figure: (node: string) => Figure | und
 export async function printNote(doc: RichDoc, figure: (node: string) => Figure | undefined, math?: MathHtml) {
   const w = window.open('', '_blank');
   if (!w) {
-    alert('The browser blocked the print window: allow pop-ups for this page.');
+    notify('The browser blocked the print window: allow pop-ups for this page.');
     return;
   }
   await figuresReady(doc, figure);

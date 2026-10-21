@@ -13,6 +13,7 @@ import { cellText, ROLE_LABELS, roleOf, type ColumnRole, type Dataset } from '..
 import { maxOf } from '../engine/minmax.ts';
 import { X } from 'lucide-react';
 import { IC } from './iconProps.ts';
+import { ask } from '../ui/dialogStore.ts';
 
 const ROW_H = 21;
 const VIEW_H = 300;
@@ -511,7 +512,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
           </button>
         )}
         {count > 0 && (
-          <button className="nodrag danger" onClick={() => confirm('Undo every change made by hand in this table (the file stays as it is)?') && onEdits({})}>
+          <button className="nodrag danger" onClick={() => void ask('Undo every change made by hand in this table (the file stays as it is)?', { ok: 'Undo all', danger: true }).then((yes) => yes && onEdits({}))}>
             Undo all changes
           </button>
         )}

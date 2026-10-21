@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { errorTargets } from './engine/errcols.ts';
 import { curvesByRole, titleOf, type Dataset } from './engine/table.ts';
 import { is1D, XYZ, type GraphKind, type PlotChoice, type PlotCurve } from './plotBuild.ts';
+import { X_LAYOUTS, Y_LAYOUTS, type XLayout, type YLayout } from './figure/multiAxes.ts';
 import { stylesFor } from './nodes/styles.ts';
 import type { NodeType } from './types.ts';
 import { X } from 'lucide-react';
@@ -68,6 +69,8 @@ export function PlotColumnsDialog({ name, shown, sheets, shownSheet, plots, onDo
   const [into, setInto] = useState('');
   const [split, setSplit] = useState<PlotChoice['split']>('one');
   const [merge, setMerge] = useState(true);
+  const [yAxes, setYAxes] = useState<YLayout>('one');
+  const [xAxes, setXAxes] = useState<XLayout>('one');
   const [style, setStyle] = useState('');
   // a 3D plot of X, Y, Z: one curve, its Z too
   const xyz = XYZ.includes(drawn);
@@ -263,9 +266,33 @@ export function PlotColumnsDialog({ name, shown, sheets, shownSheet, plots, onDo
             )}
           </div>
         )}
+        {oneD && !into && split !== 'curve' && curves.length > 1 && (
+          <div className="row wrap">
+            <label className="row" title="Every curve on a Y axis of its own, with its own scale, coloured as the curve (as Origin's double Y and multi-Y)">
+              Y axes
+              <select value={yAxes} onChange={(e) => setYAxes(e.target.value as YLayout)}>
+                {Y_LAYOUTS.map(([k, l]) => (
+                  <option key={k} value={k}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="row" title="Every curve on an X axis of its own (curves with different X ranges)">
+              X axes
+              <select value={xAxes} onChange={(e) => setXAxes(e.target.value as XLayout)}>
+                {X_LAYOUTS.map(([k, l]) => (
+                  <option key={k} value={k}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
         <div className="hint">A sweep saved in one long table: cut it into columns first (Split into columns), then plot them.</div>
         <div className="row">
-          <button className="btn-run" disabled={!ready} onClick={() => onDone({ graph: drawn, curves: oneD ? curves : shownCurves, ...(sheet ? { sheet } : {}), into: oneD ? into : '', split: into ? 'one' : split === 'sheet' && sheetsUsed.size < 2 ? 'one' : split, merge, style })}>
+          <button className="btn-run" disabled={!ready} onClick={() => onDone({ graph: drawn, curves: oneD ? curves : shownCurves, ...(sheet ? { sheet } : {}), into: oneD ? into : '', split: into ? 'one' : split === 'sheet' && sheetsUsed.size < 2 ? 'one' : split, merge, style, ...(oneD && !into ? { yAxes, xAxes } : {}) })}>
             {into ? `Add ${curves.length} curve${curves.length === 1 ? '' : 's'}` : `Make the figure (${curves.length} curve${curves.length === 1 ? '' : 's'})`}
           </button>
           <button onClick={onClose}>Cancel</button>

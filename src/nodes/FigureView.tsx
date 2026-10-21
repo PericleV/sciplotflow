@@ -13,8 +13,8 @@ import { FocusCurve, Interactive, LayoutEdit, ThreeTurn, type DragInfo } from '.
 import { FigureRotateLayer, type Turn } from './FigureRotate.tsx';
 import { FONTS, toPt, type Figure, type LengthUnit } from '../figure/spec.ts';
 import type { AnnotationItem, AppNode, PageData } from '../types.ts';
-import { Check, Field, NumInput, Select, TextInput } from './ui.tsx';
-import { RichInput, TextStyleControls } from './fields.tsx';
+import { Select, TextInput } from './ui.tsx';
+import { RichInput } from './fields.tsx';
 import { FigureZoomLayer } from './FigureZoom.tsx';
 import { Figure3DZoomLayer } from './Figure3DZoom.tsx';
 import { Figure3DReaderLayer } from './Figure3DReader.tsx';
@@ -28,11 +28,21 @@ import { autoRanges, figureAxesOf, hasThree, readableCurves, withRanges, zoomOut
 import { ZoomTools } from './ZoomTools.tsx';
 import { focusPart } from './figureFocus.ts';
 import type { ZoomMode } from './plotZoom.ts';
-import { BorderControls } from './BorderControls.tsx';
 import { FigureRangeLayer, type XRange } from './FigureRange.tsx';
 import { Crosshair, Maximize2, MoveHorizontal, Rotate3d, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
+import { Select as MSelect, UnstyledButton } from '@mantine/core';
+import { Choice, ColorField, NumPair, OpacityField, PictureGrid, Row, SliderField, TextStyleRows, Toggle, WidthField } from '../ui/props.tsx';
+import { DASH_PICS } from '../ui/dashPics.tsx';
+
+// keys pressed in the page settings are their own
+const pageKeys = (e: React.KeyboardEvent) => {
+  if (!e.ctrlKey && !e.metaKey && !e.altKey) e.stopPropagation();
+};
+import { FigureQuick, type QuickAt } from './FigureQuick.tsx';
+import { useQuickBar } from '../ui/quickBarStore.ts';
 import { MATH_FACE_NAMES, mathFace, type MathFontChoice } from '../math/sizes.ts';
+import { notify } from '../ui/dialogStore.ts';
 
 type ViewMode = 'normal' | 'gray' | 'deutan' | 'protan' | 'tritan';
 // colour-blindness simulations (Machado et al. 2009, severity 1) as SVG colour matrices
@@ -118,6 +128,20 @@ export function FigureView({ fig, width, maxHeight = 480, page, setPage, layoutT
   const own = useNodeId();
   const { setNodes } = useReactFlow<AppNode>();
   const [picked, setPicked] = useState<{ x: number; y: number; w: number; h: number; big: boolean; n: number } | null>(null);
+  // an annotation clicked: the quick bar over it (until a click elsewhere)
+  const quickOn = useQuickBar();
+  const [quick, setQuick] = useState<QuickAt | null>(null);
+  useEffect(() => {
+    if (!quick) return;
+    // a press outside the figure (not in a picker the bar opened): the bar goes
+    const away = (e: PointerEvent) => {
+      const t = e.target as Element | null;
+      if (t?.closest?.('.canvas-view, .big-figure, .mantine-Popover-dropdown, .mantine-Tooltip-tooltip')) return;
+      setQuick(null);
+    };
+    document.addEventListener('pointerdown', away, true);
+    return () => document.removeEventListener('pointerdown', away, true);
+  }, [quick]);
   const partAt = (target: EventTarget, root: HTMLElement | null) => {
     let el = target as Element | null;
     while (el && el !== root && !el.getAttribute?.('data-part')) el = el.parentElement;
@@ -141,12 +165,14 @@ export function FigureView({ fig, width, maxHeight = 480, page, setPage, layoutT
     const { el, part, node } = partAt(e.target, root);
     // the node told what was clicked (a Figure Drawing: its object, edited in its panel)
     onPick?.(node, part);
-    if (!el) return setPicked(null);
+    if (!el) return setPicked(null), setQuick(null);
     // on the screen the node is scaled by the canvas's zoom: back to the figure's own pixels
     const r = el.getBoundingClientRect();
     const b = root.getBoundingClientRect();
     const k = root.offsetWidth ? b.width / root.offsetWidth : 1;
-    setPicked((q) => ({ x: (r.left - b.left) / k, y: (r.top - b.top) / k, w: r.width / k, h: r.height / k, big, n: (q?.n ?? 0) + 1 }));
+    const at = { x: (r.left - b.left) / k, y: (r.top - b.top) / k, w: r.width / k, h: r.height / k, big };
+    setPicked((q) => ({ ...at, n: (q?.n ?? 0) + 1 }));
+    setQuick(part.startsWith('ann:') ? { ...at, node, item: part.slice(4) } : null);
   };
   const open = (e: React.MouseEvent) => {
     if (tooling()) return;
@@ -234,7 +260,7 @@ export function FigureView({ fig, width, maxHeight = 480, page, setPage, layoutT
   const run = (f: () => Promise<void>) => {
     setBusy(true);
     f()
-      .catch((e: Error) => alert(e.message))
+      .catch((e: Error) => notify(e.message))
       .finally(() => setBusy(false));
   };
   // the project put in the SVG and PNG (an editable figure): this figure's node, the groups of the level shown
@@ -397,6 +423,7 @@ export function FigureView({ fig, width, maxHeight = 480, page, setPage, layoutT
         {(place ?? shapePlace) && zoom === 'none' && <FigurePointsLayer fig={fig} width={dispW} height={dispH} {...(place ?? shapePlace)!} />}
         {reader && zoom === 'none' && !place && !shapePlace && (three ? <Figure3DReaderLayer fig={fig} width={dispW} height={dispH} mode={readMode} onRead={setReading} /> : <FigureReaderLayer fig={fig} width={dispW} height={dispH} mode={readMode} curve={readCurve} onRead={setReading} onFocus={setFocus} />)}
         {picked && !picked.big && <div key={picked.n} className="part-outline" style={{ left: picked.x - 2, top: picked.y - 2, width: picked.w + 4, height: picked.h + 4 }} />}
+        {quickOn && quick && !quick.big && !tooling() && <FigureQuick at={quick} width={dispW} onClose={() => setQuick(null)} />}
       </div>
       {reader && <div className="reader-line mono" title="The last reading (select it to copy)">{reading || 'move the mouse over a curve'}</div>}
       {pick3d && <div className="hint">{pick3d.title} (Esc: stop)</div>}
@@ -423,6 +450,7 @@ export function FigureView({ fig, width, maxHeight = 480, page, setPage, layoutT
               {(place ?? shapePlace) && zoom === 'none' && <FigurePointsLayer fig={fig} width={bigW} height={bigH} {...(place ?? shapePlace)!} />}
               {reader && zoom === 'none' && !place && !shapePlace && (three ? <Figure3DReaderLayer fig={fig} width={bigW} height={bigH} mode={readMode} onRead={setReading} /> : <FigureReaderLayer fig={fig} width={bigW} height={bigH} mode={readMode} curve={readCurve} onRead={setReading} onFocus={setFocus} />)}
               {picked?.big && <div key={picked.n} className="part-outline" style={{ left: picked.x - 2, top: picked.y - 2, width: picked.w + 4, height: picked.h + 4 }} />}
+              {quickOn && quick?.big && !tooling() && <FigureQuick at={quick} width={bigW} onClose={() => setQuick(null)} />}
             </div>
             {!noAxes && (
               <div className="big-tools">
@@ -497,102 +525,114 @@ const PRESETS: { label: string; w: number; h: number; unit: LengthUnit }[] = [
 export function PageControls({ page, set, fixed }: { page: PageData; set: (p: Partial<PageData>) => void; fixed?: string }) {
   const preset = PRESETS.findIndex((p) => p.w === page.width && p.h === page.height && p.unit === page.unit);
   const bgMode = page.background === 'none' ? 'none' : page.background === 'white' || page.background === '#ffffff' || !page.background ? 'white' : 'color';
+  const size = page.size ?? 8;
   return (
-    <>
+    <div className="page-controls props-panel props-embed nodrag" onKeyDown={pageKeys}>
       {fixed ? (
-        <div className="hint">{fixed}</div>
+        <div className="prop-note">{fixed}</div>
       ) : (
         <>
-          <Field label="Size">
-            <select
-              className="nodrag"
-              value={preset}
-              onChange={(e) => {
-                const p = PRESETS[Number(e.target.value)];
+          <Row label="Size">
+            <MSelect
+              value={String(preset)}
+              data={[{ value: '-1', label: 'Custom' }, ...PRESETS.map((p, k) => ({ value: String(k), label: p.label }))]}
+              onChange={(v) => {
+                const p = PRESETS[Number(v)];
                 if (p) set({ width: p.w, height: p.h, unit: p.unit });
               }}
-            >
-              <option value={-1}>custom</option>
-              {PRESETS.map((p, k) => (
-                <option key={k} value={k}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Width × height">
-            <span className="row">
-              <NumInput className="short" min={1} step={1} value={page.width} onChange={(width) => set({ width })} />×
-              <NumInput className="short" min={1} step={1} value={page.height} onChange={(height) => set({ height })} />
-              <Select<LengthUnit>
-                value={page.unit}
-                options={[
-                  ['mm', 'mm'],
-                  ['cm', 'cm'],
-                  ['in', 'in'],
-                ]}
-                onChange={(unit) => set({ unit })}
-              />
-            </span>
-          </Field>
+            />
+          </Row>
+          <Row label="Width, height">
+            <NumPair a={page.width} b={page.height} names={['w', 'h']} onA={(width) => set({ width })} onB={(height) => set({ height })} />
+            <Choice<LengthUnit>
+              value={page.unit}
+              onChange={(unit) => set({ unit })}
+              options={[
+                ['mm', 'mm'],
+                ['cm', 'cm'],
+                ['in', 'in'],
+              ]}
+            />
+          </Row>
         </>
       )}
-      <Field label="Text" title="The text of the figure: every text on “auto” (numbers, titles, legend, annotations)">
-        <span className="row wrap">
-          <Select value={page.font} options={FONTS} onChange={(font) => set({ font })} />
-          <NumInput className="tiny" min={1} step={0.5} value={page.size ?? 8} title="Size, pt" onChange={(size) => set({ size: size > 0 ? size : 8 })} />
-          <span className="muted">pt</span>
-          <Check label="Bold" value={!!page.bold} onChange={(bold) => set({ bold })} />
-          <Check label="Italic" value={!!page.italic} onChange={(italic) => set({ italic })} />
-          <input className="nodrag color" type="color" value={page.textColor ?? '#000000'} title="Colour" onChange={(e) => set({ textColor: e.target.value })} />
-        </span>
-      </Field>
-      <Field label="Title" title="A title over the figure, centred at the top (the frame placed under it); bold and 2 pt larger than the text unless set">
+      <Row label="Text font" hint="The text of the figure: every text on “auto” (numbers, titles, legend, annotations)">
+        <MSelect value={page.font} data={FONTS.map(([f, l]) => ({ value: f, label: l }))} onChange={(font) => font && set({ font })} />
+      </Row>
+      <Row label="Text size">
+        <div className="chip-row">
+          {[6, 7, 8, 9, 10, 11, 12].map((v) => (
+            <UnstyledButton key={v} className={`chip${size === v ? ' on' : ''}`} onClick={() => set({ size: v })}>
+              {v}
+            </UnstyledButton>
+          ))}
+        </div>
+        <SliderField value={size} onChange={(v) => set({ size: v > 0 ? v : 8 })} min={4} max={24} step={0.5} unit="pt" />
+      </Row>
+      <Row label="Text style">
+        <div className="toggle-row">
+          <UnstyledButton className={`toggle${page.bold ? ' on' : ''}`} onClick={() => set({ bold: !page.bold })} aria-label="Bold" title="Bold">
+            <b>B</b>
+          </UnstyledButton>
+          <UnstyledButton className={`toggle${page.italic ? ' on' : ''}`} onClick={() => set({ italic: !page.italic })} aria-label="Italic" title="Italic">
+            <i style={{ fontFamily: 'Georgia, serif' }}>I</i>
+          </UnstyledButton>
+          <ColorField value={page.textColor ?? '#000000'} onChange={(c) => set({ textColor: c || '#000000' })} />
+        </div>
+      </Row>
+      <Row label="Title" hint="A title over the figure, centred at the top (the frame placed under it); bold and 2 pt larger than the text unless set">
         <RichInput value={page.title ?? ''} placeholder="none" onChange={(title) => set({ title: title || undefined })} />
-      </Field>
-      {!!page.title && <TextStyleControls label="Title font" value={page.titleText ?? { bold: true }} onChange={(titleText) => set({ titleText })} />}
-      <Field label="Decimal comma" title="The numbers the figure writes — on the axes and colour bars, the values of points and bars, the parameters a node writes — with a comma: 2,5 (the texts you type stay as you type them)">
-        <Check label="2,5" value={!!page.comma} onChange={(comma) => set({ comma: comma || undefined })} />
-      </Field>
-      <Field label="Formula font" title="The font of the formulas you write between $ signs ($\alpha^2$). Automatic picks the one that looks like the text: a sans font for Arial or Calibri, a serif one for Times or Cambria">
-        <Select<MathFontChoice>
+      </Row>
+      {!!page.title && <TextStyleRows value={page.titleText ?? { bold: true }} onChange={(titleText) => set({ titleText })} />}
+      <Row label="Decimal comma" hint="The numbers the figure writes (on the axes and colour bars, the values of points and bars, the parameters a node writes) with a comma: 2,5; the texts you type stay as you type them">
+        <Toggle value={!!page.comma} onChange={(comma) => set({ comma: comma || undefined })} label="2,5" />
+      </Row>
+      <Row label="Formula font" hint="The font of the formulas you write between $ signs ($lpha^2$). Automatic picks the one that looks like the text: a sans font for Arial or Calibri, a serif one for Times or Cambria">
+        <MSelect
           value={page.mathFont ?? 'auto'}
-          options={[
-            ['auto', `automatic (${MATH_FACE_NAMES[mathFace(page.font, 'auto')]})`],
-            ['sans', MATH_FACE_NAMES.sans],
-            ['serif', MATH_FACE_NAMES.serif],
-            ['latex', MATH_FACE_NAMES.latex],
+          onChange={(f) => f && set({ mathFont: f === 'auto' ? undefined : (f as Exclude<MathFontChoice, 'auto'>) })}
+          data={[
+            { value: 'auto', label: `Automatic (${MATH_FACE_NAMES[mathFace(page.font, 'auto')]})` },
+            { value: 'sans', label: MATH_FACE_NAMES.sans },
+            { value: 'serif', label: MATH_FACE_NAMES.serif },
+            { value: 'latex', label: MATH_FACE_NAMES.latex },
           ]}
-          onChange={(f) => set({ mathFont: f === 'auto' ? undefined : f })}
         />
-      </Field>
-      <div className="grid2">
-        <Field label="Background">
-          <span className="row">
-            <Select
-              value={bgMode}
-              options={[
-                ['white', 'white'],
-                ['none', 'transparent'],
-                ['color', 'colour'],
-              ]}
-              onChange={(m) => set({ background: m === 'white' ? 'white' : m === 'none' ? 'none' : '#f4f4f4' })}
-            />
-            {bgMode === 'color' && <input className="nodrag color" type="color" value={page.background} onChange={(e) => set({ background: e.target.value })} />}
-          </span>
-        </Field>
-        <Field label="Border" title="A border around the page (in a Merge: around this Plot's place): colour, width (pt, 0 = none), line, rounded corners (pt), opacity">
-          <BorderControls
-            value={{ color: page.borderColor ?? '#000000', width: page.border ?? 0, dash: page.borderDash ?? 'solid', radius: page.borderRadius ?? 0, opacity: page.borderOpacity ?? 1 }}
-            onChange={(p) => set({ ...(p.color !== undefined ? { borderColor: p.color } : {}), ...(p.width !== undefined ? { border: p.width } : {}), ...(p.dash ? { borderDash: p.dash } : {}), ...(p.radius !== undefined ? { borderRadius: p.radius } : {}), ...(p.opacity !== undefined ? { borderOpacity: p.opacity } : {}) })}
-          />
-        </Field>
-        {(page.border ?? 0) > 0 && (
-          <Field label="Border inset" title="Its distance in from the edge of the page, pt">
-            <NumInput className="tiny" min={0} step={0.5} value={page.borderInset ?? 0} onChange={(v) => set({ borderInset: Math.max(0, v || 0) })} />
-          </Field>
-        )}
-      </div>
-    </>
+      </Row>
+      <Row label="Background">
+        <Choice
+          value={bgMode}
+          onChange={(m) => set({ background: m === 'white' ? 'white' : m === 'none' ? 'none' : '#f4f4f4' })}
+          options={[
+            ['white', 'White'],
+            ['none', 'None', 'Transparent'],
+            ['color', 'Colour'],
+          ]}
+        />
+        {bgMode === 'color' && <ColorField value={page.background} onChange={(background) => set({ background: background || '#f4f4f4' })} />}
+      </Row>
+      <Row label="Border" hint="A border around the page (in a Merge: around this Plot's place); 0: none">
+        <WidthField value={page.border ?? 0} onChange={(v) => set({ border: Math.max(0, Number.isFinite(v) ? v : 0) })} max={4} />
+      </Row>
+      {(page.border ?? 0) > 0 && (
+        <div className="prop-sub">
+          <Row label="Colour">
+            <ColorField value={page.borderColor ?? '#000000'} onChange={(c) => set({ borderColor: c || '#000000' })} />
+          </Row>
+          <Row label="Style">
+            <PictureGrid value={page.borderDash ?? 'solid'} onChange={(borderDash) => set({ borderDash })} options={DASH_PICS} cols={4} />
+          </Row>
+          <Row label="Corners" hint="Rounded corners">
+            <SliderField value={page.borderRadius ?? 0} onChange={(v) => set({ borderRadius: Math.max(0, Number.isFinite(v) ? v : 0) })} min={0} max={20} step={0.5} unit="pt" />
+          </Row>
+          <Row label="Opacity">
+            <OpacityField value={page.borderOpacity ?? 1} onChange={(v) => set({ borderOpacity: Math.min(1, Math.max(0, Number.isFinite(v) ? v : 0)) })} />
+          </Row>
+          <Row label="Inset" hint="Its distance in from the edge of the page">
+            <SliderField value={page.borderInset ?? 0} onChange={(v) => set({ borderInset: Math.max(0, v || 0) })} min={0} max={20} step={0.5} unit="pt" />
+          </Row>
+        </div>
+      )}
+    </div>
   );
 }

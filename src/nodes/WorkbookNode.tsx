@@ -19,6 +19,7 @@ import { Field, InPort, Messages, OutPort, TextInput } from './ui.tsx';
 import { maxOf } from '../engine/minmax.ts';
 import { X } from 'lucide-react';
 import { IC } from './iconProps.ts';
+import { ask, notify } from '../ui/dialogStore.ts';
 
 // A sheet name not used yet: Sheet2, Sheet3 …
 const freeName = (sheets: { name: string }[], base = 'Sheet') => {
@@ -100,17 +101,17 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
         }
       : undefined;
   const addSheet = (s: BookSheet) => set({ sheets: [...own, s], sheet: own.length });
-  const removeSheet = (j: number) => {
+  const removeSheet = async (j: number) => {
     const s = own[j];
     if (names.length < 2) return;
-    if ((s.text || s.edits?.cells) && !confirm(`Remove the sheet “${s.name}” and its table?`)) return;
+    if ((s.text || s.edits?.cells) && !(await ask(`Remove the sheet “${s.name}” and its table?`, { ok: 'Remove', danger: true }))) return;
     set({ sheets: own.filter((_, i) => i !== j), sheet: Math.max(0, Math.min(k, own.length - 2)) });
   };
   const rename = (j: number, name: string) => {
     const nm = name.trim();
     setRenaming(null);
     if (!nm || nm === own[j].name) return;
-    if (own.some((s, i) => i !== j && s.name === nm)) return alert(`There is already a sheet “${nm}”.`);
+    if (own.some((s, i) => i !== j && s.name === nm)) return notify(`There is already a sheet “${nm}”.`);
     // the designations and the arrangement of the inputs' columns go with the sheet
     const old = own[j].name;
     const moved = <T,>(rec: Record<string, T> | undefined) => (rec && old in rec ? Object.fromEntries(Object.entries(rec).map(([q, v]) => [q === old ? nm : q, v])) : rec);
@@ -125,7 +126,7 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
       const parsed = parseCsv(t, CSV_DEFAULTS).dataset;
       addSheet(asSheet(parsed, freeName(own)));
     } catch {
-      alert('The browser did not allow reading the clipboard: click a cell of the table and press Ctrl+V.');
+      notify('The browser did not allow reading the clipboard: click a cell of the table and press Ctrl+V.');
     }
   };
   // the sheets of the inputs become tables of its own: copied, the connections removed

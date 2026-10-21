@@ -1,0 +1,165 @@
+/* The properties panels (src/ui/props.tsx): rows of a label and its control, pictures to choose from, sliders with
+   their value, the anchor grid. Colours from index.css (the Mantine ones are mapped to them in src/ui/theme.ts). */
+.props-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; color: var(--text); font-size: var(--fs, 13px); }
+.props-sections .mantine-Accordion-item { border-bottom: 1px solid var(--border); }
+.props-sections .mantine-Accordion-item:last-child { border-bottom: none; }
+.props-sections .mantine-Accordion-control { padding: 0 10px; font-weight: 600; font-size: 12.5px; }
+.props-sections .mantine-Accordion-label { padding: 8px 0; }
+.props-sections .mantine-Accordion-content { padding: 2px 12px 12px; }
+.props-sections .mantine-Accordion-chevron { color: var(--muted); }
+.props-sections .mantine-Accordion-icon { color: var(--muted); }
+
+.prop-row { display: grid; grid-template-columns: 78px minmax(0, 1fr); align-items: center; gap: 4px 10px; margin-top: 8px; }
+.prop-label { color: var(--muted); font-size: 12px; line-height: 1.25; }
+.prop-label.has-hint { text-decoration: underline dotted color-mix(in srgb, var(--muted) 50%, transparent); text-underline-offset: 3px; cursor: help; }
+.prop-ctl { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.prop-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.prop-sub { margin: 8px 0 0; padding: 8px 0 0 10px; border-left: 2px solid color-mix(in srgb, var(--accent) 35%, var(--border)); }
+.grow { flex: 1; min-width: 0; }
+
+/* colour: its swatch and its code; the palette */
+:is(.props-panel, body) .color-field { display: inline-flex; align-items: center; gap: 8px; padding: 3px 8px 3px 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--input); align-self: flex-start; }
+:is(.props-panel, body) .color-field:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+.color-name { font-family: var(--mono); font-size: 11.5px; color: var(--text); }
+.color-none { width: 18px; height: 18px; display: inline-grid; place-items: center; color: var(--muted); }
+.swatch-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.swatch-row .on { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--accent); }
+
+/* a slider and its value */
+.slider-field { display: flex; align-items: center; gap: 10px; }
+:is(.props-panel, body) .slider-value { min-width: 46px; text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; padding: 2px 4px; border-radius: 4px; color: var(--text); }
+:is(.props-panel, body) .slider-value:hover { background: var(--input); }
+:is(.props-panel, body) .slider-value.auto { color: var(--muted); }
+:is(.props-panel, body) .slider-value .unit { color: var(--muted); margin-left: 2px; }
+.slider-num { width: 58px; }
+
+/* chips: the usual values */
+:is(.props-panel, body) .chip-row { display: flex; flex-wrap: wrap; gap: 4px; }
+:is(.props-panel, body) .chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border: 1px solid var(--border); border-radius: 999px; font-size: 11.5px; color: var(--text); background: transparent; font-variant-numeric: tabular-nums; }
+:is(.props-panel, body) .chip:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+:is(.props-panel, body) .chip.on { background: color-mix(in srgb, var(--accent) 16%, transparent); border-color: var(--accent); color: color-mix(in srgb, var(--accent) 70%, var(--text)); font-weight: 600; }
+:is(.props-panel, body) .chip.auto { color: var(--muted); border-style: dashed; }
+
+/* pictures to choose from */
+:is(.props-panel, body) .pic-grid { display: grid; gap: 4px; }
+:is(.props-panel, body) .pic { height: 28px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--input); }
+:is(.props-panel, body) .pic:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+:is(.props-panel, body) .pic.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--input)); color: color-mix(in srgb, var(--accent) 70%, var(--text)); }
+:is(.props-panel, body) .pic-pick { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--input); color: var(--text); }
+:is(.props-panel, body) .pic-pick:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+.seg-label { display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+.mantine-SegmentedControl-root { background: var(--input); }
+
+/* the anchor: 3 × 3 */
+:is(.props-panel, body) .anchor-grid { display: grid; grid-template-columns: repeat(3, 22px); gap: 3px; padding: 4px; border: 1px solid var(--border); border-radius: 6px; align-self: flex-start; background: var(--input); }
+:is(.props-panel, body) .anchor-grid button { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 4px; }
+:is(.props-panel, body) .anchor-grid button i { width: 6px; height: 6px; border-radius: 50%; background: color-mix(in srgb, var(--muted) 55%, transparent); }
+:is(.props-panel, body) .anchor-grid button:hover i { background: var(--text); }
+:is(.props-panel, body) .anchor-grid button.on { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+:is(.props-panel, body) .anchor-grid button.on i { width: 9px; height: 9px; background: var(--accent); }
+
+.angle-field { display: flex; gap: 10px; align-items: center; }
+.auto-tag { font-size: 11px; color: var(--muted); padding: 1px 6px; border: 1px dashed var(--border); border-radius: 999px; white-space: nowrap; }
+:is(.props-panel, body) .toggle-row { display: flex; gap: 4px; }
+:is(.props-panel, body) .toggle { min-width: 28px; height: 26px; padding: 0 7px; display: inline-grid; place-items: center; border: 1px solid var(--border); border-radius: 6px; background: var(--input); color: var(--text); font-size: 12.5px; }
+:is(.props-panel, body) .toggle.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--input)); color: color-mix(in srgb, var(--accent) 70%, var(--text)); }
+:is(.props-panel, body) .toggle.auto { color: var(--muted); }
+/* the dial: 0° to the right, clockwise as on the figure; its needle in the accent */
+.angle-field .mantine-AngleSlider-root { background: var(--input); border: 1px solid var(--border); flex: none; cursor: grab; }
+.angle-field .mantine-AngleSlider-thumb::before { background-color: var(--accent); border-radius: 2px; }
+.angle-field .mantine-AngleSlider-mark::before { background-color: var(--border); }
+
+/* a switch */
+:is(.props-panel, body) .sw-toggle { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; color: var(--text); font-size: 12px; }
+:is(.props-panel, body) .sw-toggle:disabled { opacity: 0.5; cursor: default; }
+:is(.props-panel, body) .sw-toggle.on { background: transparent; border: 0; font-weight: 400; color: var(--text); }
+:is(.props-panel, body) .sw-track { width: 28px; height: 16px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 35%, var(--input)); border: 1px solid var(--border); position: relative; transition: background-color 0.15s; flex: none; }
+:is(.props-panel, body) .sw-thumb { position: absolute; top: 1px; left: 1px; width: 12px; height: 12px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / 0.3); transition: transform 0.15s; }
+:is(.props-panel, body) .sw-toggle.on .sw-track { background: var(--accent); border-color: var(--accent); }
+:is(.props-panel, body) .sw-toggle.on .sw-thumb { transform: translateX(12px); }
+:is(.props-panel, body) .sw-toggle:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 2px; border-radius: 4px; }
+
+.num-field { min-width: 0; }
+.layer-num { min-width: 18px; text-align: center; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
+.prop-note { font-size: 11.5px; color: var(--muted); margin-top: 6px; line-height: 1.35; }
+.prop-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* inside the app's panels (class .node): its rules for labels, inputs and buttons not applied to these controls */
+.node .props-panel .mantine-SegmentedControl-label:not(.radio):not(.slider):not(.row) { display: block; grid-template-columns: none; justify-items: normal; justify-content: normal; gap: 0; }
+.props-panel { text-align: left; }
+.props-panel .mantine-Input-input { min-height: 0; }
+.props-panel .mantine-NumberInput-input, .props-panel .mantine-TextInput-input, .props-panel .mantine-Select-input { width: 100%; }
+.props-panel button:active:not(:disabled) { transform: none; }
+.props-embed { border: none; border-radius: 0; background: transparent; overflow: visible; }
+
+/* a choice with a picture and its word */
+.seg-pic { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; }
+:is(.props-panel, body) .pic-word { font-size: 11.5px; font-weight: 600; }
+/* a slider for a value or its default */
+.auto-slider { display: flex; align-items: center; gap: 6px; }
+/* the gradient placed by its handles */
+.grad-pad { width: 100%; max-width: 200px; aspect-ratio: 1; display: block; border-radius: 6px; background: var(--input); border: 1px solid var(--border); touch-action: none; }
+.grad-pad .grad-box { stroke: var(--muted); stroke-width: 0.6; stroke-dasharray: 2 2; }
+.grad-pad .grad-line { fill: none; stroke: #ffffff; stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+.grad-pad .grad-line + .grad-line, .grad-pad .grad-line { filter: drop-shadow(0 0 1px rgb(0 0 0 / 0.6)); }
+.grad-pad .grad-handle { fill: #ffffff; stroke: #333; stroke-width: 1.2; cursor: grab; vector-effect: non-scaling-stroke; }
+.grad-pad .grad-handle.main { fill: var(--accent); stroke: #fff; }
+.grad-pad .grad-handle:hover, .grad-pad .grad-handle.on { stroke: var(--accent); stroke-width: 2; }
+.grad-pad .grad-handle.on { cursor: grabbing; }
+
+/* the axes of a Plot (nodes/AxesEditor.tsx) */
+.axes-add, .axes-copy { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 2px; }
+.axes-add .prop-label, .axes-copy .prop-label { margin-right: 4px; }
+.axes-copy { border-top: 1px solid var(--border); margin-top: 4px; }
+.axes-head { padding: 0 2px 6px; }
+.props-panel .prop-ctl > .sw-toggle + .sw-toggle { margin-top: -2px; }
+
+/* the quick bar over an object clicked on a figure (src/ui/QuickBar.tsx) */
+.quick-bar { position: absolute; z-index: 20; display: flex; align-items: center; gap: 5px; padding: 4px 7px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 6px 20px rgb(0 0 0 / 0.16), 0 1px 3px rgb(0 0 0 / 0.08); white-space: nowrap; color: var(--text); font-size: 12px; cursor: default; }
+.quick-bar .color-field { padding: 2px 5px 2px 3px; }
+.quick-bar .color-name { display: none; }
+.quick-bar .pic-pick { height: 26px; }
+.qb-sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 2px; }
+.qb-size { min-width: 22px; text-align: center; font-variant-numeric: tabular-nums; }
+.qb-word { color: var(--muted); }
+.ann-quick { padding: 2px 0 4px; }
+/* the legend (nodes/LegendEditor.tsx) */
+.legend-show { display: flex; align-items: center; gap: 10px; padding: 4px 2px 8px; }
+.legend-entry-row { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
+.legend-entry-row .swatch { width: 14px; height: 14px; border-radius: 3px; flex: none; border: 1px solid color-mix(in srgb, var(--text) 20%, transparent); }
+
+/* the app's messages and questions (src/ui/Dialogs.tsx) */
+.toasts { position: fixed; right: 16px; bottom: 16px; z-index: 4000; display: flex; flex-direction: column; gap: 8px; max-width: min(420px, calc(100vw - 32px)); pointer-events: none; }
+.toast { pointer-events: auto; display: flex; align-items: flex-start; gap: 8px; padding: 10px 8px 10px 12px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 10px; box-shadow: 0 8px 24px rgb(0 0 0 / 0.18); font-size: var(--fs, 13px); line-height: 1.4; animation: toast-in 0.18s ease-out; }
+.toast.error { border-left-color: var(--err); }
+.toast.error > svg { color: var(--err); }
+.toast.ok { border-left-color: var(--ok); }
+.toast > svg { flex: none; margin-top: 1px; color: var(--accent); }
+.toast-text { flex: 1; white-space: pre-line; }
+@keyframes toast-in { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+.dlg-shade { position: fixed; inset: 0; z-index: 3900; background: rgb(0 0 0 / 0.35); display: grid; place-items: center; padding: 16px; }
+.dlg { width: min(460px, 100%); background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 16px 48px rgb(0 0 0 / 0.3); padding: 18px 18px 14px; display: flex; flex-direction: column; gap: 12px; font-size: var(--fs, 13px); }
+.dlg-text { white-space: pre-line; line-height: 1.45; }
+.dlg-buttons { display: flex; justify-content: flex-end; gap: 8px; }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+
+/* the hints of the app's titles (src/ui/TitleTips.tsx), as the panels' tooltips */
+.title-tip { position: fixed; z-index: 4100; transform: translateX(-50%); max-width: 280px; padding: 5px 9px; border-radius: 6px; background: color-mix(in srgb, var(--text) 92%, var(--panel)); color: var(--panel); font-size: 12px; line-height: 1.4; white-space: pre-line; pointer-events: none; box-shadow: 0 4px 14px rgb(0 0 0 / 0.2); animation: tip-in 0.12s ease-out; }
+.title-tip.above { transform: translate(-50%, -100%); }
+@keyframes tip-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .title-tip { animation: none; } }
+/* the inputs and lists of the panels on the app's colours (also in the dark theme) */
+.props-panel .mantine-Input-input { background: var(--input); border-color: var(--border); color: var(--text); }
+.props-panel .mantine-Input-input:focus { border-color: var(--accent); }
+.mantine-Popover-dropdown, .mantine-Combobox-dropdown { background: var(--panel); border-color: var(--border); color: var(--text); }
+.mantine-Combobox-option[data-combobox-selected], .mantine-Combobox-option:hover { background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
+.props-panel .mantine-Slider-track::before { background-color: color-mix(in srgb, var(--muted) 28%, var(--input)); }
+.props-panel .mantine-Slider-thumb { background: var(--panel); }
+
+/* the choices side by side: the one chosen raised on its own place (not Mantine's sliding indicator, which is measured
+   once and came out short or shifted in panels that open and close) */
+.mantine-SegmentedControl-indicator { display: none; }
+.mantine-SegmentedControl-label { border-radius: 4px; transition: background-color 0.12s, color 0.12s, box-shadow 0.12s; }
+.mantine-SegmentedControl-label:not([data-active]):hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.mantine-SegmentedControl-label[data-active] { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--border), 0 1px 2px rgb(0 0 0 / 0.1); }
+[data-mantine-color-scheme='dark'] .mantine-SegmentedControl-label[data-active] { background: color-mix(in srgb, var(--text) 12%, var(--panel)); }

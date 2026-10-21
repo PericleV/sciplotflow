@@ -20,6 +20,7 @@ import { Worksheet } from './Worksheet.tsx';
 import { maxOf } from '../engine/minmax.ts';
 import { RotateCcw, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
+import { ask, notify } from '../ui/dialogStore.ts';
 
 const PREVIEW_ROWS = 6;
 
@@ -82,20 +83,20 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
   const [over, setOver] = useState(false);
   // another file: the changes made by hand to the old one are dropped (after asking)
   const changed = hasEdits(data.edits) || Object.values(data.sheetEdits ?? {}).some(hasEdits);
-  const fresh = () => !changed || confirm('Open another table? The changes made by hand in the worksheet belong to the current one and are dropped.');
+  const fresh = async () => !changed || (await ask('Open another table? The changes made by hand in the worksheet belong to the current one and are dropped.', { ok: 'Open', danger: true }));
   const cleared = () => ({ textId: crypto.randomUUID().slice(0, 8), edits: undefined, sheetEdits: undefined, sheet: 0 });
   // one text file as before; a spreadsheet workbook (.xlsx, .xls, .ods) or several files: sheets
   // the files opened in this session: read again when another encoding is chosen
   const lastFiles = useRef<File[]>([]);
   const load = async (files: File[], encoding = data.csv.encoding ?? 'auto') => {
-    if (!files.length || !fresh()) return;
+    if (!files.length || !(await fresh())) return;
     lastFiles.current = files;
     try {
       const got = await readFiles(files, encoding);
       const fileName = files.length === 1 ? files[0].name : `${files.length} files`;
       set('text' in got ? { ...cleared(), text: got.text, sheets: undefined, fileName } : { ...cleared(), text: '', sheets: got.sheets, fileName });
     } catch (e) {
-      alert(`The file could not be read: ${(e as Error).message}`);
+      notify(`The file could not be read: ${(e as Error).message}`);
     }
   };
   const onDrop = (e: DragEvent) => {
@@ -138,9 +139,9 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
         onClick={async () => {
           try {
             const t = await navigator.clipboard.readText();
-            if (t.trim() && fresh()) set({ ...cleared(), text: t, sheets: undefined, fileName: 'pasted' });
+            if (t.trim() && (await fresh())) set({ ...cleared(), text: t, sheets: undefined, fileName: 'pasted' });
           } catch {
-            alert('The browser did not allow reading the clipboard. Save the text to a file and open it.');
+            notify('The browser did not allow reading the clipboard. Save the text to a file and open it.');
           }
         }}
       >
@@ -201,7 +202,7 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
             const fs = [...(e.target.files ?? [])].filter((f) => exts.some((x) => f.name.toLowerCase().endsWith(x))).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
             e.target.value = '';
             if (fs.length) void load(fs);
-            else alert('No data file in that folder.');
+            else notify('No data file in that folder.');
           }}
         />
       </div>

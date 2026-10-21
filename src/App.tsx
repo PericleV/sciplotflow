@@ -24,8 +24,8 @@ import { ReportNodeView } from './nodes/ReportNode.tsx';
 import './App.css';
 import { EngineContext, useEngine } from './engine/engine.ts';
 import { canConnect, isMultiInput, PORT_COLORS, sourcePort, type PortContext } from './engine/ports.ts';
-import { REPORT_DEFAULTS, MATCOMP_DEFAULTS, MATRIX_DEFAULTS, COLUMNS_DEFAULTS, PEAKWIDTH_DEFAULTS, AUTOEXTRACT_DEFAULTS, CANVAS_DEFAULTS, DRAWING_DEFAULTS, COMBINE_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS, CALCULUS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, AVERAGE_DEFAULTS, DIGITIZER_DEFAULTS, HISTOGRAM_DEFAULTS, BARCHART_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, CURVEMATH_DEFAULTS, TRANSLATE_DEFAULTS, PEAK_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, ANOVA_DEFAULTS, NONPAR_DEFAULTS, CORR_DEFAULTS, PICK_DEFAULTS, DATAMANIP_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, PYTHON_DEFAULTS, NOTE_DEFAULTS, NOTE_SIZE,PLOT1D_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
-import { NODE_HELP } from './help.ts';
+import { REPORT_DEFAULTS, MATCOMP_DEFAULTS, MATRIX_DEFAULTS, COLUMNS_DEFAULTS, PEAKWIDTH_DEFAULTS, AUTOEXTRACT_DEFAULTS, CANVAS_DEFAULTS, DRAWING_DEFAULTS, COMBINE_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS, CALCULUS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, AVERAGE_DEFAULTS, DIGITIZER_DEFAULTS, IMAGE_DEFAULTS, PHASE_DEFAULTS, HISTOGRAM_DEFAULTS, BARCHART_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, CURVEMATH_DEFAULTS, TRANSLATE_DEFAULTS, PEAK_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, ANOVA_DEFAULTS, NONPAR_DEFAULTS, CORR_DEFAULTS, PICK_DEFAULTS, DATAMANIP_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, PYTHON_DEFAULTS, NOTE_DEFAULTS, NOTE_SIZE,PLOT1D_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
+import { NODE_HELP, NODE_SHORT } from './help.ts';
 import { DRAG_TYPE, NodePalette, type PaletteGroup } from './NodePalette.tsx';
 // side panels: separate chunks, loaded when first opened
 const ProjectsPanel = lazy(() => import('./ProjectsPanel.tsx').then((m) => ({ default: m.ProjectsPanel })));
@@ -76,6 +76,8 @@ import { TranslateNodeView } from './nodes/CurveNodes.tsx';
 import { CurveMathNodeView } from './nodes/CurveMathNode.tsx';
 import { CleanNodeView, FilterNodeView } from './nodes/CleanNodes.tsx';
 import { DigitizerNodeView } from './nodes/DigitizerNode.tsx';
+import { ImageNodeView } from './nodes/ImageNode.tsx';
+import { PhaseNodeView } from './nodes/PhaseNode.tsx';
 import { HistogramNodeView } from './nodes/HistogramNode.tsx';
 import { BarChartNodeView } from './nodes/BarChartNode.tsx';
 import { BoxViolinNodeView } from './nodes/BoxViolinNode.tsx';
@@ -105,8 +107,9 @@ import { PlotColumnsDialog, type PlotChoice } from './PlotColumnsDialog.tsx';
 import { buildFigure } from './plotBuild.ts';
 import { readFiles } from './readFiles.ts';
 import type { AppNode, NodeType } from './types.ts';
-import { ArrowLeft, ArrowRight, CornerDownRight, Grid3x3, Map as MapIcon, Maximize, Redo2, Search, Spline, TriangleAlert, Undo2, Users } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CircleHelp, CornerDownRight, FilePlus2, FolderOpen, Grid3x3, Library, Link2, Map as MapIcon, Maximize, Monitor, Moon, Redo2, Save, Search, Spline, Sun, TriangleAlert, Undo2, Users } from 'lucide-react';
 import { IC } from './nodes/iconProps.ts';
+import { ask as askUser, askText, notify } from './ui/dialogStore.ts';
 
 const baseNodeTypes = {
   import: ImportNodeView,
@@ -122,6 +125,8 @@ const baseNodeTypes = {
   filterrows: FilterNodeView,
   clean: CleanNodeView,
   digitizer: DigitizerNodeView,
+  image: ImageNodeView,
+  phasediagram: PhaseNodeView,
   smooth: SmoothNodeView,
   interp: InterpNodeView,
   normalize: NormalizeNodeView,
@@ -189,6 +194,8 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
     items: [
       { type: 'import', label: 'Import', data: IMPORT_DEFAULTS },
       { type: 'digitizer', label: 'Digitizer', data: DIGITIZER_DEFAULTS },
+      // hidden (2026-10-20): not offered while it is reworked; saved projects with it still open
+      { type: 'image', label: 'Image analysis', data: IMAGE_DEFAULTS, hidden: true },
       { type: 'book', label: 'Workbook', data: WORKBOOK_DEFAULTS },
       { type: 'extract', label: 'Extract column', data: EXTRACT_DEFAULTS },
       { type: 'autoextract', label: 'Auto-extract', data: AUTOEXTRACT_DEFAULTS },
@@ -199,7 +206,7 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
       { type: 'columns', label: 'Columns', data: COLUMNS_DEFAULTS },
       { type: 'unstack', label: 'Split into columns', data: UNSTACK_DEFAULTS },
       { type: 'combine', label: 'Combine columns', data: COMBINE_DEFAULTS },
-      { type: 'translate', label: 'Translate', data: TRANSLATE_DEFAULTS },
+      { type: 'translate', label: 'Translate & resize', data: TRANSLATE_DEFAULTS },
       { type: 'filterrows', label: 'Filter & sort rows', data: FILTER_DEFAULTS },
       { type: 'clean', label: 'Clean data', data: CLEAN_DEFAULTS },
     ],
@@ -226,6 +233,8 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
       { type: 'pick', label: 'Pick points', data: PICK_DEFAULTS },
       { type: 'curvemath', label: 'Curve math', data: CURVEMATH_DEFAULTS },
       { type: 'matcomp', label: 'Matrix computation', data: MATCOMP_DEFAULTS },
+      // hidden (2026-10-20): not offered for now; saved projects with it still open
+      { type: 'phasediagram', label: 'Phase diagram', data: PHASE_DEFAULTS, hidden: true },
       { type: 'report', label: 'Report', data: REPORT_DEFAULTS },
     ],
   },
@@ -391,7 +400,7 @@ function Flow() {
     void withTexts(initial).then(({ project, lost }) => {
       const back = new Map(project.nodes.map((n) => [n.id, n]));
       setNodes((ns) => ns.map((n) => back.get(n.id) ?? n));
-      if (lost) alert(`${lost} imported file(s) of the last session are no longer in the browser's storage: open them again in their Import nodes.`);
+      if (lost) notify(`${lost} imported file(s) of the last session are no longer in the browser's storage: open them again in their Import nodes.`);
     });
   }, [setNodes]);
 
@@ -444,7 +453,7 @@ function Flow() {
     // a project kept in the browser: its big texts come back from IndexedDB first
     if (hasRefs(p)) {
       void withTexts(p).then(({ project, lost }) => {
-        if (lost) alert(`${lost} imported file(s) of this project are no longer in the browser's storage: open them again in their Import nodes.`);
+        if (lost) notify(`${lost} imported file(s) of this project are no longer in the browser's storage: open them again in their Import nodes.`);
         load(project, name);
       });
       return;
@@ -489,10 +498,10 @@ function Flow() {
     loadExamples().then(setExamples);
     if (shared)
       decodeProject(shared).then((p) => {
-        if (typeof p === 'string') alert(p);
+        if (typeof p === 'string') notify(p);
         else {
           load(p, p.name ?? 'Shared project');
-          if (p.repaired) alert(p.repaired);
+          if (p.repaired) notify(p.repaired);
         }
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -504,25 +513,25 @@ function Flow() {
   const [focusFig, setFocusFig] = useState<FigureRef | null>(null);
   const openFigureFile = async (file: File) => {
     const e = fileProject(new Uint8Array(await file.arrayBuffer()));
-    if (!e) return alert(`“${file.name}” has no SciPlotFlow project in it${EDITABLE_FIGURES ? ': export the figure with “project inside” (SVG or PNG)' : ''}.`);
+    if (!e) return notify(`“${file.name}” has no SciPlotFlow project in it${EDITABLE_FIGURES ? ': export the figure with “project inside” (SVG or PNG)' : ''}.`);
     const p = await openEmbedded(e);
-    if (typeof p === 'string') return alert(p);
+    if (typeof p === 'string') return notify(p);
     const when = new Date(e.exported).toLocaleString();
     const afterLoad = () => {
       setFocusFig(e.figure);
-      if (e.data === 'nodata') alert('This figure was exported without its imported data: open the files again in the Import nodes.');
+      if (e.data === 'nodata') notify('This figure was exported without its imported data: open the files again in the Import nodes.');
     };
     if (e.projectId === projectId) {
       const cur = toProject(root.nodes, root.edges, projectName, projectId);
       if ((await projectRevision(cur)) === e.revision) return setFocusFig(e.figure);
-      const other = confirm(`This figure comes from the open project, but from another version of it (exported ${when}).\n\nOK — open the figure's version (the current one is first kept in Projects as “${projectName || 'Untitled project'} (before)”).\nCancel — stay with the current version and show the figure in it.`);
+      const other = await askUser(`This figure comes from the open project, but from another version of it (exported ${when}).\n\nOpen its version: the current one is first kept in Projects as “${projectName || 'Untitled project'} (before)”.\nCancel: stay with the current version and show the figure in it.`, { ok: 'Open its version' });
       if (!other) return setFocusFig(e.figure);
       const kept = saveToBrowser(cur, `${projectName || 'Untitled project'} (before)`);
-      if (typeof kept === 'string') return alert(`The current project could not be kept in the browser (${kept}): use Save first.`);
+      if (typeof kept === 'string') return notify(`The current project could not be kept in the browser (${kept}): use Save first.`);
       load({ ...p, id: e.projectId }, p.name ?? e.projectName ?? projectName);
       return afterLoad();
     }
-    if (!confirm(`Open the project of this figure (“${e.projectName || e.figure.name}”, exported ${when})?\n\nIt replaces the current project: use Save first to keep that one.`)) return;
+    if (!(await askUser(`Open the project of this figure (“${e.projectName || e.figure.name}”, exported ${when})?\n\nIt replaces the current project: use Save first to keep that one.`, { ok: 'Open' }))) return;
     load({ ...p, id: e.projectId }, p.name ?? e.projectName ?? file.name.replace(/\.(svg|png)$/i, ''));
     afterLoad();
   };
@@ -532,19 +541,19 @@ function Flow() {
     const target = stack.length ? focusFig.node : (focusFig.path[0] ?? focusFig.node);
     const n = getNode(target);
     setFocusFig(null);
-    if (!n) return alert(`The figure “${focusFig.name}” is not on the level shown (its node may have been removed).`);
+    if (!n) return notify(`The figure “${focusFig.name}” is not on the level shown (its node may have been removed).`);
     setNodes((ns) => ns.map((q) => (q.selected === (q.id === target) ? q : { ...q, selected: q.id === target })));
     fitBounds(getNodesBounds([n]), { padding: 0.25, duration: 300 });
   }, [focusFig, fitPending, initialized, stack.length, getNode, setNodes, fitBounds, getNodesBounds]);
   // a project file (.json) opened, a figure with its project (.svg, .png)
   const openAnyFile = async (f: File, ask: boolean) => {
     if (/\.(svg|png)$/i.test(f.name) || f.type === 'image/png' || f.type === 'image/svg+xml') return openFigureFile(f);
-    if (!/\.json$/i.test(f.name)) return alert(`“${f.name}”: drop a data file (CSV, text, Excel …: an Import node is made), a project file (.json) or a figure exported with its project (.svg, .png) here.`);
+    if (!/\.json$/i.test(f.name)) return notify(`“${f.name}”: drop a data file (CSV, text, Excel …: an Import node is made), a project file (.json) or a figure exported with its project (.svg, .png) here.`);
     const p = parseProject(await f.text());
-    if (typeof p === 'string') return alert(p);
-    if (ask && !confirm(`Open the project “${p.name ?? f.name}”? It replaces the current project: use Save first to keep that one.`)) return;
+    if (typeof p === 'string') return notify(p);
+    if (ask && !(await askUser(`Open the project “${p.name ?? f.name}”? It replaces the current project: use Save first to keep that one.`, { ok: 'Open' }))) return;
     load(p, p.name ?? f.name.replace(/\.json$/i, ''));
-    if (p.repaired) alert(p.repaired);
+    if (p.repaired) notify(p.repaired);
   };
 
   // ---- Working together (Collaborate): a session keeps this project in step with the others' ----
@@ -656,7 +665,7 @@ function Flow() {
   // Empty project: no nodes, no connections.
   const newProject = () => {
     const text = 'Start a new, empty project?\n\nThe current one stays in Projects (once it has been changed); Save also keeps it as a file.';
-    if (confirm(text)) load(EMPTY);
+    void askUser(text, { ok: 'Start empty' }).then((yes) => yes && load(EMPTY));
   };
 
   const isValidConnection: IsValidConnection = useCallback(
@@ -760,15 +769,16 @@ function Flow() {
         : []),
       {
         label: 'Save settings as a style',
-        onClick: () => {
-          const name = prompt('Name of the style (kept in this browser, offered for every node of this kind):')?.trim();
-          if (name && !saveStyle(n, name)) alert('The browser storage is full: the style was not saved.');
-        },
+        onClick: () =>
+          void askText('Name of the style (kept in this browser, offered for every node of this kind):').then((v) => {
+            const name = v?.trim();
+            if (name && !saveStyle(n, name)) notify('The browser storage is full: the style was not saved.');
+          }),
       },
       {
         label: 'Use these settings for new nodes of this kind',
         onClick: () => {
-          if (!setDefaultStyle(n)) alert('The browser storage is full: the default was not kept.');
+          if (!setDefaultStyle(n)) notify('The browser storage is full: the default was not kept.');
         },
       },
       ...(defaultStyleFor(n.type)
@@ -783,10 +793,11 @@ function Flow() {
         ? [
             {
               label: 'Forget a saved style',
-              onClick: () => {
-                const name = prompt(`Forget which style?\n${mine.map((s) => s.name).join('\n')}`)?.trim();
-                if (name) forgetStyle(n.type, name);
-              },
+              onClick: () =>
+                void askText(`Forget which style?\n${mine.map((s) => s.name).join('\n')}`).then((v) => {
+                  const name = v?.trim();
+                  if (name) forgetStyle(n.type, name);
+                }),
             },
           ]
         : []),
@@ -982,20 +993,22 @@ function Flow() {
               },
               {
                 label: 'Save as template',
-                onClick: () => {
-                  const name = prompt('Name of the template (kept in this browser, in the Nodes panel under My templates):', n.data.name)?.trim();
-                  if (name && !saveTemplate(name, n.data)) alert('The browser storage is full: the template was not saved.');
-                },
+                onClick: () =>
+                  void askText('Name of the template (kept in this browser, in the Nodes panel under My templates):', n.data.name).then((v) => {
+                    const name = v?.trim();
+                    if (name && !saveTemplate(name, n.data)) notify('The browser storage is full: the template was not saved.');
+                  }),
               },
               ...(listTemplates().length
                 ? [
                     {
                       label: 'Forget a template',
-                      onClick: () => {
-                        const name = prompt(`Forget which template?\n${listTemplates().map((t) => t.name).join('\n')}`)?.trim();
-                        const t = listTemplates().find((x) => x.name === name);
-                        if (t) forgetTemplate(t.id);
-                      },
+                      onClick: () =>
+                        void askText(`Forget which template?\n${listTemplates().map((t) => t.name).join('\n')}`).then((v) => {
+                          const name = v?.trim();
+                          const t = listTemplates().find((x) => x.name === name);
+                          if (t) forgetTemplate(t.id);
+                        }),
                     },
                   ]
                 : []),
@@ -1024,7 +1037,7 @@ function Flow() {
   const templates = useTemplates();
   const paletteGroups: PaletteGroup[] = useMemo(
     () => [
-      ...GROUPS.map((g) => ({ name: g.name, color: GROUP_COLORS[g.name], items: g.items.filter((t) => !t.hidden).map((t) => ({ type: t.type, label: t.label, help: NODE_HELP[t.type], color: NODE_COLORS[t.type] })) })),
+      ...GROUPS.map((g) => ({ name: g.name, color: GROUP_COLORS[g.name], items: g.items.filter((t) => !t.hidden).map((t) => ({ type: t.type, label: t.label, help: NODE_SHORT[t.type] ?? NODE_HELP[t.type], color: NODE_COLORS[t.type] })) })),
       ...(templates.length
         ? [
             {
@@ -1081,7 +1094,7 @@ function Flow() {
       const data = { ...structuredClone(IMPORT_DEFAULTS), textId: crypto.randomUUID().slice(0, 8), fileName, ...('text' in got ? { text: got.text } : { text: '', sheets: got.sheets }) };
       setNodes((ns) => [...ns.map((n) => ({ ...n, selected: false })), { id, type: 'import', position, data, selected: true } as AppNode]);
     } catch (err) {
-      alert(`The file could not be read: ${(err as Error).message}`);
+      notify(`The file could not be read: ${(err as Error).message}`);
     }
   };
   // a node asks for “Plot these columns” (the Plot… button of Import)
@@ -1257,14 +1270,15 @@ function Flow() {
             <TriangleAlert {...IC} /> not autosaved — use Save
           </span>
         )}
-        <button onClick={newProject} title="Remove everything and start an empty project">New</button>
+        <span className="tb-group" role="group" aria-label="Project">
+        <button onClick={newProject} title="Remove everything and start an empty project"><FilePlus2 {...IC} /> <span className="tb-label">New</span></button>
         <select
           className="examples-menu"
           value=""
           title="Open a complete example"
           onChange={(e) => {
             const ex = examples[Number(e.target.value)];
-            if (ex && confirm(`Replace the current project with the “${ex.name}” example?`)) load(ex.make(), ex.name);
+            if (ex) void askUser(`Replace the current project with the “${ex.name}” example?`, { ok: 'Open the example' }).then((yes) => yes && load(ex.make(), ex.name));
           }}
         >
           <option value="">Examples</option>
@@ -1282,59 +1296,74 @@ function Flow() {
           ))}
         </select>
         <button onClick={() => openFile.current?.click()} title="Open a project file (.json), or a figure exported with its project (.svg, .png: the project opens at that figure)">
-          Open
+          <FolderOpen {...IC} /> <span className="tb-label">Open</span>
         </button>
         <button
           onClick={() =>
             download(stringifyProject(toProject(root.nodes, root.edges, projectName, projectId), 1), `${(projectName || 'sciplotflow-project').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '')}.json`, 'application/json')
           }
+          title="Save the project to a file (.json)"
         >
-          Save
+          <Save {...IC} /> <span className="tb-label">Save</span>
         </button>
         <button className={panel === 'projects' ? 'active' : ''} onClick={() => togglePanel('projects')} title="Several projects kept in this browser">
-          Projects
+          <Library {...IC} /> <span className="tb-label">Projects</span>
         </button>
         {EDITABLE_FIGURES && (
           <button className={panel === 'docs' ? 'active' : ''} onClick={() => togglePanel('docs')} title="Update the figures of this project in a Word or PowerPoint document (figures exported with “project inside”)">
             Update document…
           </button>
         )}
+        </span>
+        <span className="tb-group" role="group" aria-label="Share">
         <button
           title="Copy a link that opens this project (the whole project is in the link: nothing is sent to a server)"
           onClick={async () => {
             const code = await encodeProject(toProject(root.nodes, root.edges, projectName, projectId));
             const url = `${location.origin}${location.pathname}#p=${code}`;
-            if (url.length > 60000) alert('The project is too large for a link (imported data): use Save and send the file.');
+            if (url.length > 60000) notify('The project is too large for a link (imported data): use Save and send the file.');
             else {
               try {
                 await navigator.clipboard.writeText(url);
-                alert('A link to this project was copied to the clipboard.');
+                notify('A link to this project was copied to the clipboard.', 'ok');
               } catch {
-                prompt('Copy this link:', url);
+                void askText('Copy this link (the browser did not let the app copy it):', url);
               }
             }
           }}
         >
-          Share link
+          <Link2 {...IC} /> <span className="tb-label">Share link</span>
         </button>
         <button className={panel === 'collab' ? 'active' : ''} onClick={() => togglePanel('collab')} title={collab ? `Working together: ${peerCount + 1} in the session` : 'Work on this project together, in real time, browser to browser'}>
-          <Users {...IC} /> {collab ? `Together · ${peerCount + 1}` : 'Collaborate'}
+          <Users {...IC} /> <span className="tb-label">{collab ? `Together · ${peerCount + 1}` : 'Collaborate'}</span>
         </button>
+        </span>
+        <span className="tb-group" role="group" aria-label="Edit">
         <button className={finding ? 'active' : ''} onClick={() => setFinding(true)} title="Find a node on the canvas by its name or type (Ctrl+F)">
-          <Search {...IC} /> Find node
+          <Search {...IC} /> <span className="tb-label">Find node</span>
         </button>
         <span className="undo-redo">
           <button onClick={history.undo} disabled={!history.canUndo} title="Undo (Ctrl+Z)" aria-label="Undo"><Undo2 {...IC} /></button>
           <button onClick={history.redo} disabled={!history.canRedo} title="Redo (Ctrl+Y / Ctrl+Shift+Z)" aria-label="Redo"><Redo2 {...IC} /></button>
         </span>
+        </span>
+        <span className="tb-spacer" />
         <button className={panel === 'help' ? 'active' : ''} onClick={() => togglePanel('help')} title="Getting started, the nodes, shortcuts, validation">
-          Help
+          <CircleHelp {...IC} /> <span className="tb-label">Help</span>
         </button>
-        <select value={theme} onChange={(e) => setTheme(e.target.value as Theme)} title="Colour theme">
-          <option value="system">Theme: system</option>
-          <option value="light">Theme: light</option>
-          <option value="dark">Theme: dark</option>
-        </select>
+        <span className="tb-group tb-theme" role="radiogroup" aria-label="Colour theme">
+          {(
+            [
+              ['system', Monitor, 'Theme: as the system'],
+              ['light', Sun, 'Theme: light'],
+              ['dark', Moon, 'Theme: dark'],
+            ] as const
+          ).map(([t, Icon, label]) => (
+            <button key={t} className={theme === t ? 'active' : ''} role="radio" aria-checked={theme === t} aria-label={label} title={label} onClick={() => setTheme(t)}>
+              <Icon {...IC} />
+            </button>
+          ))}
+        </span>
         <ColorChoice value={colors.select} shown="var(--select)" label="Selection" title="Selection colour (around the selected nodes)" onChange={(c) => setColors((p) => ({ ...p, select: c }))} />
         <ColorChoice value={colors.accent} shown="var(--accent)" label="Accent" title="Accent colour (active buttons, tabs)" same onChange={(c) => setColors((p) => ({ ...p, accent: c }))} />
         <input
@@ -1433,7 +1462,7 @@ function Flow() {
               }}
             >
               <Background gap={prefs.snap ? prefs.step : 20} />
-              <Controls showFitView={false}>
+              <Controls showFitView={false} orientation="horizontal">
                 <ControlButton onClick={fitAll} title="Fit view" aria-label="Fit view">
                   <Maximize {...IC} />
                 </ControlButton>
@@ -1545,7 +1574,7 @@ function Flow() {
                 onTour={startTour}
                 onProject={(e) => {
                   setWelcome(false);
-                  void libGet(e.id).then((p) => (typeof p === 'string' ? alert(p) : load(p, e.name)));
+                  void libGet(e.id).then((p) => (typeof p === 'string' ? notify(p) : load(p, e.name)));
                 }}
               />
             )}

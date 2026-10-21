@@ -36,7 +36,7 @@ import { surfaceModel } from './surface.ts';
 import { describe, STATS, type StatKey } from './stats.ts';
 import { combineNode, combineSettings, labelRuns, sideBySide, unstack, type BlockInfo, type CombineInput, type CombineSettings, type SplitGraph } from './reshape.ts';
 import { pickPoints, type Picked } from './pick.ts';
-import { CURVE_OP_LABELS, curveFormulas, curveMath, curveOf, curveOpPort, curveOps, translate, type Curve2, type CurveMathData, type CurveOpView, type CurvePlotLine, stepInfo, type StepInfo } from './curvemath.ts';
+import { CURVE_OP_LABELS, curveFormulas, curveMath, curveOf, curveOpPort, curveOps, translate, type Curve2, type TranslateCurve, type CurveMathData, type CurveOpView, type CurvePlotLine, stepInfo, type StepInfo } from './curvemath.ts';
 import { changesTable, cleanData, filterRows } from './cleaning.ts';
 import { digitized } from './digitize.ts';
 import { histogram, type FitResult } from './histogram.ts';
@@ -71,8 +71,11 @@ import { baseParams, buildModel, peakAt, peaksModel, percentResults, shapeSize, 
 import { findSpec, runFits, totalStats, type FitParamSpec, type FitRunData, type RunResult, parseLinks } from './fit.ts';
 import { compare, compareTable, modelName, yorkRuns, type Scored } from './fitcompare.ts';
 import { parseRowHandle, rowHandle } from './ports.ts';
-import { AXIS_DEFAULTS, COLORBAR_DEFAULTS, curveStyle, axesStyle, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, toPt, type Annotation, type AxesFig, type AxesStyle, type AxisSpec, type Curve, type CurveStyle, type Figure, type FigureBox, type LegendEntry, type LegendSpec, type LengthUnit, type Placement, type ShapeSpec, type TextDefaults, resolveText, type Side, INSET_DEFAULTS, insetBackground, scaledSize } from '../figure/spec.ts';
-import { CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, MATRIX_PLOT_DEFAULTS, PLOT_PAGE_DEFAULTS, REPORT_DEFAULTS } from '../defaults.ts';
+import { AXIS_DEFAULTS, COLORBAR_DEFAULTS, SIDE_DEFAULTS, curveStyle, axesStyle, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, toPt, type Annotation, type AxesFig, type AxesStyle, type AxisSpec, type Curve, type CurveStyle, type Figure, type FigureBox, type LegendEntry, type LegendSpec, type LengthUnit, type Placement, type ShapeSpec, type TextDefaults, resolveText, type Side, INSET_DEFAULTS, insetBackground, scaledSize } from '../figure/spec.ts';
+import { CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, DRAWING_DEFAULTS, MATRIX_PLOT_DEFAULTS, PLOT_PAGE_DEFAULTS, REPORT_DEFAULTS } from '../defaults.ts';
+import { figurePng, imageFigure, imageMatrix, processImage, scaleBarPlace, type ImageAnalysisData } from '../image/node.ts';
+import { STEP_DEFS } from '../image/steps.ts';
+import { phaseFigures, type PhaseDiagramData } from './phasenode.ts';
 import { maxOf, minOf } from './minmax.ts';
 import { reportBlock, type ReportBlock, type ReportData } from './reportDoc.ts';
 import { nodeDisplayName } from '../nodeColors.ts';
@@ -131,7 +134,9 @@ export type NodeView = {
   report?: string[]; // the statistics nodes: the results in words
   signal?: { labels: string[]; plots: SignalPlot[] }; // the Signal nodes: the data and the result of every Y
   availB?: { name: string; role?: ColumnRole }[]; // Curve math: the columns of B
-  translate?: { cols: { name: string; role: ColumnRole; from: 'dataset' | 'port' }[]; curves: string[] }; // Translate: the columns and their designations, the curves
+  // Translate & resize: the columns and their designations, the curves; every curve before and after (the graph in the
+  // node), the name of X
+  translate?: { cols: { name: string; role: ColumnRole; from: 'dataset' | 'port' }[]; curves: string[]; plots?: TranslateCurve[]; xName?: string };
   fit?: { x: Float64Array; y: Float64Array; run: Int32Array; used: Uint8Array; runs: RunResult[]; use?: UseRow[][]; labels: string[]; params: { name: string; kind: string }[]; note: string; xName: string; yNames: string[]; group: string; surface?: boolean; regression?: { kind: 'linear' | 'logistic'; coefs: Coef[]; stats: Record<string, number> }; compare?: string[]; runs2?: RunResult[] };
   available?: ColInfo[];
   // Differentiate / Integrate: the data (every point, its run, whether it is in a region), the result of every run in the
@@ -170,6 +175,8 @@ export type NodeView = {
   extractCols?: { sheet: string; columns: { name: string; role: ColumnRole }[] }; // Auto-extract (simple): the first sheet's columns
   layerInputs?: { port: number; letter: string; name: string; columns: string[]; labels: Record<string, string[]> }[];
   figure?: Figure;
+  cooling?: Figure; // Phase diagram: the amounts of the phases of the alloy cooled
+  image?: { w: number; h: number; ch: number; kind: string; notes: Record<string, string>; errors: Record<string, string> }; // Image analysis: the result's size, every step's note and error
   under?: Figure; // Figure Drawing: the figure connected under it
   pinShift?: Record<string, [number, number]>; // … and how far its objects pinned to that figure's data are moved (mm)
   // Matrix, Contour: the matrix made / drawn; Matrix computation: its inputs and every step's results
@@ -206,6 +213,8 @@ export function logicalData(n: AppNode): unknown {
     delete rest.text;
     delete rest.sheets;
   }
+  // an image: by its id (its pixels are megabytes)
+  if (n.type === 'image') delete rest.pixels;
   return rest;
 }
 
@@ -2236,6 +2245,60 @@ function keepAspect(b: Placement, W: number, H: number, aspect: number): Placeme
 
 // A Figure Drawing's figure: its page, and one panel without axes — the drawing (its objects in mm from the top-left
 // corner, the first one at the back; the hidden ones left out). In a Merge or an inset it is scaled as a whole.
+// The Phase diagram node: the diagram of its model with the lever rule at its points and an alloy cooled (a second
+// figure: the amounts of its phases against the temperature); the shapes and texts it draws are locked (no handles, not
+// moved by hand)
+function phaseNodeOut(id: string, d: PhaseDiagramData): Out {
+  const r = phaseFigures(d);
+  if (typeof r === 'string') return { errors: [r] };
+  const warnings: string[] = [];
+  const T0 = r.tUnit === '°C' ? 273.15 : 0;
+  const side = (title: string) => ({ ...SIDE_DEFAULTS, title });
+  const fixed = (f: Figure): Figure => ({ ...f, axes: f.axes.map((a) => ({ ...a, annotations: a.annotations.map((x) => (/^(ph|cool)-/.test(x.key.split('/')[1] ?? '') ? { ...x, owner: undefined, locked: true } : x)) })) });
+  const st = axesStyle(d.axes);
+  const axes: Partial<AxesStyle> = {
+    ...st,
+    x: { ...st.x, min: Number.isFinite(st.x.min) ? st.x.min : 0, max: Number.isFinite(st.x.max) ? st.x.max : 100 },
+    y: { ...st.y, min: Number.isFinite(st.y.min) ? st.y.min : r.diagram.tMin - T0, max: Number.isFinite(st.y.max) ? st.y.max : r.diagram.tMax - T0, range: 'tight' },
+    sides: { ...st.sides, bottom: { ...st.sides.bottom, title: st.sides.bottom.title || `Composition (at% ${d.b})` }, left: { ...st.sides.left, title: st.sides.left.title || `Temperature (${r.tUnit})` } },
+  };
+  const { figure } = plotFigure({ id, data: { label: '', style: {}, axes, legend: d.legend ?? { show: true, x: 98, y: 2, anchor: 'tr' }, annotations: [...r.annotations, ...(d.annotations ?? [])], page: { name: 'phase_diagram', ...d.page } } }, r.curves, warnings);
+  const outputs: Record<string, Value> = { figure: { t: 'figure', v: fixed(figure) }, points: { t: 'dataset', v: r.points }, boundaries: { t: 'dataset', v: r.boundaries } };
+  let coolFig: Figure | undefined;
+  if (r.cooling && r.fractions) {
+    const cAxes: Partial<AxesStyle> = { ...axesStyle(undefined), x: { ...AXIS_DEFAULTS, reverse: true }, y: { ...AXIS_DEFAULTS, min: 0, max: 100, range: 'tight' }, sides: { ...axesStyle(undefined).sides, bottom: side(`Temperature (${r.tUnit}), cooling →`), left: side('Amount of the phase (%)') } };
+    coolFig = fixed(plotFigure({ id: `${id}:cooling`, data: { label: '', style: {}, axes: cAxes, legend: { show: true, x: 2, y: 50, anchor: 'cl' }, annotations: r.cooling.annotations, page: { name: 'phase_amounts', ...d.coolingPage } } }, r.cooling.curves, warnings).figure);
+    outputs.cooling = { t: 'figure', v: coolFig };
+    outputs.fractions = { t: 'dataset', v: r.fractions };
+  }
+  return { outputs, warnings, view: { figure: fixed(figure), ...(coolFig ? { cooling: coolFig } : {}), report: r.summary } };
+}
+
+// The Image analysis node: the image through its steps; the matrix of the result and a figure — the image on a page
+// of its proportions, a scale bar when calibrated
+function imageNodeOut(id: string, d: ImageAnalysisData): Out {
+  const p = processImage(d);
+  if (!p) return { view: { waiting: 'Open an image (PNG, JPEG, TIFF): Open image, paste one or drop it on the node.' } };
+  const f = imageFigure(d.figure);
+  const W = f.width > 0 ? f.width : 80;
+  const H = +((W * p.out.h) / p.out.w).toFixed(3);
+  const href = figurePng(p, f);
+  const ann: AnnotationItem[] = [{ id: 'img', type: 'shape', spec: { ...SHAPE_DEFAULTS, kind: 'image', coords: 'data', href, x1: 0, y1: 0, x2: W, y2: H, width: 0, stretch: true } }];
+  const bar = scaleBarPlace(p.out.w, p.out.h, W, d.cal, f.bar);
+  if (bar) {
+    ann.push({ id: 'bar', type: 'shape', spec: { ...SHAPE_DEFAULTS, kind: 'line', coords: 'data', x1: bar.x1, y1: bar.y, x2: bar.x2, y2: bar.y, color: f.bar.color, width: f.bar.thickness, head1: 'none', head2: 'none', cap: 'butt' } });
+    if (f.bar.label) ann.push({ id: 'barText', type: 'text', spec: { ...TEXT_SPEC_DEFAULTS, text: bar.text, coords: 'data', x: bar.tx, y: bar.ty, anchor: 'bc', style: { color: f.bar.color, size: f.bar.size } } });
+  }
+  const page: DrawingData = { ...DRAWING_DEFAULTS, name: d.name.replace(/\.[a-z0-9]+$/i, '') || 'image', ...d.page, width: W, height: H, unit: 'mm', annotations: ann };
+  const figure = drawingFigure(id, page);
+  const warnings = (d.steps ?? []).flatMap((s, k) => (p.errors[s.id] ? [`Step ${k + 1} (${STEP_DEFS[s.kind]?.label ?? s.kind}): ${p.errors[s.id]}.`] : []));
+  return {
+    outputs: { matrix: { t: 'matrix', v: imageMatrix(p.out, d.name || 'image', d.cal) }, figure: { t: 'figure', v: figure } },
+    warnings,
+    view: { figure, image: { w: p.out.w, h: p.out.h, ch: p.base.ch.length, kind: p.out.kind, notes: p.notes, errors: p.errors } },
+  };
+}
+
 export function drawingFigure(id: string, d: DrawingData, shiftOf?: (it: AnnotationItem) => [number, number] | null): Figure {
   const text = pageText(d);
   const W = toPt(d.width, d.unit);
@@ -4265,7 +4328,8 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       const r = translate(cols, { ...n.data, roles: {} });
       const tv = { cols: cols.map((c, j) => ({ name: c.name, role: c.role as ColumnRole, from: (j < fromDs.length ? 'dataset' : 'port') as 'dataset' | 'port' })), curves: curvesByRole(cols).curves.map((c) => c.y) };
       if (typeof r === 'string') return { errors: [r], view: { translate: tv } };
-      return { outputs: { out: { t: 'dataset', v: r.dataset }, shifts: { t: 'dataset', v: r.shifts } }, warnings: r.warnings, view: { translate: tv, available: cols.map(colInfo) } };
+      const xName = curvesByRole(cols).curves[0]?.x ?? 'row';
+      return { outputs: { out: { t: 'dataset', v: r.dataset }, shifts: { t: 'dataset', v: r.shifts } }, warnings: r.warnings, view: { translate: { ...tv, plots: r.curves, xName }, available: cols.map(colInfo) } };
     }
     case 'normality':
     case 'ttest':
@@ -4460,6 +4524,10 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       if (toPt(figure.width, figure.unit) > 72 * 60 || toPt(figure.height, figure.unit) > 72 * 60) return { errors: ['At most 60 inches (1.5 m) on a side.'] };
       return { view: { figure, ...(figs.length ? {} : { waiting: 'Connect Plots (their “figure” output).' }) }, warnings: [...new Set(warnings)] };
     }
+    case 'image':
+      return imageNodeOut(n.id, n.data);
+    case 'phasediagram':
+      return phaseNodeOut(n.id, n.data);
     case 'drawing': {
       // a figure under it: its page the drawing's, the drawing over it (or the figure only a guide)
       const below = one('under');

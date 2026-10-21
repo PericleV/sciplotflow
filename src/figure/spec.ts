@@ -405,6 +405,8 @@ export type SideStyle = {
   plus: boolean; // + before positive labels
   hideFirst: boolean;
   hideLast: boolean;
+  // its line, ticks, numbers and title in the colour of the first curve on it (several Y axes: which is whose)
+  curveColor?: boolean;
 };
 // The top / right axes: a mirror of the opposite one, an own scale (curves choose it), or a function of the opposite
 // one (e.g. eV over nm: 1239.84/x).

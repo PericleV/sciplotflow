@@ -6,6 +6,7 @@ import type { Edge } from '@xyflow/react';
 import { CANVAS_DEFAULTS, BARCHART_DEFAULTS, BOXVIOLIN_DEFAULTS, HISTOGRAM_DEFAULTS, PIE_DEFAULTS, PLOT1D_DEFAULTS, PLOT3D_DEFAULTS, POLAR_DEFAULTS, WATERFALL_DEFAULTS } from './defaults.ts';
 import { plotRows } from './engine/evaluate.ts';
 import { PALETTE, type CurveStyle } from './figure/spec.ts';
+import { layoutAxes, type XLayout, type YLayout } from './figure/multiAxes.ts';
 import type { AppNode, CurveRow, Plot1DData } from './types.ts';
 
 // how the curves are drawn (1D plot) or the graph made of the columns
@@ -17,8 +18,9 @@ export const is1D = (g: GraphKind) => ONE_D.includes(g);
 // a curve: the sheet its columns come from (a workbook), its X, Y (Z: a 3D plot) and errors ('' = none)
 export type PlotCurve = { sheet?: string; x: string; y: string; z?: string; yerr: string; xerr: string };
 // split: one Plot, a Plot per sheet or per curve (merge: then together in a Merge); into: a Plot already there (its id)
-// the curves go to ('' = a new one); sheet: the sheet of another graph
-export type PlotChoice = { graph: GraphKind; curves: PlotCurve[]; sheet?: string; into: string; split: 'one' | 'sheet' | 'curve'; merge: boolean };
+// the curves go to ('' = a new one); sheet: the sheet of another graph; yAxes / xAxes: a new Plot's curves each on an
+// axis of its own (absent: one Y, one X)
+export type PlotChoice = { graph: GraphKind; curves: PlotCurve[]; sheet?: string; into: string; split: 'one' | 'sheet' | 'curve'; merge: boolean; yAxes?: YLayout; xAxes?: XLayout };
 
 // the look of a curve drawn so
 function look(g: GraphKind): Partial<CurveStyle> {
@@ -105,7 +107,10 @@ export function buildFigure(
   const edges: Edge[] = [];
   const plots: string[] = [];
   groups.forEach((g, i) => {
-    const rows = g.map((q, k) => rowOf(q, k, c.graph, src.book));
+    let rows = g.map((q, k) => rowOf(q, k, c.graph, src.book));
+    // several Y (X) axes: every curve on its own, the axes coloured as their curves
+    const multi = g.length > 1 && ((c.yAxes ?? 'one') !== 'one' || (c.xAxes ?? 'one') !== 'one') ? layoutAxes(g.length, c.yAxes ?? 'one', c.xAxes ?? 'one') : null;
+    if (multi) rows = rows.map((r, k) => ({ ...r, style: { ...r.style, ...multi.on[k] } }));
     const [head, ...rest] = rows;
     const id = uid('plot1d');
     plots.push(id);
@@ -114,7 +119,7 @@ export function buildFigure(
       id,
       type: 'plot1d',
       position: at(80, i * 560),
-      data: { ...structuredClone(PLOT1D_DEFAULTS), label: '', style: head.style, cols: head.cols, ...(head.sheet ? { sheet: head.sheet } : {}), rows: rest, legend: { ...PLOT1D_DEFAULTS.legend!, show: many }, ...(g.length > 8 ? { curveColors: { map: 'viridis' as const } } : {}), ...(c.graph === 'stacked' && many ? { stack: 'stack' as const } : {}) },
+      data: { ...structuredClone(PLOT1D_DEFAULTS), ...(multi ? { axes: multi.axes } : {}), label: '', style: head.style, cols: head.cols, ...(head.sheet ? { sheet: head.sheet } : {}), rows: rest, legend: { ...PLOT1D_DEFAULTS.legend!, show: many }, ...(g.length > 8 ? { curveColors: { map: 'viridis' as const } } : {}), ...(c.graph === 'stacked' && many ? { stack: 'stack' as const } : {}) },
     } as AppNode);
     edges.push(edge(src.id, handle, id, 'dataset'));
   });

@@ -97,7 +97,7 @@ export const SCENES: Scene[] = [
     file: 'theme',
     setup: `await rec.example('Publication figure'); await rec.wait(1800);`,
     act: `
-      const theme = (d) => [...d.querySelectorAll('select')].find((s) => s.title === 'Colour theme');
+      const theme = (d) => d.querySelector('.tb-theme');
       await rec.play([{ kind: 'point', at: theme, ms: 300 }]);
       rec.setTheme('dark');
       await rec.wait(1400);

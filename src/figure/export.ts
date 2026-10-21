@@ -3,6 +3,7 @@
 // (vector, fonts included), and a copy to the clipboard. SVG and PNG may carry the project (embed.ts): an editable figure.
 import { PT_PER, type Figure } from './spec.ts';
 import { pngWithProject, svgWithProject, type Embedded } from './embed.ts';
+import { notify } from '../ui/dialogStore.ts';
 
 export function download(content: Blob | string, filename: string, type = 'text/plain') {
   const blob = typeof content === 'string' ? new Blob([content], { type }) : content;
@@ -189,7 +190,7 @@ export async function copyPng(svg: SVGSVGElement, fig: Figure, dpi: number) {
 export function printPdf(svg: SVGSVGElement, fig: Figure, name: string) {
   const w = window.open('', '_blank');
   if (!w) {
-    alert('The browser blocked the print window: allow pop-ups for this page.');
+    notify('The browser blocked the print window: allow pop-ups for this page.');
     return;
   }
   const size = `${fig.width}${fig.unit} ${fig.height}${fig.unit}`;

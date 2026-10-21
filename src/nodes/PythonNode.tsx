@@ -16,6 +16,7 @@ import { NodeOptions } from './NodeOptions.tsx';
 import { Check, InPort, Messages, OutPort, TextInput } from './ui.tsx';
 import { Maximize2, Play, Square, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
+import { ask } from '../ui/dialogStore.ts';
 
 const CodeEditor = lazy(() => import('./CodeEditor.tsx'));
 
@@ -231,7 +232,8 @@ export function PythonNodeView({ id, data }: NodeProps<PythonNode>) {
             title="A start: it replaces the code"
             onChange={(e) => {
               const ex = EXAMPLES[Number(e.target.value)];
-              if (ex && (!data.code.trim() || confirm('Replace the code with this example?'))) set({ code: ex[1] });
+              if (ex && !data.code.trim()) set({ code: ex[1] });
+              else if (ex) void ask('Replace the code with this example?', { ok: 'Replace' }).then((yes) => yes && set({ code: ex[1] }));
             }}
           >
             <option value="">Examples…</option>

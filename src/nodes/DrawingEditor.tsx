@@ -8,12 +8,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useReactFlow } from '@xyflow/react';
-import { plotMapping, shapeSpec } from '../engine/evaluate.ts';
+import { pageText, plotMapping, shapeSpec } from '../engine/evaluate.ts';
+import { PageTextContext } from '../ui/pageText.ts';
+import { QuickBar } from '../ui/QuickBar.tsx';
+import { setQuickBar, useQuickBar } from '../ui/quickBarStore.ts';
 import { anchorOf } from '../engine/drawingItems.ts';
 import { FigureSvg } from '../figure/render.tsx';
 import { HandleScale, Interactive, PickedNodes, type DragInfo } from '../figure/interactive.ts';
 import { DASHES } from './figureOptions.ts';
-import { TEXT_SPEC_DEFAULTS, toPt, type Dash, type Figure, type ShapeSpec } from '../figure/spec.ts';
+import { TEXT_SPEC_DEFAULTS, toPt, type Dash, type Figure, type ShapeSpec, type TextSpec } from '../figure/spec.ts';
 import { DRAWING_GRID_DEFAULTS, newAnnotation } from '../defaults.ts';
 import type { AnnotationItem, AppNode, DrawingData, DrawingGrid } from '../types.ts';
 import { ShapeEditor, TextEditor } from './AnnotationsEditor.tsx';
@@ -55,6 +58,7 @@ import { Check, Field, NumInput, Select } from './ui.tsx';
 import { alignMoves, copiedItems, copyItems, distributeMoves, groupItems, toPathItem, ungroupItems, geomBox, mapItem, MM, moveItem, snapAxis, union, type AlignHow, type Rect } from './drawingOps.ts';
 import type { Pt, StickSide } from '../figure/shapes.ts';
 import { IMAGE_ACCEPT, imageUrl } from '../imageFile.ts';
+import { ask, notify } from '../ui/dialogStore.ts';
 
 type Tool = 'select' | 'corner' | 'pen' | 'image' | 'text' | 'line' | 'arrow' | 'double' | 'curved' | 'elbow' | 'equilibrium' | 'retro' | 'dimension' | 'rect' | 'ellipse' | 'polygon' | 'polyline' | 'star' | 'regular' | 'arc' | 'bracket' | 'brace' | 'callout';
 // what each tool draws: its first look (the points come from the drag)
@@ -586,8 +590,8 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
     return { ...it, spec: { ...it.spec, corners: cornersText(c.all, c.each) } } as AnnotationItem;
   };
   // a picture placed in the middle of the page (40 mm wide at most), its proportions kept
-  const addImage = (file: File) => {
-    if (file.size > 3e6 && !confirm(`${file.name} is ${(file.size / 1e6).toFixed(1)} MB: it goes into the project (and its files). Place it anyway?`)) return;
+  const addImage = async (file: File) => {
+    if (file.size > 3e6 && !(await ask(`${file.name} is ${(file.size / 1e6).toFixed(1)} MB: it goes into the project (and its files). Place it anyway?`, { ok: 'Place it' }))) return;
     void imageUrl(file).then((href) => {
       const img = new Image();
       const place = (nw: number, nh: number) => {
@@ -599,7 +603,7 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
       img.onload = () => place(img.naturalWidth, img.naturalHeight);
       img.onerror = () => place(0, 0);
       img.src = href;
-    }, (e: Error) => alert(`${file.name}: ${e.message}`));
+    }, (e: Error) => notify(`${file.name}: ${e.message}`));
   };
   const pickImage = () => {
     const inp = document.createElement('input');
@@ -820,6 +824,15 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
   // ---- the layers: the front object first ----
   const [renaming, setRenaming] = useState<string | null>(null);
   const [dragged, setDragged] = useState<string | null>(null);
+  // the quick bar over the selection: shown (this browser's choice), not while the mouse is pressed on the page
+  const quickOn = useQuickBar();
+  const [pressing, setPressing] = useState(false);
+  useEffect(() => {
+    if (!pressing) return;
+    const up = () => setPressing(false);
+    window.addEventListener('pointerup', up);
+    return () => window.removeEventListener('pointerup', up);
+  }, [pressing]);
   const pickLayer = (e: React.MouseEvent, it: AnnotationItem) => {
     if (e.shiftKey && sel.length) {
       // a run of layers
@@ -919,6 +932,7 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
           onChange={(unit) => set({ grid: { ...grid, unit } })}
         />
         <Check label="Snap to objects" title="To the edges and middles of the other objects and of the page (guides show it)" value={data.snapObjects !== false} onChange={(snapObjects) => set({ snapObjects })} />
+        <Check label="Quick bar" title="A bar over the objects selected: their colour, width, size … one click away (its × hides it)" value={quickOn} onChange={setQuickBar} />
       </span>
       <span className="de-group">
         <button className="nodrag de-tool" title="Zoom out (Ctrl + wheel)" onClick={() => zoomBy(1 / 1.25)}>
@@ -1078,15 +1092,47 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
             </Field>
           )}
           {one?.type === 'shape' && (shapeSpec(one.spec).kind === 'line' || shapeSpec(one.spec).kind === 'arrow') && <StickFields it={one} items={items} set={(p) => setSpec(one.id, p)} />}
-          {one?.type === 'shape' && shapeSpec(one.spec).kind !== 'component' && <ShapeEditor s={{ ...shapeSpec(one.spec), ...endsOf(one), coords: 'data' }} where="drawing" set={(p) => setSpec(one.id, p)} />}
+          {one?.type === 'shape' && shapeSpec(one.spec).kind !== 'component' && (
+            <PageTextContext.Provider value={pageText(data)}>
+              <ShapeEditor s={{ ...shapeSpec(one.spec), ...endsOf(one), coords: 'data' }} where="drawing" set={(p) => setSpec(one.id, p)} />
+            </PageTextContext.Provider>
+          )}
           {one?.type === 'shape' && shapeSpec(one.spec).kind === 'component' && <div className="hint">An instance of “{data.components?.find((c) => c.id === one.spec.ref)?.name ?? 'a removed component'}”: placed and sized by its box; it changes with its component (Component ▸ Update; Detach: objects of its own).</div>}
-          {one?.type === 'text' && <TextEditor s={{ ...TEXT_SPEC_DEFAULTS, ...one.spec, coords: 'data' }} where="drawing" set={(p) => setSpec(one.id, p)} extra={<TextPathFields it={one} items={items} set={(p) => setSpec(one.id, p)} />} />}
+          {one?.type === 'text' && (
+            <PageTextContext.Provider value={pageText(data)}>
+              <TextEditor s={{ ...TEXT_SPEC_DEFAULTS, ...one.spec, coords: 'data' }} where="drawing" set={(p) => setSpec(one.id, p)} extra={<TextPathFields it={one} items={items} set={(p) => setSpec(one.id, p)} />} />
+            </PageTextContext.Provider>
+          )}
           <ObjectOps ctx={ctx} />
           {!one && shapesSel.length > 0 && <CommonStroke items={shapesSel} set={(patch) => setItems(items.map((it) => (shapesSel.includes(it) ? ({ ...it, spec: { ...it.spec, ...patch } } as AnnotationItem) : it)))} />}
         </>
       )}
     </div>
   );
+
+  // the quick bar over the selection (objects of one kind: the first one's), above its box (below it at the page's top)
+  const quickKind = selected[0]?.type;
+  const quickBar = (() => {
+    if (!quickOn || pressing || !selBox || tool !== 'select' || !quickKind || quickKind === 'colorbar' || selected.some((it) => it.locked)) return null;
+    const first = selected[0];
+    if (first.type === 'shape' && shapeSpec(first.spec).kind === 'component') return null;
+    const same = selected.filter((it) => it.type === quickKind).map((it) => it.id);
+    const patch = (p: object) => setItems(items.map((it) => (same.includes(it.id) ? ({ ...it, spec: { ...it.spec, ...p } } as AnnotationItem) : it)));
+    const x = 40 + selBox.x * MM * zoom;
+    const yTop = 40 + selBox.y * MM * zoom - 42;
+    const y = yTop >= 0 ? yTop : 40 + (selBox.y + selBox.h) * MM * zoom + 8;
+    return (
+      <QuickBar
+        target={first.type === 'shape' ? { kind: 'shape', s: shapeSpec(first.spec) } : { kind: 'text', s: { ...TEXT_SPEC_DEFAULTS, ...first.spec } as TextSpec }}
+        onShape={patch}
+        onText={patch}
+        front={() => reorder('front')}
+        back={() => reorder('back')}
+        remove={remove}
+        style={{ left: Math.max(0, x), top: y }}
+      />
+    );
+  })();
 
   // the grid (only here), in pt of the page
   const gridLines = (() => {
@@ -1212,6 +1258,7 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
           }}
         >
           <div className="de-stage" style={{ width: dispW + 60, height: dispH + 60 }}>
+            {quickBar}
             <div className="de-rulers" style={{ left: 40, top: 22 }}>
               {ruler(mmW, true)}
             </div>
@@ -1222,7 +1269,10 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
               ref={page}
               className={`de-page tool-${tool}${data.background === 'none' ? ' checker' : ''}`}
               style={{ left: 40, top: 40, width: dispW, height: dispH }}
-              onPointerDown={down}
+              onPointerDown={(e) => {
+                setPressing(true);
+                down(e);
+              }}
               onPointerMove={(e) => (((tool === 'polygon' || tool === 'polyline') && poly.length) || (tool === 'pen' && pen.length)) && setHover(at(e))}
               onDoubleClick={dbl}
               onContextMenu={openMenu}

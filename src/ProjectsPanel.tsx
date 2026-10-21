@@ -5,6 +5,7 @@ import { libAddFiles, libBackup, libDelete, libDuplicate, libGet, libList, libRe
 import type { Project } from './project.ts';
 import { Copy, Pencil, X } from 'lucide-react';
 import { IC } from './nodes/iconProps.ts';
+import { ask, askText } from './ui/dialogStore.ts';
 
 const sizeText = (b: number) => (b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} kB`);
 
@@ -15,9 +16,9 @@ export function ProjectsPanel(props: { onClose: () => void; currentId: string; k
   const [msg, setMsg] = useState('');
   const file = useRef<HTMLInputElement>(null);
   const adding = useRef<HTMLInputElement>(null);
-  const newProject = () => {
+  const newProject = async () => {
     const n = (list?.length ?? 0) + 1;
-    const name = prompt('The name of the new project:', `Project ${n}`)?.trim();
+    const name = (await askText('The name of the new project:', `Project ${n}`))?.trim();
     if (name) props.onNew(name);
   };
   const addFiles = async (fs: File[]) => {
@@ -38,7 +39,7 @@ export function ProjectsPanel(props: { onClose: () => void; currentId: string; k
     else props.onOpen(p, e.name);
   };
   const rename = async (e: LibEntry) => {
-    const name = prompt('The name of the project:', e.name)?.trim();
+    const name = (await askText('The name of the project:', e.name))?.trim();
     if (!name || name === e.name) return;
     await libRename(e.id, name);
     props.onRename(e.id, name);
@@ -140,7 +141,9 @@ export function ProjectsPanel(props: { onClose: () => void; currentId: string; k
                 disabled={isOpen}
                 title={isOpen ? 'Open another project first (the one open is kept here as it changes)' : 'Delete it from this browser'}
                 onClick={() => {
-                  if (confirm(`Delete “${e.name}” from this browser? (Back up all keeps a copy in a file.)`)) void libDelete(e.id);
+                  void ask(`Delete “${e.name}” from this browser? (Back up all keeps a copy in a file.)`, { ok: 'Delete', danger: true }).then((yes) => {
+                    if (yes) void libDelete(e.id);
+                  });
                 }}
               >
                 <X {...IC} />

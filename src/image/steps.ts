@@ -1,0 +1,389 @@
+// The editing steps of the Image analysis node: what each one is (its group, name, parameters with their defaults) and
+// what it does to a raster. The steps are applied in their order, each on what the ones above gave; a step that cannot
+// run says why and is passed over. Pure.
+import { gaussian, luminance, type Raster } from './raster.ts';
+import { anisotropic, bilateral, entropyFilter, gabor, gradient, hessianEigen, laplace, laplacianOfGaussian, lbp, meanFilter, medianFilter, minMaxFilter, nonLocalMeans, removeOutliers, rollingBall, scanLines, slidingParaboloid, varianceFilter, type Shape } from './filters.ts';
+import { autoContrast, balance, brightness, clahe, contrast, curves, equalize, hueSaturation, invert, levels, logTone, minMax, pickChannel, weightedGray, type ChannelPick } from './tone.ts';
+import { closing, dilate, distanceMap, erode, fillHoles, opening, separate, skeleton, topHat } from './morph.ts';
+import { canny } from './canny.ts';
+import { GLOBAL_METHODS, LOCAL_METHODS, globalThreshold, localThreshold, type GlobalMethod, type LocalMethod } from './threshold.ts';
+
+export type StepGroup = 'Tone' | 'Colour' | 'Noise' | 'Background' | 'Edges' | 'Texture' | 'Morphology' | 'Threshold';
+export const STEP_GROUPS: StepGroup[] = ['Tone', 'Colour', 'Noise', 'Background', 'Edges', 'Texture', 'Morphology', 'Threshold'];
+
+// A parameter: a number (in pixels, % or the image's values — NaN: automatic), a choice, a tick, or a curve's points
+export type Param =
+  | { key: string; label: string; type: 'num'; def: number; min?: number; max?: number; step?: number; unit?: string; auto?: string; title?: string }
+  | { key: string; label: string; type: 'choice'; def: string; options: [string, string][]; title?: string }
+  | { key: string; label: string; type: 'bool'; def: boolean; title?: string }
+  | { key: string; label: string; type: 'curve'; def: [number, number][]; title?: string };
+export type StepDef = { group: StepGroup; label: string; title: string; params: Param[] };
+
+const num = (key: string, label: string, def: number, o: Partial<Extract<Param, { type: 'num' }>> = {}): Param => ({ key, label, type: 'num', def, ...o });
+const choice = (key: string, label: string, def: string, options: [string, string][], title?: string): Param => ({ key, label, type: 'choice', def, options, ...(title ? { title } : {}) });
+const bool = (key: string, label: string, def: boolean, title?: string): Param => ({ key, label, type: 'bool', def, ...(title ? { title } : {}) });
+const SHAPE = choice('shape', 'Shape', 'disk', [
+  ['disk', 'disk'],
+  ['square', 'square'],
+]);
+const radius = (def = 2) => num('radius', 'Radius', def, { min: 0.5, step: 0.5, unit: 'px' });
+
+export const STEP_DEFS = {
+  // tone
+  brightness: { group: 'Tone', label: 'Brightness', title: 'Every value moved up or down by a fraction of the range', params: [num('amount', 'Amount', 0, { min: -1, max: 1, step: 0.01, title: '−1 … 1: a fraction of the range' })] },
+  contrast: { group: 'Tone', label: 'Contrast', title: 'The values spread from (or drawn to) the middle of the range', params: [num('factor', 'Factor', 1.2, { min: 0, step: 0.05 })] },
+  minmax: { group: 'Tone', label: 'Min / max', title: 'The values from min to max stretched over the whole range, the others clipped', params: [num('min', 'Min', NaN, { unit: 'value', auto: 'lowest' }), num('max', 'Max', NaN, { unit: 'value', auto: 'highest' })] },
+  levels: {
+    group: 'Tone',
+    label: 'Levels',
+    title: 'Input black and white points, gamma (> 1 lightens the middle), output black and white',
+    params: [num('inB', 'In black', NaN, { unit: 'value', auto: 'range start' }), num('inW', 'In white', NaN, { unit: 'value', auto: 'range end' }), num('gamma', 'Gamma', 1, { min: 0.05, step: 0.05 }), num('outB', 'Out black', NaN, { unit: 'value', auto: 'range start' }), num('outW', 'Out white', NaN, { unit: 'value', auto: 'range end' })],
+  },
+  curves: { group: 'Tone', label: 'Curves', title: 'A curve from the input to the output value (points dragged on its graph; RGB: one curve for all)', params: [{ key: 'points', label: 'Points', type: 'curve', def: [[0, 0], [0.5, 0.5], [1, 1]] }] },
+  autocontrast: { group: 'Tone', label: 'Auto-contrast', title: 'The darkest and brightest few % clipped, the rest stretched', params: [num('saturated', 'Saturated', 0.35, { min: 0, max: 50, step: 0.05, unit: '%' })] },
+  equalize: { group: 'Tone', label: 'Equalize', title: 'The histogram made flat (every level used as often)', params: [] },
+  clahe: { group: 'Tone', label: 'CLAHE', title: 'Contrast-limited adaptive equalisation: tile by tile, the histogram clipped so noise is not amplified', params: [num('tile', 'Tile', 64, { min: 4, step: 1, unit: 'px' }), num('clip', 'Clip limit', 3, { min: 1, step: 0.5, title: '× the mean count of a bin' }), num('bins', 'Bins', 256, { min: 8, step: 1 })] },
+  log: { group: 'Tone', label: 'Log', title: 'The dark values spread (logarithm); strength k', params: [num('k', 'Strength', 10, { min: 0.1, step: 1 })] },
+  exp: { group: 'Tone', label: 'Exp', title: 'The bright values spread (the inverse of Log)', params: [num('k', 'Strength', 10, { min: 0.1, step: 1 })] },
+  invert: { group: 'Tone', label: 'Invert', title: 'Dark and bright swapped', params: [] },
+  // colour
+  channel: {
+    group: 'Colour',
+    label: 'Channel',
+    title: 'One channel of an RGB image as a gray one',
+    params: [
+      choice('which', 'Channel', 'luma', [
+        ['luma', 'gray (luminance)'],
+        ['average', 'gray (average)'],
+        ['r', 'R'],
+        ['g', 'G'],
+        ['b', 'B'],
+        ['h', 'H (hue)'],
+        ['s', 'S (saturation)'],
+        ['v', 'V (value)'],
+        ['L', 'L* (lightness)'],
+        ['a', 'a* (green–red)'],
+        ['bb', 'b* (blue–yellow)'],
+      ]),
+    ],
+  },
+  grayweights: { group: 'Colour', label: 'Gray from weights', title: 'Gray as a weighted sum of R, G, B', params: [num('wr', 'R', 0.299, { step: 0.01 }), num('wg', 'G', 0.587, { step: 0.01 }), num('wb', 'B', 0.114, { step: 0.01 })] },
+  huesat: { group: 'Colour', label: 'Hue / saturation', title: 'The hue turned, the saturation scaled', params: [num('hue', 'Hue', 0, { step: 1, unit: '°' }), num('sat', 'Saturation', 1, { min: 0, step: 0.05 })] },
+  balance: { group: 'Colour', label: 'Colour balance', title: 'Each channel scaled', params: [num('r', 'R', 1, { min: 0, step: 0.05 }), num('g', 'G', 1, { min: 0, step: 0.05 }), num('b', 'B', 1, { min: 0, step: 0.05 })] },
+  // noise
+  gaussian: { group: 'Noise', label: 'Gaussian blur', title: 'Smoothed by a Gaussian', params: [num('sigma', 'σ', 1, { min: 0.1, step: 0.1, unit: 'px' })] },
+  median: { group: 'Noise', label: 'Median', title: 'Each pixel the median of its neighbourhood: removes specks, keeps edges', params: [radius(1), SHAPE] },
+  mean: { group: 'Noise', label: 'Mean', title: 'Each pixel the mean of its neighbourhood', params: [radius(1), SHAPE] },
+  bilateral: { group: 'Noise', label: 'Bilateral', title: 'Smoothed among similar values only: edges kept', params: [num('sigmaS', 'σ space', 2, { min: 0.5, step: 0.5, unit: 'px' }), num('sigmaR', 'σ value', NaN, { unit: 'value', auto: '10 % of the range' })] },
+  nlm: {
+    group: 'Noise',
+    label: 'Non-local means',
+    title: 'Each pixel the mean of pixels whose surroundings look alike: strong denoising that keeps texture (SEM)',
+    params: [num('h', 'h (strength)', NaN, { unit: 'value', auto: 'from the noise' }), num('patch', 'Patch', 3, { min: 1, step: 1, unit: 'px', title: 'Half-size of the patches compared' }), num('search', 'Search', 5, { min: 1, step: 1, unit: 'px', title: 'Half-size of the window searched' })],
+  },
+  anisotropic: {
+    group: 'Noise',
+    label: 'Anisotropic diffusion',
+    title: 'Smoothing that stops at edges (Perona–Malik)',
+    params: [num('iterations', 'Iterations', 10, { min: 1, step: 1 }), num('kappa', 'κ (edge)', NaN, { unit: 'value', auto: '5 % of the range' }), num('stepSize', 'Step', 0.2, { min: 0.01, max: 0.25, step: 0.01 }), choice('option', 'Conduction', '1', [['1', 'exp (favours high-contrast edges)'], ['2', '1 / (1 + x²) (favours wide regions)']])],
+  },
+  outliers: { group: 'Noise', label: 'Remove outliers', title: 'Pixels brighter (darker) than the median around them by more than the threshold take the median', params: [radius(2), num('threshold', 'Threshold', NaN, { unit: 'value', auto: '20 % of the range' }), choice('which', 'Which', 'bright', [['bright', 'bright'], ['dark', 'dark'], ['both', 'both']])] },
+  scanlines: { group: 'Noise', label: 'Scan lines', title: 'The offset of every line removed (the bands of a scanned image: SEM, AFM)', params: [choice('along', 'Lines', 'rows', [['rows', 'rows'], ['cols', 'columns']]), choice('how', 'Level', 'median', [['median', 'median'], ['mean', 'mean']])] },
+  // background
+  rollingball: { group: 'Background', label: 'Rolling ball', title: 'The background under the image (a ball rolled under it) subtracted, or shown', params: [num('radius', 'Radius', 25, { min: 1, step: 1, unit: 'px', title: 'Larger than the largest object' }), bool('light', 'Light background', false), choice('output', 'Result', 'subtract', [['subtract', 'image − background'], ['background', 'the background']])] },
+  paraboloid: { group: 'Background', label: 'Sliding paraboloid', title: 'As the rolling ball, with a paraboloid slid along the lines', params: [num('radius', 'Radius', 25, { min: 1, step: 1, unit: 'px' }), bool('light', 'Light background', false), choice('output', 'Result', 'subtract', [['subtract', 'image − background'], ['background', 'the background']])] },
+  subgauss: { group: 'Background', label: 'Subtract Gaussian', title: 'A very smoothed copy subtracted (slow variations removed)', params: [num('sigma', 'σ', 20, { min: 1, step: 1, unit: 'px' })] },
+  flatfield: { group: 'Background', label: 'Flat-field', title: 'Divided by a very smoothed copy (uneven illumination evened out), scaled back to its mean', params: [num('sigma', 'σ', 30, { min: 1, step: 1, unit: 'px' })] },
+  // edges
+  unsharp: { group: 'Edges', label: 'Unsharp mask', title: 'Edges sharpened: the image plus amount × (image − its blur)', params: [num('sigma', 'σ', 2, { min: 0.1, step: 0.1, unit: 'px' }), num('amount', 'Amount', 1, { min: 0, step: 0.1 })] },
+  gradient: {
+    group: 'Edges',
+    label: 'Gradient',
+    title: 'How fast the values change: Sobel, Prewitt or Scharr',
+    params: [choice('op', 'Operator', 'sobel', [['sobel', 'Sobel'], ['prewitt', 'Prewitt'], ['scharr', 'Scharr']]), choice('part', 'Output', 'magnitude', [['magnitude', 'magnitude'], ['x', 'X'], ['y', 'Y']])],
+  },
+  laplace: { group: 'Edges', label: 'Laplacian', title: 'The second derivative (4 neighbours): edges as zero crossings', params: [] },
+  logfilter: { group: 'Edges', label: 'LoG', title: 'Laplacian of Gaussian: spots and edges at the scale σ', params: [num('sigma', 'σ', 2, { min: 0.3, step: 0.1, unit: 'px' }), bool('negate', 'Bright spots positive', true)] },
+  dog: { group: 'Edges', label: 'DoG', title: 'Difference of Gaussians: details between two sizes (band-pass)', params: [num('s1', 'σ small', 1, { min: 0.3, step: 0.1, unit: 'px' }), num('s2', 'σ large', 3, { min: 0.3, step: 0.1, unit: 'px' })] },
+  canny: { group: 'Edges', label: 'Canny', title: 'Thin edges (a mask): smoothed, gradient, hysteresis between two thresholds', params: [num('sigma', 'σ', 1.5, { min: 0.3, step: 0.1, unit: 'px' }), num('low', 'Low', 0.1, { min: 0, step: 0.01, title: 'A fraction of the range' }), num('high', 'High', 0.2, { min: 0, step: 0.01, title: 'A fraction of the range' })] },
+  hessian: { group: 'Edges', label: 'Hessian', title: 'Ridges and valleys (filaments, fibres): an eigenvalue of the Hessian at the scale σ', params: [num('sigma', 'σ', 2, { min: 0.3, step: 0.1, unit: 'px' }), choice('which', 'Eigenvalue', 'smaller', [['smaller', 'smaller (bright ridges)'], ['larger', 'larger (dark valleys)']])] },
+  // texture
+  localsd: { group: 'Texture', label: 'Local SD', title: 'The standard deviation (or variance) around every pixel', params: [radius(3), SHAPE, bool('variance', 'Variance', false)] },
+  entropy: { group: 'Texture', label: 'Local entropy', title: 'How varied the values are around every pixel (bits)', params: [radius(3)] },
+  range: { group: 'Texture', label: 'Local range', title: 'Highest minus lowest around every pixel', params: [radius(2), SHAPE] },
+  gabor: { group: 'Texture', label: 'Gabor', title: 'The response to stripes of a frequency and an angle (the magnitude)', params: [num('frequency', 'Frequency', 0.2, { min: 0.01, max: 0.5, step: 0.01, unit: '1/px' }), num('theta', 'Angle', 0, { step: 5, unit: '°' }), num('bandwidth', 'Bandwidth', 1, { min: 0.1, step: 0.1 })] },
+  lbp: { group: 'Texture', label: 'LBP', title: 'Local binary patterns: the kind of texture at every pixel (uniform codes 0 … P + 1)', params: [num('points', 'Points', 8, { min: 4, step: 1 }), num('radius', 'Radius', 1, { min: 1, step: 0.5, unit: 'px' })] },
+  // morphology
+  morph: { group: 'Morphology', label: 'Erode / dilate / open / close', title: 'The minimum (erode) or maximum (dilate) around every pixel; open: erode then dilate (small bright things removed); close: the reverse', params: [choice('op', 'Operation', 'open', [['erode', 'erode'], ['dilate', 'dilate'], ['open', 'open'], ['close', 'close']]), radius(1), SHAPE] },
+  tophat: { group: 'Morphology', label: 'Top-hat', title: 'The details smaller than the disk: bright ones (white) or dark ones (black)', params: [choice('kind', 'Kind', 'white', [['white', 'white (bright details)'], ['black', 'black (dark details)']]), radius(5), SHAPE] },
+  fillholes: { group: 'Morphology', label: 'Fill holes', title: 'A mask: the holes in its objects filled', params: [] },
+  skeleton: { group: 'Morphology', label: 'Skeleton', title: 'A mask: thinned to lines one pixel wide', params: [] },
+  distance: { group: 'Morphology', label: 'Distance map', title: 'A mask: every object pixel its distance to the background (px)', params: [] },
+  watershed: { group: 'Morphology', label: 'Watershed', title: 'A mask: touching round objects cut apart along the narrowings', params: [num('tolerance', 'Tolerance', 0.5, { min: 0, step: 0.1, unit: 'px', title: 'How deep a narrowing must be to cut' })] },
+  // threshold
+  threshold: {
+    group: 'Threshold',
+    label: 'Threshold',
+    title: 'A mask of the objects: the values above (dark background) or below (light background) a threshold, set by hand or by a method',
+    params: [
+      choice('method', 'Method', 'otsu', [['manual', 'by hand'], ...GLOBAL_METHODS]),
+      num('low', 'Low', NaN, { unit: 'value', auto: 'range start', title: 'By hand: the objects are the values from low to high' }),
+      num('high', 'High', NaN, { unit: 'value', auto: 'range end' }),
+      bool('light', 'Light background', false, 'The objects darker than the background'),
+    ],
+  },
+  localthreshold: {
+    group: 'Threshold',
+    label: 'Local threshold',
+    title: 'A threshold for every pixel from its neighbourhood (uneven lighting)',
+    params: [choice('method', 'Method', 'sauvola', LOCAL_METHODS), num('size', 'Window', 15, { min: 3, step: 2, unit: 'px' }), num('k', 'k', NaN, { step: 0.05, auto: 'method default' }), num('offset', 'Offset', 0, { unit: 'value', title: 'Mean, median, Gaussian: subtracted from the local threshold' }), bool('light', 'Light background', false)],
+  },
+} satisfies Record<string, StepDef>;
+export type StepKind = keyof typeof STEP_DEFS;
+export const stepDef = (k: StepKind): StepDef => STEP_DEFS[k];
+
+// A step of an image: its kind, on or off, its parameters (absent: the default)
+export type ImgStep = { id: string; kind: StepKind; on: boolean; p: Record<string, number | string | boolean | [number, number][]> };
+export const newStep = (kind: StepKind, id: string): ImgStep => ({ id, kind, on: true, p: Object.fromEntries(stepDef(kind).params.map((q) => [q.key, q.def])) });
+// a parameter of a step (the default when not set)
+function param<T>(s: ImgStep, key: string): T {
+  const q = stepDef(s.kind).params.find((x) => x.key === key);
+  const v = s.p[key];
+  return (v === undefined || v === null || (typeof v === 'number' && Number.isNaN(v) && q?.type === 'num' && !Number.isNaN(q.def)) ? q?.def : v) as T;
+}
+// a number that may be automatic (NaN): its own, else the fallback
+const or = (v: number, f: number) => (Number.isFinite(v) ? v : f);
+
+const MASK_ONLY = new Set<StepKind>(['fillholes', 'skeleton', 'distance', 'watershed']);
+// the steps that work on a gray image (an RGB one is made gray by its luminance first)
+const GRAY_ONLY = new Set<StepKind>(['gradient', 'laplace', 'logfilter', 'dog', 'canny', 'hessian', 'localsd', 'entropy', 'range', 'gabor', 'lbp', 'threshold', 'localthreshold', 'equalize', 'clahe']);
+const RGB_ONLY = new Set<StepKind>(['channel', 'grayweights', 'huesat', 'balance']);
+
+const asGray = (r: Raster): Raster => (r.ch.length === 1 ? r : { ...r, ch: [luminance(r)], kind: 'gray' });
+const gray1 = (r: Raster, c: Float32Array, lo: number, hi: number): Raster => ({ w: r.w, h: r.h, ch: [c], kind: 'gray', lo, hi });
+const mask1 = (r: Raster, c: Float32Array): Raster => ({ w: r.w, h: r.h, ch: [c], kind: 'mask', lo: 0, hi: 1 });
+const rangeOfData = (c: Float32Array): [number, number] => {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const v of c) if (Number.isFinite(v)) [lo, hi] = [Math.min(lo, v), Math.max(hi, v)];
+  return Number.isFinite(lo) ? (lo === hi ? [lo, lo + 1] : [lo, hi]) : [0, 1];
+};
+// a robust estimate of the noise σ (Immerkær: the mean |Laplacian-like| response) for automatic strengths
+export function noiseSigma(c: Float32Array, w: number, h: number): number {
+  if (w < 3 || h < 3) return 0;
+  let s = 0;
+  for (let y = 1; y < h - 1; y++)
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      s += Math.abs(c[i - w - 1] - 2 * c[i - w] + c[i - w + 1] - 2 * c[i - 1] + 4 * c[i] - 2 * c[i + 1] + c[i + w - 1] - 2 * c[i + w] + c[i + w + 1]);
+    }
+  return (s * Math.sqrt(Math.PI / 2)) / (6 * (w - 2) * (h - 2));
+}
+
+// One step applied: the new raster and a note (the threshold found …), or why it cannot run
+export function applyStep(r: Raster, s: ImgStep): { r: Raster; note?: string } | string {
+  const { w, h } = r;
+  const sp = r.hi - r.lo || 1;
+  const P = <T>(k: string) => param<T>(s, k);
+  if (MASK_ONLY.has(s.kind) && r.kind !== 'mask') return 'needs a mask: put a Threshold before it';
+  if (RGB_ONLY.has(s.kind) && r.ch.length === 1) return 'needs a colour image';
+  const g = GRAY_ONLY.has(s.kind) ? asGray(r) : r;
+  const each = (f: (c: Float32Array) => Float32Array, p: Partial<Raster> = {}): { r: Raster } => ({ r: { ...g, ch: g.ch.map(f), ...p } });
+  switch (s.kind) {
+    case 'brightness':
+      return { r: { ...r, ch: brightness(r, P<number>('amount')) } };
+    case 'contrast':
+      return { r: { ...r, ch: contrast(r, P<number>('factor')) } };
+    case 'minmax': {
+      const [dlo, dhi] = rangeOfData(r.ch.length === 1 ? r.ch[0] : luminance(r));
+      return { r: { ...r, ch: minMax(r, or(P<number>('min'), dlo), or(P<number>('max'), dhi)) } };
+    }
+    case 'levels':
+      return { r: { ...r, ch: levels(r, or(P<number>('inB'), r.lo), or(P<number>('inW'), r.hi), P<number>('gamma'), or(P<number>('outB'), r.lo), or(P<number>('outW'), r.hi)) } };
+    case 'curves':
+      return { r: { ...r, ch: curves(r, P<[number, number][]>('points')) } };
+    case 'autocontrast':
+      return { r: { ...r, ch: autoContrast(r, P<number>('saturated')) } };
+    case 'equalize':
+      return { r: { ...g, ch: equalize(g) } };
+    case 'clahe':
+      return { r: { ...g, ch: clahe(g, P<number>('tile'), P<number>('clip'), P<number>('bins')) } };
+    case 'log':
+      return { r: { ...r, ch: logTone(r, P<number>('k')) } };
+    case 'exp':
+      return { r: { ...r, ch: logTone(r, P<number>('k'), true) } };
+    case 'invert':
+      return r.kind === 'mask' ? { r: { ...r, ch: r.ch.map((c) => Float32Array.from(c, (v) => (v ? 0 : 1))) } } : { r: { ...r, ch: invert(r) } };
+    case 'channel':
+      return { r: pickChannel(r, P<ChannelPick>('which')) };
+    case 'grayweights':
+      return { r: weightedGray(r, P<number>('wr'), P<number>('wg'), P<number>('wb')) };
+    case 'huesat':
+      return { r: { ...r, ch: hueSaturation(r, P<number>('sat'), P<number>('hue')) } };
+    case 'balance':
+      return { r: { ...r, ch: balance(r, [P<number>('r'), P<number>('g'), P<number>('b')]) } };
+    case 'gaussian':
+      return each((c) => gaussian(c, w, h, P<number>('sigma')));
+    case 'median':
+      return each((c) => medianFilter(c, w, h, P<number>('radius'), P<Shape>('shape')));
+    case 'mean':
+      return each((c) => meanFilter(c, w, h, P<number>('radius'), P<Shape>('shape')));
+    case 'bilateral':
+      return each((c) => bilateral(c, w, h, P<number>('sigmaS'), or(P<number>('sigmaR'), 0.1 * sp)));
+    case 'nlm': {
+      const sigma = noiseSigma(r.ch.length === 1 ? r.ch[0] : luminance(r), w, h);
+      const hh = or(P<number>('h'), Math.max(0.8 * sigma, 1e-6 * sp));
+      return { ...each((c) => nonLocalMeans(c, w, h, hh, Math.max(1, Math.round(P<number>('patch'))), Math.max(1, Math.round(P<number>('search'))))), note: `h = ${+hh.toPrecision(3)} (noise σ ≈ ${+sigma.toPrecision(3)})` };
+    }
+    case 'anisotropic':
+      return each((c) => anisotropic(c, w, h, Math.max(1, Math.round(P<number>('iterations'))), or(P<number>('kappa'), 0.05 * sp), P<number>('stepSize'), P<string>('option') === '2' ? 2 : 1));
+    case 'outliers':
+      return each((c) => removeOutliers(c, w, h, P<number>('radius'), or(P<number>('threshold'), 0.2 * sp), P<'bright' | 'dark' | 'both'>('which')));
+    case 'scanlines':
+      return each((c) => scanLines(c, w, h, P<'rows' | 'cols'>('along'), P<'median' | 'mean'>('how')));
+    case 'rollingball':
+    case 'paraboloid': {
+      const light = P<boolean>('light');
+      const out = P<string>('output');
+      const rad = P<number>('radius');
+      return each((c) => {
+        const u = light ? Float32Array.from(c, (v) => r.lo + r.hi - v) : c;
+        const bg = s.kind === 'rollingball' ? rollingBall(u, w, h, rad) : slidingParaboloid(u, w, h, rad);
+        if (out === 'background') return light ? Float32Array.from(bg, (v) => r.lo + r.hi - v) : bg;
+        const d = Float32Array.from(u, (v, i) => v - bg[i] + r.lo);
+        return light ? Float32Array.from(d, (v) => r.lo + r.hi - v) : d;
+      });
+    }
+    case 'subgauss':
+      return each((c) => {
+        const b = gaussian(c, w, h, P<number>('sigma'));
+        let m = 0;
+        for (const v of b) m += v;
+        m /= b.length;
+        return Float32Array.from(c, (v, i) => v - b[i] + m);
+      });
+    case 'flatfield':
+      return each((c) => {
+        const b = gaussian(c, w, h, P<number>('sigma'));
+        let m = 0;
+        for (const v of b) m += v;
+        m /= b.length;
+        return Float32Array.from(c, (v, i) => (b[i] ? (v * m) / b[i] : v));
+      });
+    case 'unsharp':
+      return each((c) => {
+        const b = gaussian(c, w, h, P<number>('sigma'));
+        const a = P<number>('amount');
+        return Float32Array.from(c, (v, i) => v + a * (v - b[i]));
+      });
+    case 'gradient': {
+      const c = gradient(g.ch[0], w, h, P<'sobel' | 'prewitt' | 'scharr'>('op'), P<'magnitude' | 'x' | 'y'>('part'));
+      return { r: gray1(r, c, ...rangeOfData(c)) };
+    }
+    case 'laplace': {
+      const c = laplace(g.ch[0], w, h);
+      return { r: gray1(r, c, ...rangeOfData(c)) };
+    }
+    case 'logfilter': {
+      const sig = P<number>('sigma');
+      // scale-normalised (σ²), bright spots positive when asked
+      const c = laplacianOfGaussian(g.ch[0], w, h, sig).map((v) => (P<boolean>('negate') ? -1 : 1) * sig * sig * v);
+      return { r: gray1(r, c, ...rangeOfData(c)) };
+    }
+    case 'dog': {
+      const a = gaussian(g.ch[0], w, h, P<number>('s1'));
+      const b = gaussian(g.ch[0], w, h, P<number>('s2'));
+      const c = Float32Array.from(a, (v, i) => v - b[i]);
+      return { r: gray1(r, c, ...rangeOfData(c)) };
+    }
+    case 'canny':
+      return { r: mask1(r, canny(g.ch[0], w, h, P<number>('sigma'), P<number>('low') * sp, P<number>('high') * sp)) };
+    case 'hessian': {
+      const which = P<'larger' | 'smaller'>('which');
+      const e = hessianEigen(g.ch[0], w, h, P<number>('sigma'), which);
+      // bright ridges: the smaller eigenvalue is strongly negative across them; shown positive
+      const c = Float32Array.from(e, (v) => (which === 'smaller' ? Math.max(0, -v) : Math.max(0, v)));
+      return { r: gray1(r, c, ...rangeOfData(c)) };
+    }
+    case 'localsd': {
+      const c = varianceFilter(g.ch[0], w, h, P<number>('radius'), P<Shape>('shape'), !P<boolean>('variance'));
+      return { r: gray1(r, c, ...rangeOfData(c)) };
+    }
+    case 'entropy': {
+      const integer = g.ch[0].every((v) => v === Math.round(v)) && g.hi - g.lo < 256;
+      const c = entropyFilter(g.ch[0], w, h, P<number>('radius'), g.lo, integer ? g.lo + 256 : g.hi, 256);
+      return { r: gray1(r, c, 0, 8) };
+    }
+    case 'range': {
+      const mx = minMaxFilter(g.ch[0], w, h, P<number>('radius'), true, P<Shape>('shape'));
+      const mn = minMaxFilter(g.ch[0], w, h, P<number>('radius'), false, P<Shape>('shape'));
+      const c = Float32Array.from(mx, (v, i) => v - mn[i]);
+      return { r: gray1(r, c, 0, sp) };
+    }
+    case 'gabor': {
+      const c = gabor(g.ch[0], w, h, P<number>('frequency'), (P<number>('theta') * Math.PI) / 180, P<number>('bandwidth'));
+      return { r: gray1(r, c, ...rangeOfData(c)) };
+    }
+    case 'lbp': {
+      const pts = Math.max(4, Math.round(P<number>('points')));
+      return { r: gray1(r, lbp(g.ch[0], w, h, pts, P<number>('radius')), 0, pts + 1) };
+    }
+    case 'morph': {
+      const op = P<string>('op');
+      const f = op === 'erode' ? erode : op === 'dilate' ? dilate : op === 'open' ? opening : closing;
+      return { r: { ...r, ch: r.ch.map((c) => f(c, w, h, P<number>('radius'), P<Shape>('shape'))) } };
+    }
+    case 'tophat':
+      return { r: { ...r, ch: r.ch.map((c) => topHat(c, w, h, P<number>('radius'), P<string>('kind') === 'black', P<Shape>('shape'))) } };
+    case 'fillholes':
+      return { r: mask1(r, fillHoles(r.ch[0], w, h)) };
+    case 'skeleton':
+      return { r: mask1(r, skeleton(r.ch[0], w, h)) };
+    case 'distance': {
+      const c = distanceMap(r.ch[0], w, h);
+      return { r: gray1(r, c, 0, Math.max(1, rangeOfData(c)[1])) };
+    }
+    case 'watershed':
+      return { r: mask1(r, separate(r.ch[0], w, h, P<number>('tolerance'))) };
+    case 'threshold': {
+      const c = g.ch[0];
+      const method = P<string>('method');
+      const light = P<boolean>('light');
+      if (method === 'manual') {
+        const lo = or(P<number>('low'), g.lo);
+        const hi = or(P<number>('high'), g.hi);
+        return { r: mask1(r, Float32Array.from(c, (v) => (v >= lo && v <= hi ? 1 : 0))), note: `${+lo.toPrecision(5)} … ${+hi.toPrecision(5)}` };
+      }
+      const t = globalThreshold(c, method as GlobalMethod);
+      if (typeof t === 'string') return t;
+      const name = GLOBAL_METHODS.find(([k]) => k === method)?.[1] ?? method;
+      return { r: mask1(r, Float32Array.from(c, (v) => ((light ? v <= t : v > t) ? 1 : 0))), note: `${name}: ${+t.toPrecision(5)}` };
+    }
+    case 'localthreshold': {
+      const light = P<boolean>('light');
+      const c = light ? Float32Array.from(g.ch[0], (v) => g.lo + g.hi - v) : g.ch[0];
+      const k = P<number>('k');
+      const m = localThreshold(c, w, h, P<string>('method') as LocalMethod, Math.round(P<number>('size')), { offset: P<number>('offset'), ...(Number.isFinite(k) ? { k } : {}), lo: g.lo, hi: g.hi });
+      return { r: mask1(r, m) };
+    }
+  }
+}
+
+// The steps in their order (those switched off passed over): the raster at the end, and for every step its note or
+// what went wrong
+export function applySteps(base: Raster, steps: ImgStep[], upTo = steps.length): { r: Raster; notes: Record<string, string>; errors: Record<string, string> } {
+  let r = base;
+  const notes: Record<string, string> = {};
+  const errors: Record<string, string> = {};
+  for (const s of steps.slice(0, upTo)) {
+    if (!s.on || !(s.kind in STEP_DEFS)) continue;
+    const out = applyStep(r, s);
+    if (typeof out === 'string') {
+      errors[s.id] = out;
+      continue;
+    }
+    r = out.r;
+    if (out.note) notes[s.id] = out.note;
+  }
+  return { r, notes, errors };
+}

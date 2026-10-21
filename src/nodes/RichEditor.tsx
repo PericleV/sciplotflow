@@ -64,6 +64,7 @@ import { applyNotePage, getNotePage, subscribeNotePage, type NotePage } from '..
 import { nodeDisplayName } from '../nodeColors.ts';
 import type { AppNode } from '../types.ts';
 import { IMAGE_ACCEPT } from '../imageFile.ts';
+import { notify } from '../ui/dialogStore.ts';
 
 const ptOf = (v: string) => (v.endsWith('pt') ? parseFloat(v) : v.endsWith('px') ? (parseFloat(v) * 72) / 96 : NaN);
 
@@ -449,9 +450,9 @@ export function RichEditor({ doc, text, onChange, onLarge, large, compact, mathF
   const figureOf = (id: string) => figureOfResult(results.get(id));
   const exportAs = (k: ExportKind) => {
     const json = editor.getJSON() as RichDoc;
-    if (k === 'docx') void downloadDocx(json, figureOf, latexToOmml).catch((e: Error) => alert(`The Word file could not be made: ${e.message}`));
+    if (k === 'docx') void downloadDocx(json, figureOf, latexToOmml).catch((e: Error) => notify(`The Word file could not be made: ${e.message}`));
     else if (k === 'pdf') void printNote(json, figureOf, latexToMathml);
-    else if (k === 'md') void downloadMarkdown(json, figureOf).catch((e: Error) => alert(`The Markdown could not be made: ${e.message}`));
+    else if (k === 'md') void downloadMarkdown(json, figureOf).catch((e: Error) => notify(`The Markdown could not be made: ${e.message}`));
     else void downloadHtml(json, figureOf, latexToMathml);
   };
   return (

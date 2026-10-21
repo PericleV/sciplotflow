@@ -17,6 +17,7 @@ import { importSvg } from './svgImport.ts';
 import { describe } from './annotationNames.ts';
 import { ChevronDown, ChevronRight, Plus, Split, SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
+import { ask, notify } from '../ui/dialogStore.ts';
 
 export type Ctx = {
   items: AnnotationItem[];
@@ -85,7 +86,7 @@ export function ObjectOps({ ctx }: { ctx: Ctx }) {
   const run = (what: string, f: () => Promise<void>) => {
     setBusy(what);
     f()
-      .catch((e: Error) => alert(`${what}: ${e.message}`))
+      .catch((e: Error) => notify(`${what}: ${e.message}`))
       .finally(() => setBusy(''));
   };
   // combined: the result where the back one was, in its look; the others gone
@@ -557,8 +558,8 @@ export function ComponentsTab({ ctx }: { ctx: Ctx }) {
           <button
             className="nodrag ts-btn"
             title="Remove the component (its instances too)"
-            onClick={() => {
-              if (used(c.id) && !confirm(`Remove “${c.name}” and its ${used(c.id)} instance(s)?`)) return;
+            onClick={async () => {
+              if (used(c.id) && !(await ask(`Remove “${c.name}” and its ${used(c.id)} instance(s)?`, { ok: 'Remove', danger: true }))) return;
               ctx.set({ components: comps.filter((x) => x.id !== c.id), annotations: ctx.items.filter((it) => !(it.type === 'shape' && it.spec.ref === c.id)) });
             }}
           >
@@ -657,7 +658,9 @@ export function LibraryTab({ ctx }: { ctx: Ctx }) {
           <button className="nodrag ts-btn" title="Place it in this drawing" onClick={() => place(f)}>
             <Plus {...IC} />
           </button>
-          <button className="nodrag ts-btn" title="Remove it from the library" onClick={() => confirm(`Remove “${f.name}” from your library?`) && deleteFigure(f.id).then(reload)}>
+          <button className="nodrag ts-btn" title="Remove it from the library" onClick={() => void ask(`Remove “${f.name}” from your library?`, { ok: 'Remove', danger: true }).then((yes) => {
+                if (yes) void deleteFigure(f.id).then(reload);
+              })}>
             <X {...IC} />
           </button>
         </div>

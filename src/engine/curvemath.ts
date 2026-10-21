@@ -478,7 +478,19 @@ function crossings(A: Curve2, B: Curve2, d: CurveMathData): { dataset: Dataset; 
   };
 }
 
-// ---- Translate ----
+// ---- Translate & resize ----
+// A resize of the X or the Y of the curves (before they are moved): none; by a factor about a point that stays (0, the
+// first point, the middle of the data, the peak, or a value); a range brought to another (empty ends: the data's); two
+// values brought to two others (a calibration: 532 → 532.0, 633 → 632.8)
+export type AxisScale = {
+  mode: 'none' | 'factor' | 'range' | 'points';
+  k?: number;
+  anchor?: 'zero' | 'first' | 'center' | 'peak' | 'value';
+  at?: number;
+  from?: [number, number];
+  to?: [number, number];
+  pts?: [number, number, number, number];
+};
 export type TranslateData = {
   roles: Record<string, ColumnRole>; // designations given here (by column name) over the dataset's own
   mode: 'value' | 'point' | 'stagger';
@@ -491,68 +503,147 @@ export type TranslateData = {
   moveY: boolean;
   x0: number;
   y0: number;
+  // the resize of X and of Y, done before the move; the graph in the node: the curves as they were shown (a thin grey
+  // line; false: not), its limits (NaN: the data's)
+  sx?: AxisScale;
+  sy?: AxisScale;
+  ghost?: boolean;
+  plotView?: { x0: number; x1: number; y0: number; y1: number };
 };
-// the curves of the columns (with the designations), each moved; the X shared by curves moved the same keeps its place
-export function translate(cols: Column[], d: TranslateData): { dataset: Dataset; shifts: Dataset; warnings: string[] } | string {
+// a curve before and after, for the graph in the node
+export type TranslateCurve = { name: string; ox: number[]; oy: number[]; x: number[]; y: number[] };
+
+// the factor and offset of a resize (value' = a·value + b) of the values of one curve on that axis; peak: the value of
+// that axis at the curve's maximum
+function scaleOf(s: AxisScale | undefined, vals: number[], peak: number, what: string, warnings: string[]): [number, number] {
+  if (!s || s.mode === 'none') return [1, 0];
+  const lo = minOf(vals);
+  const hi = maxOf(vals);
+  if (s.mode === 'factor') {
+    const k = Number.isFinite(s.k) && s.k !== 0 ? s.k! : 1;
+    const a = s.anchor ?? 'center';
+    const c = a === 'zero' ? 0 : a === 'first' ? (vals[0] ?? 0) : a === 'peak' ? peak : a === 'value' ? (Number.isFinite(s.at) ? s.at! : 0) : (lo + hi) / 2;
+    return Number.isFinite(c) ? [k, c * (1 - k)] : [k, 0];
+  }
+  if (s.mode === 'range') {
+    const f0 = Number.isFinite(s.from?.[0]) ? s.from![0] : lo;
+    const f1 = Number.isFinite(s.from?.[1]) ? s.from![1] : hi;
+    const t0 = Number.isFinite(s.to?.[0]) ? s.to![0] : f0;
+    const t1 = Number.isFinite(s.to?.[1]) ? s.to![1] : f1;
+    if (!(f1 !== f0) || !Number.isFinite(f0) || !Number.isFinite(f1)) {
+      warnings.push(`${what}: the range to resize from has no length; not resized.`);
+      return [1, 0];
+    }
+    const a = (t1 - t0) / (f1 - f0);
+    return [a, t0 - a * f0];
+  }
+  const [p1, p2, q1, q2] = s.pts ?? [NaN, NaN, NaN, NaN];
+  if (![p1, p2, q1, q2].every(Number.isFinite) || p1 === p2) {
+    warnings.push(`${what}: give two different values and where each goes; not resized.`);
+    return [1, 0];
+  }
+  const a = (q2 - q1) / (p2 - p1);
+  return [a, q1 - a * p1];
+}
+
+// the curves of the columns (with the designations), each resized then moved; the X shared by curves changed the same
+// keeps its place; the errors are resized with their values (a move leaves them as they are)
+export function translate(cols: Column[], d: TranslateData): { dataset: Dataset; shifts: Dataset; warnings: string[]; curves: TranslateCurve[] } | string {
   const withRoles = cols.map((c) => (d.roles[c.name] ? { ...c, role: d.roles[c.name] } : c));
   const curves = curvesByRole(withRoles).curves;
   if (!curves.length) return 'No Y column: designate one Y (and its X on its left).';
   const by = (n?: string) => (n ? withRoles.find((c) => c.name === n) : undefined);
   const warnings: string[] = [];
-  const shifts = curves.map((rc, k) => {
+  // every curve: its points, its resize on X and Y, then its move
+  const fits = curves.map((rc, k) => {
     const x = by(rc.x);
     const y = by(rc.y)!;
+    const xv = (i: number) => (x ? x.values[i] : i + 1);
+    const idx = Array.from(y.values.keys()).filter((i) => Number.isFinite(y.values[i]) && Number.isFinite(xv(i)));
+    const xs = idx.map(xv);
+    const ys = idx.map((i) => y.values[i]);
+    const top = ys.length ? ys.indexOf(maxOf(ys)) : -1;
+    const [ax, bx] = scaleOf(d.sx, xs, top >= 0 ? xs[top] : NaN, `${y.name}, X`, warnings);
+    const [ay, by2] = scaleOf(d.sy, ys, top >= 0 ? ys[top] : NaN, `${y.name}, Y`, warnings);
+    // the move, on the resized curve
+    let dx = 0;
+    let dy = 0;
     if (d.mode === 'value') {
       const o = d.own[rc.y];
-      return { dx: o ? o.dx : d.dx, dy: o ? o.dy : d.dy };
+      [dx, dy] = o ? [o.dx, o.dy] : [d.dx, d.dy];
+    } else if (d.mode === 'stagger') [dx, dy] = [k * d.dx, k * d.dy];
+    else if (idx.length) {
+      // the point chosen (on the resized curve), moved to (x0, y0)
+      const sx = xs.map((v) => ax * v + bx);
+      const sy = ys.map((v) => ay * v + by2);
+      let px: number;
+      let py: number;
+      if (d.point === 'atx') {
+        const o = sx.map((_, j) => j).sort((p, q) => sx[p] - sx[q]);
+        px = d.atx;
+        py = interp(o.map((j) => sx[j]), o.map((j) => sy[j]), d.atx);
+        if (!Number.isFinite(py)) warnings.push(`${y.name}: X = ${d.atx} is outside the curve.`);
+      } else {
+        let j = 0;
+        if (d.point === 'last') j = sx.length - 1;
+        else if (d.point === 'max') j = sy.reduce((b, v, q) => (v > sy[b] ? q : b), 0);
+        else if (d.point === 'min') j = sy.reduce((b, v, q) => (v < sy[b] ? q : b), 0);
+        [px, py] = [sx[j], sy[j]];
+      }
+      dx = d.moveX && Number.isFinite(px) ? d.x0 - px : 0;
+      dy = d.moveY && Number.isFinite(py) ? d.y0 - py : 0;
     }
-    if (d.mode === 'stagger') return { dx: k * d.dx, dy: k * d.dy };
-    // the point chosen, moved to (x0, y0)
-    const idx = Array.from(y.values.keys()).filter((i) => Number.isFinite(y.values[i]) && (!x || Number.isFinite(x.values[i])));
-    if (!idx.length) return { dx: 0, dy: 0 };
-    const xv = (i: number) => (x ? x.values[i] : i + 1);
-    let px: number;
-    let py: number;
-    if (d.point === 'atx') {
-      const o = [...idx].sort((p, q) => xv(p) - xv(q));
-      px = d.atx;
-      py = interp(o.map(xv), o.map((i) => y.values[i]), d.atx);
-      if (!Number.isFinite(py)) warnings.push(`${y.name}: X = ${d.atx} is outside the curve.`);
-    } else {
-      let i = idx[0];
-      if (d.point === 'last') i = idx[idx.length - 1];
-      else if (d.point === 'max') i = idx.reduce((b, j) => (y.values[j] > y.values[b] ? j : b), idx[0]);
-      else if (d.point === 'min') i = idx.reduce((b, j) => (y.values[j] < y.values[b] ? j : b), idx[0]);
-      [px, py] = [xv(i), y.values[i]];
-    }
-    return { dx: d.moveX && Number.isFinite(px) ? d.x0 - px : 0, dy: d.moveY && Number.isFinite(py) ? d.y0 - py : 0 };
+    return { rc, x, y, ax, bx, ay, by: by2, dx, dy };
   });
-  const add = (c: Column, v: number, name = c.name): Column => ({ ...c, name, values: Float64Array.from(c.values, (w) => w + v) });
-  const sameDx = shifts.every((s) => s.dx === shifts[0].dx);
+  // a column of values made a·v + b
+  const lin = (c: Column, a: number, b: number, name = c.name): Column => ({ ...c, name, values: Float64Array.from(c.values, (w) => a * w + b) });
+  const errOf = (name: string) => {
+    const f = fits.find((q) => q.rc.yerr === name);
+    if (f) return Math.abs(f.ay);
+    const g = fits.find((q) => q.rc.xerr === name);
+    return g ? Math.abs(g.ax) : 1;
+  };
+  const sameX = fits.every((f) => f.ax === fits[0].ax && f.bx + f.dx === fits[0].bx + fits[0].dx);
   const columns: Column[] = [];
-  if (sameDx) {
-    // the columns in their order: X moved by the common dx, every Y by its dy, the errors unchanged
+  if (sameX) {
+    // the columns in their order: X changed as the first curve's, every Y as its own, the errors resized
+    const f0 = fits[0];
     withRoles.forEach((c) => {
-      const k = curves.findIndex((rc) => rc.y === c.name);
-      if (k >= 0) columns.push(add(c, shifts[k].dy));
-      else if (curves.some((rc) => rc.x === c.name)) columns.push(add(c, shifts[0].dx));
+      const f = fits.find((q) => q.rc.y === c.name);
+      if (f) columns.push(lin(c, f.ay, f.by + f.dy));
+      else if (curves.some((rc) => rc.x === c.name)) columns.push(lin(c, f0.ax, f0.bx + f0.dx));
+      else if (c.role === 'yerr' || c.role === 'xerr') columns.push(lin(c, errOf(c.name), 0));
       else columns.push(c);
     });
   } else
-    curves.forEach((rc, k) => {
-      const x = by(rc.x);
-      const y = by(rc.y)!;
-      columns.push(x ? { ...add(x, shifts[k].dx, `${x.name} (${y.name})`), role: 'x' } : { ...column(`row (${y.name})`, Float64Array.from(y.values, (_, i) => i + 1 + shifts[k].dx)), role: 'x' });
-      columns.push(add(y, shifts[k].dy));
-      for (const e of [rc.yerr, rc.xerr]) if (e && by(e)) columns.push(by(e)!);
+    fits.forEach((f) => {
+      columns.push(f.x ? { ...lin(f.x, f.ax, f.bx + f.dx, `${f.x.name} (${f.y.name})`), role: 'x' } : { ...column(`row (${f.y.name})`, Float64Array.from(f.y.values, (_, i) => f.ax * (i + 1) + f.bx + f.dx)), role: 'x' });
+      columns.push(lin(f.y, f.ay, f.by + f.dy));
+      if (f.rc.yerr && by(f.rc.yerr)) columns.push(lin(by(f.rc.yerr)!, Math.abs(f.ay), 0));
+      if (f.rc.xerr && by(f.rc.xerr)) columns.push(lin(by(f.rc.xerr)!, Math.abs(f.ax), 0));
     });
   const shiftTable: Dataset = {
     name: 'shifts',
     columns: [
       { ...column('curve', Float64Array.from(curves, (_, k) => k + 1), curves.map((c) => c.y)), role: 'x' },
-      { ...column('ΔX', Float64Array.from(shifts, (s) => s.dx)), role: 'y' },
-      { ...column('ΔY', Float64Array.from(shifts, (s) => s.dy)), role: 'y' },
+      { ...column('ΔX', Float64Array.from(fits, (s) => s.dx)), role: 'y' },
+      { ...column('ΔY', Float64Array.from(fits, (s) => s.dy)), role: 'y' },
+      { ...column('X factor', Float64Array.from(fits, (s) => s.ax)), role: 'y' },
+      { ...column('X offset', Float64Array.from(fits, (s) => s.bx + s.dx)), role: 'y' },
+      { ...column('Y factor', Float64Array.from(fits, (s) => s.ay)), role: 'y' },
+      { ...column('Y offset', Float64Array.from(fits, (s) => s.by + s.dy)), role: 'y' },
     ],
   };
-  return { dataset: { name: 'translated', columns }, shifts: shiftTable, warnings };
+  // the curves before and after (the points of both), for the graph in the node
+  const shown: TranslateCurve[] = fits.map((f) => {
+    const n = f.y.values.length;
+    const ox: number[] = [];
+    const oy: number[] = [];
+    for (let i = 0; i < n; i++) {
+      ox.push(f.x ? f.x.values[i] : i + 1);
+      oy.push(f.y.values[i]);
+    }
+    return { name: f.y.name, ox, oy, x: ox.map((v) => f.ax * v + f.bx + f.dx), y: oy.map((v) => f.ay * v + f.by + f.dy) };
+  });
+  return { dataset: { name: 'translated', columns }, shifts: shiftTable, warnings, curves: shown };
 }

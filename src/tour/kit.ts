@@ -78,6 +78,12 @@ export const field = (label: string): Find => (doc) => {
   const lab = find('.inspector.overlay') ?? find('.react-flow__node.selected');
   const got = lab?.querySelector('.field-ctl select, .field-ctl input, .field-ctl textarea, select, input');
   if (got) return got;
+  // a row of the new panels: its label, its control (a field, else a button: a colour, a choice)
+  for (const root of ['.inspector.overlay', '.react-flow__node.selected']) {
+    const row = [...doc.querySelectorAll(`${root} .prop-row`)].find((r) => r.querySelector('.prop-label')?.textContent?.trim() === label);
+    const ctl = row?.querySelector('.prop-ctl input:not([type="hidden"]), .prop-ctl textarea, .prop-ctl select') ?? row?.querySelector('.prop-ctl button');
+    if (ctl) return ctl;
+  }
   // a two-column form: the label a span, its control the next element (or inside it)
   for (const root of ['.inspector.overlay', '.react-flow__node.selected']) {
     const next = [...doc.querySelectorAll(`${root} .col-form > span`)].find((e) => e.textContent?.trim() === label)?.nextElementSibling;

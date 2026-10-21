@@ -197,8 +197,8 @@ export const PREPARE: Tour = {
             { kind: 'set', at: labelled('New names'), text: 'Run 1, Run 2, Run 3', apply: { id: n.id, f: (d) => ({ ...d, names: 'Run 1, Run 2, Run 3' }) } },
           ],
         ),
-        adds('Add Translate', 'Translate', 'The sensor reads 12 mV even when there is nothing to measure. Add **Translate** and connect Columns to it.', translate, (s) => ({ type: 'translate', data: structuredClone(TRANSLATE_DEFAULTS), from: wire(last(s, columns, split)?.id, 'data') })),
-        sets<'translate'>('Take away the offset', 'Keep **Move** on **by values** and set **ΔY** to −12. Now every run starts from 0.\n\nTranslate can also move a curve so that one of its points, like the maximum, lands where you want.', translate, (n) => n.data.dy !== 0 || n.data.dx !== 0 || n.data.mode !== 'value', (n) => [put(n.id, 'ΔY', '-12', { dy: -12 })], 'ΔY'),
+        adds('Add Translate & resize', 'Translate & resize', 'The sensor reads 12 mV even when there is nothing to measure. Add **Translate & resize** and connect Columns to it.', translate, (s) => ({ type: 'translate', data: structuredClone(TRANSLATE_DEFAULTS), from: wire(last(s, columns, split)?.id, 'data') })),
+        sets<'translate'>('Take away the offset', 'Keep **Move** on **By values** and set **ΔY** to −12. Now every run starts from 0.\n\nIt can also move a curve so that one of its points, like the maximum, lands where you want, resize it, or move it with the mouse on its graph.', translate, (n) => n.data.dy !== 0 || n.data.dx !== 0 || n.data.mode !== 'value', (n) => [put(n.id, 'ΔY', '-12', { dy: -12 })], 'ΔY'),
       ],
     },
     {
