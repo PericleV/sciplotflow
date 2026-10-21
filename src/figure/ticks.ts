@@ -313,7 +313,12 @@ function linear(spec: AxisSpec, lo: number, hi: number, count: number): Ticks {
 
 // ---- labels ----
 const minus = (s: string) => (s === '-0' || /^-0\.?0*$/.test(s) ? s.slice(1) : s).replace(/^-/, '−');
-const decimalsFor = (step: number) => Math.max(0, Math.min(10, -Math.floor(Math.log10(step) + 1e-9)));
+// the decimals a step needs: those of its first digit, more when it has them (0.25: 2, 2.5: 1)
+const decimalsFor = (step: number) => {
+  let d = Math.max(0, Math.min(10, -Math.floor(Math.log10(step) + 1e-9)));
+  while (d < 10 && Math.abs(step * 10 ** d - Math.round(step * 10 ** d)) > 1e-6 * Math.max(1, step * 10 ** d)) d++;
+  return d;
+};
 const trimZeros = (s: string) => (s.includes('.') ? s.replace(/\.?0+$/, '') : s);
 
 function mantExp(v: number, e: number, dec: number): string {

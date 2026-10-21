@@ -14,7 +14,7 @@ import { QuickBar } from '../ui/QuickBar.tsx';
 import { setQuickBar, useQuickBar } from '../ui/quickBarStore.ts';
 import { anchorOf } from '../engine/drawingItems.ts';
 import { FigureSvg } from '../figure/render.tsx';
-import { HandleScale, Interactive, PickedNodes, type DragInfo } from '../figure/interactive.ts';
+import { dragKeys, HandleScale, Interactive, PickedNodes, type DragInfo } from '../figure/interactive.ts';
 import { DASHES } from './figureOptions.ts';
 import { TEXT_SPEC_DEFAULTS, toPt, type Dash, type Figure, type ShapeSpec, type TextSpec } from '../figure/spec.ts';
 import { DRAWING_GRID_DEFAULTS, newAnnotation } from '../defaults.ts';
@@ -463,11 +463,13 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
           let q: Pt = [h0[0] + p[0] - p0[0], h0[1] + p[1] - p0[1]];
           if (!turning) q = snapPoint(q, [hit.id], ev.altKey);
           last = [q[0] - h0[0], q[1] - h0[1], ev.shiftKey];
+          dragKeys.ctrl = ev.ctrlKey || ev.metaKey;
           cancelAnimationFrame(frame);
           frame = requestAnimationFrame(() => updateNodeData(id, tidy(info.apply(last[0], last[1], data0, last[2]), hit.id)));
         },
         (ev) => {
           cancelAnimationFrame(frame);
+          dragKeys.ctrl = ev.ctrlKey || ev.metaKey;
           // a click on a path's node: picked (Shift: one more, or one less)
           if (!dragged && anchorAt != null) {
             const n = Number(anchorAt);
@@ -1119,7 +1121,8 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
     const same = selected.filter((it) => it.type === quickKind).map((it) => it.id);
     const patch = (p: object) => setItems(items.map((it) => (same.includes(it.id) ? ({ ...it, spec: { ...it.spec, ...p } } as AnnotationItem) : it)));
     const x = 40 + selBox.x * MM * zoom;
-    const yTop = 40 + selBox.y * MM * zoom - 42;
+    // above the box and its turning handle (9 pt over it)
+    const yTop = 40 + selBox.y * MM * zoom - 42 - 9 * zoom - 8;
     const y = yTop >= 0 ? yTop : 40 + (selBox.y + selBox.h) * MM * zoom + 8;
     return (
       <QuickBar

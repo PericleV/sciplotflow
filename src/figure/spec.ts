@@ -659,6 +659,23 @@ export type ColorbarSpec = Placed & {
   text: TextStyle;
   frameWidth: number;
   ticks: number; // about this many labels
+  // the side of its ticks, values and title: end (right of a vertical bar, under a horizontal one; absent) or start
+  side?: 'start' | 'end';
+  // the values written: about `ticks` of them (auto, absent), every `every` from `everyFrom` (absent: a multiple of it),
+  // the levels of a map filled by levels, its two ends, a list (custom: "0, 0.5, 1"), or none (the ticks where auto puts
+  // them)
+  labels?: 'auto' | 'every' | 'levels' | 'minmax' | 'custom' | 'none';
+  every?: number;
+  everyFrom?: number;
+  custom?: string;
+  // the numbers as on an axis (absent: auto), with so many decimals (absent: as the step needs)
+  format?: LabelFormat;
+  decimals?: number;
+  // the ticks: outside the bar (absent), inside, across its edge, or none; their length (pt, absent 2); minor ticks
+  // between two values (absent: 0; a log map: its 2 … 9 of every decade)
+  tickDir?: 'out' | 'in' | 'both' | 'none';
+  tickLen?: number;
+  minor?: number;
 };
 // locked: drawn, but not moved with the mouse (a Figure Drawing's object locked in its layers); clip: an outline (path
 // text in its units) it is cut to; mask: a shape whose lightness shows it (white: all of it, black: none)

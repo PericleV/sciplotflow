@@ -4,8 +4,9 @@
 import { compile } from '../engine/expr.ts';
 import { bareName, titleOf, unitOf } from '../engine/table.ts';
 import { richMetrics } from './draw.ts';
-import { axisRange, formatLabels, inBreak, logitT, logitTi, niceStep, parseBreaks, probT, probTi, probValid, symT, symTi, ticks, ticksMode } from './ticks.ts';
+import { axisRange, formatLabels, inBreak, logitT, logitTi, parseBreaks, probT, probTi, probValid, symT, symTi, ticks, ticksMode } from './ticks.ts';
 import { legendLayout } from './legendLayout.ts';
+import { barReach, barTitle } from './colorbar.ts';
 import { axisKind, resolveText, type Anchor, type LegendSpec, type AxesFig, type AxisSpec, type Curve, type Placement, type Side, type SideStyle, type TextDefaults } from './spec.ts';
 import { maxOf } from '../engine/minmax.ts';
 
@@ -418,27 +419,19 @@ function barRoom(ax: AxesFig, frame: Box, defaults: TextDefaults): Record<Side, 
   for (const a of ax.annotations) {
     if (a.kind !== 'colorbar' || !a.curve?.colorRange) continue;
     const b = a.bar;
-    const t = resolveText(b.text, defaults);
-    // its title: its own, or the name of the split column of the curves it explains
-    const title = !!(b.title || (a.curve.group?.color === 'map' && a.curve.group.name));
     const [lo, hi] = a.curve.colorRange;
-    const step = niceStep(hi - lo, Math.max(2, b.ticks));
-    const widest = Math.max(richMetrics(String(+lo.toPrecision(3)), t).width, richMetrics(String(+hi.toPrecision(3)), t).width, richMetrics(String(+step.toPrecision(3)), t).width);
+    const r = barReach(b, a.curve, lo, hi, defaults, !!barTitle(b, a.curve));
     const x = frame.x + (b.x / 100) * frame.w;
     const y = frame.y + (b.y / 100) * frame.h;
-    if (b.orientation === 'vertical') {
-      const len = (b.length / 100) * frame.h;
-      room.right = Math.max(room.right, x + b.thickness + 3.5 + widest - (frame.x + frame.w));
-      room.left = Math.max(room.left, frame.x - x);
-      room.top = Math.max(room.top, frame.y - (y - (title ? t.size * 1.4 : 0)));
-      room.bottom = Math.max(room.bottom, y + len - (frame.y + frame.h));
-    } else {
-      const len = (b.length / 100) * frame.w;
-      room.bottom = Math.max(room.bottom, y + b.thickness + 3 + t.size * (title ? 2.6 : 1.2) - (frame.y + frame.h));
-      room.top = Math.max(room.top, frame.y - y);
-      room.left = Math.max(room.left, frame.x - x);
-      room.right = Math.max(room.right, x + len - (frame.x + frame.w));
-    }
+    const vert = b.orientation === 'vertical';
+    const len = (b.length / 100) * (vert ? frame.h : frame.w);
+    // the box of the bar with all it draws around it (x, y: its top-left corner, the values on the left / top included)
+    const [x0, x1] = vert ? [x, x + r.before + b.thickness + r.after] : [x, x + len + r.atEnd];
+    const [y0, y1] = vert ? [y - r.atStart, y + len] : [y, y + r.before + b.thickness + r.after];
+    room.left = Math.max(room.left, frame.x - x0);
+    room.right = Math.max(room.right, x1 - (frame.x + frame.w));
+    room.top = Math.max(room.top, frame.y - y0);
+    room.bottom = Math.max(room.bottom, y1 - (frame.y + frame.h));
   }
   return room;
 }

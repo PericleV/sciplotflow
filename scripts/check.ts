@@ -27,7 +27,7 @@ import { parseCsv, CSV_DEFAULTS, plainNumber } from '../src/engine/csv.ts';
 import { compile } from '../src/engine/expr.ts';
 import { describe } from '../src/engine/stats.ts';
 import { axisRange, formatLabels, inBreak, parseBreaks, ticks } from '../src/figure/ticks.ts';
-import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, axesStyle, CURVE_STYLE_DEFAULTS, SIDE_DEFAULTS, curveStyle, toPt, type AxesStyle, type Curve, type Figure, LEGEND_STYLE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, FONTS, type Annotation } from '../src/figure/spec.ts';
+import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, axesStyle, CURVE_STYLE_DEFAULTS, SIDE_DEFAULTS, curveStyle, toPt, type AxesStyle, type Curve, type Figure, LEGEND_STYLE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, FONTS, type Annotation, COLORBAR_DEFAULTS, type ColorbarSpec } from '../src/figure/spec.ts';
 import { BUILTIN_STYLES, styledData } from '../src/nodes/styles.ts';
 import { parseRich, plainText, richMetrics } from '../src/figure/draw.ts';
 import { mathFace, mathKey, setMathSizes } from '../src/math/sizes.ts';
@@ -48,7 +48,8 @@ import { reportBlock, reportMarkdown, reportText } from '../src/engine/reportDoc
 import { REPORT_DEFAULTS } from '../src/defaults.ts';
 import { deleteNode, insertNode, parsePath, pathBox, pathText, reversePath, roundCorners, setClosed, shapeToPath, toggleNode } from '../src/figure/paths.ts';
 import { placeComponent, rotateItem } from '../src/engine/drawingItems.ts';
-import { aboveOf, elbowCorners, lineLength, offsetLine, outlinePoint, taperOutline, trimLine, waveLine } from '../src/figure/shapes.ts';
+import { barReach, barTicks } from '../src/figure/colorbar.ts';
+import { aboveOf, boxHandleAt, elbowCorners, lineLength, offsetLine, outlinePoint, resizeBox, taperOutline, trimLine, waveLine, type Box4 } from '../src/figure/shapes.ts';
 import { alignMoves, distributeMoves, geomBox, moveItem, snapAxis } from '../src/nodes/drawingOps.ts';
 import { CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, COMBINE_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, IMPORT_DEFAULTS, PLOT1D_DEFAULTS } from '../src/defaults.ts';
 import type { AppNode, CalculusData, CombineData, FitNodeData, PeakData, PickData, Plot1DData, WorkbookData } from '../src/types.ts';
@@ -171,6 +172,51 @@ function ok(cond: boolean, what: string) {
   }
 }
 const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Math.max(1, Math.abs(b));
+
+// ---- the handles of a box: its corners and sides, turned with it ----
+{
+  const near = (p: number[], q: number[]) => p.every((v, i) => Math.abs(v - q[i]) < 1e-9);
+  const b: Box4 = [10, 20, 50, 40];
+  ok(near(resizeBox(b, 0, 1, 0, 5, 7, false, false), [10, 20, 55, 40]) && near(resizeBox(b, 0, 0, -1, 3, -4, false, false), [10, 16, 50, 40]), 'box handles: a side moves alone (across, or up), the other ways ignored');
+  ok(near(resizeBox(b, 0, 1, 1, 4, 6, false, false), [10, 20, 54, 46]) && near(resizeBox(b, 0, -1, 0, 5, 0, false, true), [15, 20, 45, 40]), 'box handles: a corner moves two sides; Ctrl: about the centre');
+  ok(near(resizeBox(b, 0, 1, 1, 40, 0, true, false), [10, 20, 90, 60]) && near(resizeBox([50, 40, 10, 20], 0, -1, -1, -4, 0, false, false), [50, 40, 6, 20]), 'box handles: Shift keeps its proportions; x1 on the right: the left side is x2');
+  // turned 30°: the corner opposite the one dragged stays where it is drawn, the box keeps its turn
+  for (const [ix, iy] of [[1, 1], [-1, 1], [1, 0], [0, -1]] as const) {
+    const fixed = boxHandleAt(b, 30, -ix || 1, -iy || 1);
+    const fixed2 = boxHandleAt(b, 30, -ix || -1, -iy || -1);
+    const nb = resizeBox(b, 30, ix, iy, 6, -9, false, false);
+    const keep = boxHandleAt(nb, 30, -ix || 1, -iy || 1);
+    const keep2 = boxHandleAt(nb, 30, -ix || -1, -iy || -1);
+    ok(near(keep, fixed) && near(keep2, fixed2), `box handles: turned 30°, the handle (${ix}, ${iy}) dragged, the other side stays in place`);
+  }
+  // turned 90°: a drag down on its right side (now at the bottom) widens it
+  const turned = resizeBox(b, 90, 1, 0, 0, 10, false, false);
+  ok(Math.abs(turned[2] - turned[0] - 50) < 1e-9 && Math.abs(turned[3] - turned[1] - 20) < 1e-9, `box handles: turned 90°, its side dragged along its own direction (${turned.map((v) => v.toFixed(2)).join(', ')})`);
+}
+
+// ---- a colour bar: its values (auto, every, levels, min and max, a list, none), minor ticks, its side ----
+{
+  const cv = (log = false, levels?: number[]) => ({ style: { ...CURVE_STYLE_DEFAULTS, colorBy: 'y', cmapLog: log }, colorRange: [0, 10], ...(levels ? { grid: { xs: [], ys: [], z: new Float64Array(0), mode: 'filled', smooth: false, levels, range: [0, 10], nan: '' } } : {}) }) as unknown as Curve;
+  const bt = (p: Partial<ColorbarSpec>, c = cv(), lo = 0, hi = 10) => barTicks({ ...COLORBAR_DEFAULTS, ...p }, c, lo, hi);
+  const j = (v: number[]) => v.map((x) => +x.toPrecision(6)).join(' ');
+  ok(j(bt({}).major) === '0 2 4 6 8 10' && bt({}).labels.join(' ') === '0 2 4 6 8 10', `colour bar: auto values (${j(bt({}).major)})`);
+  ok(j(bt({ labels: 'every', every: 3 }).major) === '0 3 6 9' && j(bt({ labels: 'every', every: 3, everyFrom: 1 }).major) === '1 4 7 10', 'colour bar: every 3, from a multiple or from 1');
+  ok(j(bt({ labels: 'levels' }, cv(false, [1, 2.5, 7, 12])).major) === '1 2.5 7' && j(bt({ labels: 'levels' }).major) === '0 2 4 6 8 10', 'colour bar: the levels of the map (inside it); none: as auto');
+  ok(j(bt({ labels: 'minmax' }).major) === '0 10' && j(bt({ labels: 'custom', custom: '0.5, 3;12  7 x 3' }).major) === '0.5 3 7', 'colour bar: min and max; a list (outside the map and repeated left out)');
+  const none = bt({ labels: 'none' });
+  ok(j(none.major) === '0 2 4 6 8 10' && none.labels.every((l) => l === ''), 'colour bar: no values, the ticks where auto puts them');
+  ok(j(bt({ minor: 1 }).minor) === '1 3 5 7 9' && j(bt({ labels: 'every', every: 4, everyFrom: 1, minor: 1 }).minor) === '3 7', `colour bar: minor ticks between the values, and past them at the same step (${j(bt({ labels: 'every', every: 4, everyFrom: 1, minor: 1 }).minor)})`);
+  const lg = bt({ minor: 1 }, cv(true), 1, 100);
+  ok(j(lg.major) === '1 10 100' && lg.minor.length === 16 && lg.minor[0] === 2 && lg.minor[15] === 90, 'colour bar: a log map, its decades and the 2 … 9 of each');
+  ok(bt({ format: 'decimal', decimals: 2 }).labels[1] === '2.00', 'colour bar: its numbers as on an axis (2 decimals)');
+  ok(bt({ labels: 'every', every: 0.25 }, cv(), 0, 1).labels.join(' ') === '0.00 0.25 0.50 0.75 1.00' && bt({ labels: 'every', every: 2.5 }).labels.join(' ') === '0.0 2.5 5.0 7.5 10.0', `colour bar: a step of 0.25 or 2.5 written with the decimals it needs (${bt({ labels: 'every', every: 0.25 }, cv(), 0, 1).labels.join(' ')})`);
+  // its side: the numbers on the right (room after it) or the left (before it); a horizontal bar's title under / over
+  const r1 = barReach({ ...COLORBAR_DEFAULTS }, cv(), 0, 10, TEXT_DEFAULTS, true);
+  const r2 = barReach({ ...COLORBAR_DEFAULTS, side: 'start', tickDir: 'in' }, cv(), 0, 10, TEXT_DEFAULTS, true);
+  const r3 = barReach({ ...COLORBAR_DEFAULTS, orientation: 'horizontal', labels: 'none' }, cv(), 0, 10, TEXT_DEFAULTS, true);
+  ok(r1.after > 3.5 && r1.before === 0 && r2.before > 0 && r2.after === 0 && r2.gap === 1.5 && r1.gap === 3.5 && r1.atStart > 0, 'colour bar: the room on its side (right, or left with the ticks inside)');
+  ok(r3.after > 0 && r3.after < TEXT_DEFAULTS.size * 2 && r3.before === 0, 'colour bar: horizontal, no numbers: only its ticks and title under it');
+}
 
 // ---- CSV ----
 {

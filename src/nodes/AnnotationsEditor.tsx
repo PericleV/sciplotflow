@@ -10,7 +10,7 @@ import { Button, Select as MSelect, TextInput as MTextInput, Textarea, Tooltip, 
 import { pageText, shapeSpec } from '../engine/evaluate.ts';
 import { PageTextContext } from '../ui/pageText.ts';
 import { setQuickBar, useQuickBar } from '../ui/quickBarStore.ts';
-import { COLORBAR_DEFAULTS, TEXT_SPEC_DEFAULTS, type Anchor, type ArrowBody, type ArrowHead, type ColorbarSpec, type Hatch, type ShapeKind, type ShapeSpec, type TextSpec } from '../figure/spec.ts';
+import { COLORBAR_DEFAULTS, TEXT_SPEC_DEFAULTS, type Anchor, type ArrowBody, type ArrowHead, type ColorbarSpec, type Hatch, type LabelFormat, type ShapeKind, type ShapeSpec, type TextSpec } from '../figure/spec.ts';
 import { newAnnotation } from '../defaults.ts';
 import type { AnnotationItem, PageData } from '../types.ts';
 import { HATCHES } from './figureOptions.ts';
@@ -25,7 +25,7 @@ import { Copy, RotateCcw, X } from 'lucide-react';
 import { linearEnds, NO_GRAD_PLACE, radialPlace } from '../figure/gradient.ts';
 import { IC } from './iconProps.ts';
 import { IMAGE_ACCEPT, imageUrl } from '../imageFile.ts';
-import { AnchorField, AngleField, Choice, ColorField, LayerRow, NumField, NumPair, OpacityField, PictureGrid, PicturePick, Row, Section, Sections, ShadowRows, SliderField, TextStyleRows, Toggle, WidthField } from '../ui/props.tsx';
+import { AnchorField, AngleField, Choice, ColorField, LayerRow, ListField, NumField, NumPair, OpacityField, PictureGrid, PicturePick, Row, Section, Sections, ShadowRows, SliderField, TextStyleRows, Toggle, WidthField } from '../ui/props.tsx';
 import { BodyIcon, BoxIcon, CapIcon, HeadIcon, JoinIcon, RouteIcon } from '../ui/propIcons.tsx';
 import { DASH_PICS } from '../ui/dashPics.tsx';
 import { notify } from '../ui/dialogStore.ts';
@@ -941,10 +941,12 @@ export function TextEditor({ s, set, where, extra }: { s: TextSpec; set: (p: Par
 }
 
 export function ColorbarEditor({ s, set, where }: { s: ColorbarSpec; set: (p: Partial<ColorbarSpec>) => void; where: Where }) {
+  const vert = s.orientation === 'vertical';
+  const labels = s.labels ?? 'auto';
   return (
     <div className="props-panel props-embed nodrag" onKeyDown={ownKeys}>
       {where === 'page' && <div className="prop-note">In a Merge: the colour map of the first curve coloured by a map, of all its Plots.</div>}
-      <Sections panel="colorbar" open={['own', 'text']}>
+      <Sections panel="colorbar" open={['own', 'values', 'text']}>
         <Section value="own" title="Colour bar">
           <Row label="Orientation">
             <Choice
@@ -962,12 +964,105 @@ export function ColorbarEditor({ s, set, where }: { s: ColorbarSpec; set: (p: Pa
           <Row label="Thickness">
             <SliderField value={s.thickness} onChange={(v) => set({ thickness: Math.max(1, v || 6) })} min={1} max={30} step={0.5} unit="pt" />
           </Row>
-          <Row label="Labels" hint="About this many">
-            <SliderField value={s.ticks} onChange={(v) => set({ ticks: Math.max(2, Math.floor(v) || 5) })} min={2} max={12} step={1} />
-          </Row>
           <Row label="Frame" hint="Its width (0: none)">
             <WidthField value={s.frameWidth} onChange={(v) => set({ frameWidth: Math.max(0, v || 0) })} max={3} />
           </Row>
+        </Section>
+        <Section value="values" title="Values and ticks" aside={`${vert ? (s.side === 'start' ? 'left' : 'right') : s.side === 'start' ? 'top' : 'bottom'}, ${labels}`}>
+          <Row label="Side" hint="Where its ticks, values and title go">
+            <Choice<'start' | 'end'>
+              value={s.side ?? 'end'}
+              onChange={(side) => set({ side: side === 'end' ? undefined : side })}
+              options={
+                vert
+                  ? [
+                      ['start', 'Left'],
+                      ['end', 'Right'],
+                    ]
+                  : [
+                      ['start', 'Top'],
+                      ['end', 'Bottom'],
+                    ]
+              }
+            />
+          </Row>
+          <Row label="Values" hint="The values written by the bar">
+            <ListField<NonNullable<ColorbarSpec['labels']>>
+              value={labels}
+              onChange={(v) => set({ labels: v === 'auto' ? undefined : v })}
+              options={[
+                ['auto', 'Auto (about so many)'],
+                ['every', 'Every … (a step)'],
+                ['levels', 'The levels of the map'],
+                ['minmax', 'Min and max'],
+                ['custom', 'My own list'],
+                ['none', 'None'],
+              ]}
+            />
+          </Row>
+          {labels === 'auto' && (
+            <Row label="About" hint="About this many values">
+              <SliderField value={s.ticks} onChange={(v) => set({ ticks: Math.max(2, Math.floor(v) || 5) })} min={2} max={12} step={1} />
+            </Row>
+          )}
+          {labels === 'every' && (
+            <Row label="Every" hint="A value every so much (a log map: every so many decades), from a value (empty: from a multiple of the step)">
+              <div className="prop-pair">
+                <NumField value={s.every ?? NaN} min={0} placeholder="step" onChange={(every) => set({ every: every > 0 ? every : undefined })} />
+                <NumField value={s.everyFrom ?? NaN} prefix="from" placeholder="auto" onChange={(everyFrom) => set({ everyFrom: Number.isFinite(everyFrom) ? everyFrom : undefined })} />
+              </div>
+            </Row>
+          )}
+          {labels === 'levels' && <div className="prop-note">The levels of a map filled by levels (a contour). Without levels: as Auto.</div>}
+          {labels === 'custom' && (
+            <Row label="List" hint="The values, with commas: 0, 0.5, 1.2 (those outside the map left out)">
+              <MTextInput value={s.custom ?? ''} placeholder="0, 0.5, 1" onChange={(e) => set({ custom: e.currentTarget.value })} />
+            </Row>
+          )}
+          {labels !== 'none' && (
+            <>
+              <Row label="Format">
+                <ListField<LabelFormat>
+                  value={s.format ?? 'auto'}
+                  onChange={(format) => set({ format: format === 'auto' ? undefined : format })}
+                  options={[
+                    ['auto', 'Automatic'],
+                    ['decimal', 'Decimal'],
+                    ['sci', 'Scientific'],
+                    ['eng', 'Engineering'],
+                    ['common', 'Common ×10ⁿ'],
+                    ['percent', 'Percent'],
+                    ['si', 'SI prefixes (k, M, µ, n)'],
+                  ]}
+                />
+              </Row>
+              <Row label="Decimals" hint="Empty: as many as the step needs">
+                <NumField value={s.decimals ?? NaN} min={0} max={12} step={1} placeholder="auto" onChange={(d) => set({ decimals: Number.isFinite(d) && d >= 0 ? Math.min(12, Math.floor(d)) : undefined })} />
+              </Row>
+            </>
+          )}
+          <Row label="Ticks">
+            <Choice<NonNullable<ColorbarSpec['tickDir']>>
+              value={s.tickDir ?? 'out'}
+              onChange={(d) => set({ tickDir: d === 'out' ? undefined : d })}
+              options={[
+                ['out', 'Out'],
+                ['in', 'In'],
+                ['both', 'Across', 'Across its edge'],
+                ['none', 'None'],
+              ]}
+            />
+          </Row>
+          {(s.tickDir ?? 'out') !== 'none' && (
+            <>
+              <Row label="Length">
+                <SliderField value={s.tickLen ?? 2} onChange={(v) => set({ tickLen: v === 2 ? undefined : Math.max(0, v) })} min={0} max={8} step={0.5} unit="pt" />
+              </Row>
+              <Row label="Minor" hint="Minor ticks between two values (0: none; a log map: 2 … 9 of every decade)">
+                <SliderField value={s.minor ?? 0} onChange={(v) => set({ minor: v > 0 ? Math.floor(v) : undefined })} min={0} max={9} step={1} />
+              </Row>
+            </>
+          )}
         </Section>
         <Section value="text" title="Title and text">
           <Row label="Title">

@@ -28,8 +28,8 @@ export function FigureQuick({ at, width, onClose }: { at: QuickAt; width: number
     const n = z + d;
     patch({ z: n === 0 ? n + d : n });
   };
-  // above the object, inside the figure; below it when it is at the top
-  const top = at.y - 40 >= 0 ? at.y - 40 : at.y + at.h + 6;
+  // above the object and its turning handle, inside the figure; below it when it is at the top
+  const top = at.y - 54 >= 0 ? at.y - 54 : at.y + at.h + 6;
   const left = Math.max(0, Math.min(at.x, width - 320));
   return (
     <QuickBar

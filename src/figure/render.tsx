@@ -2,7 +2,7 @@
 // size, PNG / TIFF at a chosen dpi). Only SVG attributes, no CSS classes, so the export is the drawing.
 import { createContext, Fragment, memo, useContext, type ReactNode } from 'react';
 import { CommaContext, commaNumbers } from './comma.ts';
-import { FocusCurve, HandleScale, Interactive, LayoutEdit, PickedNodes, type DragInfo } from './interactive.ts';
+import { dragKeys, FocusCurve, HandleScale, Interactive, LayoutEdit, PickedNodes, type DragInfo } from './interactive.ts';
 import type { AnnotationItem, CanvasItem } from '../types.ts';
 import { categoryColors, legendColor, mapColor, mapT, stopsOf } from './colors.ts';
 import { cellEdges } from '../engine/contour.ts';
@@ -10,16 +10,16 @@ import { legendLayout } from './legendLayout.ts';
 import { dashArray, hasLine, hasSymbols, lineHeightOf, lineOnly, parseRich, plainText, richMetrics, runMath, runSize, splinePath, symbolPath, textRunWidth, type Run } from './draw.ts';
 import { mathBox, mathError, mathFace, useMathVersion } from '../math/store.ts';
 import { CORNERED, isClosed as pathClosed, mapSegs, parsePath, pathBox, pathPolylines, pathText, radiiOf, roundedRectD, shapeToPath } from './paths.ts';
-import { formatLabels, niceStep, parseBreaks } from './ticks.ts';
+import { parseBreaks } from './ticks.ts';
+import { barOffset, barReach, barTitle } from './colorbar.ts';
 import { ThreeView } from './render3d.tsx';
-import { aboveOf, arcPath, bendPoints, bendText, bentLine, bentPoints, bracketBase, bracketPath, bracketTextPlace, elbowCorners, endAngles, lineLength, niceLength, offsetLine, pointAlong, pointsD, pointsPath, roundedCorners, starPoints, taperOutline, throughLine, throughPoints, trimLine, waveLine, type Pt } from './shapes.ts';
+import { aboveOf, arcPath, boxHandleAt, resizeBox, type Box4, bendPoints, bendText, bentLine, bentPoints, bracketBase, bracketPath, bracketTextPlace, elbowCorners, endAngles, lineLength, niceLength, offsetLine, pointAlong, pointsD, pointsPath, roundedCorners, starPoints, taperOutline, throughLine, throughPoints, trimLine, waveLine, type Pt } from './shapes.ts';
 import { compile } from '../engine/expr.ts';
 import { gradAttrs, inBox, linearEnds, radialPlace } from './gradient.ts';
 import { axesGeometry, axisNeeds, endLabels, labelReach, legendPlace, turnedExtent, validFor, type Box, type DrawnAxis, type Scale } from './axes.ts';
 import {
   resolveText,
   toPt,
-  SIDE_DEFAULTS,
   type Anchor,
   type Annotation,
   type ArrowHead,
@@ -34,7 +34,6 @@ import {
   type Placement,
   type ResolvedText,
   type ShapeSpec,
-  type SideStyle,
   type TextDefaults,
   type TextSpec,
   axesStyle,
@@ -2114,63 +2113,102 @@ function TextView({ s, m, defaults, id = 'txt' }: { s: TextSpec; m: Mapper; defa
   );
 }
 
-const SIDE_FOR_BAR: SideStyle = { ...SIDE_DEFAULTS };
-
+// A colour bar: its map (a band of every level when the map is filled by levels), its frame, ticks (outside, inside,
+// across, none; minor ones), values and title on the side chosen (right / left of a vertical bar, under / over a
+// horizontal one).
 function ColorbarView({ bar, curve, m, defaults, gid }: { bar: ColorbarSpec; curve: Curve | null; m: Mapper; defaults: TextDefaults; gid: string }) {
   // a curve coloured by a map, or the curves of a split coloured by the map of their values
   const byGroup = curve?.group?.color === 'map';
   if (!curve || ((curve.style.colorBy === 'none' || curve.style.categorical) && !byGroup) || !curve.colorRange) return null;
   const st = curve.style;
-  const title = bar.title || (byGroup && curve.group!.name ? curve.group!.name : '');
-  const t = resolveText(bar.text, defaults);
+  const title = barTitle(bar, curve);
   const [lo, hi] = curve.colorRange;
+  const { t, ticks, gap, len: tl } = barReach(bar, curve, lo, hi, defaults, !!title);
   const vert = bar.orientation === 'vertical';
-  const x = m.box.x + (bar.x / 100) * m.box.w;
-  const y = m.box.y + (bar.y / 100) * m.box.h;
+  const start = bar.side === 'start';
+  // its place: the top-left corner of all of it (its values and title on the left / top: the bar past them)
+  const [ox, oy] = barOffset(bar, curve, lo, hi, defaults);
+  const x = m.box.x + (bar.x / 100) * m.box.w + ox;
+  const y = m.box.y + (bar.y / 100) * m.box.h + oy;
   const len = (bar.length / 100) * (vert ? m.box.h : m.box.w);
   const th = bar.thickness;
   const stops = stopsOf(st.cmap, st.cmapColors);
   const N = 24;
-  const tickVals: number[] = [];
-  if (st.cmapLog && lo > 0) {
-    for (let d = Math.ceil(Math.log10(lo) - 1e-9); d <= Math.floor(Math.log10(hi) + 1e-9); d++) tickVals.push(10 ** d);
-  } else {
-    const step = niceStep(hi - lo, Math.max(2, bar.ticks));
-    for (let k = Math.ceil(lo / step - 1e-9); k * step <= hi + step * 1e-9; k++) tickVals.push(Math.abs(k * step) < step * 1e-9 ? 0 : k * step);
-  }
-  const fmt = formatLabels(tickVals, st.cmapLog, SIDE_FOR_BAR);
   const lw = Math.max(0.4, bar.frameWidth);
+  const dir = bar.tickDir ?? 'out';
+  // a value's place along the bar (0 … 1, from the bottom of a vertical bar, from the left of a horizontal one)
+  const along = (v: number) => mapT(v, lo, hi, st.cmapLog, false);
+  const inRange = (v: number) => v >= Math.min(lo, hi) - 1e-12 && v <= Math.max(lo, hi) + 1e-12;
+  // the edge of the side chosen, and outward from it (+1 right / down, −1 left / up)
+  const edge = vert ? (start ? x : x + th) : start ? y : y + th;
+  const outward = start ? -1 : 1;
+  const tick = (v: number, k: string, size: number) => {
+    if (dir === 'none' || !inRange(v)) return null;
+    const p = along(v);
+    const [a, b] = dir === 'out' ? [0, size] : dir === 'in' ? [-size, 0] : [-size, size];
+    const [c1, c2] = [edge + outward * a, edge + outward * b];
+    if (vert) {
+      const yy = y + len - p * len;
+      return <line key={k} x1={n2(c1)} x2={n2(c2)} y1={n2(yy)} y2={n2(yy)} stroke="#000000" strokeWidth={lw} />;
+    }
+    const xx = x + p * len;
+    return <line key={k} x1={n2(xx)} x2={n2(xx)} y1={n2(c1)} y2={n2(c2)} stroke="#000000" strokeWidth={lw} />;
+  };
+  // filled by levels: a band of every level, as the map is drawn
+  const lv = curve.grid?.mode === 'filled' ? curve.grid.levels.filter((v) => v > Math.min(lo, hi) && v < Math.max(lo, hi)) : [];
+  const bands = lv.length
+    ? [Math.min(lo, hi), ...lv, Math.max(lo, hi)].slice(0, -1).map((a, k, arr) => {
+        const b = k === arr.length - 1 ? Math.max(lo, hi) : arr[k + 1];
+        const mid = st.cmapLog && a > 0 && b > 0 ? Math.sqrt(a * b) : (a + b) / 2;
+        return { a, b, color: mapColor(stops, mapT(mid, lo, hi, st.cmapLog, st.cmapReverse)) };
+      })
+    : null;
+  const numbers = ticks.labels.some(Boolean);
+  const labelAt = edge + outward * gap;
   return (
     <g>
-      <defs>
-        <linearGradient id={gid} x1="0" y1={vert ? '1' : '0'} x2={vert ? '0' : '1'} y2="0">
-          {Array.from({ length: N + 1 }, (_, k) => (
-            <stop key={k} offset={k / N} stopColor={mapColor(stops, st.cmapReverse ? 1 - k / N : k / N)} />
-          ))}
-        </linearGradient>
-      </defs>
-      <rect x={n2(x)} y={n2(y)} width={n2(vert ? th : len)} height={n2(vert ? len : th)} fill={`url(#${gid})`} stroke={bar.frameWidth > 0 ? '#000000' : 'none'} strokeWidth={bar.frameWidth} />
-      {tickVals.map((v, k) => {
-        const p = mapT(v, lo, hi, st.cmapLog, false);
-        if (v < Math.min(lo, hi) - 1e-12 || v > Math.max(lo, hi) + 1e-12) return null;
-        if (vert) {
-          const yy = y + len - p * len;
-          return (
-            <g key={k}>
-              <line x1={n2(x + th)} x2={n2(x + th + 2)} y1={n2(yy)} y2={n2(yy)} stroke="#000000" strokeWidth={lw} />
-              <RichText x={x + th + 3.5} y={yy} text={fmt.labels[k]} st={t} valign="middle" num />
-            </g>
+      {bands ? (
+        bands.map((q, k) => {
+          const [p1, p2] = [along(q.a), along(q.b)];
+          return vert ? <rect key={k} x={n2(x)} y={n2(y + len - p2 * len)} width={n2(th)} height={n2((p2 - p1) * len)} fill={q.color} /> : <rect key={k} x={n2(x + p1 * len)} y={n2(y)} width={n2((p2 - p1) * len)} height={n2(th)} fill={q.color} />;
+        })
+      ) : (
+        <>
+          <defs>
+            <linearGradient id={gid} x1="0" y1={vert ? '1' : '0'} x2={vert ? '0' : '1'} y2="0">
+              {Array.from({ length: N + 1 }, (_, k) => (
+                <stop key={k} offset={k / N} stopColor={mapColor(stops, st.cmapReverse ? 1 - k / N : k / N)} />
+              ))}
+            </linearGradient>
+          </defs>
+          <rect x={n2(x)} y={n2(y)} width={n2(vert ? th : len)} height={n2(vert ? len : th)} fill={`url(#${gid})`} />
+        </>
+      )}
+      {bar.frameWidth > 0 && <rect x={n2(x)} y={n2(y)} width={n2(vert ? th : len)} height={n2(vert ? len : th)} fill="none" stroke="#000000" strokeWidth={bar.frameWidth} />}
+      {ticks.minor.map((v, k) => tick(v, `m${k}`, tl * 0.6))}
+      {ticks.major.map((v, k) => tick(v, `t${k}`, tl))}
+      {numbers &&
+        ticks.major.map((v, k) => {
+          if (!inRange(v) || !ticks.labels[k]) return null;
+          const p = along(v);
+          return vert ? (
+            <RichText key={`l${k}`} x={labelAt} y={y + len - p * len} text={ticks.labels[k]} st={t} anchor={start ? 'end' : 'start'} valign="middle" num />
+          ) : (
+            <RichText key={`l${k}`} x={x + p * len} y={labelAt} text={ticks.labels[k]} st={t} anchor="middle" valign={start ? 'bottom' : 'top'} num />
           );
-        }
-        const xx = x + p * len;
-        return (
-          <g key={k}>
-            <line x1={n2(xx)} x2={n2(xx)} y1={n2(y + th)} y2={n2(y + th + 2)} stroke="#000000" strokeWidth={lw} />
-            <RichText x={xx} y={y + th + 3} text={fmt.labels[k]} st={t} anchor="middle" valign="top" num />
-          </g>
-        );
-      })}
-      {title && (vert ? <RichText x={x + th / 2} y={y - 3} text={title} st={t} anchor="middle" valign="bottom" /> : <RichText x={x + len / 2} y={y + th + 4 + t.size * 1.3} text={title} st={t} anchor="middle" valign="top" />)}
+        })}
+      {ticks.common &&
+        (vert ? (
+          <RichText x={labelAt} y={y - 2} text={ticks.common} st={t} anchor={start ? 'end' : 'start'} valign="bottom" num />
+        ) : (
+          <RichText x={x + len + 3} y={y + th / 2} text={ticks.common} st={t} anchor="start" valign="middle" num />
+        ))}
+      {title &&
+        (vert ? (
+          <RichText x={x + th / 2} y={y - 3 - (ticks.common ? t.size * 1.3 : 0)} text={title} st={t} anchor="middle" valign="bottom" />
+        ) : (
+          <RichText x={x + len / 2} y={start ? y - gap - (numbers ? t.size * 1.2 : 0) - 1 : y + th + gap + (numbers ? t.size * 1.2 : 0) + 1} text={title} st={t} anchor="middle" valign={start ? 'bottom' : 'top'} />
+        ))}
     </g>
   );
 }
@@ -2183,14 +2221,14 @@ function moved(m: Mapper, coords: 'data' | 'percent') {
 }
 // A small square on a point of a shape: dragging it moves that point only (shown when the mouse is over the shape).
 // anchor: a path's node (its number: the drawing editor removes it on a double-click); round: a curve's control point
-function Handle({ x, y, info, anchor, round, on }: { x: number; y: number; info: DragInfo; anchor?: number; round?: boolean; on?: boolean }) {
+function Handle({ x, y, info, anchor, round, on, cursor }: { x: number; y: number; info: DragInfo; anchor?: number; round?: boolean; on?: boolean; cursor?: string }) {
   const k = useContext(HandleScale);
   return (
-    <Draggable info={info}>
+    <Draggable info={{ ...info, live: true }}>
       {round ? (
         <circle data-export="skip" className="shape-handle" cx={n2(x)} cy={n2(y)} r={n2(2.2 * k)} fill="var(--select)" stroke="#ffffff" strokeWidth={n2(0.6 * k)} />
       ) : (
-        <rect data-export="skip" data-anchor={anchor} className="shape-handle" x={n2(x - 2.8 * k)} y={n2(y - 2.8 * k)} width={n2(5.6 * k)} height={n2(5.6 * k)} fill={on ? 'var(--select)' : '#ffffff'} stroke="var(--select)" strokeWidth={n2(0.8 * k)} />
+        <rect data-export="skip" data-anchor={anchor} className="shape-handle" x={n2(x - 2.8 * k)} y={n2(y - 2.8 * k)} width={n2(5.6 * k)} height={n2(5.6 * k)} fill={on ? 'var(--select)' : '#ffffff'} stroke="var(--select)" strokeWidth={n2(0.8 * k)} style={cursor ? { cursor } : undefined} />
       )}
     </Draggable>
   );
@@ -2432,6 +2470,25 @@ function GradHandles({ s, m, info }: { s: ShapeSpec; m: Mapper; info: (patch: Pa
     </g>
   );
 }
+// The handles of a box (a rectangle, ellipse, polygon or star, arc, picture): its 4 corners and the middles of its 4
+// sides, where they are drawn (turned with it). A side moves alone, the other one staying; a corner moves its two sides
+// (Shift: the box keeps its proportions); Ctrl: about its centre (the other sides move the other way).
+function boxHandles(s: ShapeSpec, X: (v: number) => number, Y: (v: number) => number, mx: (v: number, d: number) => number, my: (v: number, d: number) => number, info: (patch: Patch) => DragInfo) {
+  const box: Box4 = [X(s.x1), Y(s.y1), X(s.x2), Y(s.y2)];
+  const deg = s.rotation || 0;
+  // the cursor of a handle: its direction from the centre, turned with the box
+  const cursorOf = (ix: number, iy: number) => BOX_CURSORS[((Math.round(((Math.atan2(iy, ix) * 180) / Math.PI + deg) / 45) % 4) + 4) % 4];
+  const one = (ix: number, iy: number) => {
+    const at = boxHandleAt(box, deg, ix, iy);
+    const patch: Patch = (dx, dy, shift) => {
+      const [a1, b1, a2, b2] = resizeBox(box, deg, ix, iy, dx, dy, shift, dragKeys.ctrl);
+      return { x1: mx(s.x1, a1 - box[0]), y1: my(s.y1, b1 - box[1]), x2: mx(s.x2, a2 - box[2]), y2: my(s.y2, b2 - box[3]) };
+    };
+    return <Handle key={`b${ix}${iy}`} x={at[0]} y={at[1]} info={info(patch)} cursor={cursorOf(ix, iy)} />;
+  };
+  return [one(-1, -1), one(0, -1), one(1, -1), one(1, 0), one(1, 1), one(0, 1), one(-1, 1), one(-1, 0)];
+}
+const BOX_CURSORS = ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'];
 function ShapeHandles({ s, m, info, item }: { s: ShapeSpec; m: Mapper; info: (patch: Patch) => DragInfo; item?: string }) {
   const on = useContext(Interactive);
   if (!on) return null;
@@ -2498,21 +2555,15 @@ function ShapeHandles({ s, m, info, item }: { s: ShapeSpec; m: Mapper; info: (pa
     case 'star':
     case 'regular':
     case 'arc':
+    case 'image':
       return (
         <g>
-          {corners()}
+          {boxHandles(s, X, Y, mx, my, info)}
           {turn()}
         </g>
       );
     case 'callout':
       return <g>{corners()}</g>;
-    case 'image':
-      return (
-        <g>
-          {corners()}
-          {turn()}
-        </g>
-      );
     case 'path':
       return <PathHandles s={s} m={m} info={info} item={item} />;
     case 'dimension': {
@@ -2594,12 +2645,13 @@ function ShapeHandles({ s, m, info, item }: { s: ShapeSpec; m: Mapper; info: (pa
 }
 
 // The far end of a colour bar: dragging it changes its length.
-function BarHandle({ b, m, info }: { b: ColorbarSpec; m: Mapper; info: (patch: Patch) => DragInfo }) {
+function BarHandle({ b, m, info, curve, defaults }: { b: ColorbarSpec; m: Mapper; info: (patch: Patch) => DragInfo; curve: Curve | null; defaults: TextDefaults }) {
   const on = useContext(Interactive);
   if (!on) return null;
   const vert = b.orientation === 'vertical';
-  const x = m.box.x + (b.x / 100) * m.box.w;
-  const y = m.box.y + (b.y / 100) * m.box.h;
+  const [ox, oy] = curve?.colorRange ? barOffset(b, curve, curve.colorRange[0], curve.colorRange[1], defaults) : [0, 0];
+  const x = m.box.x + (b.x / 100) * m.box.w + ox;
+  const y = m.box.y + (b.y / 100) * m.box.h + oy;
   const len = (b.length / 100) * (vert ? m.box.h : m.box.w);
   return (
     <Handle
@@ -2662,8 +2714,9 @@ function AnnotationView({ a, m, defaults, idPrefix }: { a: Annotation; m: Mapper
     return (
       <Draggable info={info(apply)}>
         {body}
-        <ShapeHandles s={s} m={m} info={info} item={a.owner?.field === 'annotations' ? a.owner.item : undefined} />
+        {/* the box's handles over the gradient's (an end of the gradient on a side: the side still resized there) */}
         <GradHandles s={s} m={m} info={info} />
+        <ShapeHandles s={s} m={m} info={info} item={a.owner?.field === 'annotations' ? a.owner.item : undefined} />
       </Draggable>
     );
   }
@@ -2693,7 +2746,7 @@ function AnnotationView({ a, m, defaults, idPrefix }: { a: Annotation; m: Mapper
   return (
     <Draggable info={info((dx, dy) => ({ x: r1(b.x + (dx / m.box.w) * 100), y: r1(b.y + (dy / m.box.h) * 100) }))}>
       <ColorbarView bar={b} curve={a.curve} m={m} defaults={defaults} gid={`${idPrefix}-cb-${a.key.replace(/[^\w-]/g, '_')}`} />
-      <BarHandle b={b} m={m} info={info} />
+      <BarHandle b={b} m={m} info={info} curve={a.curve} defaults={defaults} />
     </Draggable>
   );
 }

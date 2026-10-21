@@ -359,3 +359,56 @@ export function aboveOf(u: Pt): Pt {
   if (n[1] < -1e-9 || (Math.abs(n[1]) <= 1e-9 && n[0] > 0)) return n;
   return [-n[0], -n[1]];
 }
+
+// A box (x1, y1, x2, y2 on the page) turned by deg degrees (clockwise) about its centre: the place of a handle (ix, iy:
+// −1, 0 or 1 across and down: a corner, the middle of a side), and the box after that handle is dragged by (dx, dy) on
+// the page — a side moves alone, the other one staying (ctrl: about the centre, the other side the other way); a corner
+// moves its two sides (shift: as wide and as high as before, both by the larger change). The box keeps its turn.
+export type Box4 = [number, number, number, number];
+export function boxHandleAt(b: Box4, deg: number, ix: number, iy: number): Pt {
+  const [cx, cy] = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+  const t = (deg * Math.PI) / 180;
+  const [u, v] = [(ix * Math.abs(b[2] - b[0])) / 2, (iy * Math.abs(b[3] - b[1])) / 2];
+  return [cx + u * Math.cos(t) - v * Math.sin(t), cy + u * Math.sin(t) + v * Math.cos(t)];
+}
+export function resizeBox(b: Box4, deg: number, ix: number, iy: number, dx: number, dy: number, shift: boolean, ctrl: boolean): Box4 {
+  const [cx, cy] = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+  const t = (deg * Math.PI) / 180;
+  const [co, si] = [Math.cos(t), Math.sin(t)];
+  // x1, x2 and y1, y2 in the box's own frame (from its centre, before it is turned); which of each is the left / top
+  const u0 = [b[0] - cx, b[2] - cx];
+  const v0 = [b[1] - cy, b[3] - cy];
+  const ju = (ix < 0) === b[0] <= b[2] ? 0 : 1;
+  const jv = (iy < 0) === b[1] <= b[3] ? 0 : 1;
+  // the move in that frame
+  const du = dx * co + dy * si;
+  const dv = -dx * si + dy * co;
+  const u = [...u0];
+  const v = [...v0];
+  if (ix) {
+    u[ju] += du;
+    if (ctrl) u[1 - ju] -= du;
+  }
+  if (iy) {
+    v[jv] += dv;
+    if (ctrl) v[1 - jv] -= dv;
+  }
+  const w0 = u0[1] - u0[0];
+  const h0 = v0[1] - v0[0];
+  if (shift && ix && iy && Math.abs(w0) > 1e-9 && Math.abs(h0) > 1e-9) {
+    const [fw, fh] = [(u[1] - u[0]) / w0, (v[1] - v[0]) / h0];
+    const f = Math.max(Math.abs(fw), Math.abs(fh));
+    const [w, h] = [w0 * f * (Math.sign(fw) || 1), h0 * f * (Math.sign(fh) || 1)];
+    if (ctrl) [u[0], u[1], v[0], v[1]] = [-w / 2, w / 2, -h / 2, h / 2];
+    else {
+      if (ju === 1) u[1] = u[0] + w;
+      else u[0] = u[1] - w;
+      if (jv === 1) v[1] = v[0] + h;
+      else v[0] = v[1] - h;
+    }
+  }
+  // the new centre on the page (the box turned about it), the box around it
+  const [um, vm] = [(u[0] + u[1]) / 2, (v[0] + v[1]) / 2];
+  const [ncx, ncy] = [cx + um * co - vm * si, cy + um * si + vm * co];
+  return [ncx + u[0] - um, ncy + v[0] - vm, ncx + u[1] - um, ncy + v[1] - vm];
+}

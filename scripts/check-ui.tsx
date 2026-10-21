@@ -18,7 +18,7 @@ import { AXIS_DEFAULTS, SIDE_DEFAULTS as AXIS_SIDE } from '../src/figure/spec.ts
 import { COLORBAR_DEFAULTS, SHAPE_DEFAULTS, TEXT_SPEC_DEFAULTS, TEXT_DEFAULTS, type ShapeKind, type ShapeSpec, type TextSpec } from '../src/figure/spec.ts';
 
 // every section open
-const SECTIONS = ['own', 'text', 'line', 'fill', 'place', 'effects', 'more', 'box'];
+const SECTIONS = ['own', 'text', 'line', 'fill', 'place', 'effects', 'more', 'box', 'values'];
 const store = new Map<string, string>();
 const KINDS: ShapeKind[] = ['line', 'arrow', 'rect', 'ellipse', 'polygon', 'xband', 'yband', 'vline', 'hline', 'bracket', 'star', 'regular', 'arc', 'callout', 'scalebar', 'dimension', 'path', 'image'];
 store.set('graph-flow:prop-sections', JSON.stringify(Object.fromEntries([...KINDS.map((k) => `shape:${k}`), 'text', 'colorbar'].map((p) => [p, SECTIONS]).concat([['axis-side', ['scale', 'ticks', 'line', 'numbers', 'title']], ['axis-grid', ['x', 'y', 'frame']], ['legend', ['place', 'entries', 'text', 'frame']], ['curve-line', ['line', 'fill']]]))));
@@ -139,7 +139,7 @@ for (const where of WHERE) {
   try {
     for (const where of ['frame', 'page'] as Where[]) {
       const t = text(draw(<ColorbarEditor s={{ ...COLORBAR_DEFAULTS }} set={() => {}} where={where} />));
-      for (const w of ['Colour bar', 'Orientation', 'Length', 'Thickness', 'Labels', 'Frame', 'Title', 'Top left', 'Layer']) if (!t.includes(w)) err ||= `${where}: no ${w}`;
+      for (const w of ['Colour bar', 'Orientation', 'Length', 'Thickness', 'Frame', 'Values and ticks', 'Side', 'Right', 'Values', 'About', 'Format', 'Decimals', 'Ticks', 'Across', 'Minor', 'Title', 'Top left', 'Layer']) if (!t.includes(w)) err ||= `${where}: no ${w}`;
     }
   } catch (e) {
     err = (e as Error).message;

@@ -9,7 +9,7 @@ import { EDITABLE_FIGURES, makeEmbedded, type Embedded } from '../figure/embed.t
 import { ProjectInfoContext } from '../projectInfo.ts';
 import { exportPng, exportSvg, exportTiff, copyPng, printPdf, pixelSize, safeName, MAX_PIXELS } from '../figure/export.ts';
 import { FigureSvg } from '../figure/render.tsx';
-import { FocusCurve, Interactive, LayoutEdit, ThreeTurn, type DragInfo } from '../figure/interactive.ts';
+import { dragKeys, FocusCurve, Interactive, LayoutEdit, ThreeTurn, type DragInfo } from '../figure/interactive.ts';
 import { FigureRotateLayer, type Turn } from './FigureRotate.tsx';
 import { FONTS, toPt, type Figure, type LengthUnit } from '../figure/spec.ts';
 import type { AnnotationItem, AppNode, PageData } from '../types.ts';
@@ -75,19 +75,29 @@ function useFigureDrag() {
     const target = (el as SVGElement).dataset.dragMove === 'root' ? (el.closest('[data-drag-root]') ?? el) : el;
     let d = [0, 0];
     let shift = e.shiftKey;
+    // a handle: its object changed as it goes, from what it was (Ctrl read by a box's handles)
+    const data0 = info.live ? (getNode(info.node)?.data as Record<string, unknown> | undefined) : undefined;
+    let frame = 0;
     const move = (ev: PointerEvent) => {
       const [x, y] = user(ev.clientX, ev.clientY);
       d = [x - x0, y - y0];
       shift = ev.shiftKey;
+      dragKeys.ctrl = ev.ctrlKey || ev.metaKey;
+      if (data0) {
+        cancelAnimationFrame(frame);
+        frame = requestAnimationFrame(() => updateNodeData(info.node, info.apply(d[0], d[1], data0, shift)));
+        return;
+      }
       target.setAttribute('transform', info.transform ? info.transform(d[0], d[1], shift) : `translate(${d[0].toFixed(2)} ${d[1].toFixed(2)})`);
     };
     const up = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      cancelAnimationFrame(frame);
       target.removeAttribute('transform');
       if (Math.hypot(d[0], d[1]) < 0.3) return;
-      const n = getNode(info.node);
-      if (n) updateNodeData(info.node, info.apply(d[0], d[1], n.data as Record<string, unknown>, shift));
+      const n = data0 ?? (getNode(info.node)?.data as Record<string, unknown> | undefined);
+      if (n) updateNodeData(info.node, info.apply(d[0], d[1], n, shift));
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
