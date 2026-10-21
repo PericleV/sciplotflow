@@ -200,6 +200,14 @@ const turnAbout = (c: Pt, deg: number) => {
   const [cs, sn] = [Math.cos(a), Math.sin(a)];
   return ([x, y]: Pt): Pt => (deg ? [c[0] + (x - c[0]) * cs - (y - c[1]) * sn, c[1] + (x - c[0]) * sn + (y - c[1]) * cs] : [x, y]);
 };
+// A path turned by deg degrees (clockwise on the page) about the middle of its box where it is drawn: its points to the
+// page by `page`, turned there, and back by `own` (a shape's own units: mm, % of the frame, the data)
+export function turnedPath(segs: Seg[], deg: number, page: (p: Pt) => Pt = (p) => p, own: (p: Pt) => Pt = (p) => p): Seg[] {
+  const b = deg ? pathBox(mapSegs(segs, page)) : null;
+  if (!b) return segs;
+  const t = turnAbout([b.x + b.w / 2, b.y + b.h / 2], deg);
+  return mapSegs(segs, (p) => own(t(page(p))));
+}
 const polyD = (pts: Pt[], close: boolean) => (pts.length ? `M${pts.map((p) => `${r4(p[0])} ${r4(p[1])}`).join(' L')}${close ? ' Z' : ''}` : '');
 // a closed smooth curve through points (as the renderer's smooth polygon)
 const smoothClosed = (pts: Pt[]) => {

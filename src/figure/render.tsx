@@ -9,7 +9,7 @@ import { cellEdges } from '../engine/contour.ts';
 import { legendLayout } from './legendLayout.ts';
 import { dashArray, hasLine, hasSymbols, lineHeightOf, lineOnly, parseRich, plainText, richMetrics, runMath, runSize, splinePath, symbolPath, textRunWidth, type Run } from './draw.ts';
 import { mathBox, mathError, mathFace, useMathVersion } from '../math/store.ts';
-import { CORNERED, isClosed as pathClosed, mapSegs, parsePath, pathBox, pathPolylines, pathText, radiiOf, roundedRectD, shapeToPath } from './paths.ts';
+import { CORNERED, isClosed as pathClosed, mapSegs, parsePath, pathBox, pathPolylines, pathText, radiiOf, roundedRectD, shapeToPath, turnedPath, type Seg } from './paths.ts';
 import { parseBreaks } from './ticks.ts';
 import { barOffset, barReach, barTitle } from './colorbar.ts';
 import { ThreeView } from './render3d.tsx';
@@ -2320,11 +2320,25 @@ function PathHandles({ s, m, info, item }: { s: ShapeSpec; m: Mapper; info: (pat
   const { mx, my } = moved(m, s.coords);
   const X = (v: number) => (s.coords === 'data' ? m.x(v) : m.box.x + (v / 100) * m.box.w);
   const Y = (v: number) => (s.coords === 'data' ? m.y(v) : m.box.y + (v / 100) * m.box.h);
-  const segs = parsePath(s.d);
-  // the turning handle above its box (it turns about the box's middle)
-  const pb = pathBox(mapSegs(segs, ([u, v]): Pt => [X(u), Y(v)]));
-  const turn = pb ? <RotateHandle key="r" cx={pb.x + pb.w / 2} cy={pb.y + pb.h / 2} r={pb.h / 2 + 9} deg={s.rotation || 0} info={info} /> : null;
-  if (s.rotation) return <g>{turn}</g>;
+  // a path keeps its turn in its points (as one made from a shape): turned with the round handle, its points are turned
+  // (about the middle of its box). One with a turn of its own (an older one, or turned in its options): its nodes shown
+  // where they are drawn, and its first change writes the turn into its points.
+  const page = ([u, v]: Pt): Pt => [X(u), Y(v)];
+  const own = ([px, py]: Pt): Pt => (s.coords === 'data' ? [m.ix(px), m.iy(py)] : [((px - m.box.x) / m.box.w) * 100, ((py - m.box.y) / m.box.h) * 100]);
+  const turned = (list: Seg[], deg: number) => turnedPath(list, deg, page, own);
+  const segs = turned(parsePath(s.d), s.rotation || 0);
+  const unturned = s.rotation ? { rotation: 0 } : {};
+  const pb = pathBox(mapSegs(segs, page));
+  const turn = pb ? (
+    <RotateHandle
+      key="r"
+      cx={pb.x + pb.w / 2}
+      cy={pb.y + pb.h / 2}
+      r={pb.h / 2 + 9}
+      deg={0}
+      info={(patch) => info((dx, dy, shift) => ({ d: pathText(turned(segs, (patch(dx, dy, shift) as { rotation: number }).rotation || 0)), rotation: 0 }))}
+    />
+  ) : null;
   // every subpath: its first segment, its last drawn one, closed or not
   const subOf = (i: number) => {
     let a = i;
@@ -2337,7 +2351,7 @@ function PathHandles({ s, m, info, item }: { s: ShapeSpec; m: Mapper; info: (pat
   };
   const end = (q: { p: number[] }): Pt => [q.p[q.p.length - 2], q.p[q.p.length - 1]];
   const same = (p: Pt, q: Pt) => Math.abs(p[0] - q[0]) < 1e-6 && Math.abs(p[1] - q[1]) < 1e-6;
-  const write = (list: { c: string; p: number[] }[]) => ({ d: pathText(list as never) });
+  const write = (list: { c: string; p: number[] }[]) => ({ d: pathText(list as never), ...unturned });
   // a node moved: its point, the control into it and the one out of it
   const moveNode = (i: number, dx: number, dy: number) => {
     const out = segs.map((q) => ({ c: q.c, p: q.p.slice() }));

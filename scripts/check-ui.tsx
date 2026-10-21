@@ -13,7 +13,10 @@ import { PageControls } from '../src/nodes/FigureView.tsx';
 import { QuickBar } from '../src/ui/QuickBar.tsx';
 import { RowsControls } from '../src/nodes/RowsPanel.tsx';
 import { CURVE_STYLE_DEFAULTS, LEGEND_STYLE_DEFAULTS } from '../src/figure/spec.ts';
-import { PLOT_PAGE_DEFAULTS } from '../src/defaults.ts';
+import { DRAWING_DEFAULTS, PLOT_PAGE_DEFAULTS } from '../src/defaults.ts';
+import { drawingFigure } from '../src/engine/evaluate.ts';
+import { FigureSvg } from '../src/figure/render.tsx';
+import { Interactive } from '../src/figure/interactive.ts';
 import { AXIS_DEFAULTS, SIDE_DEFAULTS as AXIS_SIDE } from '../src/figure/spec.ts';
 import { COLORBAR_DEFAULTS, SHAPE_DEFAULTS, TEXT_SPEC_DEFAULTS, TEXT_DEFAULTS, type ShapeKind, type ShapeSpec, type TextSpec } from '../src/figure/spec.ts';
 
@@ -225,6 +228,25 @@ for (const where of WHERE) {
   check('where, formula', <RowsControls value={{ mode: 'rule', rule: 'x > 3' }} onChange={() => {}} hasX names={names} />, ['aria-label="Formula"', 'x &gt; 3'], ['Add condition']);
   check('ranges', <RowsControls value={{ mode: 'range', by: 'x', ranges: [{ from: 1, to: 2 }] }} onChange={() => {}} hasX names={names} />, ['From – to', 'X value', 'Add a range']);
   ok(!err, `the quick bar and the rows (where, formula, ranges)${err ? ` — ${err}` : ''}`);
+}
+
+// a path turned in a Figure Drawing (an older one, or turned in its options): its nodes' handles where they are drawn,
+// still there to drag (a turn of its own once hid them)
+{
+  const fig = drawingFigure('dr', { ...DRAWING_DEFAULTS, annotations: [{ id: 'p', type: 'shape', spec: { kind: 'path', coords: 'data', d: 'M10 10 L30 10 L30 20 L10 20 Z', rotation: 30, fill: '#cccccc' } }] });
+  const html = renderToStaticMarkup(
+    <Interactive.Provider value={true}>
+      <FigureSvg fig={fig} display={{ width: 400, height: 300 }} idPrefix="t" />
+    </Interactive.Provider>,
+  );
+  const anchors = [...html.matchAll(/data-anchor="(\d+)" class="shape-handle" x="([-\d.]+)" y="([-\d.]+)" width="([\d.]+)"/g)].map((q) => [Number(q[2]) + Number(q[4]) / 2, Number(q[3]) + Number(q[4]) / 2]);
+  const rot = /transform="rotate\(([-\d.]+) ([-\d.]+) ([-\d.]+)\)"><g><path d="([^"]+)"/.exec(html);
+  const nums = (rot?.[4].match(/-?[\d.]+/g) ?? []).map(Number);
+  const [deg, cx, cy] = rot ? [Number(rot[1]), Number(rot[2]), Number(rot[3])] : [0, 0, 0];
+  const a = (deg * Math.PI) / 180;
+  const drawn = Array.from({ length: nums.length / 2 }, (_, k) => [cx + (nums[2 * k] - cx) * Math.cos(a) - (nums[2 * k + 1] - cy) * Math.sin(a), cy + (nums[2 * k] - cx) * Math.sin(a) + (nums[2 * k + 1] - cy) * Math.cos(a)]);
+  const placed = anchors.length === 4 && drawn.length >= 4 && anchors.every((p, k) => Math.hypot(p[0] - drawn[k][0], p[1] - drawn[k][1]) < 0.05);
+  ok(!!rot && deg === 30 && placed, `a turned path: its 4 nodes' handles on its drawn corners (${JSON.stringify({ anchors, drawn })})`);
 }
 
 console.error = origError;

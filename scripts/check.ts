@@ -46,7 +46,7 @@ import { gradAttrs, linearEnds } from '../src/figure/gradient.ts';
 import { exportOptions, extensionOf, TABLE_EXPORT_DEFAULTS, tableCells, tableText } from '../src/engine/exportTable.ts';
 import { reportBlock, reportMarkdown, reportText } from '../src/engine/reportDoc.ts';
 import { REPORT_DEFAULTS } from '../src/defaults.ts';
-import { deleteNode, insertNode, parsePath, pathBox, pathText, reversePath, roundCorners, setClosed, shapeToPath, toggleNode } from '../src/figure/paths.ts';
+import { deleteNode, insertNode, parsePath, pathBox, pathText, reversePath, roundCorners, setClosed, shapeToPath, toggleNode, turnedPath } from '../src/figure/paths.ts';
 import { placeComponent, rotateItem } from '../src/engine/drawingItems.ts';
 import { barReach, barTicks } from '../src/figure/colorbar.ts';
 import { aboveOf, boxHandleAt, elbowCorners, lineLength, offsetLine, outlinePoint, resizeBox, taperOutline, trimLine, waveLine, type Box4 } from '../src/figure/shapes.ts';
@@ -4657,6 +4657,18 @@ for (const ex of EXAMPLES) {
   ok(parsePath(rr).filter((x) => x.c === 'C').length === 4, 'Path: a rounded rectangle, its four round corners');
   const turned = pathBox(parsePath(shapeToPath({ ...SHAPE_DEFAULTS, kind: 'rect', x1: 0, y1: 0, x2: 10, y2: 2, rotation: 90 })!))!;
   ok(Math.abs(turned.w - 2) < 1e-6 && Math.abs(turned.h - 10) < 1e-6, 'Path: a turned rectangle, the turn in its points');
+  {
+    // a path turned with its handle: the turn in its points, about the middle of its box where it is drawn (here the page
+    // is twice its units: the same turn); its curves' controls turned with them
+    const bar = parsePath('M0 0 L10 0 L10 4 C10 6 0 6 0 4 Z');
+    const t1 = turnedPath(bar, 90);
+    const t2 = turnedPath(bar, 90, ([x, y]) => [2 * x, 2 * y], ([x, y]) => [x / 2, y / 2]);
+    const b1 = pathBox(t1)!;
+    const c = t1.find((q) => q.c === 'C')!.p;
+    // (its box 10 × 5.5 — the curve reaches y = 5.5 —, its middle (5, 2.75); (0, 0) → (7.75, −2.25), (10, 0) → (7.75, 7.75))
+    ok(turnedPath(bar, 0) === bar && near(b1.x + b1.w / 2, 5, 1e-9) && near(b1.y + b1.h / 2, 2.75, 1e-9) && near(b1.w, 5.5, 0.01) && near(b1.h, 10, 1e-9) && near(t1[0].p[0], 7.75, 1e-9) && near(t1[0].p[1], -2.25, 1e-9) && near(t1[1].p[0], 7.75, 1e-9) && near(t1[1].p[1], 7.75, 1e-9) && near(c[0], 1.75, 1e-9) && near(c[1], 7.75, 1e-9) && t2.every((q, k) => q.p.every((v, j) => near(v, t1[k].p[j], 1e-9))),
+      `Path: turned about the middle of its box, its controls with it, the same through the page's scale (${pathText(t1)})`);
+  }
   const sq = parsePath('M0 0 L10 0 L10 10 L0 10 Z');
   const filleted = roundCorners(sq, 2, false);
   const chamfered = roundCorners(sq, 2, true);
