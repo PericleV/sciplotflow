@@ -40,6 +40,8 @@ export type ColumnsSpec = {
   namesFrom?: NamesFrom;
   computed?: ComputedColumn[]; // computed in this order (a formula may use those above it)
 };
+// the settings' fields (to copy one sheet's to all)
+export const COLUMNS_SPEC_KEYS = ['items', 'renameOn', 'renameList', 'renamePick', 'names', 'find', 'replace', 'prefix', 'suffix', 'namesRow', 'namesFrom', 'computed'] as const satisfies readonly (keyof ColumnsSpec)[];
 // every column as it comes out: its key (its name in, after the names row; a column added: '=' and its id), its name
 // out, designation, kept, rows
 // input: a column connected to a port A, B … (its key {A}): a column of its own, at the end unless moved

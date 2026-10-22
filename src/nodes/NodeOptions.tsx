@@ -12,6 +12,9 @@ import { InPanel, useSlot } from './inspectorStore.ts';
 import { Field, Select } from './ui.tsx';
 
 const stop = (e: SyntheticEvent) => e.stopPropagation();
+const ownKeys = (e: React.KeyboardEvent) => {
+  if (!e.ctrlKey && !e.metaKey && !e.altKey) e.stopPropagation();
+};
 
 export function NodeOptions({ children }: { children: ReactNode }) {
   const id = useNodeId();
@@ -36,7 +39,7 @@ export function NodeOptions({ children }: { children: ReactNode }) {
   };
   // the node's own classes, so the options look as they did in it (their width freed: the panel's)
   return createPortal(
-    <div className={`node node-${type} inspector-options nokey`} onClick={stop} onDoubleClick={stop} onContextMenu={stop} onKeyDown={stop} onKeyUp={stop}>
+    <div className={`node node-${type} inspector-options nokey`} onClick={stop} onDoubleClick={stop} onContextMenu={stop} onKeyDown={ownKeys} onKeyUp={ownKeys}>
       <InPanel.Provider value>
         {sheets && id && (
           <div className="row">

@@ -161,7 +161,18 @@ function ManipPlot(props: {
         g.stroke();
       }
     }
-    for (const i of sel) if (Number.isFinite(x[i]) && Number.isFinite(y[i]) && !(state[i] & ROW_DELETED)) dot(i, COLORS.selected, r + 1.2, shift[0], shift[1]);
+    for (const i of sel) {
+      if (!Number.isFinite(x[i]) || !Number.isFinite(y[i])) continue;
+      if (state[i] & ROW_DELETED) {
+        g.strokeStyle = COLORS.selected;
+        g.lineWidth = 1.8;
+        g.beginPath();
+        g.arc(fx(x[i]), fy(y[i]), r + 2.5, 0, 2 * Math.PI);
+        g.stroke();
+      } else {
+        dot(i, COLORS.selected, r + 1.2, shift[0], shift[1]);
+      }
+    }
     g.restore();
     // the frame and the numbers
     g.strokeStyle = '#333333';
@@ -206,7 +217,6 @@ function ManipPlot(props: {
     let best = -1;
     let d = within * within;
     for (let i = added ? props.nIn : 0; i < (added ? x.length : props.nIn); i++) {
-      if (state[i] & ROW_DELETED) continue;
       const dd = (fx(x[i]) - px) ** 2 + (fy(y[i]) - py) ** 2;
       if (dd < d) [d, best] = [dd, i];
     }
@@ -270,7 +280,6 @@ function ManipPlot(props: {
       const [l, r] = [Math.min(a[0], b[0]), Math.max(a[0], b[0])];
       const [t, bt] = [Math.min(a[1], b[1]), Math.max(a[1], b[1])];
       for (let i = 0; i < x.length; i++) {
-        if (state[i] & ROW_DELETED) continue;
         const [px, py] = [fx(x[i]), fy(y[i])];
         if (px >= l && px <= r && py >= t && py <= bt) rows.push(i);
       }
@@ -278,7 +287,6 @@ function ManipPlot(props: {
       // inside the lasso (even–odd rule)
       const poly = d.pts;
       for (let i = 0; i < x.length; i++) {
-        if (state[i] & ROW_DELETED) continue;
         const [px, py] = [fx(x[i]), fy(y[i])];
         let inside = false;
         for (let j = 0, k = poly.length - 1; j < poly.length; k = j++) {
@@ -330,7 +338,7 @@ function ManipPlot(props: {
   );
 }
 
-const OP_TEXT: Record<ManipKind, string> = { mask: 'masked', unmask: 'unmasked', delete: 'deleted', move: 'moved', scale: 'scaled', set: 'set' };
+const OP_TEXT: Record<ManipKind, string> = { mask: 'masked', unmask: 'unmasked', delete: 'deleted', move: 'moved', scale: 'scaled', set: 'set', restore: 'restored' };
 const opText = (op: ManipOp) => {
   const count = (() => {
     const r = parseRows(op.rows, op.n);
@@ -360,6 +368,12 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
   const [d, setD] = useState({ dx: NaN, dy: NaN, factor: NaN, value: NaN, axis: 'y' as 'x' | 'y' });
   const n = m?.nIn ?? 0;
   const live = [...sel].filter((i) => i < n && !(m!.state[i] & ROW_DELETED));
+  const canRestore = [...sel].some((i) => i < n && (m!.state[i] & (ROW_MASKED | ROW_DELETED)));
+  const onRestore = () => {
+    const rows = [...sel].filter((i) => i < n);
+    if (!rows.length) return;
+    set({ ops: [...data.ops, { kind: 'restore', rows: rowsText(rows.map((i) => i + 1)), n }] });
+  };
   const added = data.added ?? [];
   const setAdded = (a: { x: number; y: number }[]) => set({ added: a });
   const addOp = (op: Omit<ManipOp, 'rows' | 'n'>) => {
@@ -478,6 +492,22 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
       />
     );
   const readout = hover !== null && m ? `row ${hover + 1}: x = ${fmtNum(m.x[hover])}, y = ${fmtNum(m.y[hover])}${m.state[hover] & ROW_MASKED ? ' (masked)' : ''}` : `${live.length} selected · ${counts.masked} masked · ${counts.deleted} deleted · ${counts.changed} moved${added.length ? ` · ${added.length} added` : ''}`;
+  const quickActions = (
+    <div className="row wrap manip-actions" style={{ marginTop: 4, marginBottom: 4 }}>
+      <button className="nodrag" disabled={!live.length} title="Kept, but grey or hidden in Plot and left out of statistics, fits, smoothing" onClick={() => addOp({ kind: 'mask' })}>
+        Mask
+      </button>
+      <button className="nodrag danger" disabled={!live.length} title="The rows leave the output of this node" onClick={() => addOp({ kind: 'delete' })}>
+        Delete
+      </button>
+      <button className="nodrag" disabled={!canRestore} title="Selected points become normal again (unmasked and undeleted)" onClick={onRestore}>
+        Restore
+      </button>
+      <button className="nodrag" disabled={!data.ops.length} title="Undo the last operation" onClick={() => set({ ops: data.ops.slice(0, -1) })}>
+        Undo last
+      </button>
+    </div>
+  );
   const toolbar = (
     <>
     <div className="row wrap manip-tools">
@@ -554,6 +584,7 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
         <>
           {toolbar}
           {plot(plotW, 300)}
+          {quickActions}
           <div className="row">
             <span className="muted ellipsis grow">{readout}</span>
             <button className="nodrag" title="The graph large" onClick={() => setBig(true)}>
@@ -598,6 +629,9 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
             <button className="nodrag danger" disabled={!live.length} title="The rows leave the output of this node (Apply to the Import to delete them there too)" onClick={() => addOp({ kind: 'delete' })}>
               Delete
             </button>
+            <button className="nodrag" disabled={!canRestore} title="Selected points become normal again (unmasked and undeleted)" onClick={onRestore}>
+              Restore
+            </button>
           </div>
           <div className="row wrap manip-actions">
             <span className="muted">Move by</span>
@@ -633,11 +667,27 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
             <summary>Operations ({data.ops.length})</summary>
             {data.ops.length === 0 && <div className="hint">None yet: select points, then Mask, Delete or Move.</div>}
             {data.ops.map((op, k) => (
-              <div key={k} className="manip-op">
+              <div
+                key={k}
+                className="manip-op"
+                style={{ cursor: 'pointer' }}
+                title="Click to select these points on the graph"
+                onClick={() => {
+                  const rows = parseRows(op.rows, n);
+                  if (typeof rows !== 'string') setSel(new Set(rows));
+                }}
+              >
                 <span className="ellipsis" title={opText(op)}>
                   {k + 1}. {opText(op)}
                 </span>
-                <button className="nodrag ts-btn" title="Undo this operation" onClick={() => set({ ops: data.ops.filter((_, j) => j !== k) })}>
+                <button
+                  className="nodrag ts-btn"
+                  title="Undo this operation"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    set({ ops: data.ops.filter((_, j) => j !== k) });
+                  }}
+                >
                   <X {...IC} />
                 </button>
               </div>
@@ -666,6 +716,7 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
             <div className="manip-big">
               {toolbar}
               {plot(Math.max(480, Math.min((window.innerWidth || 1200) * 0.86, 1400)), Math.max(320, Math.min((window.innerHeight || 800) * 0.72, 800)))}
+              {quickActions}
               <div className="muted">{readout}</div>
             </div>
           </div>,

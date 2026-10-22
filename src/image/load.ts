@@ -8,9 +8,11 @@ type Ifd = Record<string, unknown> & { width: number; height: number; data: Uint
 type Utif = { decode: (b: ArrayBuffer) => Ifd[]; decodeImage: (b: ArrayBuffer, i: Ifd) => void; toRGBA8: (i: Ifd) => Uint8Array };
 const tag = (ifd: Ifd, t: number): number[] | undefined => ifd[`t${t}`] as number[] | undefined;
 
-// the size of a pixel written in a TIFF: ImageJ's description (unit=…) with its resolution, or a resolution in
-// centimetres; an inch resolution (72 dpi of a screen) is not taken as a scale
+// the size of a pixel written in a TIFF: by the electron microscope (its text tags), ImageJ's description (unit=…)
+// with its resolution, or a resolution in centimetres; an inch resolution (72 dpi of a screen) is not taken as a scale
 function tiffScale(ifd: Ifd): ImgPixels['scale'] {
+  const sem = semScale(ifd);
+  if (sem) return sem;
   const xr = tag(ifd, 282);
   const res = xr ? (xr.length >= 2 ? xr[0] / xr[1] : xr[0]) : NaN;
   if (!(res > 0)) return undefined;
@@ -20,6 +22,40 @@ function tiffScale(ifd: Ifd): ImgPixels['scale'] {
   const ru = tag(ifd, 296)?.[0] ?? 2;
   if (ru === 3) return { size: 10000 / res, unit: 'µm' };
   return undefined;
+}
+
+// the text of a TIFF's tags (the microscopes write their settings there: FEI / Thermo 34682, Zeiss 34118, Tescan
+// 50431 …), every one that is text
+function tagTexts(ifd: Ifd): string {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(ifd)) {
+    if (!/^t\d+$/.test(k)) continue;
+    if (typeof v === 'string') out.push(v);
+    else if (Array.isArray(v) && typeof v[0] === 'string') out.push(v.join('\n'));
+    else if (v instanceof Uint8Array && v.length > 16) {
+      // (a text written as bytes)
+      let t = '';
+      for (let i = 0; i < Math.min(v.length, 200000); i++) t += String.fromCharCode(v[i]);
+      if (/[A-Za-z]{4}/.test(t)) out.push(t);
+    }
+  }
+  return out.join('\n');
+}
+const LENGTH: Record<string, number> = { m: 1, mm: 1e-3, um: 1e-6, µm: 1e-6, nm: 1e-9, pm: 1e-12 };
+// the pixel size an electron microscope wrote: FEI / Thermo (PixelWidth=… in metres), Zeiss (Image Pixel Size = … nm),
+// Tescan (PixelSizeX=… in metres) — in nm or µm, as suits it
+export function semScale(ifd: Record<string, unknown>): ImgPixels['scale'] {
+  const t = tagTexts(ifd as Ifd);
+  if (!t) return undefined;
+  let metres = NaN;
+  const fei = /PixelWidth\s*=\s*([\d.]+(?:[eE][-+]?\d+)?)/.exec(t);
+  const tescan = /PixelSizeX\s*=\s*([\d.]+(?:[eE][-+]?\d+)?)/.exec(t);
+  const zeiss = /Image Pixel Size\s*=\s*([\d.]+)\s*(pm|nm|µm|um|mm)/i.exec(t);
+  if (fei) metres = Number(fei[1]);
+  else if (tescan) metres = Number(tescan[1]);
+  else if (zeiss) metres = Number(zeiss[1]) * LENGTH[zeiss[2].toLowerCase().replace('um', 'µm')];
+  if (!(metres > 0) || metres > 1e-2) return undefined;
+  return metres < 1e-7 ? { size: +(metres * 1e9).toPrecision(6), unit: 'nm' } : { size: +(metres * 1e6).toPrecision(6), unit: 'µm' };
 }
 
 async function readTiff(file: Blob): Promise<ImgPixels> {
@@ -46,7 +82,9 @@ async function readTiff(file: Blob): Promise<ImgPixels> {
     return fromRGBA(rgba, w, h, scale);
   }
   const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
-  const sample = (k: number) => (bps === 8 ? data[k] : bps === 16 ? dv.getUint16(k * 2, true) : dv.getFloat32(k * 4, ifd.isLE !== false));
+  // (16 and 32 bit in the file's own byte order)
+  const le = ifd.isLE !== false;
+  const sample = (k: number) => (bps === 8 ? data[k] : bps === 16 ? dv.getUint16(k * 2, le) : dv.getFloat32(k * 4, le));
   if (photo === 3) {
     // a palette: the colours of the colour map (16 bit) as 8-bit RGB
     const map = tag(ifd, 320) ?? [];
@@ -92,9 +130,9 @@ function fromRGBA(rgba: ArrayLike<number>, w: number, h: number, scale?: ImgPixe
 
 async function readOther(file: Blob): Promise<ImgPixels> {
   const bmp = await createImageBitmap(file);
-  const cv = document.createElement('canvas');
-  [cv.width, cv.height] = [bmp.width, bmp.height];
-  const g = cv.getContext('2d', { willReadFrequently: true })!;
+  // (an offscreen canvas: in a worker as on the page)
+  const cv = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(bmp.width, bmp.height) : Object.assign(document.createElement('canvas'), { width: bmp.width, height: bmp.height });
+  const g = cv.getContext('2d', { willReadFrequently: true }) as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
   g.drawImage(bmp, 0, 0);
   bmp.close();
   return fromRGBA(g.getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height);
@@ -103,6 +141,29 @@ async function readOther(file: Blob): Promise<ImgPixels> {
 // The pixels of an image file, or why not
 export async function readImagePixels(file: Blob): Promise<ImgPixels> {
   return (await isTiff(file)) ? readTiff(file) : readOther(file);
+}
+// The same, read in a worker of its own (a large TIFF decoded and packed without stopping the page); on the page when
+// a worker cannot be made
+export function readImagePixelsAsync(file: Blob): Promise<ImgPixels> {
+  let w: Worker;
+  try {
+    w = new Worker(new URL('./loadWorker.ts', import.meta.url), { type: 'module' });
+  } catch {
+    return readImagePixels(file);
+  }
+  return new Promise((resolve, reject) => {
+    w.onmessage = (e: MessageEvent<{ pixels?: ImgPixels; error?: string }>) => {
+      w.terminate();
+      if (e.data.pixels) resolve(e.data.pixels);
+      else reject(new Error(e.data.error ?? 'the image could not be read'));
+    };
+    w.onerror = () => {
+      w.terminate();
+      // (the worker itself failed: read on the page)
+      readImagePixels(file).then(resolve, reject);
+    };
+    w.postMessage(file);
+  });
 }
 // a new id for a new image
 export const newPixelsId = () => `img${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;

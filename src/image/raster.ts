@@ -47,7 +47,14 @@ function rangeOf(depth: ImgPixels['depth'], chans: Float32Array[]): [number, num
   if (depth === 16) return [0, 65535];
   let lo = Infinity;
   let hi = -Infinity;
-  for (const c of chans) for (const v of c) if (Number.isFinite(v)) [lo, hi] = [Math.min(lo, v), Math.max(hi, v)];
+  for (const c of chans)
+    for (let i = 0; i < c.length; i++) {
+      const v = c[i];
+      // (NaN and ±∞ left out: v − v is 0 only for a finite v)
+      if (v - v !== 0) continue;
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
   return Number.isFinite(lo) ? (lo === hi ? [lo, lo + 1] : [lo, hi]) : [0, 1];
 }
 
@@ -80,6 +87,95 @@ export function unpackPixels(p: ImgPixels, key?: string): Raster {
   return r;
 }
 
+// every value of a channel mapped (a plain loop: Float32Array.from with a function is many times slower)
+export function map1(c: ArrayLike<number>, f: (v: number, i: number) => number): Float32Array {
+  const n = c.length;
+  const o = new Float32Array(n);
+  for (let i = 0; i < n; i++) o[i] = f(c[i], i);
+  return o;
+}
+
+// ---- the part of the original analysed: a crop (x, y, w, h in pixels) ----
+export type Crop = [number, number, number, number];
+// the crop kept inside the image, whole pixels (null: none, or nothing left)
+export function cropBox(c: Crop | undefined, w: number, h: number): Crop | null {
+  if (!c) return null;
+  const x = Math.max(0, Math.min(w - 1, Math.round(c[0])));
+  const y = Math.max(0, Math.min(h - 1, Math.round(c[1])));
+  const cw = Math.max(1, Math.min(w - x, Math.round(c[2])));
+  const ch = Math.max(1, Math.min(h - y, Math.round(c[3])));
+  return cw === w && ch === h ? null : [x, y, cw, ch];
+}
+// the raster cut to the crop (its kind and range kept); the same raster when there is none
+const crops = new WeakMap<Raster, { key: string; r: Raster }>();
+export function cropRaster(r: Raster, c: Crop | undefined): Raster {
+  const box = cropBox(c, r.w, r.h);
+  if (!box) return r;
+  const key = box.join();
+  const hit = crops.get(r);
+  if (hit?.key === key) return hit.r;
+  const [x0, y0, w, h] = box;
+  const ch = r.ch.map((src) => {
+    const out = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) out.set(src.subarray((y0 + y) * r.w + x0, (y0 + y) * r.w + x0 + w), y * w);
+    return out;
+  });
+  const out = { ...r, w, h, ch };
+  crops.set(r, { key, r: out });
+  return out;
+}
+// the raster shrunk by a whole factor f: every block of f × f its mean (a mask: its majority) — a preview
+export function shrinkRaster(r: Raster, f: number): Raster {
+  if (f <= 1) return r;
+  const [w, h] = [Math.ceil(r.w / f), Math.ceil(r.h / f)];
+  const cnt = new Float32Array(w * h);
+  for (let y = 0; y < r.h; y++) {
+    const ro = Math.floor(y / f) * w;
+    for (let x = 0; x < r.w; x++) cnt[ro + Math.floor(x / f)]++;
+  }
+  const ch = r.ch.map((c) => {
+    const out = new Float32Array(w * h);
+    for (let y = 0; y < r.h; y++) {
+      const ro = Math.floor(y / f) * w;
+      const o = y * r.w;
+      for (let x = 0; x < r.w; x++) out[ro + Math.floor(x / f)] += c[o + x];
+    }
+    for (let k = 0; k < out.length; k++) out[k] = r.kind === 'mask' ? (out[k] / cnt[k] >= 0.5 ? 1 : 0) : out[k] / cnt[k];
+    return out;
+  });
+  return { ...r, w, h, ch };
+}
+// The data bar an electron microscope writes under the image (its settings, the scale bar): the rows at the bottom
+// mostly of one value (its background), with no more than a few rows of the image's texture between them — their number
+// (0: none found; between 2 % and 40 % of the height)
+export function dataBarRows(r: Raster): number {
+  const g = r.ch.length === 1 ? r.ch[0] : luminance(r);
+  const tol = (r.hi - r.lo) * 0.012;
+  // a row of the bar: half or more of it within tol of its most frequent value
+  const plain = (y: number) => {
+    const row = g.subarray(y * r.w, (y + 1) * r.w);
+    const counts = new Map<number, number>();
+    for (let i = 0; i < row.length; i++) {
+      const v = row[i];
+      const b = Math.round((v - r.lo) / (tol || 1));
+      counts.set(b, (counts.get(b) ?? 0) + 1);
+    }
+    let best = 0;
+    for (const [b, n] of counts) best = Math.max(best, n + (counts.get(b - 1) ?? 0) + (counts.get(b + 1) ?? 0));
+    return best >= 0.5 * r.w;
+  };
+  let top = r.h;
+  let miss = 0;
+  for (let y = r.h - 1; y >= 0 && miss <= 3; y--) {
+    if (plain(y)) {
+      top = y;
+      miss = 0;
+    } else miss++;
+  }
+  const n = r.h - top;
+  return n >= 0.02 * r.h && n <= 0.4 * r.h ? n : 0;
+}
+
 // ---- helpers of the steps ----
 
 export const gray = (r: Raster): Float32Array => (r.ch.length === 1 ? r.ch[0] : luminance(r));
@@ -104,13 +200,21 @@ export function reflect(i: number, n: number): number {
   return i < n ? i : p - 1 - i;
 }
 
-// one row or column filtered by a kernel (centre at kernel.length >> 1), the edge mirrored
-function conv1(src: Float32Array, dst: Float32Array, n: number, stride: number, off: number, k: Float64Array, tmp: Float64Array) {
+// the mirrored index of every place of a line of n with `pad` places past each end (reflect, read from a table)
+export function mirrorTable(n: number, pad: number): Int32Array {
+  const t = new Int32Array(n + 2 * pad);
+  for (let i = 0; i < t.length; i++) t[i] = reflect(i - pad, n);
+  return t;
+}
+// one row or column filtered by a kernel (centre at kernel.length >> 1), the edge mirrored: the line copied with its
+// mirrored margins once, then a plain sum
+function conv1(src: Float32Array, dst: Float32Array, n: number, stride: number, off: number, k: Float64Array, tmp: Float64Array, mt: Int32Array) {
   const r = k.length >> 1;
-  for (let i = 0; i < n; i++) tmp[i] = src[off + i * stride];
+  const m = k.length;
+  for (let i = 0; i < n + 2 * r; i++) tmp[i] = src[off + mt[i] * stride];
   for (let i = 0; i < n; i++) {
     let s = 0;
-    for (let j = 0; j < k.length; j++) s += k[j] * tmp[reflect(i + j - r, n)];
+    for (let j = 0; j < m; j++) s += k[j] * tmp[i + j];
     dst[off + i * stride] = s;
   }
 }
@@ -118,9 +222,11 @@ function conv1(src: Float32Array, dst: Float32Array, n: number, stride: number, 
 export function separable(c: Float32Array, w: number, h: number, kx: Float64Array, ky: Float64Array): Float32Array {
   const a = new Float32Array(c.length);
   const b = new Float32Array(c.length);
-  const tmp = new Float64Array(Math.max(w, h));
-  for (let y = 0; y < h; y++) conv1(c, a, w, 1, y * w, kx, tmp);
-  for (let x = 0; x < w; x++) conv1(a, b, h, w, x, ky, tmp);
+  const tmp = new Float64Array(Math.max(w, h) + Math.max(kx.length, ky.length));
+  const mx = mirrorTable(w, kx.length >> 1);
+  const my = mirrorTable(h, ky.length >> 1);
+  for (let y = 0; y < h; y++) conv1(c, a, w, 1, y * w, kx, tmp, mx);
+  for (let x = 0; x < w; x++) conv1(a, b, h, w, x, ky, tmp, my);
   return b;
 }
 // a 1D Gaussian of σ (truncated at 4 σ, as scipy), normalised; order 1 / 2: its derivatives
@@ -140,12 +246,47 @@ export function gaussKernel(sigma: number, order: 0 | 1 | 2 = 0, truncate = 4): 
   return order === 1 ? out.reverse() : out;
 }
 export const gaussian = (c: Float32Array, w: number, h: number, sigma: number) => separable(c, w, h, gaussKernel(sigma), gaussKernel(sigma));
+// a wide Gaussian (a background: σ of tens of pixels) on the image shrunk by f (block means), then brought back between
+// the blocks' centres — the same smooth surface to well under 1 % of the range, without a kernel of hundreds of taps
+export function gaussianWide(c: Float32Array, w: number, h: number, sigma: number): Float32Array {
+  const f = Math.floor(sigma / 4);
+  if (f < 2 || w < 4 * f || h < 4 * f) return gaussian(c, w, h, sigma);
+  const [sw, sh] = [Math.ceil(w / f), Math.ceil(h / f)];
+  const small = new Float32Array(sw * sh);
+  const cnt = new Float32Array(sw * sh);
+  for (let y = 0; y < h; y++) {
+    const ro = Math.floor(y / f) * sw;
+    for (let x = 0; x < w; x++) {
+      const k = ro + Math.floor(x / f);
+      small[k] += c[y * w + x];
+      cnt[k]++;
+    }
+  }
+  for (let k = 0; k < small.length; k++) small[k] /= cnt[k];
+  const b = gaussian(small, sw, sh, Math.sqrt(Math.max(0.25, sigma * sigma - (f * f) / 12)) / f);
+  const out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const fy = Math.min(sh - 1, Math.max(0, (y - (f - 1) / 2) / f));
+    const y0 = Math.floor(fy);
+    const y1 = Math.min(sh - 1, y0 + 1);
+    const ty = fy - y0;
+    for (let x = 0; x < w; x++) {
+      const fx = Math.min(sw - 1, Math.max(0, (x - (f - 1) / 2) / f));
+      const x0 = Math.floor(fx);
+      const x1 = Math.min(sw - 1, x0 + 1);
+      const tx = fx - x0;
+      out[y * w + x] = (b[y0 * sw + x0] * (1 - tx) + b[y0 * sw + x1] * tx) * (1 - ty) + (b[y1 * sw + x0] * (1 - tx) + b[y1 * sw + x1] * tx) * ty;
+    }
+  }
+  return out;
+}
 
 // the histogram of a channel in `bins` bins over [lo, hi] (values outside go to the end bins); NaN left out
 export function histogram(c: Float32Array, lo: number, hi: number, bins = 256): Float64Array {
   const hst = new Float64Array(bins);
   const k = bins / (hi - lo || 1);
-  for (const v of c) {
+  for (let i = 0; i < c.length; i++) {
+    const v = c[i];
     if (!Number.isFinite(v)) continue;
     const b = Math.floor((v - lo) * k);
     hst[b < 0 ? 0 : b >= bins ? bins - 1 : b]++;
@@ -153,11 +294,45 @@ export function histogram(c: Float32Array, lo: number, hi: number, bins = 256): 
   return hst;
 }
 // the value under which a fraction q of the samples lie (0 ≤ q ≤ 1), from a sorted copy
+// (the two order statistics around it by selection, not a sort of everything)
 export function quantile(c: Float32Array, q: number): number {
-  const s = Float32Array.from(c.filter(Number.isFinite)).sort();
-  if (!s.length) return NaN;
+  const all = new Float32Array(c.length);
+  let n = 0;
+  for (let i = 0; i < c.length; i++) if (c[i] - c[i] === 0) all[n++] = c[i];
+  const s = all.subarray(0, n);
+  if (!n) return NaN;
   const p = Math.min(s.length - 1, Math.max(0, q * (s.length - 1)));
   const a = Math.floor(p);
-  return s[a] + (s[Math.min(s.length - 1, a + 1)] - s[a]) * (p - a);
+  const va = kth(s, a);
+  if (a + 1 >= s.length || p === a) return va;
+  // (after the selection, the values above a are all ≥ va: the next one is their least)
+  let vb = Infinity;
+  for (let i = a + 1; i < s.length; i++) if (s[i] < vb) vb = s[i];
+  return va + (vb - va) * (p - a);
+}
+// the k-th smallest of a (reordered: smaller before it, larger after)
+function kth(a: Float32Array, k: number): number {
+  let lo = 0;
+  let hi = a.length - 1;
+  while (lo < hi) {
+    const pv = a[(lo + hi) >> 1];
+    let i = lo;
+    let j = hi;
+    while (i <= j) {
+      while (a[i] < pv) i++;
+      while (a[j] > pv) j--;
+      if (i <= j) {
+        const t = a[i];
+        a[i] = a[j];
+        a[j] = t;
+        i++;
+        j--;
+      }
+    }
+    if (k <= j) hi = j;
+    else if (k >= i) lo = i;
+    else return a[k];
+  }
+  return a[k];
 }
 export const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);

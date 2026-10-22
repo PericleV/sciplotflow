@@ -1,13 +1,14 @@
 // Image analysis: an image opened in the node (PNG, JPEG, TIFF of 8 or 16 bit or float; pasted or dropped too), edited
 // in its editor by steps (tone, colour, noise, background, edges, texture, morphology, threshold), calibrated; out: the
-// result as a matrix and a figure (the image on a page, a scale bar).
+// result as a matrix, a figure (the image on a page, its selections, a scale bar) and the measurements of the selections
+// drawn in the editor (a workbook).
 import { useRef, useState, type DragEvent } from 'react';
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import { DRAWING_DEFAULTS } from '../defaults.ts';
 import type { AppNode, ImageAnalysisData, ImageNode, PageData } from '../types.ts';
 import { imageFigure, unitText, type ImageFigure } from '../image/node.ts';
-import { readImagePixels, newPixelsId } from '../image/load.ts';
+import { readImagePixelsAsync, newPixelsId } from '../image/load.ts';
 import { IMAGE_ACCEPT, isTiff } from '../imageFile.ts';
 import { COLOR_MAPS } from '../figure/colors.ts';
 import type { Lut } from '../image/render.ts';
@@ -47,7 +48,7 @@ export function ImageNodeView({ id, data }: NodeProps<ImageNode>) {
     if (!fl.type.startsWith('image/') && !(await isTiff(fl))) return;
     setBusy(`Reading ${name}…`);
     try {
-      const pixels = await readImagePixels(fl);
+      const pixels = await readImagePixelsAsync(fl);
       if (pixels.data.length > LARGE && !(await ask(`${name}: ${pixels.w} × ${pixels.h} px, ${(pixels.data.length / 1e6).toFixed(0)} MB in the project. Keep it at its full size?`, { ok: 'Keep it' }))) {
         setBusy('');
         return;
@@ -124,6 +125,7 @@ export function ImageNodeView({ id, data }: NodeProps<ImageNode>) {
         <div className="hint">
           {nSteps} step{nSteps === 1 ? '' : 's'}
           {errs ? ` (${errs} cannot run)` : ''} · {calText}
+          {info?.summary ? ` · ${info.summary}` : ''}
         </div>
       )}
       {fig && (
@@ -133,7 +135,8 @@ export function ImageNodeView({ id, data }: NodeProps<ImageNode>) {
       )}
       <Messages result={r} />
       <OutPort label="matrix" port="matrix" id="matrix" title="The result as a matrix: its values, X and Y of the columns and rows in the calibrated unit (gray; RGB: its luminance)" />
-      <OutPort label="figure" port="figure" id="figure" title="The image on a page of its proportions, with a scale bar: to a Merge, a Figure Drawing or a Plot's insets" />
+      <OutPort label="figure" port="figure" id="figure" title="The image on a page of its proportions, with its selections and a scale bar: to a Merge, a Figure Drawing or a Plot's insets" />
+      <OutPort label="workbook" port="workbook" id="workbook" title="The measurements of the selections (Selections, Spots, Profiles, Points, Summary — the sheets used) and the mask's coverage of the image" />
       <NodeOptions>
         <div className="row wrap">
           {openButton}
@@ -186,6 +189,17 @@ export function ImageNodeView({ id, data }: NodeProps<ImageNode>) {
                   </span>
                 </Field>
               )}
+              <Field label="Selections" title="The selections drawn on the figure: none, their outlines, or their outlines with their names">
+                <Select<ImageFigure['rois']>
+                  value={f.rois}
+                  options={[
+                    ['none', 'none'],
+                    ['outlines', 'outlines'],
+                    ['labels', 'outlines + names'],
+                  ]}
+                  onChange={(rois) => setFig({ rois })}
+                />
+              </Field>
               <Field label="Range" title="The values shown from black to white (empty: the image's)">
                 <span className="row">
                   <NumInput className="short" value={f.lo} placeholder="auto" onChange={(lo) => setFig({ lo })} />

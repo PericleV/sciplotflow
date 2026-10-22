@@ -8,7 +8,7 @@ import type { MathInput, NodeResult } from '../engine/evaluate.ts';
 import { isCommentLine, columnLetter, textLines, type CsvOptions, type Delimiter, type Decimal } from '../engine/csv.ts';
 import { cellText, fmtNum, ROLE_LABELS, titleOf, type Column, type ColumnRole } from '../engine/table.ts';
 import { ROLE_OPTIONS, type ExtractNames, type ExtractRule } from '../engine/extract.ts';
-import { formulaShown, formulaStored, lineLetter, type ColumnItem, type ColumnLine, type ComputedColumn, type ComputedKind } from '../engine/columns.ts';
+import { COLUMNS_SPEC_KEYS, formulaShown, formulaStored, lineLetter, type ColumnsSpec, type ColumnItem, type ColumnLine, type ComputedColumn, type ComputedKind } from '../engine/columns.ts';
 import { GEN_SPEC_DEFAULTS, type GenSpec } from '../engine/gencol.ts';
 import { hasEdits, type SheetEdits } from '../engine/sheet.ts';
 import { ACCEPT, ENCODINGS, pickDataFiles, readFiles } from '../readFiles.ts';
@@ -889,10 +889,42 @@ function RenameSeveral({ data, set, lines, head, refOptions }: { data: ColumnsDa
 // The columns of a dataset: a row each (⠿ dragged to move it, kept or not, its name, its designation; a column added: ƒ),
 // every name at once (replace, before, after; from a row of the data or from a column), the columns added (a formula of
 // the others, a value, a copy) with their place; ports A, B … for columns from elsewhere.
-export function ColumnsNodeView({ id, data }: NodeProps<ColumnsNode>) {
+export function ColumnsNodeView({ id, data: nodeData }: NodeProps<ColumnsNode>) {
   const { updateNodeData } = useReactFlow<AppNode>();
-  const set = (patch: Partial<ColumnsData>) => updateNodeData(id, patch);
   const r = useNodeResult(id);
+  // every sheet of a workbook: the same settings for all, or each sheet its own (those of the sheet edited shown and
+  // changed here; a sheet without its own: the common ones, until it is changed)
+  const { sheet: _sheet, perSheet, sheets: ownSheets, editSheet, ...common } = nodeData;
+  const every = nodeData.sheet === '*';
+  const ownMode = every && perSheet === 'own';
+  const sheetNames = r?.view.sheets ?? [];
+  const editing = editSheet && sheetNames.includes(editSheet) ? editSheet : sheetNames[0];
+  const data: ColumnsSpec = ownMode && editing ? (ownSheets?.[editing] ?? common) : nodeData;
+  const set = (patch: Partial<ColumnsSpec>) => (ownMode && editing ? updateNodeData(id, { sheets: { ...ownSheets, [editing]: { ...data, ...patch } } }) : updateNodeData(id, patch));
+  // the settings of the sheet edited for all of them (the common ones; no sheet with its own)
+  const copyToAll = () => updateNodeData(id, { ...Object.fromEntries(COLUMNS_SPEC_KEYS.map((k) => [k, data[k]])), sheets: undefined });
+  const sheetBar = every && sheetNames.length > 0 && (
+    <div className="row wrap">
+      <Field label="Columns" title="Every sheet with the same settings (columns matched by their names), or each sheet with its own">
+        <Select<'same' | 'own'>
+          value={perSheet ?? 'same'}
+          options={[
+            ['same', 'same for every sheet'],
+            ['own', 'own for each sheet'],
+          ]}
+          onChange={(v) => updateNodeData(id, { perSheet: v === 'own' ? 'own' : undefined })}
+        />
+      </Field>
+      <Field label={ownMode ? 'Editing' : 'Shown'} title={ownMode ? 'The sheet whose columns are set here (own: its own settings; common: the common ones, until changed)' : 'The sheet whose columns are listed here (the settings: of every sheet)'}>
+        <Select<string> value={editing ?? ''} options={sheetNames.map((nm): [string, string] => [nm, ownMode ? `${nm} (${ownSheets?.[nm] ? 'own' : 'common'})` : nm])} onChange={(v) => updateNodeData(id, { editSheet: v })} />
+      </Field>
+      {ownMode && (
+        <button className="nodrag" title="The settings of this sheet for every sheet (the others' own settings dropped)" onClick={copyToAll}>
+          Copy to all
+        </button>
+      )}
+    </div>
+  );
   const lines = r?.view.columnLines ?? [];
   const items = data.items ?? [];
   const computed = data.computed ?? [];
@@ -971,6 +1003,7 @@ export function ColumnsNodeView({ id, data }: NodeProps<ColumnsNode>) {
         );
       })}
       <NodeOptions>
+      {sheetBar}
       {lines.length > 0 && (
         <div className={`columns-list${picking ? ' picking' : ''}`}>
           {lines.map((L, k) => (
@@ -1091,7 +1124,7 @@ export function ColumnsNodeView({ id, data }: NodeProps<ColumnsNode>) {
       </NodeOptions>
       <ResultSummary result={r} />
       <Messages result={r} />
-      <OutPort label="dataset" port="dataset" />
+      <OutPort label={every ? 'workbook' : 'dataset'} port={every ? 'workbook' : 'dataset'} title={every ? 'Every sheet with its columns set: a workbook' : undefined} />
       <OutPort label="names (a column)" port="column" id="names" title="The names of the columns kept, as a text column (its values: the blocks' values of columns made by Split into columns)" />
     </div>
   );

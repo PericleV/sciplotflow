@@ -1,25 +1,25 @@
 // Tone and colour steps of the Image analysis node: values mapped one by one (brightness, contrast, min / max, levels,
 // curves, log, invert), by the histogram (auto-contrast, equalisation, CLAHE), and the colour of RGB images (a channel,
 // HSV, L*a*b*, gray with weights, saturation, hue, balance). Pure.
-import { clamp, histogram, quantile, type Raster } from './raster.ts';
+import { clamp, histogram, map1, quantile, type Raster } from './raster.ts';
 
 const span = (r: Raster) => r.hi - r.lo || 1;
 
-export const brightness = (r: Raster, amount: number) => r.ch.map((c) => Float32Array.from(c, (v) => v + amount * span(r)));
+export const brightness = (r: Raster, amount: number) => r.ch.map((c) => map1(c, (v) => v + amount * span(r)));
 export const contrast = (r: Raster, factor: number) => {
   const mid = (r.lo + r.hi) / 2;
-  return r.ch.map((c) => Float32Array.from(c, (v) => mid + (v - mid) * factor));
+  return r.ch.map((c) => map1(c, (v) => mid + (v - mid) * factor));
 };
 // [min, max] stretched over the whole range, the rest clipped
 export function minMax(r: Raster, min: number, max: number): Float32Array[] {
   const k = span(r) / (max - min || 1);
-  return r.ch.map((c) => Float32Array.from(c, (v) => clamp(r.lo + (v - min) * k, r.lo, r.hi)));
+  return r.ch.map((c) => map1(c, (v) => clamp(r.lo + (v - min) * k, r.lo, r.hi)));
 }
 // Levels: input black and white, gamma (> 1 lightens the middle), output black and white (in the image's values)
 export function levels(r: Raster, inB: number, inW: number, gamma: number, outB: number, outW: number): Float32Array[] {
   const g = 1 / (gamma > 0 ? gamma : 1);
   return r.ch.map((c) =>
-    Float32Array.from(c, (v) => {
+    map1(c, (v) => {
       const t = clamp((v - inB) / (inW - inB || 1), 0, 1);
       return outB + Math.pow(t, g) * (outW - outB);
     }),
@@ -67,7 +67,7 @@ export function curves(r: Raster, all: [number, number][], per?: [number, number
   const f = monotoneCurve(all);
   return r.ch.map((c, k) => {
     const g = per?.[k]?.length ? monotoneCurve(per[k]) : null;
-    return Float32Array.from(c, (v) => {
+    return map1(c, (v) => {
       let t = clamp(f((v - r.lo) / span(r)), 0, 1);
       if (g) t = clamp(g(t), 0, 1);
       return r.lo + t * span(r);
@@ -88,13 +88,13 @@ export function logTone(r: Raster, k: number, inverse = false): Float32Array[] {
   const kk = k > 0 ? k : 10;
   const L = Math.log1p(kk);
   return r.ch.map((c) =>
-    Float32Array.from(c, (v) => {
+    map1(c, (v) => {
       const t = clamp((v - r.lo) / span(r), 0, 1);
       return r.lo + span(r) * (inverse ? Math.expm1(t * L) / kk : Math.log1p(kk * t) / L);
     }),
   );
 }
-export const invert = (r: Raster) => r.ch.map((c) => Float32Array.from(c, (v) => r.lo + r.hi - v));
+export const invert = (r: Raster) => r.ch.map((c) => map1(c, (v) => r.lo + r.hi - v));
 
 // Equalisation (as scikit-image's equalize_hist): every value mapped by the cumulative histogram (256 bins over the
 // data; whole numbers over < 256 levels: one bin per value), read between the bin centres
@@ -103,7 +103,8 @@ export function equalize(r: Raster): Float32Array[] {
     let lo = Infinity;
     let hi = -Infinity;
     let integer = true;
-    for (const v of c) {
+    for (let i_ = 0; i_ < c.length; i_++) {
+      const v = c[i_];
       if (v < lo) lo = v;
       if (v > hi) hi = v;
       if (integer && v !== Math.round(v)) integer = false;
@@ -111,7 +112,10 @@ export function equalize(r: Raster): Float32Array[] {
     const bins = integer && hi - lo < 256 ? hi - lo + 1 : 256;
     const hst = integer && hi - lo < 256 ? (() => {
       const h = new Float64Array(bins);
-      for (const v of c) h[v - lo]++;
+      for (let i_ = 0; i_ < c.length; i_++) {
+        const v = c[i_];
+        h[v - lo]++;
+      }
       return h;
     })() : histogram(c, lo, hi, bins);
     const centers = Float64Array.from({ length: bins }, (_, k) => (integer && hi - lo < 256 ? lo + k : lo + ((k + 0.5) * (hi - lo)) / bins));
@@ -120,7 +124,7 @@ export function equalize(r: Raster): Float32Array[] {
     for (let k = 0; k < bins; k++) cdf[k] = s += hst[k];
     for (let k = 0; k < bins; k++) cdf[k] /= s;
     // numpy.interp: below the first centre the first value, above the last the last
-    return Float32Array.from(c, (v) => {
+    return map1(c, (v) => {
       let t: number;
       if (v <= centers[0]) t = cdf[0];
       else if (v >= centers[bins - 1]) t = cdf[bins - 1];
@@ -283,7 +287,7 @@ export function weightedGray(r: Raster, wr: number, wg: number, wb: number): Ras
   if (r.ch.length === 1) return r;
   const s = wr + wg + wb || 1;
   const [R, G, B] = r.ch;
-  return { ...r, kind: 'gray', ch: [Float32Array.from(R, (v, i) => (wr * v + wg * G[i] + wb * B[i]) / s)] };
+  return { ...r, kind: 'gray', ch: [map1(R, (v, i) => (wr * v + wg * G[i] + wb * B[i]) / s)] };
 }
 // saturation × factor and hue + degrees, through HSV
 export function hueSaturation(r: Raster, satFactor: number, hueShift: number): Float32Array[] {
@@ -300,4 +304,4 @@ export function hueSaturation(r: Raster, satFactor: number, hueShift: number): F
   }
   return out;
 }
-export const balance = (r: Raster, gains: [number, number, number]) => r.ch.map((c, k) => Float32Array.from(c, (v) => clamp(r.lo + (v - r.lo) * (gains[k] ?? 1), r.lo, r.hi)));
+export const balance = (r: Raster, gains: [number, number, number]) => r.ch.map((c, k) => map1(c, (v) => clamp(r.lo + (v - r.lo) * (gains[k] ?? 1), r.lo, r.hi)));

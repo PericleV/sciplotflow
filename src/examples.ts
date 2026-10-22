@@ -2,7 +2,7 @@
 import { peakRunKey } from './engine/peaks.ts';
 import type { Edge } from '@xyflow/react';
 import { REGION_COLORS } from './nodes/regionColors.ts';
-import { DRAWING_DEFAULTS, PYTHON_DEFAULTS, REPORT_DEFAULTS, COLUMNS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, DATAMANIP_DEFAULTS, AVERAGE_DEFAULTS, COMBINE_DEFAULTS, TRANSLATE_DEFAULTS, CURVEMATH_DEFAULTS, DIGITIZER_DEFAULTS, PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
+import { DRAWING_DEFAULTS, PYTHON_DEFAULTS, REPORT_DEFAULTS, COLUMNS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, DATAMANIP_DEFAULTS, AVERAGE_DEFAULTS, COMBINE_DEFAULTS, TRANSLATE_DEFAULTS, CURVEMATH_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, IMAGE_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
 import { INSET_DEFAULTS, AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, COLORBAR_DEFAULTS, CURVE_STYLE_DEFAULTS, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, SIDE_DEFAULTS, TEXT_SPEC_DEFAULTS, type AxesStyle, type CurveStyle, type SideStyle } from './figure/spec.ts';
 import { PROJECT_VERSION, type Project } from './project.ts';
 import type { AnnotationItem, AppNode, ImportSheet, NodeType, Plot1DData, PlotLegend, PlotPage } from './types.ts';
@@ -11,6 +11,8 @@ import { SC_D, SC_LAMBDA, SC_R } from './data/strongCoupling.ts';
 import { JOHNSON_AU } from './data/johnsonGold.ts';
 import { makeGroup } from './engine/subgraph.ts';
 import { FRAME_COLORS } from './nodeColors.ts';
+import { packPixels } from './image/raster.ts';
+import type { Roi } from './image/roi.ts';
 
 type Builder = { nodes: AppNode[]; edges: Edge[] };
 const builder = (): Builder => ({ nodes: [], edges: [] });
@@ -1566,6 +1568,47 @@ const erfcEx = (x: number) => {
   return x >= 0 ? y : 2 - y;
 };
 
+// ---- Equivalent circuit (EIS): a cell R₀ + R_ct ∥ CPE + W measured from 100 kHz to 10 mHz (0.4 % noise), its
+// columns named as a potentiostat writes them, two points spoiled (left out in the node) ----
+export const EIS_TRUTH = { R1: 15, R2: 220, 'Q1 Y0': 3e-5, 'Q1 n': 0.87, 'W1 Y0': 4e-3 };
+export const EIS_SPOILED = [10, 40];
+function eisRows(): string[] {
+  const r = rng(29);
+  const rows = ["Freq / Hz;Z' / ohm;-Z'' / ohm;Time / s"];
+  const T = EIS_TRUTH;
+  for (let k = 0; k <= 70; k++) {
+    const f = 10 ** (5 - (7 * k) / 70);
+    const w = 2 * Math.PI * f;
+    // Z = R1 + 1/(1/R2 + Y0 (jω)^n) + 1/(Yw √(jω))
+    const [qn, qa] = [T['Q1 Y0'] * w ** T['Q1 n'], (T['Q1 n'] * Math.PI) / 2];
+    const [yr, yi] = [1 / T.R2 + qn * Math.cos(qa), qn * Math.sin(qa)];
+    const yd = yr * yr + yi * yi;
+    const wm = 1 / (T['W1 Y0'] * Math.sqrt(w));
+    let re = T.R1 + yr / yd + wm * Math.SQRT1_2;
+    let im = -yi / yd - wm * Math.SQRT1_2;
+    re *= 1 + 0.004 * gauss(r);
+    im *= 1 + 0.004 * gauss(r);
+    if (k === EIS_SPOILED[0]) [re, im] = [re * 1.4, im * 0.5];
+    if (k === EIS_SPOILED[1]) re *= 0.7;
+    rows.push(`${f.toPrecision(6)};${re.toFixed(4)};${(-im).toFixed(4)};${(k * 3).toFixed(0)}`);
+  }
+  return rows;
+}
+function eisExample(): Project {
+  const b = builder();
+  const imp = add(b, 'import', 'eis-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'EIS cell', fileName: 'cell_eis.txt', text: eisRows().join('\n'), textId: 'eis-cell' });
+  const fit = add(b, 'eis', 'eis-node', 640, 0, { ...EIS_DEFAULTS, circuit: 'R(RQ)W', excluded: EIS_SPOILED });
+  link(b, imp, fit, 'in');
+  const cv = add(b, 'canvas', 'eis-canvas', 1300, 0, { ...CANVAS_DEFAULTS, width: 180, height: 75, name: 'eis_nyquist_bode', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 2, hgap: 4 } });
+  link(b, fit, cv, 'figures', 'figure');
+  link(b, fit, cv, 'figures', 'bode');
+  add(b, 'note', 'eis-note', -560, 0, {
+    ...NOTE_DEFAULTS,
+    text: 'An impedance spectrum (simulated: R₀ = 15 Ω, R_ct = 220 Ω, a CPE Y0 = 3·10⁻⁵ S·sⁿ, n = 0.87, a Warburg Y0 = 4·10⁻³ S·s^½; 0.4 % noise) with its columns named as a potentiostat writes them — Freq / Hz, Z\' / ohm, -Z\'\' / ohm and a Time column.\n\nEquivalent circuit: the columns chosen by their role (guessed from the names, shown in Columns), the circuit R(RQ)W (Boukamp’s code, its schematic drawn), the starts guessed from the data, the fit on Z′ and Z″ at once; two spoiled points (at 10 kHz and 10 Hz) left out with a click — grey crosses on the graph.',
+  });
+  return project(b, 'Equivalent circuit (EIS): R(RQ)W fitted, two points left out');
+}
+
 // the impedance of a cell: R0 in series with R1 ∥ a constant-phase element, measured from 0.1 Hz to 100 kHz
 function impedanceExample(): Project {
   const b = builder();
@@ -1906,6 +1949,8 @@ function digiImage(): string {
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
+
+
 function digitizerExample(): Project {
   const b = builder();
   // calibrated on the axes (two ticks on each), the curve's points placed as clicks would (on whole pixels)
@@ -1954,6 +1999,386 @@ function digitizerExample(): Project {
   link(b, x, p, 'x-1');
   link(b, y, p, 'y-1');
   return project(b, 'Digitizer: values read off the image of a graph');
+}
+
+function phaseDigiImage(): string {
+  const u = (x: number) => 70 + 5 * x;
+  const v = (t: number) => 340 - 0.62 * (t - 1000);
+  const liq = Array.from({ length: 21 }, (_, k) => {
+    const x = 5 * k;
+    const t = 1085 + 3.7 * x + 0.0155 * x * (100 - x);
+    return `${k ? 'L' : 'M'}${u(x).toFixed(1)},${v(t).toFixed(1)}`;
+  }).join('');
+  const sol = Array.from({ length: 21 }, (_, k) => {
+    const x = 5 * k;
+    const t = 1085 + 3.7 * x - 0.0185 * x * (100 - x);
+    return `${k ? 'L' : 'M'}${u(x).toFixed(1)},${v(t).toFixed(1)}`;
+  }).join('');
+  const ticksX = Array.from({ length: 6 }, (_, k) => `<line x1="${u(20 * k)}" y1="340" x2="${u(20 * k)}" y2="346" stroke="#000"/><text x="${u(20 * k)}" y="362" text-anchor="middle">${20 * k}</text>`).join('');
+  const ticksY = Array.from({ length: 6 }, (_, k) => {
+    const t = 1000 + 100 * k;
+    return `<line x1="64" y1="${v(t)}" x2="70" y2="${v(t)}" stroke="#000"/><text x="58" y="${v(t) + 4}" text-anchor="end">${t}</text>`;
+  }).join('');
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400" font-family="Arial" font-size="13">` +
+    `<rect width="600" height="400" fill="#ffffff"/>` +
+    `<rect x="70" y="30" width="500" height="310" fill="none" stroke="#000" stroke-width="1.2"/>` +
+    ticksX +
+    ticksY +
+    `<text x="320" y="390" text-anchor="middle">Composition (wt% Ni)</text>` +
+    `<text x="18" y="185" text-anchor="middle" transform="rotate(-90 18 185)">Temperature (°C)</text>` +
+    `<path d="${liq}" fill="none" stroke="#c0392b" stroke-width="2"/>` +
+    `<path d="${sol}" fill="none" stroke="#1f5fbf" stroke-width="2"/>` +
+    `</svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+function phaseDigitizerExample(): Project {
+  const b = builder();
+  // the image's pixels of a composition (wt% Ni) and a temperature (°C); the lines clicked every 20 wt%
+  const u = (x: number) => 70 + 5 * x;
+  const v = (t: number) => 340 - 0.62 * (t - 1000);
+  const at = (x: number, t: number) => ({ u: +u(x).toFixed(1), v: +v(t).toFixed(1) });
+  const xs = [0, 20, 40, 60, 80, 100];
+  const pd = add(b, 'phasedigitizer', 'pd-cuni', 0, 0, {
+    ...PHASE_DIGITIZER_DEFAULTS,
+    image: phaseDigiImage(),
+    fileName: 'Cu_Ni_phase_diagram.svg',
+    w: 600,
+    h: 400,
+    axes: [
+      { u: 70, v: 340, val: 0 },
+      { u: 570, v: 340, val: 100 },
+      { u: 70, v: 340, val: 1000 },
+      { u: 70, v: 30, val: 1500 },
+    ],
+    compA: 'Cu',
+    compB: 'Ni',
+    xUnit: 'wt%',
+    yName: 'Temperature',
+    yUnit: '°C',
+    splines: [
+      { id: 'sp-liq', name: 'Liquidus', color: '#d62728', points: xs.map((x) => at(x, 1085 + 3.7 * x + 0.0155 * x * (100 - x))) },
+      { id: 'sp-sol', name: 'Solidus', color: '#1f77b4', points: xs.map((x) => at(x, 1085 + 3.7 * x - 0.0185 * x * (100 - x))) },
+    ],
+    activeSpline: 0,
+    regions: [
+      { id: 'reg1', name: 'L', color: REGION_COLORS[1], opacity: 0.25, labelPt: at(25, 1400) },
+      { id: 'reg2', name: 'α + L', color: REGION_COLORS[2], opacity: 0.3, labelPt: at(66, 1325) },
+      { id: 'reg3', name: 'α', color: REGION_COLORS[0], opacity: 0.25, labelPt: at(70, 1130) },
+    ],
+    leverPoints: [{ id: 'lp-1', name: 'P1', pt: at(45, 1250) }],
+  });
+  const wb = add(b, 'book', 'pd-book', 900, 0, { ...WORKBOOK_DEFAULTS, name: 'Cu-Ni lever rule', sheets: [], into: ['Cu-Ni lever rule'] });
+  link(b, pd, wb, 'in-0', 'workbook');
+  const cv = add(b, 'canvas', 'pd-canvas', 900, 420, { ...CANVAS_DEFAULTS, width: 120, height: 90, name: 'cu_ni_phase_diagram', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 1 } });
+  link(b, pd, cv, 'figures', 'figure');
+  return project(b, 'Cu-Ni phase diagram: Lever rule & dual components (wt.% Ni and wt.% Cu)');
+}
+
+// ---- Image analysis: the spots of a two-colour microarray (the image drawn here, so the answers can be checked): 3 rows
+// (replicates A, B, C) of 6 spots, a gene each, its red / green ratio 2^(k − 2.5); the background a little uneven ----
+const ARRAY = { w: 260, h: 170, cols: 6, rows: 3, x0: 40, dx: 36, y0: 40, dy: 45, r: 11 };
+function arrayImage() {
+  const { w, h } = ARRAY;
+  const r = rng(11);
+  const px = new Uint8Array(w * h * 3);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      // (a background brighter to the right, its noise)
+      let R = 22 + (12 * x) / w + (r() - 0.5) * 8;
+      let G = 20 + (10 * x) / w + (r() - 0.5) * 8;
+      for (let j = 0; j < ARRAY.rows; j++)
+        for (let k = 0; k < ARRAY.cols; k++) {
+          const d = Math.hypot(x + 0.5 - (ARRAY.x0 + k * ARRAY.dx), y + 0.5 - (ARRAY.y0 + j * ARRAY.dy));
+          if (d > ARRAY.r) continue;
+          const ratio = Math.pow(2, k - 2.5);
+          const f = 1 - (d / ARRAY.r) ** 4 * 0.3;
+          R += 60 * f * Math.sqrt(ratio) * (0.9 + 0.1 * j);
+          G += (60 * f) / Math.sqrt(ratio) * (0.9 + 0.1 * j);
+        }
+      const i = (y * w + x) * 3;
+      px[i] = Math.min(255, Math.round(R));
+      px[i + 1] = Math.min(255, Math.round(G));
+      px[i + 2] = Math.round(8 + r() * 4);
+    }
+  return packPixels(w, h, 3, 8, px);
+}
+function microarrayExample(): Project {
+  const b = builder();
+  const rois: Roi[] = [];
+  for (let j = 0; j < ARRAY.rows; j++)
+    for (let k = 0; k < ARRAY.cols; k++) {
+      const g = 'ABC'[j];
+      rois.push({ id: `sp-${g}${k + 1}`, name: `${g}${k + 1}`, kind: 'ellipse', box: [ARRAY.x0 + k * ARRAY.dx, ARRAY.y0 + j * ARRAY.dy, 2 * ARRAY.r + 2, 2 * ARRAY.r + 2], group: g, bg: { mode: 'ring', gap: 2, width: 4 } });
+    }
+  // a line through row A (3 px wide): the red and green profiles across its spots
+  rois.push({ id: 'pr-A', name: 'row A', kind: 'line', pts: [[10, ARRAY.y0], [ARRAY.w - 10, ARRAY.y0]], width: 3, color: '#ffffff' });
+  const im = add(b, 'image', 'ma-image', 0, 0, {
+    ...IMAGE_DEFAULTS,
+    name: 'array_scan.tif',
+    pixels: arrayImage(),
+    pixelsId: 'example-microarray',
+    rois,
+    measure: { channels: 'each', ratio: [0, 1], keys: ['area', 'mean', 'median', 'sd', 'intden'] },
+    figure: { width: 100, show: 'original', rois: 'labels' },
+  });
+  const wb = add(b, 'book', 'ma-book', 640, 0, { ...WORKBOOK_DEFAULTS, name: 'spots', sheets: [], into: ['spots'] });
+  link(b, im, wb, 'in-0', 'workbook');
+  const pr = add(
+    b,
+    'plot1d',
+    'ma-profile',
+    640,
+    700,
+    plot(
+      {
+        label: 'red',
+        style: lineK(0, { color: '#d62728' }),
+        cols: { x: 'row A distance (px)', y: 'row A R' },
+        sheet: 'Profiles',
+        rows: [{ label: 'green', style: lineK(0, { color: '#2ca02c' }), cols: { x: 'row A distance (px)', y: 'row A G' }, sheet: 'Profiles' }],
+      },
+      { axes: { sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Distance along row A (px)' }), left: side({ title: 'Value' }) } }, legend: { x: 96, y: 4, anchor: 'tr' }, page: { name: 'row_A_profile' } },
+    ),
+  );
+  link(b, im, pr, 'dataset', 'workbook');
+  add(b, 'note', 'ma-note', -560, 0, {
+    ...NOTE_DEFAULTS,
+    text: 'A two-colour microarray scan (red: the sample, green: the reference), 3 replicates (A, B, C) of 6 genes. Every spot is an ellipse stamped on it, its background a ring around it (2 px away, 4 px wide, the other spots left out).\n\nMeasured on each channel: the net signal F − B (the background median taken off), the SNR, and the ratio R / G with its log2 — about −2.5 … +2.5 from gene 1 to gene 6, the same in the three replicates. The Summary sheet gives each replicate and all of them; the Plot, the red and green profiles along row A.',
+  });
+  return project(b, 'Microarray spots: signal over a ring of background, red / green ratio');
+}
+
+// ---- Phase digitizer: problems as set in a materials course (the images drawn from simplified curves, so the answers
+// can be checked) ----
+type Curve2D = { pts: [number, number][]; color: string; dash?: boolean };
+// the image of a diagram drawn from its curves in the data (an SVG: the frame, ticks, titles, the curves, the names of
+// the regions), and the pixel of a value (where the clicks go)
+function diagramImage(o: { w: number; h: number; frame: [number, number, number, number]; x: [number, number]; y: [number, number]; xt: number[]; yt: number[]; xTitle: string; yTitle: string; curves: Curve2D[]; labels: [string, number, number][] }) {
+  const [L, T, W, H] = o.frame;
+  const u = (x: number) => L + ((x - o.x[0]) / (o.x[1] - o.x[0])) * W;
+  const v = (y: number) => T + H - ((y - o.y[0]) / (o.y[1] - o.y[0])) * H;
+  const at = (x: number, y: number) => ({ u: +u(x).toFixed(2), v: +v(y).toFixed(2) });
+  const path = (c: Curve2D) => `<path d="${c.pts.map(([x, y], k) => `${k ? 'L' : 'M'}${u(x).toFixed(1)},${v(y).toFixed(1)}`).join('')}" fill="none" stroke="${c.color}" stroke-width="2"${c.dash ? ' stroke-dasharray="6 4"' : ''}/>`;
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${o.w}" height="${o.h}" viewBox="0 0 ${o.w} ${o.h}" font-family="Arial" font-size="13">` +
+    `<rect width="${o.w}" height="${o.h}" fill="#ffffff"/>` +
+    `<rect x="${L}" y="${T}" width="${W}" height="${H}" fill="none" stroke="#000" stroke-width="1.2"/>` +
+    o.xt.map((x) => `<line x1="${u(x)}" y1="${T + H}" x2="${u(x)}" y2="${T + H + 6}" stroke="#000"/><text x="${u(x)}" y="${T + H + 21}" text-anchor="middle">${x}</text>`).join('') +
+    o.yt.map((y) => `<line x1="${L - 6}" y1="${v(y)}" x2="${L}" y2="${v(y)}" stroke="#000"/><text x="${L - 9}" y="${v(y) + 4}" text-anchor="end">${y}</text>`).join('') +
+    `<text x="${L + W / 2}" y="${o.h - 8}" text-anchor="middle">${o.xTitle}</text>` +
+    `<text x="18" y="${T + H / 2}" text-anchor="middle" transform="rotate(-90 18 ${T + H / 2})">${o.yTitle}</text>` +
+    o.curves.map(path).join('') +
+    o.labels.map(([s, x, y]) => `<text x="${u(x)}" y="${v(y) + 4}" text-anchor="middle" font-size="12" fill="#333">${s}</text>`).join('') +
+    `</svg>`;
+  return { image: `data:image/svg+xml,${encodeURIComponent(svg)}`, at, axes: [{ ...at(o.x[0], o.y[0]), val: o.x[0] }, { ...at(o.x[1], o.y[0]), val: o.x[1] }, { ...at(o.x[0], o.y[0]), val: o.y[0] }, { ...at(o.x[0], o.y[1]), val: o.y[1] }] };
+}
+const range = (a: number, b: number, n: number) => Array.from({ length: n + 1 }, (_, k) => a + ((b - a) * k) / n);
+
+// Pb–Sn (eutectic at 183 °C, 61.9 wt% Sn; α to 18.3, β from 97.8 wt% Sn): the liquidus lines bent a little, the solvus
+// lines x = 18.3 (T/183)² and 100 − 2.2 (T/183)²
+export const PBSN = {
+  liqA: (x: number) => 327 - 2.3263 * x - 0.01 * x * (61.9 - x),
+  liqB: (x: number) => 183 + 1.2861 * (x - 61.9) - 0.01 * (x - 61.9) * (100 - x),
+  solvA: (t: number) => 18.3 * (t / 183) ** 2,
+  solvB: (t: number) => 100 - 2.2 * (t / 183) ** 2,
+};
+function pbSnExample(): Project {
+  const b = builder();
+  const { liqA, liqB, solvA, solvB } = PBSN;
+  const g = diagramImage({
+    w: 640,
+    h: 420,
+    frame: [70, 30, 540, 330],
+    x: [0, 100],
+    y: [0, 350],
+    xt: [0, 20, 40, 60, 80, 100],
+    yt: [0, 50, 100, 150, 200, 250, 300, 350],
+    xTitle: 'Composition (wt% Sn)',
+    yTitle: 'Temperature (°C)',
+    curves: [
+      { pts: range(0, 61.9, 40).map((x) => [x, liqA(x)]), color: '#c0392b' },
+      { pts: range(61.9, 100, 30).map((x) => [x, liqB(x)]), color: '#c0392b' },
+      { pts: [[0, 327], [18.3, 183]], color: '#1f5fbf' },
+      { pts: [[97.8, 183], [100, 232]], color: '#1f5fbf' },
+      { pts: range(183, 0, 30).map((t) => [solvA(t), t]), color: '#2e7d32' },
+      { pts: range(183, 0, 30).map((t) => [solvB(t), t]), color: '#2e7d32' },
+      { pts: [[18.3, 183], [97.8, 183]], color: '#000000' },
+    ],
+    labels: [['L', 25, 300], ['α + L', 28, 210], ['β + L', 92, 192], ['α', 4, 130], ['α + β', 70, 110]],
+  });
+  const at = g.at;
+  const pd = add(b, 'phasedigitizer', 'pd-pbsn', 0, 0, {
+    ...PHASE_DIGITIZER_DEFAULTS,
+    image: g.image,
+    fileName: 'Pb_Sn_phase_diagram.svg',
+    w: 640,
+    h: 420,
+    axes: g.axes,
+    compA: 'Pb',
+    compB: 'Sn',
+    xUnit: 'wt%',
+    massA: 207.2,
+    massB: 118.71,
+    yName: 'Temperature',
+    yUnit: '°C',
+    splines: [
+      { id: 'liqA', name: 'Liquidus Pb', color: '#d62728', points: [0, 15, 30, 45, 61.9].map((x) => at(x, liqA(x))) },
+      { id: 'liqB', name: 'Liquidus Sn', color: '#d62728', points: [61.9, 75, 87.5, 100].map((x) => at(x, liqB(x))) },
+      { id: 'solA', name: 'Solidus α', color: '#1f77b4', points: [at(0, 327), at(18.3, 183)] },
+      { id: 'solB', name: 'Solidus β', color: '#1f77b4', points: [at(97.8, 183), at(100, 232)] },
+      { id: 'svA', name: 'Solvus α', color: '#2ca02c', points: [183, 140, 100, 60, 0].map((t) => at(solvA(t), t)) },
+      { id: 'svB', name: 'Solvus β', color: '#2ca02c', points: [183, 140, 100, 60, 0].map((t) => at(solvB(t), t)) },
+      { id: 'eut', name: 'Eutectic', color: '#000000', points: [at(18.3, 183), at(97.8, 183)], invariant: true, micro: 'eutectic' },
+    ],
+    activeSpline: 0,
+    regions: [
+      { id: 'reg1', name: 'L', color: REGION_COLORS[1], opacity: 0.25, labelPt: at(25, 300) },
+      { id: 'reg2', name: 'α + L', color: REGION_COLORS[2], opacity: 0.3, labelPt: at(28, 210) },
+      { id: 'reg3', name: 'β + L', color: REGION_COLORS[3], opacity: 0.3, labelPt: at(92, 192) },
+      { id: 'reg4', name: 'α', color: REGION_COLORS[0], opacity: 0.25, labelPt: at(4, 130) },
+      { id: 'reg5', name: 'β', color: REGION_COLORS[4], opacity: 0.25, labelPt: at(99.4, 120) },
+      { id: 'reg6', name: 'α + β', color: REGION_COLORS[6], opacity: 0.3, labelPt: at(70, 110) },
+    ],
+    leverPoints: [
+      { id: 'p1', name: 'P1', pt: at(40, 150), color: '#e03131', colorA: '#1971c2', colorB: '#e8590c' },
+      { id: 'p2', name: 'P2', pt: at(40, 300), color: '#7048e8', kind: 'path', dir: 'down' },
+    ],
+  });
+  const wb = add(b, 'book', 'pbsn-book', 900, 0, { ...WORKBOOK_DEFAULTS, name: 'Pb-Sn', sheets: [], into: ['Pb-Sn'] });
+  link(b, pd, wb, 'in-0', 'workbook');
+  const cv = add(b, 'canvas', 'pbsn-canvas', 900, 420, { ...CANVAS_DEFAULTS, width: 120, height: 90, name: 'pb_sn_phase_diagram', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 1 } });
+  link(b, pd, cv, 'figures', 'figure');
+  return project(b, 'Pb-Sn eutectic: phases, amounts and microconstituents of a 40 wt% Sn alloy');
+}
+
+// Fe–Fe₃C, the steel corner (eutectoid at 727 °C, 0.76 wt% C; ferrite to 0.022 wt% C; cementite at 6.7 wt% C, the
+// right edge): the lines straight
+export const FEC = { a3: (x: number) => 912 - 243.4 * x, acm: (x: number) => 727 + 304.3 * (x - 0.76), ag: (x: number) => 912 - (185 / 0.022) * x };
+function steelExample(): Project {
+  const b = builder();
+  const { a3 } = FEC;
+  const g = diagramImage({
+    w: 900,
+    h: 460,
+    frame: [80, 30, 780, 380],
+    x: [0, 6.7],
+    y: [400, 1000],
+    xt: [0, 1, 2, 3, 4, 5, 6, 6.7],
+    yt: [400, 500, 600, 700, 800, 900, 1000],
+    xTitle: 'Composition (wt% C)',
+    yTitle: 'Temperature (°C)',
+    curves: [
+      { pts: [[0, 912], [0.76, 727]], color: '#1f5fbf' },
+      { pts: [[0, 912], [0.022, 727]], color: '#1f5fbf' },
+      { pts: [[0.022, 727], [0.008, 600], [0, 400]], color: '#2e7d32' },
+      { pts: [[0.76, 727], [0.76 + 273 / 304.3, 1000]], color: '#c0392b' },
+      { pts: [[0.022, 727], [6.7, 727]], color: '#000000' },
+    ],
+    labels: [['γ', 0.7, 950], ['γ + Fe₃C', 4.5, 860], ['α + Fe₃C', 4.5, 520], ['α + γ', 0.28, 760]],
+  });
+  const at = g.at;
+  const pd = add(b, 'phasedigitizer', 'pd-steel', 0, 0, {
+    ...PHASE_DIGITIZER_DEFAULTS,
+    image: g.image,
+    fileName: 'Fe_Fe3C_steel.svg',
+    w: 900,
+    h: 460,
+    axes: g.axes,
+    compA: 'Fe',
+    compB: 'C',
+    xUnit: 'wt%',
+    yName: 'Temperature',
+    yUnit: '°C',
+    splines: [
+      { id: 'a3', name: 'A3', color: '#1f77b4', points: [at(0, 912), at(0.76, a3(0.76))] },
+      { id: 'ag', name: 'α / α + γ', color: '#1f77b4', points: [at(0, 912), at(0.022, 727)] },
+      { id: 'sv', name: 'Solvus α', color: '#2ca02c', points: [at(0.022, 727), at(0.008, 600), at(0, 400)], smooth: false },
+      { id: 'acm', name: 'Acm', color: '#d62728', points: [at(0.76, 727), at(0.76 + 273 / 304.3, 1000)] },
+      { id: 'eut', name: 'Eutectoid', color: '#000000', points: [at(0.022, 727), at(6.7, 727)], invariant: true, micro: 'pearlite' },
+    ],
+    activeSpline: 0,
+    regions: [
+      { id: 'reg1', name: 'γ', color: REGION_COLORS[1], opacity: 0.25, labelPt: at(0.7, 950) },
+      { id: 'reg2', name: 'α + γ', color: REGION_COLORS[2], opacity: 0.3, labelPt: at(0.28, 760) },
+      { id: 'reg3', name: 'γ + Fe₃C', color: REGION_COLORS[3], opacity: 0.25, labelPt: at(4.5, 860) },
+      { id: 'reg4', name: 'α + Fe₃C', color: REGION_COLORS[0], opacity: 0.25, labelPt: at(4.5, 520) },
+    ],
+    leverPoints: [
+      { id: 'p1', name: 'P1', pt: at(0.4, 900), color: '#7048e8', kind: 'path', dir: 'down' },
+      { id: 'p2', name: 'P2', pt: at(1.2, 950), color: '#e03131', kind: 'path', dir: 'down' },
+      { id: 'p3', name: 'P3', pt: at(0.4, 760), color: '#0c8599', colorA: '#1971c2', colorB: '#e8590c' },
+    ],
+  });
+  const wb = add(b, 'book', 'steel-book', 1100, 0, { ...WORKBOOK_DEFAULTS, name: 'Steel', sheets: [], into: ['Steel'] });
+  link(b, pd, wb, 'in-0', 'workbook');
+  return project(b, 'Fe-Fe3C: proeutectoid ferrite and pearlite in 0.40 and 1.20 wt% C steels');
+}
+
+// CO₂, a one-component (P–T) diagram: the sublimation and boiling lines P = 5.11 exp(k (T + 56.6)) through the triple
+// point (−56.6 °C, 5.11 atm), the melting line almost upright; the critical point (31 °C, 73.8 atm) and the dashed
+// lines of the supercritical fluid
+export const CO2 = { sub: (t: number) => 5.11 * Math.exp(0.07449 * (t + 56.6)), vap: (t: number) => 5.11 * Math.exp(0.030485 * (t + 56.6)), melt: (p: number) => -56.6 + 0.08 * (p - 5.11) };
+function co2Example(): Project {
+  const b = builder();
+  const { sub, vap, melt } = CO2;
+  const g = diagramImage({
+    w: 640,
+    h: 420,
+    frame: [70, 30, 540, 330],
+    x: [-100, 50],
+    y: [0, 100],
+    xt: [-100, -75, -50, -25, 0, 25, 50],
+    yt: [0, 20, 40, 60, 80, 100],
+    xTitle: 'Temperature (°C)',
+    yTitle: 'Pressure (atm)',
+    curves: [
+      { pts: range(-100, -56.6, 20).map((t) => [t, sub(t)]), color: '#2e7d32' },
+      { pts: range(-56.6, 31, 40).map((t) => [t, vap(t)]), color: '#c0392b' },
+      { pts: [[-56.6, 5.11], [melt(100), 100]], color: '#1f5fbf' },
+      { pts: [[31, 73.8], [31, 100]], color: '#777777', dash: true },
+      { pts: [[31, 73.8], [50, 73.8]], color: '#777777', dash: true },
+    ],
+    labels: [['Solid', -85, 40], ['Liquid', -35, 60], ['Gas', 10, 15], ['Supercritical', 40.5, 92]],
+  });
+  const at = g.at;
+  const pd = add(b, 'phasedigitizer', 'pd-co2', 0, 0, {
+    ...PHASE_DIGITIZER_DEFAULTS,
+    image: g.image,
+    fileName: 'CO2_phase_diagram.svg',
+    w: 640,
+    h: 420,
+    axes: g.axes,
+    compA: '',
+    compB: 'Temperature',
+    xUnit: '°C',
+    yName: 'Pressure',
+    yUnit: 'atm',
+    splines: [
+      { id: 'sub', name: 'Sublimation', color: '#2ca02c', points: [-100, -85, -70, -56.6].map((t) => at(t, sub(t))) },
+      { id: 'vap', name: 'Boiling', color: '#d62728', points: [-56.6, -35, -10, 10, 31].map((t) => at(t, vap(t))) },
+      { id: 'melt', name: 'Melting', color: '#1f77b4', points: [at(-56.6, 5.11), at(melt(100), 100)] },
+      { id: 'tc', name: 'T critical', color: '#777777', points: [at(31, 73.8), at(31, 100)] },
+      { id: 'pc', name: 'P critical', color: '#777777', points: [at(31, 73.8), at(50, 73.8)] },
+    ],
+    activeSpline: 0,
+    regions: [
+      { id: 'reg1', name: 'Solid', color: REGION_COLORS[1], opacity: 0.25, labelPt: at(-85, 40) },
+      { id: 'reg2', name: 'Liquid', color: REGION_COLORS[2], opacity: 0.25, labelPt: at(-35, 60) },
+      { id: 'reg3', name: 'Gas', color: REGION_COLORS[0], opacity: 0.25, labelPt: at(10, 15) },
+      { id: 'reg4', name: 'Supercritical', color: REGION_COLORS[3], opacity: 0.3, labelPt: at(40.5, 92) },
+    ],
+    leverPoints: [
+      { id: 'p1', name: 'P1', pt: at(-20, 30), color: '#e03131', kind: 'read' },
+      { id: 'p2', name: 'P2', pt: at(40, 82), color: '#0c8599', kind: 'read' },
+      { id: 'p3', name: 'P3', pt: at(-20, 5), color: '#7048e8', kind: 'path', dir: 'up' },
+      { id: 'p4', name: 'P4', pt: at(-78.5, 30), color: '#f08c00', kind: 'path', dir: 'down' },
+    ],
+  });
+  const wb = add(b, 'book', 'co2-book', 900, 0, { ...WORKBOOK_DEFAULTS, name: 'CO2', sheets: [], into: ['CO2'] });
+  link(b, pd, wb, 'in-0', 'workbook');
+  return project(b, 'CO2 pressure–temperature diagram: the phase at given conditions, compression and sublimation');
 }
 
 // ---- Python ----
@@ -2161,6 +2586,34 @@ const ABOUT: Record<string, About> = {
     what: 'A sample measured with a 2 nm calibration error, moved back, then compared with its reference: the difference shows the band only the sample has.',
     try: ['Set the shift of Translate to 0: the difference shows the misalignment as wiggles.', 'Look at the second output of Curve math: sample / reference.'],
   },
+  'Pb-Sn eutectic: phases, amounts and microconstituents of a 40 wt% Sn alloy': {
+    what: 'A problem of a materials course on a (simplified) Pb–Sn diagram: for a 40 wt% Sn – 60 wt% Pb alloy, (a) at 150 °C the phases, their compositions and amounts (P1, the lever rule: α 12.3 and β 98.5 wt% Sn, 67.9 % α), (b) cooled from 300 °C (P2, a path): where it starts to solidify (225 °C), the eutectic at 183 °C, the primary α and the eutectic just above it (50.2 % and 49.8 %) and the α and β just below it (72.7 % and 27.3 %); with the molar masses of Pb and Sn the compositions in at% too (40 wt% Sn = 53.8 at% Sn).',
+    try: [
+      'Drag P1: the arms a and b (in their colours) and the amounts follow; the amount of α is b / (a + b).',
+      'Drag P2 to 70 wt% Sn (a hypereutectic alloy): the primary phase becomes β.',
+      'Open the Workbook: the sheets Lever rule, Paths and Microconstituents.',
+    ],
+  },
+  'Fe-Fe3C: proeutectoid ferrite and pearlite in 0.40 and 1.20 wt% C steels': {
+    what: 'Steels cooled slowly through the eutectoid (727 °C, 0.76 wt% C) on the steel corner of the Fe–Fe₃C diagram (straight lines): the 0.40 wt% C steel (P1) leaves γ at 815 °C, then 48.8 % proeutectoid ferrite and 51.2 % pearlite, and below 727 °C 94.3 % ferrite and 5.7 % cementite in all; the 1.20 wt% C steel (P2): 7.4 % proeutectoid cementite and 92.6 % pearlite; P3, the lever rule in α + γ at 760 °C. The eutectoid line is marked Invariant, its constituent named pearlite.',
+    try: ['Move P1 to 0.76 wt% C: all pearlite.', 'Change the constituent of the eutectoid line (Border & splines): the tables follow.'],
+  },
+  'CO2 pressure–temperature diagram: the phase at given conditions, compression and sublimation': {
+    what: 'A one-component diagram (simplified CO₂): X is the temperature and Y the pressure, no composition and no lever rule. Read points give the phase at given conditions (P1: liquid at −20 °C, 30 atm; P2: a supercritical fluid at 40 °C, 82 atm); a path up is a compression at constant temperature (P3: the gas condenses at about 15.7 atm at −20 °C), a path down a fall of pressure (P4: at −78.5 °C the solid sublimes at 1 atm, as dry ice).',
+    try: ['Drag P3 left of the triple point (−56.6 °C): the gas becomes solid instead.', 'Add point ▸ Read, then click anywhere: the phase there.'],
+  },
+  'Cu-Ni phase diagram: Lever rule & dual components (wt.% Ni and wt.% Cu)': {
+    what: 'The image of the Cu-Ni diagram (complete solubility) calibrated on its axes, the liquidus and the solidus clicked as splines (their ends on the border), the three regions they close (L, α + L, α), and the lever rule at 45 wt% Ni, 1250 °C: the tie line from the liquid at 35.1 wt% Ni to the solid α at 56.9 wt% Ni, 54.4 % liquid and 45.6 % α (the image was drawn from these curves).',
+    try: [
+      'Drag the point P1: its tie line, the compositions under it and the amounts follow; in L or in α it is one phase (100 %).',
+      'Drag a point of the solidus: the regions follow the line.',
+      'Add point, then click elsewhere in α + L; the Workbook gets a row per point (Ni and Cu of both phases) and a sheet per boundary.',
+    ],
+  },
+  'Microarray spots: signal over a ring of background, red / green ratio': {
+    what: 'The scan of a two-colour microarray in the Image analysis node: every spot an ellipse with a ring of background around it, measured on the red and the green channel; the net signals, their ratio and log2 ratio in a Workbook (Selections, Spots, Summary by replicate).',
+    try: ['Edit image: pick a spot, change its ring (gap, width) or its background (a region drawn, the global one).', 'Stamp: pick a spot, then click elsewhere — a copy centred on the bright pixels there.', 'Look at the Spots sheet: log2 ratio R/G about −2.5 … +2.5 from gene 1 to gene 6.'],
+  },
   'Digitizer: values read off the image of a graph': {
     what: 'The image of a graph calibrated on its axes and its curve’s points placed (as clicks on whole pixels): the values read lie on the curve the image was drawn from.',
     try: ['Open the Digitizer: drag a point, or add some with clicks.', 'Let it find the curve by its colour: Auto (by colour).', 'Open an image of your own (a figure of a paper).'],
@@ -2188,6 +2641,15 @@ const ABOUT: Record<string, About> = {
   'Kinetics and lifetimes: rate equations, reconvolution': {
     what: 'Two fits beyond a formula: rate equations A → B → C solved at every step of the fit, and a fluorescence decay fitted through the instrument response.',
     try: ['In the first Fit, change the starting values of k1 and k2 and fit again.', 'Turn Reconvolution off in the second Fit: the lifetime then includes the instrument’s.'],
+  },
+  'Equivalent circuit (EIS): R(RQ)W fitted, two points left out': {
+    what: 'The Equivalent circuit node on an impedance spectrum whose columns are named as a potentiostat writes them: the frequency, Z′ and −Z″ found by their names (and shown, to be changed), the circuit R(RQ)W — R₀ + R_ct ∥ CPE + Warburg —, its starts guessed from the data, the fit with the two spoiled points left out: R₀ = 15.0 Ω, R_ct = 220 Ω, Y0 = 3.0·10⁻⁵ S·sⁿ, n = 0.87, W Y0 = 4.0·10⁻³ S·s^½, the values the spectrum was simulated from. The Nyquist and Bode plots side by side in a Merge.',
+    try: [
+      'Restore all: the spoiled points come back and pull the fit away; click them again to leave them out.',
+      'Bode: |Z| and −phase against the frequency.',
+      'Change the circuit to R(RQ): no Warburg — the low-frequency tail is missed (χ² grows).',
+      'f: every point, and Values: the frequency and Z′, −Z″ beside every point.',
+    ],
   },
   'Impedance: an equivalent circuit fitted, a Nyquist plot': {
     what: 'An equivalent circuit (R0 + R1 ∥ CPE) written with functions of your own, fitted to the real and imaginary parts at once; the Nyquist plot with equal scales.',
@@ -2360,13 +2822,19 @@ const LIST: { group: string; name: string; desc: string; make: () => Project }[]
   { group: 'Data preparation', name: 'Cleaning a sensor log: order, repeats, gaps, spikes', desc: 'A logger file as it comes: Columns leaves the battery out, Filter & sort rows puts the rows in time order and merges the times written twice, Clean data fills the missing temperatures and replaces the spikes (moving median), Data manipulation masks two humidity readings by hand; the raw and the cleaned data in one Plot, the changes in a Workbook.', make: loggerExample },
   { group: 'Data preparation', name: 'Replicate scans: mean ± SD on a common X', desc: 'Three scans on different wavelength grids: Average curves gives their mean ± SD on a common grid (a band in the Plot); Combine columns puts every point of the three scans in one table, in the order of the wavelength.', make: scansExample },
   { group: 'Data preparation', name: 'Difference spectrum: sample minus reference', desc: 'A sample measured 2 nm off: Translate moves it back, Curve math gives sample − reference and sample / reference on a common grid; the difference on its own axis shows the band the sample has more.', make: differenceExample },
+  { group: 'Data preparation', name: 'Microarray spots: signal over a ring of background, red / green ratio', desc: 'Image analysis of a two-colour microarray scan: spots stamped as ellipses, a ring of background around each, measured on the red and green channels — net signal, SNR, ratio and log2 ratio, a summary by replicate — in a Workbook.', make: microarrayExample },
   { group: 'Data preparation', name: 'Digitizer: values read off the image of a graph', desc: 'The image of a published graph, calibrated on its axes, the points of its curve placed; the values read compared with the curve it was drawn from.', make: digitizerExample },
+  { group: 'Data preparation', name: 'Cu-Ni phase diagram: Lever rule & dual components (wt.% Ni and wt.% Cu)', desc: 'The image of a Cu-Ni phase diagram calibrated on its axes, the liquidus and solidus clicked as splines, the regions L, α + L, α they close, and the lever rule at a point: the compositions and amounts of the liquid and the solid.', make: phaseDigitizerExample },
+  { group: 'Data preparation', name: 'Pb-Sn eutectic: phases, amounts and microconstituents of a 40 wt% Sn alloy', desc: 'A Pb–Sn diagram read off its image: the lever rule at 150 °C (the arms coloured), the alloy cooled from 300 °C with the primary α and the eutectic, the compositions in wt% and at%.', make: pbSnExample },
+  { group: 'Data preparation', name: 'Fe-Fe3C: proeutectoid ferrite and pearlite in 0.40 and 1.20 wt% C steels', desc: 'The steel corner of the Fe–Fe₃C diagram: two steels cooled through the eutectoid — the proeutectoid ferrite or cementite and the pearlite, the ferrite and cementite in all.', make: steelExample },
+  { group: 'Data preparation', name: 'CO2 pressure–temperature diagram: the phase at given conditions, compression and sublimation', desc: 'A one-component P–T diagram: the phase at given conditions, a compression at constant temperature, the sublimation of dry ice.', make: co2Example },
   { group: 'Spectroscopy & peaks', name: 'Overlapping peaks: peak deconvolution', desc: 'A spectrum with a peak hidden in the side of another: Peak analyzer fits a baseline and three peaks (each its shape) together, separating them; the data, every peak and their sum (the envelope) go to a Plot, the table of the peaks (center, height, FWHM, area %) to a Workbook.', make: overlapExample },
   { group: 'Spectroscopy & peaks', name: 'XPS: Shirley background and a spin–orbit doublet', desc: 'A Ni 2p spectrum: Peak analyzer with the Shirley background and one exact Voigt line made a doublet (2×: 17.3 eV, half the area, the same widths — linked in the fit); the lines filled down to the background.', make: xpsExample },
   { group: 'Spectroscopy & peaks', name: 'Raman on a fluorescence background: baselines from the data', desc: 'One list of baselines in three nodes, found from the data: airPLS under four fitted lines (Peak analyzer), asymmetric least squares under the integrated ranges (Integrate), SNIP under the measured widths (Peak width).', make: ramanBaselineExample },
   { group: 'Spectroscopy & peaks', name: 'Strong coupling: fit of every run, then the anticrossing', desc: 'R(λ) of a microcavity with an exciton for 23 cavity thicknesses (computed by transfer matrices, one table): a Fit of every run (two Lorentzian dips), then a Fit of both polariton branches together (coupled-oscillator dispersion) giving the splitting Ω; the fits drawn by Plots like any data.', make: strongCouplingExample },
   { group: 'Fitting', name: 'Calibration: unknowns, LOD and LOQ', desc: 'A weighted straight-line calibration; Use the fit: two unknowns read backwards with their 95 % intervals (3 replicates each), the limits of detection and quantification, the sensitivity with its error — to a Workbook; the line with its prediction band.', make: calibrationExample },
   { group: 'Fitting', name: 'Kinetics and lifetimes: rate equations, reconvolution', desc: 'Fit ▸ Equations: A → B → C fitted from the intermediate B (dA/dt, dB/dt solved numerically); a fluorescence decay fitted through the instrument response (reconvolution with the IRF, its shift and background), on a log axis.', make: kineticsExample },
+  { group: 'Fitting', name: 'Equivalent circuit (EIS): R(RQ)W fitted, two points left out', desc: 'An impedance spectrum fitted with R₀ + R_ct ∥ CPE + Warburg (Boukamp’s code), the columns found by their roles, two spoiled points left out with a click; Nyquist and Bode.', make: eisExample },
   { group: 'Fitting', name: 'Impedance: an equivalent circuit fitted, a Nyquist plot', desc: 'Fit ▸ Complex: R0 + R1 ∥ CPE written with functions of your own, fitted to Re Z and −Im Z at once; the Nyquist plot with equal scales (Aspect = 1).', make: impedanceExample },
   { group: 'Signals', name: 'Signal processing: smooth, FFT, deconvolution, interpolation', desc: 'A noisy spectrum smoothed (Savitzky–Golay) and normalized; the FFT spectrum of a sampled signal and an FFT low pass; a spectrum blurred by the instrument deconvolved (Richardson–Lucy); two curves on different X read on a common X (spline).', make: signalExample },
   { group: 'Signals', name: 'Signals: PSD, a Butterworth filter, the Allan deviation', desc: 'The FFT node in three modes: the power spectral density (Welch, dB), a zero-phase Butterworth low pass, the Allan deviation of a drifting sensor on log–log axes.', make: spectralExample },

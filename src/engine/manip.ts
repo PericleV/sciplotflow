@@ -7,7 +7,7 @@ import { rowsText } from './split.ts';
 import { column, findColumn, type Column, type Dataset } from './table.ts';
 import { maxOf } from './minmax.ts';
 
-export type ManipKind = 'mask' | 'unmask' | 'delete' | 'move' | 'scale' | 'set';
+export type ManipKind = 'mask' | 'unmask' | 'delete' | 'move' | 'scale' | 'set' | 'restore';
 // rows: "3, 7-12"; move: dx, dy added; scale: × factor on `axis`; set: `axis` = value. n: the rows the input had then.
 export type ManipOp = { kind: ManipKind; rows: string; n: number; dx?: number; dy?: number; axis?: 'x' | 'y'; factor?: number; value?: number };
 
@@ -52,13 +52,17 @@ export function applyManip(ds: Dataset, xName: string, yName: string, ops: Manip
       return;
     }
     for (const i of rows) {
-      if (state[i] & ROW_DELETED) continue;
+      if (state[i] & ROW_DELETED && op.kind !== 'restore') continue;
       switch (op.kind) {
         case 'mask':
           state[i] |= ROW_MASKED;
           break;
         case 'unmask':
           state[i] &= ~ROW_MASKED;
+          break;
+        case 'restore':
+          state[i] &= ~ROW_MASKED;
+          state[i] &= ~ROW_DELETED;
           break;
         case 'delete':
           state[i] |= ROW_DELETED;

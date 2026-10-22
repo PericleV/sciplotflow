@@ -4,6 +4,8 @@ import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, COLORBAR_DEFAULTS, CURVE_STYLE_DEFA
 import type { ReportData } from './engine/reportDoc.ts';
 import type { MatCompData, MatrixData, PickData, CalculusData, BookSheet, WorkbookData, ColumnsData, PeakWidthData, CombineData, UnstackData, AnnotationItem, AutoExtractData, CanvasData, DrawingData, DrawingGrid, CanvasLayout, DataManipData, ExtractData, FitNodeData, GenColData, ImportData, MathColData, PythonData, NoteData, Plot1DData, PlotPage, StatsData, PeakData, AnovaData, CorrData, NonparData, NormData, TTestData, CurveMathData, TranslateData, ConvData, FFTData, InterpData, NormalizeData, SmoothData, AverageData, CleanData, DigitizerData, FilterData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from './types.ts';
 import { SET_COLORS } from './engine/digitize.ts';
+import type { PhaseDigitizerData } from './engine/phasedigitize.ts';
+import type { EisData } from './engine/eis.ts';
 import type { ImageAnalysisData } from './image/node.ts';
 import type { MatrixPlotSpec } from './engine/matrixplot.ts';
 
@@ -57,6 +59,34 @@ export const DIGITIZER_DEFAULTS: DigitizerData = {
   auto: { mode: 'line', color: null, tol: 20, step: 3, minSize: 4, maxSize: 400, area: [], exclude: [] },
 };
 export const REPORT_DEFAULTS: ReportData = { title: 'Report', intro: '', outro: '', date: true, digits: 4, pm: true, maxRows: 50 };
+export const PHASE_DIGITIZER_DEFAULTS: PhaseDigitizerData = {
+  image: '',
+  fileName: '',
+  w: 0,
+  h: 0,
+  cal: 'axes',
+  axes: [null, null, null, null],
+  corners: [null, null, null, null],
+  grid: [],
+  gridFit: 'tps',
+  xLog: false,
+  yLog: false,
+  compA: '',
+  compB: '',
+  yName: 'T',
+  yUnit: '°C',
+  border: [null, null, null, null],
+  showBorder: true,
+  splines: [],
+  activeSpline: 0,
+  snapTol: 10,
+  regions: [],
+  showRegions: true,
+  leverPoints: [],
+  notes: [],
+  annotations: [],
+};
+export const EIS_DEFAULTS: EisData = { form: 'reim', freq: '', re: '', im: '', imSign: 'auto', freqUnit: 'Hz', circuit: 'R(RQ)', params: [], weight: 'modulus', excluded: [], labels: 'decades', values: false, view: 'nyquist' };
 export const AVERAGE_DEFAULTS: AverageData = { x: '', ys: '', grid: 'union', points: 200, from: NaN, to: NaN, need: 'all', k: 2, method: 'linear', extra: false };
 export const SMOOTH_DEFAULTS: SmoothData = { x: '', ys: '', method: 'savgol', points: 11, order: 3, sigma: 2, frac: 0.2, iter: 3, cutoff: 0.1, edge: 'interp', withData: true, withResid: false };
 export const INTERP_DEFAULTS: InterpData = { x: '', ys: '', method: 'spline', extrap: 'none', grid: 'points', from: NaN, to: NaN, points: 500, step: 1 };

@@ -89,6 +89,8 @@ import { condsFormula, selectRows, type RowOp } from '../src/engine/rowsel.ts';
 import { rowHandle, sourcePort, targetAccepts } from '../src/engine/ports.ts';
 import { checkImage } from './check-image.ts';
 import { checkPhase } from './check-phase.ts';
+import { armsOf, closestOnSeg, cornersOf as boundaryCorners, createCalMapper, detectRegions, followFrame, evalLeverPoint, frameOf, phaseFaces, regionFills, regionPhases, runPhaseDigitizer, sampleSpline, snapPoint, totalOfUnit, type PhaseDigitizerData } from '../src/engine/phasedigitize.ts';
+import { PHASE_DIGITIZER_DEFAULTS } from '../src/defaults.ts';
 import { buildFigure } from '../src/plotBuild.ts';
 import { addAxis, removeAxis, layoutAxes, type XLayout, type YLayout } from '../src/figure/multiAxes.ts';
 import { drawnLimits } from '../src/figure/drawnLimits.ts';
@@ -97,7 +99,8 @@ import { curveColumns, digest, figPort, outValue, toPy, validName, type MplFigur
 import { figureNodes } from '../src/mplPlot.ts';
 import { bothWithin, dunnett, dunnettProb, factorCols, interCols, mixedDesign, mixedModel } from '../src/engine/rmstats.ts';
 import { makeGroup, ungroupNode } from '../src/engine/subgraph.ts';
-import { EXAMPLES } from '../src/examples.ts';
+import { CO2, EIS_TRUTH, EXAMPLES, FEC, PBSN } from '../src/examples.ts';
+import { EIS_CIRCUITS, circuitZ, colKey, colLabel, fitSettingsOf, drawCircuit, dropInto, editCircuit, elemsOf, rangeOf, withBranch, fitWarnings, guessColumns, labelledPoints, looksAngular, parseCircuit, runEis, simulate, writeCircuit, type EisData } from '../src/engine/eis.ts';
 import * as Y from 'yjs';
 import { mergeEdges, mergeNodes, ProjectBinding, readProject, writeProject, yProject } from '../src/collab/yproject.ts';
 import { chunked, Joiner, SyncHub, ZIP_MIN, type Link } from '../src/collab/sync.ts';
@@ -106,8 +109,8 @@ import { candidatesIn, decodeSignal, encodeSignal, isAddress, splitCandidates, w
 import { darkShade, loadColors, SWATCHES } from '../src/theme.ts';
 import { doStep, figureSaved, importWithData, plotOfImport, stepsOf, TOURS, uvVisText, type TourState } from '../src/tour/tours.ts';
 import { groupNodes } from '../src/groups.ts';
-import { asBatch, GROUP_IN, GROUP_OUT } from '../src/engine/subgraph.ts';
-import { patternOf, readName } from '../src/engine/batch.ts';
+import { asBatch, emptyBatch, GROUP_IN, GROUP_OUT } from '../src/engine/subgraph.ts';
+import { guessPattern, patternOf, readName, tidyOwn, withOwn } from '../src/engine/batch.ts';
 import type { GroupData } from '../src/types.ts';
 import { fileProject, isPng, makeEmbedded, openEmbedded, pngProject, pngWithProject, projectRevision, svgProject, svgWithProject, withoutImported } from '../src/figure/embed.ts';
 import { EMU_PER_PT, readOffice, writeOffice } from '../src/figure/office.ts';
@@ -533,6 +536,16 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   const pr = evaluateGraph(nodes, [{ id: '1', source: 'i', sourceHandle: 'out', target: 'p', targetHandle: 'dataset' }]).get('p')!;
   const cs = pr.view.curves ?? [];
   ok(cs.length === 2 && cs[1].series.y.values[1] === 5 && cs[1].series.x.values[1] === 2, 'Plot: curves from the columns of a dataset');
+  // the microarray example: the log2 red / green ratio of every spot as drawn (gene k: k − 2.5), the same in the three
+  // replicates; nothing saturated
+  {
+    const ma = EXAMPLES.find((e) => e.name.startsWith('Microarray'))!.make();
+    const wb = evaluateGraph(ma.nodes, ma.edges).get('ma-image')!.outputs.workbook;
+    const sp = wb?.t === 'workbook' ? wb.v.sheets.find((x) => x.name === 'Spots') : undefined;
+    const lr = sp?.columns.find((c) => c.name === 'log2 ratio R/G')?.values ?? new Float64Array();
+    const off = Array.from(lr).map((v, i) => Math.abs(v - ((i % 6) - 2.5)));
+    ok(lr.length === 18 && Math.max(...off) < 0.1 && wb?.t === 'workbook' && wb.v.sheets.map((x) => x.name).join() === 'Selections,Spots,Profiles,Summary', `microarray example: log2 R/G of the 18 spots over their rings within ${Math.max(...off).toFixed(3)} of the ratios drawn`);
+  }
   // a group of the generated example's nodes gives the same figure, and ungrouping gives the graph back
   const ex = EXAMPLES.find((e) => e.name.startsWith('Generated'))!.make();
   const fig0 = evaluateGraph(ex.nodes, ex.edges).get('plot-osc')!.view.figure!;
@@ -626,6 +639,23 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
       [{ id: 'e', source: 'w', sourceHandle: 'book', target: 'c', targetHandle: 'in' }],
     ).get('c')!;
     ok(cw.outputs.out?.t === 'dataset' && cw.outputs.out.v.columns.map((c) => c.name).join() === 'D,E,F' && cw.view.sheets?.join() === 'S1,S2', 'Columns: a workbook on its input — the sheet it names');
+    // every sheet: the same settings for all (a workbook out, columns matched by name), or each sheet its own (a sheet
+    // without its own: the common ones); the list shown: of the sheet edited
+    const every = (data: object) =>
+      evaluateGraph(
+        [
+          { id: 'w', type: 'book', position: { x: 0, y: 0 }, data: { ...WORKBOOK_DEFAULTS, sheets: [{ name: 'S1', text: 'A\tB\n1\t2\n' }, { name: 'S2', text: 'A\tB\tF\n1\t2\t3\n' }, { name: 'S3', text: 'A\tB\n5\t6\n' }] } } as AppNode,
+          { id: 'c', type: 'columns', position: { x: 0, y: 0 }, data: { sheet: '*', ...data } } as AppNode,
+        ],
+        [{ id: 'e', source: 'w', sourceHandle: 'book', target: 'c', targetHandle: 'in' }],
+      ).get('c')!;
+    const heads = (r: ReturnType<typeof every>) => (r.outputs.out?.t === 'workbook' ? r.outputs.out.v.sheets.map((q) => `${q.name}:${q.columns.map((c) => c.name).join()}`).join(' | ') : '');
+    const sameAll = every({ items: [{ from: 'B', name: 'Signal' }, { from: 'A', keep: false }] });
+    const ownEach = every({ perSheet: 'own', items: [{ from: 'B', name: 'Signal' }], sheets: { S2: { items: [{ from: 'F', name: 'Third' }, { from: 'A', keep: false }] } }, editSheet: 'S2' });
+    ok(
+      heads(sameAll) === 'S1:Signal | S2:Signal,F | S3:Signal' && heads(ownEach) === 'S1:Signal,A | S2:Third,B | S3:Signal,A' && ownEach.view.columnLines?.[0]?.name === 'Third' && sameAll.outputs.names?.t === 'column',
+      `Columns: every sheet of a workbook — the same settings for all, or each its own (${heads(sameAll)}; ${heads(ownEach)})`,
+    );
   }
   // Columns: the names from a column (all the others, the Y ones, a list; the column left out), columns added (a formula
   // of the columns, of an input {A}, of a column added above, with whole-column functions; a value; a copy), the formula
@@ -733,6 +763,12 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   ]);
   ok(typeof r !== 'string' && Array.from(r.dataset.columns[1].values).join(',') === '20,35,40,100' && Array.from(r.dataset.columns[1].mask ?? []).join(',') === '1,0,0,0', 'manip: masked, unmasked, moved, scaled, deleted');
   ok(typeof r !== 'string' && r.state[0] === ROW_DELETED && r.state[1] === ROW_MASKED && r.state[2] === ROW_CHANGED, 'manip: the state of every input row');
+  const rr = applyManip(ds, 't', 'y', [
+    { kind: 'delete', rows: '1, 2', n: 5 },
+    { kind: 'mask', rows: '3', n: 5 },
+    { kind: 'restore', rows: '1, 3', n: 5 },
+  ]);
+  ok(typeof rr !== 'string' && !(rr.state[0] & ROW_DELETED) && (rr.state[1] & ROW_DELETED) && !(rr.state[2] & ROW_MASKED) && rr.dataset.columns[0].values.length === 4, 'manip: restore makes deleted or masked points normal again');
   ok(typeof r !== 'string' && r.warnings.length === 0 && typeof applyManip(ds, 't', 'y', [{ kind: 'mask', rows: '1', n: 9 }]) !== 'string' && (applyManip(ds, 't', 'y', [{ kind: 'mask', rows: '1', n: 9 }]) as { warnings: string[] }).warnings.length === 1, 'manip: a warning when the data have another number of rows');
   ok(JSON.stringify(renumber([{ kind: 'mask', rows: '2, 4-5', n: 5 }], new Set([0, 2]), 5)) === JSON.stringify([{ kind: 'mask', rows: '1-3', n: 3 }]), 'manip: rows counted again after deletions');
   // the mask goes on: Math column, Statistics (left out), Plot (the masked points of the curve)
@@ -1053,7 +1089,8 @@ for (const ex of EXAMPLES) {
   const res = evaluateGraph(p.nodes, p.edges);
   const errs = [...res.entries()].flatMap(([id, r]) => r.errors.map((e) => `${id}: ${e}`));
   ok(!errs.length, `example “${ex.name}” has no errors${errs.length ? ` (${errs.join('; ')})` : ''}`);
-  const canvas = [...res.values()].find((r) => r.view.figure);
+  // (a figure with curves: an image's figure, first, has none)
+  const canvas = [...res.values()].find((r) => r.view.figure && r.view.figure.axes[0]?.curves.length);
   ok(!!canvas && canvas.view.figure!.axes.length > 0 && canvas.view.figure!.axes[0].curves.length > 0, `example “${ex.name}” draws curves`);
   const back = parseProject(stringifyProject(p));
   ok(typeof back !== 'string' && back.nodes.length === p.nodes.length && back.edges.length === p.edges.length, `example “${ex.name}” saves and opens`);
@@ -1131,6 +1168,30 @@ for (const ex of EXAMPLES) {
   ok(typeof lb2 !== 'string' && lb2.blocks.length === 2 && lb2.dataset.columns.map((c) => c.name).join() === 'Qx,I · Sample = S1,I · Sample = S2', 'split: auto by a column of labels beside X');
   ok(labelRuns(lab) && !labelRuns({ ...lab, text: ['S1', 'S2', 'S1', 'S2', 'S1', 'S2'] }) && !labelRuns({ ...lab, text: ['a', 'a', 'a', 'a', 'a', 'a'] }) && !labelRuns(qx), 'labels in runs: each label in one run, two labels or more, no numbers');
   ok(typeof unstack({ name: 's', columns: [t] }, UNSTACK_DEFAULTS) === 'string', 'split: only X → a message');
+  {
+    const wb = {
+      id: 'w',
+      type: 'book',
+      position: { x: 0, y: 0 },
+      data: {
+        ...WORKBOOK_DEFAULTS,
+        sheets: [
+          { name: 'Sheet1', text: 'x\ty\n1\t1\n2\t2\n' },
+          { name: 'Sheet2', text: 'a\tb\n1\t10\n2\t20\n3\t30\n4\t40\n1\t50\n2\t60\n3\t70\n4\t80\n' },
+        ],
+      },
+    } as AppNode;
+    const un = {
+      id: 'u',
+      type: 'unstack',
+      position: { x: 0, y: 0 },
+      data: { ...UNSTACK_DEFAULTS, sheet: 'Sheet2' },
+    } as AppNode;
+    const res = evaluateGraph([wb, un], [{ id: 'e', source: 'w', sourceHandle: 'book', target: 'u', targetHandle: 'in' }]);
+    const uOut = res.get('u')?.outputs.out;
+    const out = uOut && uOut.t === 'dataset' ? (uOut as { v: Dataset }).v : null;
+    ok(!!out && out.columns.map((c) => c.name).join(',') === 'a,b,b_2' && res.get('u')?.view.sheets?.join(',') === 'Sheet1,Sheet2', 'split: workbook input — reads from chosen sheet');
+  }
 
   // a scan as a cyclic voltammogram is saved: from 0 up to 1, down to −1, up to 1, down to −1, up to 0 (step 0.1) —
   // turns at rows 11 (top), 31 (bottom), 51 (top), 71 (bottom); 81 rows; Y = the row index, the time t = 2 × row
@@ -1418,6 +1479,16 @@ for (const ex of EXAMPLES) {
   const at = (rule: PickRule, oo = o) => pickPoints(lx, ly, rows, [rule], oo).points;
   ok(near(at({ kind: 'x', value: '0.33' })[0].y, 0.66) && at({ kind: 'x', value: '1.5' }).length === 0 && near(at({ kind: 'x', value: '1.5' }, { ...o, outside: 'extrapolate' })[0].y, 3) && at({ kind: 'x', value: '1.5' }, { ...o, outside: 'end' })[0].y === 2, 'pick: at X (linear), beyond: nothing / extrapolated / the end');
   ok(near(at({ kind: 'y', value: '1' })[0].x, 0.5), 'pick: at Y = 1 → x = 0.5');
+  {
+    // A cyclic curve: 0 -> 1 -> 0 -> -1 -> 0
+    const cx = [0, 1, 2, 3, 4];
+    const cy = [0, 1, 0, -1, 0];
+    const crows = [0, 1, 2, 3, 4];
+    const allC = pickPoints(cx, cy, crows, [{ kind: 'y', value: '0.5', which: 'all' }], o).points;
+    const firstC = pickPoints(cx, cy, crows, [{ kind: 'y', value: '0.5', which: 'first' }], o).points;
+    const lastC = pickPoints(cx, cy, crows, [{ kind: 'y', value: '0.5', which: 'last' }], o).points;
+    ok(allC.length === 2 && firstC.length === 1 && near(firstC[0].x, 0.5) && lastC.length === 1 && near(lastC[0].x, 1.5), 'pick: which crossing — all (2), first (0.5), last (1.5)');
+  }
   const sx = Array.from({ length: 41 }, (_, i) => (i / 40) * Math.PI);
   const sy = sx.map(Math.sin);
   const sp = pickPoints(sx, sy, sx.map((_, i) => i), [{ kind: 'x', value: '1' }, { kind: 'max', value: '' }], { ...o, interp: 'spline' }).points;
@@ -1488,6 +1559,93 @@ for (const ex of EXAMPLES) {
   };
   const [first, second] = [twoSheets({}, {}), twoSheets({ sheet: 'S2' }, { sheet: 'S2' })];
   ok(yOf(first) === '0.5/1' && yOf(second) === '5/10' && JSON.stringify(second.get('p')?.view.sheets) === '["S1","S2"]', `pick, extract: a workbook, the sheet chosen (${yOf(first)} | ${yOf(second)})`);
+}
+
+{
+  // Pick points: separate sheets for X readings and Y readings (workbook output)
+  const g = evaluateGraph(
+    [
+      { id: 'w', type: 'book', position: { x: 0, y: 0 }, data: { ...WORKBOOK_DEFAULTS, sheets: [{ name: 'Data', text: 'x\ty\n0\t0\n1\t1' }] } } as AppNode,
+      {
+        id: 'p',
+        type: 'pick',
+        position: { x: 0, y: 0 },
+        data: {
+          ...PICK_DEFAULTS,
+          rules: [
+            { kind: 'x', value: '0.4' },
+            { kind: 'y', value: '0.7' },
+          ],
+        },
+      } as AppNode,
+      { id: 'ex', type: 'extract', position: { x: 0, y: 0 }, data: { ...EXTRACT_DEFAULTS, sheet: 'at Y', column: 'x', index: 4 } } as AppNode,
+    ],
+    [
+      { id: 'e1', source: 'w', sourceHandle: 'out', target: 'p', targetHandle: 'in' },
+      { id: 'e2', source: 'p', sourceHandle: 'book', target: 'ex', targetHandle: 'in' },
+    ],
+  );
+  const pOut = g.get('p')?.outputs.out;
+  const pBook = g.get('p')?.outputs.book;
+  const exOut = g.get('ex')?.outputs.out;
+  ok(pBook?.t === 'workbook' && pBook.v.sheets.length === 2 && pBook.v.sheets[0].name === 'at X' && pBook.v.sheets[1].name === 'at Y', 'pick: rules at X and at Y produce separate sheets in workbook');
+  ok(pOut?.t === 'dataset' && pOut.v.name === 'at X' && near(pOut.v.columns.find((c) => c.name === 'y')?.values[0] ?? 0, 0.4), 'pick: default out emits active sheet (at X)');
+  ok(near(pBook?.v.sheets[1].columns.find((c) => c.name === 'x')?.values[0] ?? 0, 0.7), 'pick: at Y sheet contains crossing X value');
+  ok(exOut?.t === 'column' && near(exOut.v.values[0], 0.7), 'pick: extract connected to book port can read from at Y sheet');
+
+  // Split into columns from a workbook: the sheet chosen (absent: the first)
+  {
+    const book = { id: 'w', type: 'book', position: { x: 0, y: 0 }, data: { ...WORKBOOK_DEFAULTS, sheets: [{ name: 'One', text: 'x\ty\trun\n0\t1\t1\n1\t2\t1' }, { name: 'Two', text: 'x\ty\trun\n0\t5\t1\n1\t6\t1\n0\t7\t2\n1\t8\t2' }] } } as AppNode;
+    const split = (extra: object) => evaluateGraph([book, { id: 's', type: 'unstack', position: { x: 0, y: 0 }, data: { ...UNSTACK_DEFAULTS, x: 'x', ys: 'y', by: 'column', column: 'run', ...extra } } as AppNode], [{ id: 'e', source: 'w', sourceHandle: 'book', target: 's', targetHandle: 'in' }]).get('s')?.outputs.out;
+    const [first, two] = [split({}), split({ sheet: 'Two' })];
+    ok(first?.t === 'dataset' && first.v.columns.length === 2 && two?.t === 'dataset' && two.v.columns.length === 3 && Array.from(two.v.columns[2].values).join() === '7,8', 'Split into columns: the sheet of a workbook chosen (else the first)');
+  }
+
+  // switching active output sheet
+  const g2 = evaluateGraph(
+    [
+      { id: 'w', type: 'book', position: { x: 0, y: 0 }, data: { ...WORKBOOK_DEFAULTS, sheets: [{ name: 'Data', text: 'x\ty\n0\t0\n1\t1' }] } } as AppNode,
+      {
+        id: 'p',
+        type: 'pick',
+        position: { x: 0, y: 0 },
+        data: {
+          ...PICK_DEFAULTS,
+          sheetOut: 1,
+          rules: [
+            { kind: 'x', value: '0.4' },
+            { kind: 'y', value: '0.7' },
+          ],
+        },
+      } as AppNode,
+    ],
+    [{ id: 'e1', source: 'w', sourceHandle: 'out', target: 'p', targetHandle: 'in' }],
+  );
+  const pOut2 = g2.get('p')?.outputs.out;
+  ok(pOut2?.t === 'dataset' && pOut2.v.name === 'at Y', 'pick: sheetOut: 1 switches active dataset output to at Y');
+
+  // sheetsMode: 'one' combines into single table
+  const g3 = evaluateGraph(
+    [
+      { id: 'w', type: 'book', position: { x: 0, y: 0 }, data: { ...WORKBOOK_DEFAULTS, sheets: [{ name: 'Data', text: 'x\ty\n0\t0\n1\t1' }] } } as AppNode,
+      {
+        id: 'p',
+        type: 'pick',
+        position: { x: 0, y: 0 },
+        data: {
+          ...PICK_DEFAULTS,
+          sheetsMode: 'one',
+          rules: [
+            { kind: 'x', value: '0.4' },
+            { kind: 'y', value: '0.7' },
+          ],
+        },
+      } as AppNode,
+    ],
+    [{ id: 'e1', source: 'w', sourceHandle: 'out', target: 'p', targetHandle: 'in' }],
+  );
+  const pBook3 = g3.get('p')?.outputs.book;
+  ok(pBook3?.t === 'workbook' && pBook3.v.sheets.length === 1 && pBook3.v.sheets[0].columns.find((c) => c.name === 'pick')?.values.length === 2, 'pick: sheetsMode one keeps all points in single table');
 }
 
 
@@ -5511,6 +5669,27 @@ for (const ex of EXAMPLES) {
     const asB = asBatch(made.nodes, made.edges, made.groupId, () => 'smoothed', (n, h) => sourcePort(n, h));
     const bd = asB.nodes.find((n) => n.id === made.groupId)!.data as GroupData;
     ok(!!bd.batch && bd.inputs[0].label === 'files' && bd.outputs.map((p) => p.label).join() === 'smoothed' && bd.edges.some((e) => e.target === GROUP_OUT && e.source === 's'), 'Batch: made from a group, it keeps what its last step gives');
+    // the file the steps are shown on: chosen (the third in the order); every file listed with what its name says
+    const shownThird = evaluateGraph([imp, { ...batch, data: { ...(batch.data as GroupData), batch: { pattern: 'sample_{T}C', order: 'value', show: 2 } } } as AppNode], g.edges);
+    const pk3 = shownThird.get('b1/pk')?.outputs.out;
+    const bl = shownThird.get('b1')!.view.batch;
+    ok(pk3?.t === 'dataset' && pk3.v.columns.find((c) => c.name === 'x')?.values[0] === 70 && bl?.shown === 2 && bl.list?.map((f) => f.read).join('|') === 'T = 20|T = 30|T = 40', `Batch: the steps shown on the file chosen (the third: its peak at 70); the files with what their names say (${bl?.list?.map((f) => f.read).join(', ')})`);
+    // a file with its own settings: Pick points takes the point at X = 40 only for sample_30C (the others: the maximum);
+    // the table says which files have their own; tidied, no file nor step without any
+    const ownSpec = { pattern: 'sample_{T}C', order: 'value' as const, own: { sample_30C: { pk: { rules: [{ kind: 'x', value: '40', which: 'all' }] } } } };
+    const ownRes = evaluateGraph([imp, { ...batch, data: { ...(batch.data as GroupData), batch: ownSpec } } as AppNode], g.edges).get('b1')!;
+    const ot = ownRes.outputs.table?.t === 'dataset' ? ownRes.outputs.table.v : undefined;
+    const oc = (name: string) => ot?.columns.find((c) => c.name === name);
+    ok(Array.from(oc('x')?.values ?? []).join(' ') === '30 40 70' && oc('Own settings')?.text?.join('|') === '|Pick points|' && ownRes.view.batch?.list?.[1].own?.join() === 'Pick points', `Batch: a file with its own settings of a step (sample_30C read at X = 40; the others their maximum: ${Array.from(oc('x')?.values ?? []).join(', ')})`);
+    ok(tidyOwn({ a: { s: {} }, b: {} }) === undefined && JSON.stringify(tidyOwn({ a: { s: { k: 1 }, t: {} } })) === '{"a":{"s":{"k":1}}}' && (withOwn([{ id: 's', data: { k: 0, m: 2 } }], { s: { k: 1 } })[0].data as { k: number; m: number }).m === 2, 'Batch: own settings tidied (no empty step or file), laid over the common ones (the others kept)');
+    // a pattern guessed from the names: the numbers that change become {V}, those that do not stay
+    const gp1 = guessPattern(['PL_300K_run1', 'PL_310K_run1', 'PL_320K_run1']);
+    const gp2 = guessPattern(['sample_25C_2h', 'sample_30C_4h']);
+    ok(gp1 === 'PL_{V}K_run1' && gp2 === 'sample_{V1}C_{V2}h' && guessPattern(['a_1', 'b_x']) === null && guessPattern(['x1', 'x1']) === null, `Batch: a pattern guessed from the names (${gp1}; ${gp2})`);
+    // a Batch from the Nodes panel: no steps, nothing kept — its files counted, nothing else said wrong
+    const eb = { id: 'b2', type: 'subgraph', position: { x: 0, y: 0 }, data: emptyBatch() } as AppNode;
+    const er = evaluateGraph([imp, eb], [{ id: 'f2', source: 'files', sourceHandle: 'book', target: 'b2', targetHandle: 'in-0' }]).get('b2')!;
+    ok(er.view.batch?.files === 3 && !er.errors.length && (eb.data as GroupData).inputs[0].label === 'files' && (eb.data as GroupData).nodes.length === 2, 'Batch: an empty one from the Nodes panel — its files counted, no steps, nothing kept yet');
   }
   {
     // tour 2 done by Show me alone: every step done, no node in error, the data as the steps say
@@ -5564,6 +5743,413 @@ checkImage(ok);
 
 // ---- Phase diagram: against closed forms ----
 checkPhase(ok);
+
+// ---- Phase digitizer: the frame, the splines, the regions they close, the lever rule ----
+{
+  const frame = [
+    { u: 100, v: 500 },
+    { u: 500, v: 500 },
+    { u: 500, v: 100 },
+    { u: 100, v: 100 },
+  ];
+  const s2 = sampleSpline([{ u: 100, v: 300 }, { u: 500, v: 300 }]);
+  const s3 = sampleSpline([{ u: 100, v: 200 }, { u: 300, v: 300 }, { u: 500, v: 200 }]);
+  const through = [{ u: 100, v: 200 }, { u: 300, v: 300 }, { u: 500, v: 200 }].every((p) => s3.some((q) => near(q.u, p.u, 1e-9) && near(q.v, p.v, 1e-9)));
+  ok(s2.length === 2 && s3.length > 40 && through && sampleSpline([{ u: 0, v: 0 }, { u: 1, v: 1 }, { u: 2, v: 0 }], false).length === 3, 'Phase digitizer: 2 points a straight line, more a curve through every point (or straight pieces)');
+  // a sharp turn: a corner (the curve straight into it and out of it, never past it); a gentle one smooth; a corner
+  // marked, or made smooth
+  {
+    const vee = [{ u: 0, v: 0 }, { u: 100, v: 10 }, { u: 0, v: 20 }];
+    const cv = sampleSpline(vee, true, { corner: boundaryCorners({ points: vee }) });
+    const arc = [{ u: 0, v: 0 }, { u: 50, v: 10 }, { u: 100, v: 0 }];
+    const ca = sampleSpline(arc, true, { corner: boundaryCorners({ points: arc }) });
+    const hump = Math.min(...ca.map((p) => p.v));
+    ok(
+      boundaryCorners({ points: vee }).join() === 'false,true,false' && Math.max(...cv.map((p) => p.u)) <= 100 + 1e-9 && boundaryCorners({ points: arc }).join() === 'false,false,false' && Math.max(...ca.map((p) => p.v)) <= 10 + 1e-9 && hump >= -1e-9 && boundaryCorners({ points: arc, corners: [1] })[1] && !boundaryCorners({ points: vee, rounds: [1] })[1],
+      'Phase digitizer: a sharp turn a corner (no swing past it), a gentle one smooth (never out of its points), marked by hand',
+    );
+  }
+  // a closed boundary inside a region: an island (one face more); the ends of the boundaries on the frame follow it
+  {
+    const box = [{ u: 100, v: 500 }, { u: 500, v: 500 }, { u: 500, v: 100 }, { u: 100, v: 100 }];
+    const island = { id: 'i', name: 'island', color: '#000000', closed: true, points: [{ u: 200, v: 200 }, { u: 300, v: 200 }, { u: 300, v: 300 }, { u: 200, v: 300 }] };
+    const fi = phaseFaces(box, [island]);
+    const across = { id: 'a', name: 'across', color: '#000000', points: [{ u: 100, v: 300 }, { u: 500, v: 250 }] };
+    const moved = [{ u: 120, v: 500 }, { u: 500, v: 520 }, { u: 500, v: 100 }, { u: 100, v: 100 }];
+    const [f] = followFrame(box, moved, [across]);
+    ok(
+      fi.length === 2 && near(fi[1].area, 10000, 1e-6) && closestOnSeg(f.points[0], moved[3], moved[0]).dist < 1e-9 && Math.hypot(f.points[0].u - 110, f.points[0].v - 300) < 1 && near(f.points[1].u, 500, 1e-9) && near(f.points[1].v, 250, 1e-9),
+      `Phase digitizer: a closed boundary an island (${fi.map((q) => q.area).join(', ')}); the ends on the frame follow its edges as they move`,
+    );
+  }
+  const sn = snapPoint({ u: 104, v: 300 }, frame, [], -1, 10);
+  const sc = snapPoint({ u: 106, v: 104 }, frame, [], -1, 10);
+  ok(sn?.kind === 'border' && near(sn.pt.u, 100, 1e-9) && near(sn.pt.v, 300, 1e-9) && sc?.kind === 'corner' && sc.pt.u === 100 && sc.pt.v === 100 && snapPoint({ u: 130, v: 300 }, frame, [], -1, 10) === null, 'Phase digitizer: a point caught on the border, a corner first, nothing far away');
+
+  // a lens: the liquidus and the solidus from corner to corner of their sides; the frame alone one face
+  const liq = { id: 'l', name: 'Liquidus', color: '#d62728', points: [{ u: 100, v: 200 }, { u: 300, v: 240 }, { u: 500, v: 400 }] };
+  const sol = { id: 's', name: 'Solidus', color: '#1f77b4', points: [{ u: 100, v: 200 }, { u: 300, v: 360 }, { u: 500, v: 400 }] };
+  const one = phaseFaces(frame, []);
+  const lens = phaseFaces(frame, [liq, sol]);
+  const sum = (fs: { area: number }[]) => fs.reduce((t, f) => t + f.area, 0);
+  ok(one.length === 1 && near(one[0].area, 160000, 1e-6) && lens.length === 3 && near(sum(lens), 160000, 1e-6), `Phase digitizer: the frame one region; a lens three, filling the frame (${lens.length})`);
+  // the ends clicked short of the frame (4 px) or past it: closed onto it, the same three regions
+  const short = phaseFaces(frame, [
+    { ...liq, points: [{ u: 104, v: 200 }, liq.points[1], { u: 497, v: 400 }] },
+    { ...sol, points: [{ u: 95, v: 201 }, sol.points[1], { u: 508, v: 402 }] },
+  ]);
+  ok(short.length === 3 && near(sum(short), 160000, 1e-6), `Phase digitizer: an end short of a line or past it is closed onto it (${short.length})`);
+  // a eutectic: two liquidus lines meeting at E, the eutectic line, two solvus lines: six regions
+  const E = { u: 300, v: 350 };
+  const eut = [
+    { id: 'a', name: 'liquidus A', color: '#d62728', points: [{ u: 100, v: 150 }, { u: 200, v: 260 }, E] },
+    { id: 'b', name: 'liquidus B', color: '#d62728', points: [E, { u: 400, v: 230 }, { u: 500, v: 130 }] },
+    { id: 'c', name: 'eutectic', color: '#000000', points: [{ u: 150, v: 350 }, { u: 450, v: 350 }] },
+    { id: 'd', name: 'solvus A', color: '#1f77b4', points: [{ u: 100, v: 170 }, { u: 150, v: 350 }, { u: 120, v: 500 }] },
+    { id: 'e', name: 'solvus B', color: '#1f77b4', points: [{ u: 500, v: 150 }, { u: 450, v: 350 }, { u: 480, v: 500 }] },
+  ];
+  const ef = phaseFaces(frame, eut);
+  ok(ef.length === 6 && near(sum(ef), 160000, 1e-6), `Phase digitizer: a eutectic diagram, six regions (${ef.length})`);
+
+  // the regions: a label in every face; kept (by their labels) when a line moves
+  const regs = detectRegions(lens, []).map((r) => ({ ...r }));
+  const byV = regs.slice().sort((p, q) => p.labelPt.v - q.labelPt.v);
+  [byV[0].name, byV[1].name, byV[2].name] = ['L', 'α + L', 'α'];
+  const moved = phaseFaces(frame, [liq, { ...sol, points: [sol.points[0], { u: 300, v: 330 }, sol.points[2]] }]);
+  const fills = regionFills(moved, regs);
+  ok(regs.length === 3 && detectRegions(lens, regs).length === 3 && fills.length === 3 && new Set(fills.map((f) => f.region)).size === 3, 'Phase digitizer: Draw regions labels every face once; the regions follow a line moved');
+
+  const pd: PhaseDigitizerData = {
+    ...PHASE_DIGITIZER_DEFAULTS,
+    image: 'x',
+    w: 600,
+    h: 600,
+    axes: [
+      { u: 100, v: 500, val: 0 },
+      { u: 500, v: 500, val: 100 },
+      { u: 100, v: 500, val: 0 },
+      { u: 100, v: 100, val: 1000 },
+    ],
+    compA: 'Cu',
+    compB: 'Ni',
+    xUnit: 'wt%',
+    splines: [liq, sol],
+    regions: regs,
+    leverPoints: [
+      { id: 'p1', name: 'P1', pt: { u: 300, v: 300 } },
+      { id: 'p2', name: 'P2', pt: { u: 300, v: 150 } },
+    ],
+  };
+  const m = createCalMapper(pd);
+  if (typeof m === 'string') ok(false, `Phase digitizer: calibrated (${m})`);
+  else {
+    const fr = frameOf(pd, m)!;
+    const inv = m.fromData(50, 500);
+    ok(fr.every((p, k) => near(p.u, frame[k].u, 1e-6) && near(p.v, frame[k].v, 1e-6)) && near(inv.u, 300, 1e-6) && near(inv.v, 300, 1e-6), 'Phase digitizer: the border from the calibration, the pixel of a value (the inverse map)');
+    // at y = 500 (v = 300) the solidus is at the left, the liquidus at the right: the lever rule against them
+    const crossAt = (s: typeof liq) => {
+      const c = sampleSpline(s.points);
+      for (let i = 0; i < c.length - 1; i++) if ((c[i].v - 300) * (c[i + 1].v - 300) <= 0) return (c[i].u + ((300 - c[i].v) / (c[i + 1].v - c[i].v)) * (c[i + 1].u - c[i].u) - 100) / 4;
+      return NaN;
+    };
+    const [x1, x2] = [crossAt(sol), crossAt(liq)];
+    const ev = evalLeverPoint(pd.leverPoints[0], 0, pd, m, fr, lens);
+    const [e1, e2] = ev.ends ?? [];
+    ok(
+      !!e1 && !!e2 && near(ev.x0, 50, 1e-9) && near(ev.y0, 500, 1e-9) && ev.region === 'α + L' && near(e1.x, x1, 1e-6) && near(e2.x, x2, 1e-6) && e1.phase === 'α' && e2.phase === 'L' && near(e1.frac, ((x2 - 50) / (x2 - x1)) * 100, 1e-9) && near(e1.frac + e2.frac, 100, 1e-9),
+      `Phase digitizer: the lever rule — the tie line to the solidus and the liquidus, their phases, the amounts (${ev.ends?.map((q) => `${q.phase} ${q.x.toFixed(2)} ${q.frac.toFixed(2)} %`).join(', ')})`,
+    );
+    const ev2 = evalLeverPoint(pd.leverPoints[1], 1, pd, m, fr, lens);
+    ok(ev2.region === 'L' && ev2.ends === null, 'Phase digitizer: a point in a region named without “+” is one phase');
+    // the regions as Draw regions names them (R1, R2 …): two phases until named — the lever rule shown; one chosen
+    const auto = { ...pd, regions: detectRegions(lens, []) };
+    const evA = evalLeverPoint(pd.leverPoints[0], 0, auto, m, fr, lens);
+    const one = { ...pd, regions: pd.regions.map((r) => (r.name === 'α + L' ? { ...r, phases: 1 as const } : r)) };
+    ok(
+      !!evA.ends && near(evA.ends[0].x, x1, 1e-6) && regionPhases({ ...regs[0], name: 'L' }) === 1 && regionPhases({ ...regs[0], name: 'α + L' }) === 2 && regionPhases({ ...regs[0], name: 'R3' }) === 2 && regionPhases(undefined) === 2 && evalLeverPoint(pd.leverPoints[0], 0, one, m, fr, lens).ends === null,
+      'Phase digitizer: the phases of a region — from its name (automatic names: two), or chosen',
+    );
+    // the tie line runs to the frontier of its region: a loose line inside the region (closing nothing) does not stop it
+    const loose = { id: 'x', name: 'loose', color: '#000000', points: [{ u: 250, v: 280 }, { u: 260, v: 320 }] };
+    const looseFaces = phaseFaces(frame, [liq, sol, loose]);
+    const evL = evalLeverPoint(pd.leverPoints[0], 0, { ...pd, splines: [liq, sol, loose] }, m, fr, looseFaces);
+    ok(looseFaces.length === 3 && !!evL.ends && near(evL.ends[0].x, x1, 1e-6) && near(evL.ends[1].x, x2, 1e-6), 'Phase digitizer: the tie line to the frontier of its region (a loose line inside it ignored)');
+  }
+  const out = runPhaseDigitizer(pd);
+  ok(
+    typeof out === 'object' && out.dataset.columns.length === 15 && out.dataset.columns[14].name === 'Arm b (wt%)' && out.dataset.columns[0].text?.join() === 'P1,P2' && out.workbook.sheets.map((q) => q.name).join() === 'Lever rule,Liquidus,Solidus' && out.dataset.columns[2].name === 'Ni (wt%)' && near(out.dataset.columns[8].values[1], 100, 1e-9),
+    'Phase digitizer: the lever rule table, a sheet per boundary',
+  );
+  // any X axis: no other component, no unit (a mole fraction, a temperature …): its name alone, no rest to a total
+  const bare = runPhaseDigitizer({ ...pd, compA: '', compB: 'x', xUnit: '' });
+  ok(typeof bare === 'object' && bare.dataset.columns.map((c) => c.name).join() === 'Point,Region,x,T (°C),Phase 1,Phase 1 x,Phase 1 amount (%),Phase 2,Phase 2 x,Phase 2 amount (%),Arm a,Arm b' && bare.xLabel === 'x', 'Phase digitizer: any X axis — no other component, no unit');
+  const frac = runPhaseDigitizer({ ...pd, xUnit: 'mole fraction', total: 1 });
+  ok(typeof frac === 'object' && frac.dataset.columns[3].name === 'Cu (mole fraction)' && near(frac.dataset.columns[3].values[0], 1 - 50, 1e-9), 'Phase digitizer: the other component, the rest to the total given');
+  ok(runPhaseDigitizer({ ...PHASE_DIGITIZER_DEFAULTS }) === 'Open the image of a phase diagram (or paste one: Ctrl+V).', 'Phase digitizer: waits for an image');
+  // the data of an older node: a point as u, v; a region's name as label, its label point as labelPos
+  const older = { ...pd, leverPoints: [{ id: 'x', name: 'P1', u: 300, v: 300 }], regions: [{ id: 'r', label: 'α + L', color: '#009E73', opacity: 0.2, poly: [], labelPos: { u: 300, v: 300 } }] } as unknown as PhaseDigitizerData;
+  const oo = runPhaseDigitizer(older);
+  ok(typeof oo === 'object' && oo.evals.length === 1 && oo.evals[0].region === 'α + L' && !!oo.evals[0].ends, 'Phase digitizer: the data of an older node still open (a point as u, v; a region label, labelPos)');
+  // the example: the image drawn from the curves; the lever rule at 45 wt% Ni, 1250 °C against the exact crossings
+  const exNode = EXAMPLES.find((e) => e.name.startsWith('Cu-Ni phase diagram'))!.make().nodes.find((q) => q.type === 'phasedigitizer');
+  const exOut = exNode && runPhaseDigitizer(exNode.data as PhaseDigitizerData);
+  const xL = (5.25 - Math.sqrt(5.25 ** 2 - 4 * 0.0155 * 165)) / (2 * 0.0155);
+  const xS = (-1.85 + Math.sqrt(1.85 ** 2 + 4 * 0.0185 * 165)) / (2 * 0.0185);
+  const col = (n: string) => (typeof exOut === 'object' ? exOut.dataset.columns.find((c) => c.name === n) : undefined);
+  ok(
+    typeof exOut === 'object' && col('Phase 1')?.text?.[0] === 'L' && col('Phase 2')?.text?.[0] === 'α' && near(col('Phase 1 Ni (wt%)')!.values[0], xL, 0.05) && near(col('Phase 2 Ni (wt%)')!.values[0], xS, 0.05) && near(col('Phase 1 amount (%)')!.values[0], ((xS - 45) / (xS - xL)) * 100, 0.3),
+    `Phase digitizer example: the lever rule at 45 wt% Ni, 1250 °C — L ${xL.toFixed(2)}, α ${xS.toFixed(2)} wt% Ni (read ${col('Phase 1 Ni (wt%)')?.values[0]}, ${col('Phase 2 Ni (wt%)')?.values[0]})`,
+  );
+  // the total from the unit; wt% → at% with the molar masses (Pb–Sn: 40 wt% Sn)
+  const pbsnAt = (100 * (40 / 118.71)) / (40 / 118.71 + 60 / 207.2);
+  ok(totalOfUnit('wt%') === 100 && totalOfUnit('mole fraction') === 1 && totalOfUnit('x') === 1 && totalOfUnit('K') === null, 'Phase digitizer: the total from the unit (100 for %, 1 for a fraction, else asked)');
+  const exOf = (start: string) => {
+    const nd = EXAMPLES.find((e) => e.name.startsWith(start))!.make().nodes.find((q) => q.type === 'phasedigitizer');
+    const r = runPhaseDigitizer(nd!.data as PhaseDigitizerData);
+    return typeof r === 'object' ? r : null;
+  };
+  // Pb–Sn, 40 wt% Sn: the lever rule at 150 °C against the solvus lines; cooled from 300 °C: the liquidus, the eutectic,
+  // the primary α and the eutectic just above it, α and β just below it (the textbook's compositions at 183 °C)
+  {
+    const r = exOf('Pb-Sn eutectic');
+    const [p1, p2] = r?.evals ?? [];
+    const [xa, xb] = [PBSN.solvA(150), PBSN.solvB(150)];
+    const ar = p1 && armsOf(p1);
+    ok(!!p1?.ends && near(p1.ends[0].x, xa, 0.1) && near(p1.ends[1].x, xb, 0.1) && near(p1.ends[0].frac, ((xb - 40) / (xb - xa)) * 100, 0.2) && !!ar && near(ar.a + ar.b, p1.ends[1].x - p1.ends[0].x, 1e-9) && near(p1.ends[0].frac, (100 * ar.b) / (ar.a + ar.b), 1e-9) && p1.armA === '#1971c2' && p1.armB === '#e8590c', `Pb-Sn at 40 wt% Sn, 150 °C: α ${xa.toFixed(2)}, β ${xb.toFixed(2)} wt% Sn, the arms a and b in their colours (read ${p1?.ends?.map((q) => q.x.toFixed(2)).join(', ')})`);
+    const mc = p2?.path?.micro[0];
+    const tL = PBSN.liqA(40);
+    ok(
+      !!p2?.path && p2.path.cross.length === 2 && near(p2.path.cross[0].y, tL, 0.3) && near(p2.path.cross[1].y, 183, 0.01) && p2.path.steps.map((q) => q.region).join(' | ') === 'L | α + L | α + β' && !!mc?.before && mc.primary === 0 && mc.before[0].phase === 'α' && mc.before[1].phase === 'eutectic' && near(mc.before[0].frac, ((61.9 - 40) / (61.9 - 18.3)) * 100, 0.1) && !!mc.after && near(mc.after[0].frac, ((97.8 - 40) / (97.8 - 18.3)) * 100, 0.1),
+      `Pb-Sn cooled at 40 wt% Sn: liquidus ${tL.toFixed(1)} °C, eutectic 183 °C; primary α ${(((61.9 - 40) / (61.9 - 18.3)) * 100).toFixed(2)} %, then α ${(((97.8 - 40) / (97.8 - 18.3)) * 100).toFixed(2)} % (read ${mc?.before?.map((q) => q.frac.toFixed(2)).join(', ')}; ${mc?.after?.map((q) => q.frac.toFixed(2)).join(', ')})`,
+    );
+    const atCol = r?.dataset.columns.find((c) => c.name === 'Sn (at%)');
+    ok(!!atCol && near(atCol.values[0], pbsnAt, 1e-3) && r?.workbook.sheets.map((q) => q.name).slice(0, 3).join() === 'Lever rule,Paths,Microconstituents', `Pb-Sn: 40 wt% Sn = ${pbsnAt.toFixed(2)} at% Sn (molar masses); the sheets of the paths and the microconstituents`);
+  }
+  // the steels: 0.40 wt% C — A3, then 48.8 % proeutectoid ferrite and 51.2 % pearlite, 94.3 % ferrite in all; 1.20 wt% C —
+  // Acm, 7.4 % proeutectoid cementite
+  {
+    const r = exOf('Fe-Fe3C');
+    const [p1, p2] = r?.evals ?? [];
+    const [m1, m2] = [p1?.path?.micro[0], p2?.path?.micro[0]];
+    ok(
+      !!m1?.before && !!m1.after && near(p1!.path!.cross[0].y, FEC.a3(0.4), 0.3) && m1.before[0].phase === 'α' && m1.before[1].phase === 'pearlite' && near(m1.before[0].frac, ((0.76 - 0.4) / (0.76 - 0.022)) * 100, 0.1) && near(m1.after[0].frac, ((6.7 - 0.4) / (6.7 - 0.022)) * 100, 0.05) && m1.after[1].phase === 'Fe₃C',
+      `Steel 0.40 wt% C: proeutectoid ferrite ${(((0.76 - 0.4) / (0.76 - 0.022)) * 100).toFixed(2)} %, pearlite, then ferrite ${(((6.7 - 0.4) / (6.7 - 0.022)) * 100).toFixed(2)} % in all (read ${m1?.before?.map((q) => `${q.phase} ${q.frac.toFixed(2)}`).join(', ')}; ${m1?.after?.map((q) => `${q.phase} ${q.frac.toFixed(2)}`).join(', ')})`,
+    );
+    ok(!!m2?.before && near(p2!.path!.cross[0].y, FEC.acm(1.2), 0.3) && m2.primary === 1 && m2.before[1].phase === 'Fe₃C' && m2.before[0].phase === 'pearlite' && near(m2.before[1].frac, ((1.2 - 0.76) / (6.7 - 0.76)) * 100, 0.1), `Steel 1.20 wt% C: Acm, proeutectoid cementite ${(((1.2 - 0.76) / (6.7 - 0.76)) * 100).toFixed(2)} % (read ${m2?.before?.map((q) => `${q.phase} ${q.frac.toFixed(2)}`).join(', ')})`);
+  }
+  // CO₂: the phases read; compressed at −20 °C the gas condenses on the boiling line; at −78.5 °C the solid sublimes at 1 atm
+  {
+    const r = exOf('CO2 pressure');
+    const [p1, p2, p3, p4] = r?.evals ?? [];
+    ok(p1?.kind === 'read' && p1.region === 'Liquid' && p2?.region === 'Supercritical' && !p1.ends && !r?.dataset.columns.some((c) => c.name === 'Phase 2'), 'CO2: the phase read at a point (liquid; supercritical), no second phase');
+    ok(!!p3?.path && p3.path.steps.map((q) => q.region).join() === 'Gas,Liquid' && near(p3.path.cross[0].y, CO2.vap(-20), 0.3) && !!p4?.path && p4.path.steps.map((q) => q.region).join() === 'Solid,Gas' && near(p4.path.cross[0].y, 1, 0.05), `CO2: compressed at −20 °C, the gas condenses at ${CO2.vap(-20).toFixed(2)} atm; at −78.5 °C the solid sublimes at 1 atm (read ${p3?.path?.cross[0]?.y.toFixed(2)}, ${p4?.path?.cross[0]?.y.toFixed(3)})`);
+  }
+}
+
+// ---- Equivalent circuit (EIS): the code read, the impedance against closed forms, the fit, the columns by role ----
+{
+  const p1 = parseCircuit('R(Q[RW])');
+  const bad = [parseCircuit('R(RQ'), parseCircuit('R(RX)'), parseCircuit('')];
+  ok(typeof p1 === 'object' && p1.elems.map((e) => e.id).join() === 'R1,Q1,R2,W1' && p1.elems.flatMap((e) => e.params).join() === 'R1,Q1 Y0,Q1 n,R2,W1 Y0' && bad.every((q) => typeof q === 'string'), 'EIS: Boukamp’s code read (series, parallel, a series inside), errors named');
+  // R0 + R ∥ C at ω: R0 + R / (1 + jωRC); a CPE with n = 1 is a capacitor; Ws at low frequency → R, Wo → 1/(jω T/R)
+  const rc = parseCircuit('R(RC)');
+  const rq = parseCircuit('R(RQ)');
+  const w = 2 * Math.PI * 37;
+  if (typeof rc === 'object' && typeof rq === 'object') {
+    const z = circuitZ(rc.tree, { R1: 10, R2: 100, C1: 1e-5 }, w);
+    const den = 1 + (w * 100 * 1e-5) ** 2;
+    const zq = circuitZ(rq.tree, { R1: 10, R2: 100, 'Q1 Y0': 1e-5, 'Q1 n': 1 }, w);
+    const ws = parseCircuit('Ws');
+    const zs = typeof ws === 'object' ? circuitZ(ws.tree, { 'Ws1 R': 50, 'Ws1 T': 1 }, 1e-6) : [NaN, NaN];
+    ok(near(z[0], 10 + 100 / den, 1e-9) && near(z[1], (-100 * w * 100 * 1e-5) / den, 1e-9) && near(zq[0], z[0], 1e-9) && near(zq[1], z[1], 1e-9) && near(zs[0], 50, 1e-3), 'EIS: the impedance of R + R ∥ C against its closed form; a CPE with n = 1 a capacitor; the short Warburg → R at low frequency');
+  }
+  // the example: the columns found by their names; the fit with the spoiled points left out finds the circuit simulated
+  const ex = EXAMPLES.find((e) => e.name.startsWith('Equivalent circuit (EIS)'))!.make();
+  const res = evaluateGraph(ex.nodes, ex.edges).get('eis-node');
+  const pv = res?.view.eis;
+  const val = (n: string) => pv?.params.find((q) => q.name === n)?.value ?? NaN;
+  ok(
+    !!pv && pv.cols.freq === 'Freq / Hz' && pv.cols.a === "Z' / ohm" && pv.cols.b === "-Z'' / ohm" && Object.entries(EIS_TRUTH).every(([k, t]) => near(val(k) / t, 1, 0.02)) && pv.n === 69,
+    `EIS example: the columns by their names, R(RQ)W fitted with 2 points left out (${pv?.params.map((q) => `${q.name} ${fmtNum(q.value, 4)}`).join(', ')})`,
+  );
+  // all the points: the spoiled ones pull the fit away (a larger χ²); the same spectrum as |Z| and the phase, ω in rad/s
+  const node = ex.nodes.find((n) => n.id === 'eis-node')!;
+  const all = evaluateGraph(ex.nodes.map((n) => (n.id === 'eis-node' ? ({ ...n, data: { ...n.data, excluded: [] } } as AppNode) : n)), ex.edges).get('eis-node')?.view.eis;
+  ok(!!all && !!pv && all.redChi2 > 20 * pv.redChi2, `EIS: the spoiled points in, the reduced χ² ${fmtNum(all?.redChi2 ?? NaN, 3)} against ${fmtNum(pv?.redChi2 ?? NaN, 3)}`);
+  const fitted = res?.outputs.fitted;
+  if (fitted?.t === 'dataset' && pv) {
+    const c = (n: string) => fitted.v.columns.find((q) => q.name === n)!.values;
+    const [f, re, mim] = [c('Frequency (Hz)'), c("Z' (Ω)"), c("-Z'' (Ω)")];
+    const polar: Dataset = { name: 'polar', columns: [column('omega', Float64Array.from(f, (v) => 2 * Math.PI * v)), column('Zmod', Float64Array.from(re, (v, i) => Math.hypot(v, mim[i]))), column('Phase', Float64Array.from(re, (v, i) => (Math.atan2(-mim[i], v) * 180) / Math.PI))] };
+    const r2 = runEis(polar, { ...(node.data as EisData), form: 'polar', freq: 'omega', re: 'Zmod', im: 'Phase', freqUnit: 'rad/s', params: [] });
+    ok(typeof r2 === 'object' && r2.result.params.every((q) => near(q.value / val(q.name), 1, 1e-4)), 'EIS: the same spectrum as |Z| and the phase, the frequency as ω: the same fit');
+  }
+  const g = guessColumns([column('Time (s)', new Float64Array(1)), column('Frequency (Hz)', new Float64Array(1)), column('Zre (Ohm)', new Float64Array(1)), column('-Zim (Ohm)', new Float64Array(1))], 'reim');
+  ok(g.freq?.name === 'Frequency (Hz)' && g.a?.name === 'Zre (Ohm)' && g.b?.name === '-Zim (Ohm)', `EIS: the columns guessed from other names (${g.freq?.name}, ${g.a?.name}, ${g.b?.name})`);
+}
+
+// ---- EIS: the circuit edited and written back, the elements a fit does not need, R², ω found, the figures ----
+{
+  const ids = (c: string) => {
+    const q = parseCircuit(c);
+    return typeof q === 'object' ? q.elems.map((e) => e.id).join() : q;
+  };
+  ok(ids('R1R') === 'R1,R2' && ids('RR1') === 'R2,R1' && ids('R(R3Q)') === 'R1,R3,Q1', `EIS: an element without a number takes the next one not written (${ids('R1R')}; ${ids('RR1')}; ${ids('R(R3Q)')})`);
+  const trip = EIS_CIRCUITS.every(([c]) => {
+    const q = parseCircuit(c);
+    return typeof q === 'object' && writeCircuit(q.tree, false) === c && ids(writeCircuit(q.tree, true)) === q.elems.map((e) => e.id).join();
+  });
+  ok(trip && EIS_CIRCUITS.some(([c]) => c === 'RWo') && EIS_CIRCUITS.some(([c]) => c === 'R(RQ)WC'), 'EIS: every circuit of the list written back as it was read (with and without the numbers); the supercapacitor circuits in it');
+  const rq = parseCircuit('R(RQ)');
+  if (typeof rq === 'object') {
+    const w = (t: ReturnType<typeof editCircuit>) => writeCircuit(t, false);
+    const ser = w(editCircuit(rq.tree, [1, 0], 'series', 'W'));
+    const par = w(editCircuit(rq.tree, [], 'parallel', 'C'));
+    const del = w(editCircuit(rq.tree, [1], 'delete', 'R'));
+    const rpl = w(editCircuit(rq.tree, [1, 1], 'replace', 'C'));
+    const two = w(editCircuit(rq.tree, [1], 'series', 'Q'));
+    ok(ser === 'R([RW]Q)' && par === '([R(RQ)]C)' && del === 'R' && rpl === 'R(RC)' && two === 'R(RQ)Q' && w(editCircuit(null, [], 'series', 'R')) === 'R', `EIS: the circuit edited on its drawing (${ser}, ${par}, ${del}, ${rpl}, ${two})`);
+  }
+  // a Warburg the spectrum has no use for: its Y0 run away (its impedance → 0), the circuit without it proposed
+  const rqw = parseCircuit('R(RQ)W');
+  if (typeof rqw === 'object') {
+    const p = { R1: 10, R2: 100, 'Q1 Y0': 2e-5, 'Q1 n': 0.9, 'W1 Y0': 1e300 };
+    const sim = simulate(rqw.tree, p, 0.1, 1e5, 8);
+    const pts = { f: sim.f, w: sim.f.map((f) => 2 * Math.PI * f), re: sim.re, im: sim.im, rows: sim.f.map((_, i) => i) };
+    const res = { elems: rqw.elems, tree: rqw.tree, params: Object.entries(p).map(([name, value]) => ({ name, value, se: NaN, unit: '', fixed: false })), chi2: 0, redChi2: 0, r2: { all: 1, re: 1, im: 1 }, n: pts.f.length, fitted: true };
+    const wn = fitWarnings(res, pts, pts.f.map(() => true));
+    const wq = fitWarnings({ ...res, params: res.params.map((q) => (q.name === 'Q1 n' ? { ...q, value: 1 } : q)) }, pts, pts.f.map(() => true));
+    ok(wn.length === 1 && /^W1 is not needed: its impedance → 0/.test(wn[0]) && wn[0].endsWith('try R(RQ).') && wq.some((m) => m.startsWith('Q1 n → 1')), `EIS: an element not needed found, the circuit without it proposed (${wn.join(' | ')})`);
+  }
+  // the example: R² near 1 (the two parts and each), the parameters table ends with the statistics
+  const ex = EXAMPLES.find((e) => e.name.startsWith('Equivalent circuit (EIS)'))!.make();
+  const res = evaluateGraph(ex.nodes, ex.edges).get('eis-node');
+  const pv = res?.view.eis;
+  const par = res?.outputs.parameters;
+  const lastRows = par?.t === 'dataset' ? par.v.columns[0].text?.slice(-6).join() : '';
+  ok(!!pv && pv.r2.all > 0.999 && pv.r2.re > 0.99 && pv.r2.im > 0.99 && lastRows === "χ²,reduced χ²,R²,R² Z',R² Z'',points" && pv.by.freq === 'name' && !pv.angular && res?.warnings?.length === 0, `EIS: R² of the fit ${fmtNum(pv?.r2.all ?? NaN, 6)} (Z′ ${fmtNum(pv?.r2.re ?? NaN, 5)}, Z″ ${fmtNum(pv?.r2.im ?? NaN, 5)}); the statistics under the parameters`);
+  // the figures: Nyquist, |Z|, phase, Bode, the circuit (white or transparent; its four elements drawn)
+  const figs = ['figure', 'mod', 'phase', 'bode', 'circuit'].map((k) => res?.outputs[k]);
+  const node = ex.nodes.find((n) => n.id === 'eis-node')!;
+  const withData = (patch: Partial<EisData>) => evaluateGraph(ex.nodes.map((n) => (n.id === 'eis-node' ? ({ ...n, data: { ...n.data, ...patch } } as AppNode) : n)), ex.edges).get('eis-node');
+  const clear = withData({ circuitBg: 'none', circuitValues: true });
+  const circ = clear?.outputs.circuit;
+  const texts = circ?.t === 'figure' ? circ.v.axes[0].annotations.flatMap((a) => (a.kind === 'text' ? [a.text.text] : [])) : [];
+  ok(figs.every((f) => f?.t === 'figure') && circ?.t === 'figure' && circ.v.background === 'none' && ['R1', 'R2', 'Q1', 'W1'].every((t) => texts.includes(t)) && texts.some((t) => /Ω$/.test(t)), `EIS: the figures out (Nyquist, |Z|, phase, Bode, circuit); the circuit transparent, its elements and values written (${texts.join(' ')})`);
+  // a frequency's label moved: in the figure where it was put, with a line back to its point
+  const lab = pv ? labelledPoints(pv.pts.f, 'decades').slice(-2)[0] : -1;
+  const row = pv ? pv.pts.rows[lab] : -1;
+  const movedTo: [number, number] = [150, 120];
+  const mv = withData({ labelAt: { nyquist: { [String(row)]: movedTo } } });
+  const nyf = mv?.outputs.figure;
+  const anns = nyf?.t === 'figure' ? nyf.v.axes[0].annotations : [];
+  const t = anns.find((a) => a.kind === 'text' && a.text.x === movedTo[0] && a.text.y === movedTo[1]);
+  const l = anns.find((a) => a.kind === 'shape' && a.shape.kind === 'line' && a.shape.x2 === movedTo[0] && a.shape.y2 === movedTo[1]);
+  ok(lab >= 0 && !!t && !!l && (node.data as EisData).labelAt === undefined, 'EIS: a frequency label moved by hand: in the Nyquist figure where it was put, a line back to its point');
+  // ω found: the frequencies on an even logarithmic grid only once divided by 2π; columns named A, B, C: by their places
+  const f = Array.from({ length: 31 }, (_, k) => 10 ** (5 - k / 5));
+  const g = guessColumns([column('A', new Float64Array(1)), column('B', new Float64Array(1)), column('C', new Float64Array(1))], 'reim');
+  ok(looksAngular(f.map((v) => 2 * Math.PI * v)) && !looksAngular(f) && !looksAngular([1, 2, 5, 10, 20, 50, 100]) && g.by.freq === 'place' && g.by.a === 'place' && g.by.b === 'place' && g.a?.name === 'B', 'EIS: ω (2πf) told from f by its values; columns without telling names taken by their places (and said so)');
+  const dr = parseCircuit('R(Q[RW])');
+  if (typeof dr === 'object') {
+    const pic = drawCircuit(dr.tree, { R1: 15.2, 'Q1 Y0': 3e-5, 'Q1 n': 0.87, R2: 213, 'W1 Y0': 0.004 });
+    const inside = pic.elems.every((e) => e.x0 >= 0 && e.y0 >= 0 && e.x1 <= pic.w && e.y1 <= pic.h);
+    const apart = pic.elems.every((a, i) => pic.elems.every((b, j) => i === j || a.x1 <= b.x0 || b.x1 <= a.x0 || a.y1 <= b.y0 || b.y1 <= a.y0));
+    ok(pic.elems.length === 4 && pic.groups.length === 2 && inside && apart, `EIS: the circuit drawn — every element on the page, none over another (${pic.w} × ${pic.h} mm)`);
+  }
+}
+
+// ---- EIS: elements dragged onto the circuit's drawing — new ones beside a part or in its place, moved, swapped ----
+{
+  const rq = parseCircuit('R(RQ)');
+  if (typeof rq === 'object') {
+    const w = (t: ReturnType<typeof dropInto>, ids = false) => writeCircuit(t, ids);
+    const t = rq.tree;
+    const out = [
+      w(dropInto(t, [1, 0], 'right', 'W')), // after R2: R2 and W in series
+      w(dropInto(t, [1, 0], 'left', 'W')), // before R2
+      w(dropInto(t, [0], 'bottom', 'C')), // R1 ∥ C
+      w(dropInto(t, [1], 'top', 'L')), // L over the group (one parallel group)
+      w(dropInto(t, [], 'right', 'W')), // after the whole circuit
+      w(dropInto(t, [1, 1], 'center', 'C')), // Q1 replaced
+      w(dropInto(null, [], 'center', 'Q')), // an empty circuit
+    ];
+    const want = ['R([RW]Q)', 'R([WR]Q)', '(RC)(RQ)', 'R(LRQ)', 'R(RQ)W', 'R(RC)', 'Q'];
+    // moved: R1 into the group beside R2 (its name kept), then R1 and Q1 changing places
+    const mv = dropInto(t, [1, 0], 'right', { id: 'R1' });
+    const sw = dropInto(t, [1, 1], 'center', { id: 'R1' });
+    const kept = mv && elemsOf(mv).map((e) => e.id).join();
+    ok(out.every((c, k) => c === want[k]) && w(mv, true) === '([R2R1]Q1)' && kept === 'R2,R1,Q1' && w(sw, true) === 'Q1(R2R1)' && dropInto(t, [0], 'left', { id: 'R1' }) === t, `EIS: elements dropped on the drawing (${out.join(', ')}; moved ${w(mv, true)}, swapped ${w(sw, true)})`);
+  }
+}
+
+// ---- EIS: a parallel split and join on the drawing — the elements between them a branch, a new element the other ----
+{
+  const c = parseCircuit('RRQW');
+  if (typeof c === 'object') {
+    const t = c.tree;
+    const rg = rangeOf(t, 'R2', 'Q1');
+    const one = rangeOf(t, 'Q1', 'Q1');
+    const back = rangeOf(t, 'Q1', 'R2'); // the join put first: the same branch
+    const w = (x: ReturnType<typeof withBranch>, ids = false) => writeCircuit(x, ids);
+    const two = typeof rg === 'object' ? w(withBranch(t, rg, 'C')) : rg;
+    const alone = typeof one === 'object' ? w(withBranch(t, one, 'C')) : one;
+    const same = typeof back === 'object' && typeof rg === 'object' && back.a === rg.a && back.b === rg.b;
+    const moved = typeof rg === 'object' ? w(withBranch(t, rg, { id: 'W1' }), true) : '';
+    const whole = rangeOf(t, 'R1', 'W1');
+    const all = typeof whole === 'object' ? w(withBranch(t, whole, 'L')) : whole;
+    const par = parseCircuit('R(RQ)');
+    const cross = typeof par === 'object' ? rangeOf(par.tree, 'R2', 'Q1') : '';
+    ok(two === 'R([RQ]C)W' && alone === 'RR(QC)W' && same && moved === 'R1([R2Q1]W1)' && all === '([RRQW]L)' && typeof cross === 'string', `EIS: split and join — the branch between them (${two}, ${alone}, moved ${moved}, ${all}); not across two branches`);
+  }
+}
+
+// ---- EIS: columns without names (chosen by their places, shown by their letters) ----
+{
+  const f = Array.from({ length: 30 }, (_, k) => 10 ** (5 - k / 6));
+  const z = f.map((v) => {
+    const w = 2 * Math.PI * v;
+    const den = 1 + (w * 200 * 2e-5) ** 2;
+    return [15 + 200 / den, (w * 200 * 200 * 2e-5) / den];
+  });
+  const ds: Dataset = { name: 'no names', columns: [column('', Float64Array.from(f, (v) => 2 * Math.PI * v)), column('', Float64Array.from(z, (q) => q[0])), column('', Float64Array.from(z, (q) => q[1]))] };
+  const base: EisData = { form: 'reim', freq: '#0', re: '#1', im: '#2', imSign: 'auto', freqUnit: 'rad/s', circuit: 'R(RC)', params: [], weight: 'modulus', excluded: [], labels: 'decades', view: 'nyquist' };
+  const r = runEis(ds, base);
+  const val = (n: string) => (typeof r === 'object' ? (r.result.params.find((q) => q.name === n)?.value ?? NaN) : NaN);
+  ok(typeof r === 'object' && near(val('R1'), 15, 1e-3) && near(val('R2'), 200, 1e-3) && near(val('C1') / 2e-5, 1, 1e-3) && colLabel(ds.columns, ds.columns[2]) === 'C' && colKey(ds.columns, ds.columns[1]) === '#1' && r.signNote.startsWith('“C”'), `EIS: columns without names chosen by their places (#0, #1, #2), shown by their letters; ω read as rad/s (${typeof r === 'string' ? r : r.signNote})`);
+}
+
+// ---- EIS: frequency ranges, a fit per range (its own circuit), the fit on demand (Start fit) ----
+{
+  const ex = EXAMPLES.find((e) => e.name.startsWith('Equivalent circuit (EIS)'))!.make();
+  const src = evaluateGraph(ex.nodes, ex.edges);
+  const node = ex.nodes.find((n) => n.id === 'eis-node')!;
+  const edge = ex.edges.find((e) => e.target === 'eis-node')!;
+  const sv = src.get(edge.source)!.outputs[edge.sourceHandle ?? 'out'];
+  const ds = sv?.t === 'workbook' ? sv.v.sheets[0] : sv?.t === 'dataset' ? sv.v : null;
+  const base = node.data as EisData;
+  if (ds) {
+    const all = runEis(ds, base);
+    const ranged = runEis(ds, { ...base, ranges: [{ lo: 1, hi: 1e5 }] });
+    const used = (r: typeof all) => (typeof r === 'object' ? r.fitted.columns.find((c) => c.name === 'Used')!.text! : []);
+    ok(typeof all === 'object' && typeof ranged === 'object' && ranged.result.n < all.result.n && used(ranged).includes('outside the ranges') && ranged.inRange.some((q) => !q), `EIS: a frequency range — the points outside it not fitted (${typeof ranged === 'object' ? ranged.result.n : '?'} of ${typeof all === 'object' ? all.result.n : '?'})`);
+    // the high-frequency arc on its own with R(RQ): its values near those of the whole fit
+    const per = runEis(ds, { ...base, ranges: [{ lo: 5, hi: 1e5, circuit: 'R(RQ)' }, { lo: 1e-2, hi: 0.5 }], rangeFits: true });
+    const rf = typeof per === 'object' ? per.rangeFits : [];
+    const arc = rf[0]?.result;
+    const v = (n: string) => arc?.params.find((q) => q.name === n)?.value ?? NaN;
+    ok(rf.length === 2 && !!arc && arc.r2.all > 0.99 && near(v('R1') / 15, 1, 0.1) && near(v('R2') / 220, 1, 0.25) && rf[1].circuit === 'R(RQ)W' && !!rf[1].result && typeof per === 'object' && per.ranges.columns[0].text!.length === arc.params.length + rf[1].result!.params.length, `EIS: a fit per range, the arc alone with R(RQ) (R1 ${fmtNum(v('R1'), 4)}, R2 ${fmtNum(v('R2'), 4)}, R² ${fmtNum(arc?.r2.all ?? NaN, 5)})`);
+    // on demand: nothing fitted before Start fit; then the settings kept, a change only said (outdated)
+    const before = runEis(ds, { ...base, autoFit: false });
+    const kept = fitSettingsOf(base);
+    const after = runEis(ds, { ...base, autoFit: false, fitWith: kept });
+    const changed = runEis(ds, { ...base, circuit: 'R(RQ)', autoFit: false, fitWith: kept });
+    ok(
+      typeof before === 'object' && !before.fittedYet && !before.result.fitted && typeof after === 'object' && after.result.fitted && !after.outdated && typeof changed === 'object' && changed.outdated && changed.result.params.some((q) => q.name === 'W1 Y0') && near(changed.result.chi2, after.result.chi2, 1e-9),
+      'EIS: the fit on demand — not fitted before Start fit; after it, a change of the circuit only marked outdated (the last fit kept)',
+    );
+  }
+}
 
 console.log(`${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

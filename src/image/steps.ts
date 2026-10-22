@@ -1,7 +1,7 @@
 // The editing steps of the Image analysis node: what each one is (its group, name, parameters with their defaults) and
 // what it does to a raster. The steps are applied in their order, each on what the ones above gave; a step that cannot
 // run says why and is passed over. Pure.
-import { gaussian, luminance, type Raster } from './raster.ts';
+import { gaussian, gaussianWide, luminance, map1, type Raster } from './raster.ts';
 import { anisotropic, bilateral, entropyFilter, gabor, gradient, hessianEigen, laplace, laplacianOfGaussian, lbp, meanFilter, medianFilter, minMaxFilter, nonLocalMeans, removeOutliers, rollingBall, scanLines, slidingParaboloid, varianceFilter, type Shape } from './filters.ts';
 import { autoContrast, balance, brightness, clahe, contrast, curves, equalize, hueSaturation, invert, levels, logTone, minMax, pickChannel, weightedGray, type ChannelPick } from './tone.ts';
 import { closing, dilate, distanceMap, erode, fillHoles, opening, separate, skeleton, topHat } from './morph.ts';
@@ -39,7 +39,17 @@ export const STEP_DEFS = {
     title: 'Input black and white points, gamma (> 1 lightens the middle), output black and white',
     params: [num('inB', 'In black', NaN, { unit: 'value', auto: 'range start' }), num('inW', 'In white', NaN, { unit: 'value', auto: 'range end' }), num('gamma', 'Gamma', 1, { min: 0.05, step: 0.05 }), num('outB', 'Out black', NaN, { unit: 'value', auto: 'range start' }), num('outW', 'Out white', NaN, { unit: 'value', auto: 'range end' })],
   },
-  curves: { group: 'Tone', label: 'Curves', title: 'A curve from the input to the output value (points dragged on its graph; RGB: one curve for all)', params: [{ key: 'points', label: 'Points', type: 'curve', def: [[0, 0], [0.5, 0.5], [1, 1]] }] },
+  curves: {
+    group: 'Tone',
+    label: 'Curves',
+    title: 'A curve from the input to the output value, drawn over the histogram of what comes in (a click on it adds a point, drag it; double-click or drag it out: taken off); RGB: the curve of all the channels, then one for each',
+    params: [
+      { key: 'points', label: 'Curve', type: 'curve', def: [[0, 0], [1, 1]] },
+      { key: 'r', label: 'R', type: 'curve', def: [[0, 0], [1, 1]] },
+      { key: 'g', label: 'G', type: 'curve', def: [[0, 0], [1, 1]] },
+      { key: 'b', label: 'B', type: 'curve', def: [[0, 0], [1, 1]] },
+    ],
+  },
   autocontrast: { group: 'Tone', label: 'Auto-contrast', title: 'The darkest and brightest few % clipped, the rest stretched', params: [num('saturated', 'Saturated', 0.35, { min: 0, max: 50, step: 0.05, unit: '%' })] },
   equalize: { group: 'Tone', label: 'Equalize', title: 'The histogram made flat (every level used as often)', params: [] },
   clahe: { group: 'Tone', label: 'CLAHE', title: 'Contrast-limited adaptive equalisation: tile by tile, the histogram clipped so noise is not amplified', params: [num('tile', 'Tile', 64, { min: 4, step: 1, unit: 'px' }), num('clip', 'Clip limit', 3, { min: 1, step: 0.5, title: '× the mean count of a bin' }), num('bins', 'Bins', 256, { min: 8, step: 1 })] },
@@ -165,7 +175,12 @@ const mask1 = (r: Raster, c: Float32Array): Raster => ({ w: r.w, h: r.h, ch: [c]
 const rangeOfData = (c: Float32Array): [number, number] => {
   let lo = Infinity;
   let hi = -Infinity;
-  for (const v of c) if (Number.isFinite(v)) [lo, hi] = [Math.min(lo, v), Math.max(hi, v)];
+  for (let i = 0; i < c.length; i++) {
+    const v = c[i];
+    if (v - v !== 0) continue;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
   return Number.isFinite(lo) ? (lo === hi ? [lo, lo + 1] : [lo, hi]) : [0, 1];
 };
 // a robust estimate of the noise σ (Immerkær: the mean |Laplacian-like| response) for automatic strengths
@@ -180,11 +195,20 @@ export function noiseSigma(c: Float32Array, w: number, h: number): number {
   return (s * Math.sqrt(Math.PI / 2)) / (6 * (w - 2) * (h - 2));
 }
 
-// One step applied: the new raster and a note (the threshold found …), or why it cannot run
-export function applyStep(r: Raster, s: ImgStep): { r: Raster; note?: string } | string {
+// One step applied: the new raster and a note (the threshold found …), or why it cannot run. scale: the image is the
+// original shrunk by it (a preview): the lengths in pixels shrunk too (and the frequencies per pixel grown), so the
+// preview looks as the result will
+export function applyStep(r: Raster, s: ImgStep, scale = 1): { r: Raster; note?: string } | string {
   const { w, h } = r;
   const sp = r.hi - r.lo || 1;
-  const P = <T>(k: string) => param<T>(s, k);
+  const defs = stepDef(s.kind).params;
+  const P = <T>(k: string): T => {
+    const v = param<T>(s, k);
+    if (scale === 1 || typeof v !== 'number') return v;
+    const q = defs.find((x) => x.key === k);
+    if (q?.type !== 'num') return v;
+    return (q.unit === 'px' ? v * scale : q.unit === '1/px' ? v / scale : v) as T;
+  };
   if (MASK_ONLY.has(s.kind) && r.kind !== 'mask') return 'needs a mask: put a Threshold before it';
   if (RGB_ONLY.has(s.kind) && r.ch.length === 1) return 'needs a colour image';
   const g = GRAY_ONLY.has(s.kind) ? asGray(r) : r;
@@ -201,7 +225,7 @@ export function applyStep(r: Raster, s: ImgStep): { r: Raster; note?: string } |
     case 'levels':
       return { r: { ...r, ch: levels(r, or(P<number>('inB'), r.lo), or(P<number>('inW'), r.hi), P<number>('gamma'), or(P<number>('outB'), r.lo), or(P<number>('outW'), r.hi)) } };
     case 'curves':
-      return { r: { ...r, ch: curves(r, P<[number, number][]>('points')) } };
+      return { r: { ...r, ch: curves(r, P<[number, number][]>('points'), r.ch.length === 3 ? [P<[number, number][]>('r'), P<[number, number][]>('g'), P<[number, number][]>('b')] : undefined) } };
     case 'autocontrast':
       return { r: { ...r, ch: autoContrast(r, P<number>('saturated')) } };
     case 'equalize':
@@ -213,7 +237,7 @@ export function applyStep(r: Raster, s: ImgStep): { r: Raster; note?: string } |
     case 'exp':
       return { r: { ...r, ch: logTone(r, P<number>('k'), true) } };
     case 'invert':
-      return r.kind === 'mask' ? { r: { ...r, ch: r.ch.map((c) => Float32Array.from(c, (v) => (v ? 0 : 1))) } } : { r: { ...r, ch: invert(r) } };
+      return r.kind === 'mask' ? { r: { ...r, ch: r.ch.map((c) => map1(c, (v) => (v ? 0 : 1))) } } : { r: { ...r, ch: invert(r) } };
     case 'channel':
       return { r: pickChannel(r, P<ChannelPick>('which')) };
     case 'grayweights':
@@ -247,34 +271,40 @@ export function applyStep(r: Raster, s: ImgStep): { r: Raster; note?: string } |
       const out = P<string>('output');
       const rad = P<number>('radius');
       return each((c) => {
-        const u = light ? Float32Array.from(c, (v) => r.lo + r.hi - v) : c;
+        const u = light ? map1(c, (v) => r.lo + r.hi - v) : c;
         const bg = s.kind === 'rollingball' ? rollingBall(u, w, h, rad) : slidingParaboloid(u, w, h, rad);
-        if (out === 'background') return light ? Float32Array.from(bg, (v) => r.lo + r.hi - v) : bg;
-        const d = Float32Array.from(u, (v, i) => v - bg[i] + r.lo);
-        return light ? Float32Array.from(d, (v) => r.lo + r.hi - v) : d;
+        if (out === 'background') return light ? map1(bg, (v) => r.lo + r.hi - v) : bg;
+        const d = map1(u, (v, i) => v - bg[i] + r.lo);
+        return light ? map1(d, (v) => r.lo + r.hi - v) : d;
       });
     }
     case 'subgauss':
       return each((c) => {
-        const b = gaussian(c, w, h, P<number>('sigma'));
+        const b = gaussianWide(c, w, h, P<number>('sigma'));
         let m = 0;
-        for (const v of b) m += v;
+        for (let i_ = 0; i_ < b.length; i_++) {
+          const v = b[i_];
+          m += v;
+        }
         m /= b.length;
-        return Float32Array.from(c, (v, i) => v - b[i] + m);
+        return map1(c, (v, i) => v - b[i] + m);
       });
     case 'flatfield':
       return each((c) => {
-        const b = gaussian(c, w, h, P<number>('sigma'));
+        const b = gaussianWide(c, w, h, P<number>('sigma'));
         let m = 0;
-        for (const v of b) m += v;
+        for (let i_ = 0; i_ < b.length; i_++) {
+          const v = b[i_];
+          m += v;
+        }
         m /= b.length;
-        return Float32Array.from(c, (v, i) => (b[i] ? (v * m) / b[i] : v));
+        return map1(c, (v, i) => (b[i] ? (v * m) / b[i] : v));
       });
     case 'unsharp':
       return each((c) => {
         const b = gaussian(c, w, h, P<number>('sigma'));
         const a = P<number>('amount');
-        return Float32Array.from(c, (v, i) => v + a * (v - b[i]));
+        return map1(c, (v, i) => v + a * (v - b[i]));
       });
     case 'gradient': {
       const c = gradient(g.ch[0], w, h, P<'sobel' | 'prewitt' | 'scharr'>('op'), P<'magnitude' | 'x' | 'y'>('part'));
@@ -293,7 +323,7 @@ export function applyStep(r: Raster, s: ImgStep): { r: Raster; note?: string } |
     case 'dog': {
       const a = gaussian(g.ch[0], w, h, P<number>('s1'));
       const b = gaussian(g.ch[0], w, h, P<number>('s2'));
-      const c = Float32Array.from(a, (v, i) => v - b[i]);
+      const c = map1(a, (v, i) => v - b[i]);
       return { r: gray1(r, c, ...rangeOfData(c)) };
     }
     case 'canny':
@@ -302,7 +332,7 @@ export function applyStep(r: Raster, s: ImgStep): { r: Raster; note?: string } |
       const which = P<'larger' | 'smaller'>('which');
       const e = hessianEigen(g.ch[0], w, h, P<number>('sigma'), which);
       // bright ridges: the smaller eigenvalue is strongly negative across them; shown positive
-      const c = Float32Array.from(e, (v) => (which === 'smaller' ? Math.max(0, -v) : Math.max(0, v)));
+      const c = map1(e, (v) => (which === 'smaller' ? Math.max(0, -v) : Math.max(0, v)));
       return { r: gray1(r, c, ...rangeOfData(c)) };
     }
     case 'localsd': {
@@ -317,7 +347,7 @@ export function applyStep(r: Raster, s: ImgStep): { r: Raster; note?: string } |
     case 'range': {
       const mx = minMaxFilter(g.ch[0], w, h, P<number>('radius'), true, P<Shape>('shape'));
       const mn = minMaxFilter(g.ch[0], w, h, P<number>('radius'), false, P<Shape>('shape'));
-      const c = Float32Array.from(mx, (v, i) => v - mn[i]);
+      const c = map1(mx, (v, i) => v - mn[i]);
       return { r: gray1(r, c, 0, sp) };
     }
     case 'gabor': {
@@ -352,16 +382,16 @@ export function applyStep(r: Raster, s: ImgStep): { r: Raster; note?: string } |
       if (method === 'manual') {
         const lo = or(P<number>('low'), g.lo);
         const hi = or(P<number>('high'), g.hi);
-        return { r: mask1(r, Float32Array.from(c, (v) => (v >= lo && v <= hi ? 1 : 0))), note: `${+lo.toPrecision(5)} … ${+hi.toPrecision(5)}` };
+        return { r: mask1(r, map1(c, (v) => (v >= lo && v <= hi ? 1 : 0))), note: `${+lo.toPrecision(5)} … ${+hi.toPrecision(5)}` };
       }
       const t = globalThreshold(c, method as GlobalMethod);
       if (typeof t === 'string') return t;
       const name = GLOBAL_METHODS.find(([k]) => k === method)?.[1] ?? method;
-      return { r: mask1(r, Float32Array.from(c, (v) => ((light ? v <= t : v > t) ? 1 : 0))), note: `${name}: ${+t.toPrecision(5)}` };
+      return { r: mask1(r, map1(c, (v) => ((light ? v <= t : v > t) ? 1 : 0))), note: `${name}: ${+t.toPrecision(5)}` };
     }
     case 'localthreshold': {
       const light = P<boolean>('light');
-      const c = light ? Float32Array.from(g.ch[0], (v) => g.lo + g.hi - v) : g.ch[0];
+      const c = light ? map1(g.ch[0], (v) => g.lo + g.hi - v) : g.ch[0];
       const k = P<number>('k');
       const m = localThreshold(c, w, h, P<string>('method') as LocalMethod, Math.round(P<number>('size')), { offset: P<number>('offset'), ...(Number.isFinite(k) ? { k } : {}), lo: g.lo, hi: g.hi });
       return { r: mask1(r, m) };
@@ -371,13 +401,15 @@ export function applyStep(r: Raster, s: ImgStep): { r: Raster; note?: string } |
 
 // The steps in their order (those switched off passed over): the raster at the end, and for every step its note or
 // what went wrong
-export function applySteps(base: Raster, steps: ImgStep[], upTo = steps.length): { r: Raster; notes: Record<string, string>; errors: Record<string, string> } {
+// seen: the raster that comes into each step (its place in the list), before it runs
+export function applySteps(base: Raster, steps: ImgStep[], upTo = steps.length, seen?: (k: number, r: Raster) => void, scale = 1): { r: Raster; notes: Record<string, string>; errors: Record<string, string> } {
   let r = base;
   const notes: Record<string, string> = {};
   const errors: Record<string, string> = {};
-  for (const s of steps.slice(0, upTo)) {
+  for (const [k, s] of steps.slice(0, upTo).entries()) {
+    seen?.(k, r);
     if (!s.on || !(s.kind in STEP_DEFS)) continue;
-    const out = applyStep(r, s);
+    const out = applyStep(r, s, scale);
     if (typeof out === 'string') {
       errors[s.id] = out;
       continue;

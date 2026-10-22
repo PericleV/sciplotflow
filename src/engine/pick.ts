@@ -8,11 +8,17 @@ import { fmtNum } from './table.ts';
 export type PickKind = 'x' | 'y' | 'max' | 'min' | 'where';
 // x / y: the values (“0.5”, “0.2, 0.5”, “0:0.1:0.8”); max / min: between `from` and `to` on X (NaN: no limit);
 // where: a condition of x, y, i, n and the columns A, B, C …
-export type PickRule = { kind: PickKind; value: string; from?: number; to?: number };
+export type PickRule = { kind: PickKind; value: string; from?: number; to?: number; which?: 'all' | 'first' | 'last' };
 export type PickOptions = { interp: 'linear' | 'spline' | 'nearest'; outside: 'empty' | 'extrapolate' | 'end' };
+export type PickGraph = {
+  xName: string;
+  yName: string;
+  curves: { name: string; x: Float64Array | number[]; y: Float64Array | number[] }[];
+  points: { x: number; y: number; rule: string; at: number; kind: PickKind }[];
+};
 // A point picked: between rows a and b (b = a: on a row) at t (0 … 1, beyond when extrapolated); its x and y; at: the
-// value the rule asked for (at X = 0.5: 0.5; NaN for the others)
-export type Picked = { rule: string; a: number; b: number; t: number; x: number; y: number; at: number };
+// value the rule asked for (at X = 0.5: 0.5; NaN for the others); kind: the rule's kind
+export type Picked = { rule: string; a: number; b: number; t: number; x: number; y: number; at: number; kind?: PickKind };
 
 // “0.5”, “0.2, 0.5”, “0:0.1:0.8” (start:step:end) → the values; a message when it cannot be read.
 export function pickValues(s: string): number[] | string {
@@ -53,10 +59,12 @@ export function pickPoints(x: ArrayLike<number>, y: ArrayLike<number>, rows: num
   const points: Picked[] = [];
   const errors: string[] = [];
   let asked = NaN;
-  const at = (rule: string, a: number, b: number, t: number, xv?: number, yv?: number) => points.push({ rule, a, b, t, x: xv ?? lerp(x[a], x[b], t), y: yv ?? lerp(y[a], y[b], t), at: asked });
+  let curKind: PickKind = 'x';
+  const at = (rule: string, a: number, b: number, t: number, xv?: number, yv?: number, kind?: PickKind) => points.push({ rule, a, b, t, x: xv ?? lerp(x[a], x[b], t), y: yv ?? lerp(y[a], y[b], t), at: asked, kind: kind ?? curKind });
   const byX = [...rows].sort((p, q) => x[p] - x[q]);
   rules.forEach((r, k) => {
     asked = NaN;
+    curKind = r.kind;
     if (r.kind === 'x' || r.kind === 'y') {
       const vals = pickValues(r.value);
       if (typeof vals === 'string') return errors.push(`Rule ${k + 1}: ${vals}`);
@@ -65,20 +73,23 @@ export function pickPoints(x: ArrayLike<number>, y: ArrayLike<number>, rows: num
       for (const v of vals) {
         asked = v;
         const name = `${r.kind} = ${fmtNum(v, 6)}`;
-        let found = false;
+        const hits: { a: number; b: number; t: number; xv?: number; yv?: number }[] = [];
         // every crossing of the value, in the order measured (a value met exactly on a row: counted once)
         for (let j = 0; j + 1 < rows.length; j++) {
           const [p, q] = [by[rows[j]], by[rows[j + 1]]];
           if (!((p - v) * (q - v) <= 0) || p === q || (q === v && j + 2 < rows.length)) continue;
           const t = (v - p) / (q - p);
           const [a, b] = [rows[j], rows[j + 1]];
-          if (r.kind === 'x' && o.interp === 'nearest') at(name, t < 0.5 ? a : b, t < 0.5 ? a : b, 0);
+          if (r.kind === 'x' && o.interp === 'nearest') hits.push({ a: t < 0.5 ? a : b, b: t < 0.5 ? a : b, t: 0 });
           else if (spline) {
             const yv = spline(v);
-            at(name, a, b, t, v, Number.isFinite(yv) ? yv : undefined);
-          } else at(name, a, b, t, r.kind === 'x' ? v : undefined, r.kind === 'y' ? v : undefined);
-          found = true;
+            hits.push({ a, b, t, xv: v, yv: Number.isFinite(yv) ? yv : undefined });
+          } else hits.push({ a, b, t, xv: r.kind === 'x' ? v : undefined, yv: r.kind === 'y' ? v : undefined });
+
         }
+        const chosen = r.which === 'first' ? hits.slice(0, 1) : r.which === 'last' ? hits.slice(-1) : hits;
+        for (const h of chosen) at(name, h.a, h.b, h.t, h.xv, h.yv);
+        const found = chosen.length > 0;
         if (found || r.kind === 'y' || o.outside === 'empty' || byX.length < 2) continue;
         // beyond the curve: its end value, or the line through its last two points (in X)
         const low = v < x[byX[0]];

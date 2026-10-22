@@ -4,7 +4,8 @@
 // the reader, the graph large; and the edits made on it: + Cut (a click puts a cut at that row — on the curves, at the
 // nearest point), a cut line dragged to another row or removed by a double-click, Blocks (a click keeps a block or
 // leaves it out), Rows (dragged across the rows used).
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { InPanel } from './inspectorStore.ts';
 import { createPortal } from 'react-dom';
 import { Maximize2, Scissors, SquareDashedMousePointer, MousePointerClick, X as XIcon } from 'lucide-react';
 import type { SplitGraph } from '../engine/reshape.ts';
@@ -237,7 +238,11 @@ function Graph({ g, view, W, H, zoom, box: zbox, onView, zoomOut, tool, snap, to
     ctx.font = '10px system-ui, sans-serif';
     const sx = niceStep(box.x1 - box.x0, Math.max(3, Math.round(pw / 80)));
     ctx.textAlign = 'center';
-    for (let v = Math.ceil(box.x0 / sx) * sx; v <= box.x1 + sx * 1e-9; v += sx) ctx.fillText(fmtNum(Math.abs(v) < sx * 1e-9 ? 0 : v, 4), fx(v), H - M.b + 12);
+    // (the last one kept inside the canvas)
+    for (let v = Math.ceil(box.x0 / sx) * sx; v <= box.x1 + sx * 1e-9; v += sx) {
+      const t = fmtNum(Math.abs(v) < sx * 1e-9 ? 0 : v, 4);
+      ctx.fillText(t, Math.min(fx(v), W - ctx.measureText(t).width / 2 - 1), H - M.b + 12);
+    }
     const sy = niceStep(box.y1 - box.y0, Math.max(3, Math.round(ph / 40)));
     ctx.textAlign = 'right';
     for (let v = Math.ceil(box.y0 / sy) * sy; v <= box.y1 + sy * 1e-9; v += sy) ctx.fillText(fmtNum(Math.abs(v) < sy * 1e-9 ? 0 : v, 4), M.l - 4, fy(v) + 3);
@@ -385,6 +390,21 @@ function Graph({ g, view, W, H, zoom, box: zbox, onView, zoomOut, tool, snap, to
 // the graph large
 // (tol: the turn tolerance of the node, % of the range — the maxima and minima a cut snaps to)
 export function SplitGraphView({ g, view, setView, edits, tol }: { g: SplitGraph; view: 'rows' | 'curves'; setView: (v: 'rows' | 'curves') => void; edits: SplitEdits; tol: number }) {
+  const inPanel = useContext(InPanel);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [panelW, setPanelW] = useState<number>(W0);
+  useEffect(() => {
+    if (!inPanel || !containerRef.current) return;
+    const el = containerRef.current;
+    const ro = new ResizeObserver(([entry]) => {
+      if (entry?.contentRect?.width) {
+        setPanelW(Math.round(entry.contentRect.width));
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [inPanel]);
+  const curW = inPanel ? Math.max(260, panelW) : W0;
   const [zoom, setZoom] = useState<ZoomMode>('none');
   const [snap, setSnap] = useState<SplitSnap>('data');
   const [box, setBox] = useState<View | null>(null);
@@ -488,9 +508,9 @@ export function SplitGraphView({ g, view, setView, edits, tol }: { g: SplitGraph
   );
   const graph = (w: number, h: number) => <Graph g={g} view={view} W={w} H={h} zoom={zoom} box={box} onView={setBox} zoomOut={out} tool={tool} snap={snap} tol={tol} edits={edits} yAt={yAt} reader={{ r: rd, onRead: (reading) => setRd((q) => ({ ...q, reading })) }} />;
   return (
-    <>
+    <div ref={containerRef} style={{ width: '100%', minWidth: 0 }}>
       {tools}
-      {graph(W0, H0)}
+      {graph(curW, H0)}
       {big &&
         createPortal(
           <div className="big-view nodrag nowheel" onClick={(e) => e.target === e.currentTarget && setBig(false)}>
@@ -504,6 +524,6 @@ export function SplitGraphView({ g, view, setView, edits, tol }: { g: SplitGraph
           </div>,
           document.body,
         )}
-    </>
+    </div>
   );
 }

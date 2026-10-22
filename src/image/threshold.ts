@@ -2,7 +2,7 @@
 // also has computed as it does: Otsu, IsoData, Li, Mean, Minimum, Triangle, Yen —) and local ones (a threshold for every
 // pixel from its neighbourhood). A threshold T: the objects are the values above it (bright objects on a dark ground).
 // Pure.
-import { gaussian, reflect } from './raster.ts';
+import { gaussian, map1, reflect } from './raster.ts';
 import { medianFilter, meanFilter, minMaxFilter, varianceFilter } from './filters.ts';
 
 export type GlobalMethod = 'default' | 'huang' | 'intermodes' | 'isodata' | 'li' | 'maxentropy' | 'mean' | 'minerror' | 'minimum' | 'moments' | 'otsu' | 'percentile' | 'renyi' | 'shanbhag' | 'triangle' | 'yen';
@@ -33,7 +33,8 @@ export function threshHistogram(c: Float32Array): Hist | null {
   let lo = Infinity;
   let hi = -Infinity;
   let integer = true;
-  for (const v of c) {
+  for (let i_ = 0; i_ < c.length; i_++) {
+    const v = c[i_];
     if (!Number.isFinite(v)) continue;
     if (v < lo) lo = v;
     if (v > hi) hi = v;
@@ -43,13 +44,17 @@ export function threshHistogram(c: Float32Array): Hist | null {
   if (integer && hi - lo < 256) {
     const n = hi - lo + 1;
     const counts = new Float64Array(n);
-    for (const v of c) if (Number.isFinite(v)) counts[v - lo]++;
+    for (let i_ = 0; i_ < c.length; i_++) {
+      const v = c[i_];
+      if (Number.isFinite(v)) counts[v - lo]++;
+    }
     return { counts, centers: Float64Array.from({ length: n }, (_, k) => lo + k), edge: (k) => lo + k, integer: true };
   }
   const bins = 256;
   const width = (hi - lo) / bins || 1;
   const counts = new Float64Array(bins);
-  for (const v of c) {
+  for (let i_ = 0; i_ < c.length; i_++) {
+    const v = c[i_];
     if (!Number.isFinite(v)) continue;
     const b = Math.floor((v - lo) / width);
     counts[b >= bins ? bins - 1 : b < 0 ? 0 : b]++;
@@ -117,7 +122,10 @@ function isodata(H: Hist): number {
 function li(c: Float32Array, H: Hist): number {
   const vals = Array.from(c).filter(Number.isFinite);
   let min = Infinity;
-  for (const v of vals) if (v < min) min = v;
+  for (let i_ = 0; i_ < vals.length; i_++) {
+    const v = vals[i_];
+    if (v < min) min = v;
+  }
   if (vals.every((v) => v === vals[0])) return vals[0];
   const im = vals.map((v) => v - min);
   let tol: number;
@@ -143,7 +151,8 @@ function li(c: Float32Array, H: Hist): number {
         else [sb, nb] = [sb + v * H.counts[i], nb + H.counts[i]];
       });
     else
-      for (const v of im) {
+      for (let i_ = 0; i_ < im.length; i_++) {
+        const v = im[i_];
         if (v > cur) [sf, nf] = [sf + v, nf + 1];
         else [sb, nb] = [sb + v, nb + 1];
       }
@@ -482,7 +491,11 @@ export function globalThreshold(c: Float32Array, method: GlobalMethod): number |
   if (method === 'mean') {
     let s = 0;
     let n = 0;
-    for (const v of c) if (Number.isFinite(v)) [s, n] = [s + v, n + 1];
+    for (let i = 0; i < c.length; i++)
+      if (Number.isFinite(c[i])) {
+        s += c[i];
+        n++;
+      }
     return s / n;
   }
   if (method === 'otsu') return H.counts.length === 1 ? H.centers[0] : otsu(H);
@@ -529,31 +542,56 @@ function meanStdSquare(c: Float32Array, w: number, h: number, size: number): { m
     if (i < 0) i += p;
     return i < n ? i : p - i;
   };
+  // (the window's sums slid: along every row by prefix sums of the row with its mirrored margins, then down the columns
+  // a row in, a row out — the same sums as adding up every window)
+  const tx = Int32Array.from({ length: w + 2 * r }, (_, i) => mirror(i - r, w));
+  const ty = Int32Array.from({ length: h + 2 * r }, (_, i) => mirror(i - r, h));
+  const ra = new Float64Array(w * h);
+  const rb = new Float64Array(w * h);
+  const pa = new Float64Array(w + 2 * r + 1);
+  const pb = new Float64Array(w + 2 * r + 1);
+  for (let y = 0; y < h; y++) {
+    const o = y * w;
+    for (let i = 0; i < w + 2 * r; i++) {
+      const v = c[o + tx[i]];
+      pa[i + 1] = pa[i] + v;
+      pb[i + 1] = pb[i] + v * v;
+    }
+    for (let x = 0; x < w; x++) {
+      ra[o + x] = pa[x + size] - pa[x];
+      rb[o + x] = pb[x + size] - pb[x];
+    }
+  }
   const m = new Float32Array(w * h);
   const s = new Float32Array(w * h);
   const n = size * size;
-  for (let y = 0; y < h; y++)
+  const ca = new Float64Array(w);
+  const cb = new Float64Array(w);
+  for (let j = 0; j < size; j++) {
+    const ro = ty[j] * w;
     for (let x = 0; x < w; x++) {
-      let a = 0;
-      let b = 0;
-      for (let dy = -r; dy <= r; dy++) {
-        const yy = mirror(y + dy, h) * w;
-        for (let dx = -r; dx <= r; dx++) {
-          const v = c[yy + mirror(x + dx, w)];
-          a += v;
-          b += v * v;
-        }
-      }
-      const mean = a / n;
-      m[y * w + x] = mean;
-      s[y * w + x] = Math.sqrt(Math.max(0, b / n - mean * mean));
+      ca[x] += ra[ro + x];
+      cb[x] += rb[ro + x];
     }
+  }
+  for (let y = 0; y < h; y++) {
+    const o = y * w;
+    for (let x = 0; x < w; x++) {
+      const mean = ca[x] / n;
+      m[o + x] = mean;
+      s[o + x] = Math.sqrt(Math.max(0, cb[x] / n - mean * mean));
+    }
+    if (y + 1 < h) {
+      const [add, sub] = [ty[y + size] * w, ty[y] * w];
+      for (let x = 0; x < w; x++) {
+        ca[x] += ra[add + x] - ra[sub + x];
+        cb[x] += rb[add + x] - rb[sub + x];
+      }
+    }
+  }
   return { m, s };
 }
 
-// The local threshold of every pixel (scikit-image's threshold_local, Niblack, Sauvola: a square of `size`; ImageJ's
-// Bernsen and Phansalkar: a disk of radius size / 2), then the mask of the objects (above it)
-// p: offset (mean, median, gaussian: T − offset), k, r (Niblack, Sauvola, Phansalkar), contrast (Bernsen)
 export function localThreshold(c: Float32Array, w: number, h: number, method: LocalMethod, size: number, p: { offset?: number; k?: number; r?: number; contrast?: number; lo: number; hi: number }): Float32Array {
   const odd = Math.max(3, size % 2 ? size : size + 1);
   const out = new Float32Array(w * h);
@@ -589,7 +627,7 @@ export function localThreshold(c: Float32Array, w: number, h: number, method: Lo
   }
   // Phansalkar: on values scaled to 0 … 1
   const span = p.hi - p.lo || 1;
-  const u = Float32Array.from(c, (v) => (v - p.lo) / span);
+  const u = map1(c, (v) => (v - p.lo) / span);
   const m = meanFilter(u, w, h, rad);
   const s = varianceFilter(u, w, h, rad, 'disk', true);
   const k = p.k ?? 0.25;

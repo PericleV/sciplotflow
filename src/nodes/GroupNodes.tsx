@@ -1,16 +1,18 @@
 // Group nodes: the group (its ports, its name, Open), a Batch (a group run on every file), and inside them the Group
 // input and Group output nodes.
+import { useState } from 'react';
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import { sourcePort, targetAccepts, type PortType } from '../engine/ports.ts';
 import { NEW_OUT } from '../engine/subgraph.ts';
-import type { BatchSpec } from '../engine/batch.ts';
+import { guessPattern, type BatchSpec } from '../engine/batch.ts';
+import { nodeTitle } from '../nodeColors.ts';
 import type { AppNode, GroupNode } from '../types.ts';
 import { useGroupNav } from './groupNav.ts';
 import { Field, InPort, Messages, OutPort, Select, TextInput } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
 import { DataPreview } from './DataNodes.tsx';
-import { ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { IC } from './iconProps.ts';
 
 const known = (t: string | undefined | null): PortType => (t && t !== 'any' ? (t as PortType) : 'any');
@@ -49,7 +51,9 @@ function PlainGroup({ id, data }: NodeProps<GroupNode>) {
 }
 
 // A Batch: its steps (opened like a group) run on every file of its first input; what they give gathered in a table
-// (a row per file), a workbook (a sheet per file) and all the rows one under the other.
+// (a row per file), a workbook (a sheet per file) and all the rows one under the other. While it is not ready, a guide
+// of its three steps (the files, the steps, what is kept), each ticked when done; its files listed in the options (what
+// their names say, their errors — one clicked: the file its steps are shown on inside).
 function BatchView({ id, data }: NodeProps<GroupNode>) {
   const { updateNodeData } = useReactFlow<AppNode>();
   const r = useNodeResult(id);
@@ -57,29 +61,71 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
   const spec = data.batch ?? {};
   const set = (p: Partial<BatchSpec>) => updateNodeData(id, { batch: { ...spec, ...p } });
   const self = { id, type: 'subgraph', data } as AppNode;
-  const steps = data.nodes.filter((n) => n.type !== 'groupin' && n.type !== 'groupout').length;
+  const steps = data.nodes.filter((n) => n.type !== 'groupin' && n.type !== 'groupout');
   const b = r?.view.batch;
+  const list = b?.list ?? [];
   const table = r?.outputs.table?.t === 'dataset' ? r.outputs.table.v : undefined;
+  const [guessNote, setGuessNote] = useState('');
+  // the three steps: the files connected, steps inside, something kept
+  const kept = data.outputs.map((p) => p.label);
+  const done = [!!b, steps.length > 0, kept.length > 0];
+  const stepNames = [...new Set(steps.map((n) => nodeTitle(n)))];
+  const guide: [string, string][] = [
+    ['Files', done[0] ? `${b!.files} file${b!.files === 1 ? '' : 's'}` : 'Connect the workbook output of an Import (several files opened together, or Open a folder) to “files”.'],
+    ['Steps', done[1] ? `${steps.length} step${steps.length === 1 ? '' : 's'}: ${stepNames.slice(0, 3).join(', ')}${stepNames.length > 3 ? ' …' : ''}` : 'Open the batch and build the analysis on one file (it starts from “one file”).'],
+    ['Keep', done[2] ? `kept: ${kept.join(', ')}` : 'Inside, connect what to keep from each file (a value, a table) to “+ keep”.'],
+  ];
+  const ready = done.every(Boolean);
+  // what the pattern reads from the first file's name (or that it does not match)
+  const first = list[0];
+  const guess = () => {
+    const p = guessPattern(list.map((f) => f.name));
+    if (p) {
+      set({ pattern: p });
+      setGuessNote('');
+    } else setGuessNote('No shape shared by the names (the same text between their numbers): write the pattern.');
+  };
   return (
     <div className="node node-group">
       <div className="row">
         <TextInput value={data.name} placeholder="Batch" onChange={(name) => updateNodeData(id, { name })} />
-        <button className="nodrag btn-run" title="See and change the steps run on every file (shown on the first file)" onClick={() => nav.open(id)}>
+        <button className="nodrag btn-run" title="See and change the steps run on every file (shown on one file: the first, or the one chosen)" onClick={() => nav.open(id)}>
           Open <ChevronRight {...IC} />
         </button>
       </div>
-      <div className="hint">
-        {steps} step{steps === 1 ? '' : 's'}
-        {b ? ` · ${b.files} file${b.files === 1 ? '' : 's'}` : ''}
-        {b?.failed.length ? ` · ${b.failed.length} with errors` : ''}
-      </div>
+      {ready ? (
+        <div className="hint">
+          ✓ {b!.files} file{b!.files === 1 ? '' : 's'} · {steps.length} step{steps.length === 1 ? '' : 's'} · kept: {kept.join(', ')}
+          {b?.failed.length ? <span className="warn-text"> · {b.failed.length} with errors</span> : null}
+        </div>
+      ) : (
+        <ol className="batch-guide">
+          {guide.map(([name, text], k) => (
+            <li key={name} className={done[k] ? 'done' : ''}>
+              <span className="batch-step">{done[k] ? '✓' : k + 1}</span>
+              <span>
+                <b>{name}</b> — {text}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
       {data.inputs.map((p, k) => (
         <InPort key={p.id} label={k === 0 ? 'files' : p.label} port={k === 0 ? 'workbook' : known(targetAccepts(self, p.id)[0] ?? p.type)} id={p.id} title={k === 0 ? 'The files: an Import with several files opened together (or a folder), a sheet each' : 'The same for every file'} />
       ))}
       <NodeOptions>
         <Field label="Names" title="What the file names say, as columns of the table: {Name} takes a number, {Name:text} a word, the rest is written as in the names. Example: sample_{T}C_{t}h reads T = 25 and t = 2 from sample_25C_2h">
           <TextInput value={spec.pattern ?? ''} placeholder="e.g. sample_{T}C_{t}h" onChange={(pattern) => set({ pattern: pattern || undefined })} />
+          <button className="nodrag" disabled={list.length < 2} title="A pattern guessed from the names: the numbers that change from file to file become {V1}, {V2} … — then name them" onClick={guess}>
+            Guess
+          </button>
         </Field>
+        {first && (
+          <div className="hint mono">
+            {first.name} → {spec.pattern?.trim() ? first.read || 'does not match the pattern' : 'nothing read (no pattern)'}
+          </div>
+        )}
+        {guessNote && <div className="msg warn">{guessNote}</div>}
         <Field label="Order" title="The order of the files in the table and the workbook">
           <Select<NonNullable<BatchSpec['order']>>
             value={spec.order ?? 'given'}
@@ -92,14 +138,35 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
           />
         </Field>
         <div className="hint">
-          {data.outputs.length ? `Kept from every file: ${data.outputs.map((p) => p.label).join(', ')}.` : 'Nothing is kept yet.'} To keep more, open the batch and connect a value or a table to “+ keep” on its Group output.
+          {kept.length ? `Kept from every file: ${kept.join(', ')}.` : 'Nothing is kept yet.'} To keep more, open the batch and connect a value or a table to “+ keep” on its Group output.
         </div>
-        {(b?.failed ?? []).map((f) => (
-          <div key={f.name} className="msg warn">
-            <b>{f.name}</b>: {f.errors.slice(0, 2).join('; ')}
-            {f.errors.length > 2 ? ' …' : ''}
+        {list.length > 0 && (
+          <div className="batch-files nowheel">
+            <table className="preview-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>File</th>
+                  <th>Its name says</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((f, k) => (
+                  <tr key={`${k}-${f.name}`} className={`nodrag${k === (b?.shown ?? 0) ? ' shown' : ''}`} title={f.errors.length ? f.errors.join('\n') : 'Click: the file the steps are shown on inside'} onClick={() => set({ show: k || undefined })}>
+                    <td>{k + 1}</td>
+                    <td className="mono">{f.name}</td>
+                    <td className="mono">{f.read}</td>
+                    <td>
+                      {f.errors.length ? <span className="warn-text">⚠ {f.errors[0]}</span> : '✓'}
+                      {f.own?.length ? <span className="muted" title={`Own settings: ${f.own.join(', ')}`}> ✎ {f.own.length} own</span> : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        ))}
+        )}
         {table && <DataPreview columns={table.columns} rows={6} />}
       </NodeOptions>
       <Messages result={r} />
@@ -107,6 +174,76 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
       <OutPort label="sheets" port="workbook" id="sheets" title="A sheet per file: the tables kept (Auto-extract or a Plot of a workbook draws them all)" />
       <OutPort label="all rows" port="dataset" id="stacked" title="The rows of every file one under the other, the file and what its name says before them" />
     </div>
+  );
+}
+
+// Inside a Batch, at the top: the file its steps are shown on (◀ ▶ or chosen; ✎ one with its own settings), what is
+// kept from every file; a change of a step made for every file or only for the file shown; the steps with that file's
+// own settings — each back to the common ones (↺) or made the common ones, for every file (⇪)
+export function BatchFileBar({
+  files,
+  shown,
+  kept,
+  onShow,
+  mode,
+  setMode,
+  ownSteps,
+  ownCount,
+  onBack,
+  onForAll,
+}: {
+  files: { name: string; errors: string[] }[];
+  shown: number;
+  kept: string[];
+  onShow: (k: number) => void;
+  mode: 'all' | 'own';
+  setMode: (m: 'all' | 'own') => void;
+  ownSteps: { id: string; title: string }[];
+  ownCount: (name: string) => number;
+  onBack: (id: string) => void;
+  onForAll: (id: string) => void;
+}) {
+  if (!files.length) return <span className="hint">These steps run on every file: connect the files to the batch (outside) to see them here, one at a time. Connect to “+ keep” what to keep from each file.</span>;
+  return (
+    <span className="batch-bar">
+      <span className="row">
+        <span className="muted">File shown:</span>
+        <button className="nodrag" disabled={shown <= 0} title="The file before" onClick={() => onShow(shown - 1)}>
+          <ChevronLeft {...IC} />
+        </button>
+        <Select<string> value={String(shown)} title="The file these steps are shown on (they run on every one); ✎ a file with its own settings, ⚠ one with errors" options={files.map((f, k): [string, string] => [String(k), `${k + 1} / ${files.length} — ${f.name}${ownCount(f.name) ? ' ✎' : ''}${f.errors.length ? ' ⚠' : ''}`])} onChange={(v) => onShow(Number(v))} />
+        <button className="nodrag" disabled={shown >= files.length - 1} title="The file after" onClick={() => onShow(shown + 1)}>
+          <ChevronRight {...IC} />
+        </button>
+        <span className="muted">Changes:</span>
+        <Select<'all' | 'own'>
+          value={mode}
+          title="A change of a step: for every file (the common settings), or only for the file shown (its own settings; the others keep the common ones)"
+          options={[
+            ['all', 'for all files'],
+            ['own', 'only for this file'],
+          ]}
+          onChange={setMode}
+        />
+        <span className="muted">{kept.length ? `kept: ${kept.join(', ')}` : 'nothing kept yet: connect to “+ keep”'}</span>
+      </span>
+      {ownSteps.length > 0 && (
+        <span className="row">
+          <span className="muted">Own settings of {files[shown]?.name}:</span>
+          {ownSteps.map((q) => (
+            <span key={q.id} className="chip">
+              ✎ {q.title}
+              <button className="nodrag ts-btn" title="Back to the common settings (for this file)" onClick={() => onBack(q.id)}>
+                ↺
+              </button>
+              <button className="nodrag ts-btn" title="Use for all files: these settings become the common ones" onClick={() => onForAll(q.id)}>
+                ⇪
+              </button>
+            </span>
+          ))}
+        </span>
+      )}
+    </span>
   );
 }
 

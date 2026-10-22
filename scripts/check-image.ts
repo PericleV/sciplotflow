@@ -1,17 +1,20 @@
 // The checks of the Image analysis node's algorithms against scikit-image / scipy (scripts/fixtures/image-ref.py →
 // image-ref.json), and properties where there is no reference (skeleton, watershed, the ImageJ thresholds).
 import { readFileSync } from 'node:fs';
-import { gaussian, packPixels, unpackPixels, type Raster } from '../src/image/raster.ts';
+import { cropRaster, dataBarRows, gaussian, gaussianWide, packPixels, quantile, shrinkRaster, unpackPixels, type Raster } from '../src/image/raster.ts';
+import { semScale } from '../src/image/load.ts';
+import { measureRois, measureSpec, valueStats, feret, lineProfile } from '../src/image/measure.ts';
+import { ringMask, roiMask, traceOutline, wand, polygonArea, type Roi } from '../src/image/roi.ts';
 import { bilateral, entropyFilter, gabor, gradient, hessianEigen, laplace, laplacianOfGaussian, lbp, meanFilter, medianFilter, minMaxFilter, nonLocalMeans, rollingBall, varianceFilter } from '../src/image/filters.ts';
 import { closing, distanceMap, fillHoles, label, opening, separate, skeleton } from '../src/image/morph.ts';
 import { canny } from '../src/image/canny.ts';
 import { clahe, equalize, monotoneCurve, pickChannel } from '../src/image/tone.ts';
 import { GLOBAL_METHODS, globalThreshold, localThreshold } from '../src/image/threshold.ts';
-import { applySteps, newStep } from '../src/image/steps.ts';
+import { applyStep, applySteps, newStep } from '../src/image/steps.ts';
 import { encodePNG } from '../src/image/render.ts';
 import { niceBar, scaleBarPlace, BAR_DEFAULTS } from '../src/image/node.ts';
 import { unzlibSync } from 'fflate';
-import { evaluateGraph } from '../src/engine/evaluate.ts';
+import { evaluateGraph, logicalData } from '../src/engine/evaluate.ts';
 import type { AppNode } from '../src/types.ts';
 
 type Ok = (cond: boolean, what: string) => void;
@@ -240,5 +243,209 @@ export function checkImage(ok: Ok) {
     const bad = evaluateGraph([{ ...node, data: { ...node.data, steps: [newStep('skeleton', 'k1')] } } as AppNode], []).get('im')!;
     const none = evaluateGraph([{ ...node, data: { name: '', steps: [] } } as AppNode], []).get('im')!;
     ok(bad.warnings.some((x) => x.startsWith('Step 1 (Skeleton): needs a mask')) && none.view.waiting !== undefined, 'Image node: a step that cannot run said with its number; no image yet: waiting');
+    // a crop: the part analysed (the matrix and the figure of its size)
+    const cropped = evaluateGraph([{ ...node, data: { ...node.data, crop: [3, 2, w - 10, h - 8] } } as AppNode], []).get('im')!;
+    const cm = cropped.outputs.matrix;
+    ok(cm?.t === 'matrix' && cm.v.cols === w - 10 && cm.v.rows === h - 8, `Image node: a crop — only that part analysed (${cm?.t === 'matrix' ? `${cm.v.cols} × ${cm.v.rows}` : '?'} of ${w} × ${h})`);
+    // selections: measured on the part analysed (their places in the original's pixels), out as a workbook with the
+    // mask's coverage; drawn on the figure, locked; the node evaluated again once its pixels are back from the browser's
+    // storage (its key changes)
+    const roi: Roi = { id: 'q', name: 'Q1', kind: 'rect', box: [9, 7, 8, 6] };
+    const withRoi = { ...node, data: { ...node.data, crop: [3, 2, w - 10, h - 8], rois: [roi], measure: { keys: ['area', 'mean', 'covered'] } } } as AppNode;
+    const mr = evaluateGraph([withRoi], []).get('im')!;
+    const wb = mr.outputs.workbook;
+    const selSheet = wb?.t === 'workbook' ? wb.v.sheets.find((x) => x.name === 'Selections') : undefined;
+    const val = (n: string) => selSheet?.columns.find((c) => c.name === n)?.values[0] ?? NaN;
+    let sum = 0;
+    for (let y = 4; y < 10; y++) for (let x = 5; x < 13; x++) sum += Math.round(G[y * w + x]);
+    const outline = mr.outputs.figure?.t === 'figure' ? mr.outputs.figure.v.axes[0].annotations.find((x) => x.kind === 'shape' && x.shape.kind === 'polygon') : undefined;
+    const keyOf = (px: string) => JSON.stringify(logicalData({ ...withRoi, data: { ...withRoi.data, pixels: { ...pixels, data: px } } } as AppNode));
+    ok(
+      val('Area (µm²)') === 12 && Math.abs(val('Mean') - sum / 48) < 1e-9 && Number.isFinite(val('Covered (%)')) && wb?.t === 'workbook' && wb.v.sheets.some((x) => x.name === 'Summary') && !!outline?.locked && /^1 selection · coverage /.test(mr.view.image?.summary ?? '') && keyOf('') !== keyOf(pixels.data),
+      `Image node: a selection measured on the part cropped (48 px = 12 µm², its mean), out as a workbook with the mask's coverage; its outline on the figure, locked; evaluated again when its pixels come back (${mr.view.image?.summary})`,
+    );
+  }
+  // the data bar of an electron microscope under the image: found (its rows), none on an image without one
+  {
+    const [W, H, bar] = [120, 90, 14];
+    let seed = 3;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const px = new Float32Array(W * H);
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) px[y * W + x] = y >= H - bar ? ((x > 10 && x < 40 && y % 5 === 0) || (x > 80 && x < 110 && y === H - 4) ? 255 : 0) : 60 + rnd() * 120;
+    const r: Raster = { w: W, h: H, ch: [px], kind: 'gray', lo: 0, hi: 255 };
+    const plain: Raster = { ...r, ch: [Float32Array.from(px, (v, i) => (i >= (H - bar) * W ? 60 + ((i * 7919) % 120) : v))] };
+    const c = cropRaster(r, [0, 0, W, H - dataBarRows(r)]);
+    ok(dataBarRows(r) === bar && dataBarRows(plain) === 0 && c.h === H - bar && c.ch[0][0] === px[0] && cropRaster(r, [0, 0, W, H]) === r, `Image: the data bar under an SEM image found (${dataBarRows(r)} rows of ${bar}), none on an image without one; cut off by a crop`);
+  }
+  // a large rolling ball as ImageJ (on the image shrunk): the background of the exact one to a few % of the range
+  {
+    const fast = rollingBall(G, w, h, 18);
+    const exact = rollingBall(G, w, h, 18, true);
+    let m = 0;
+    for (let i = 0; i < G.length; i++) m = Math.max(m, Math.abs(fast[i] - exact[i]));
+    let [lo, hi] = [Infinity, -Infinity];
+    for (const v of G) [lo, hi] = [Math.min(lo, v), Math.max(hi, v)];
+    ok(m / (hi - lo) < 0.08 && fast.every((v, i) => v <= G[i] + 1e-4), `rolling ball r 18 on the image shrunk (as ImageJ): within ${((m / (hi - lo)) * 100).toFixed(1)} % of the exact background, never above the image`);
+  }
+  // Curves: a curve per channel after the common one; the same curve the editor draws (the default: the identity)
+  {
+    const rgb: Raster = { w: 2, h: 1, ch: [Float32Array.of(0, 255), Float32Array.of(64, 128), Float32Array.of(255, 0)], kind: 'rgb', lo: 0, hi: 255 };
+    const st = newStep('curves', 'c1');
+    const same = applySteps(rgb, [st]).r;
+    const inv = applySteps(rgb, [{ ...st, p: { ...st.p, r: [[0, 1], [1, 0]] } }]).r;
+    ok(same.ch.every((c, k) => c.every((v, i) => Math.abs(v - rgb.ch[k][i]) < 1e-3)) && Math.abs(inv.ch[0][0] - 255) < 1e-3 && Math.abs(inv.ch[0][1]) < 1e-3 && Math.abs(inv.ch[1][1] - 128) < 1e-3, 'Curves: the default leaves the image as it is; R inverted alone (G, B kept)');
+  }
+  // the pixel size an SEM writes in its TIFF: FEI / Thermo (m), Zeiss (nm), Tescan (m)
+  {
+    const fei = semScale({ t34682: ['[Scan]\nPixelWidth=2.5e-009\nPixelHeight=2.5e-009'] });
+    const zeiss = semScale({ t34118: ['AP_IMAGE_PIXEL_SIZE\nImage Pixel Size = 12.40 nm\n'] });
+    const tescan = semScale({ t50431: ['PixelSizeX=4.6e-07\n'] });
+    ok(fei?.size === 2.5 && fei.unit === 'nm' && zeiss?.size === 12.4 && zeiss.unit === 'nm' && tescan?.size === 0.46 && tescan.unit === 'µm' && semScale({ t270: ['nothing here'] }) === undefined, `Image: the pixel size read from an SEM's TIFF tags (FEI ${fei?.size} ${fei?.unit}, Zeiss ${zeiss?.size} ${zeiss?.unit}, Tescan ${tescan?.size} ${tescan?.unit})`);
+  }
+  // the editor's preview: the image shrunk by block means (a mask by the majority), a step's lengths in pixels with it
+  {
+    const W = 9;
+    const H = 7;
+    const c = Float32Array.from({ length: W * H }, (_, i) => i);
+    const sm = shrinkRaster({ w: W, h: H, ch: [c], kind: 'gray', lo: 0, hi: W * H }, 3);
+    const m = shrinkRaster({ w: 4, h: 2, ch: [Float32Array.of(1, 1, 0, 0, 1, 0, 0, 0)], kind: 'mask', lo: 0, hi: 1 }, 2);
+    // (block 0: rows 0–2, columns 0–2: mean of 0 1 2 9 10 11 18 19 20; the last row a block of one row)
+    const blur = { ...newStep('gaussian', 'g'), p: { ...newStep('gaussian', 'g').p, sigma: 6 } };
+    const big = gaussian(c, W, H, 3)[0];
+    const sc = applyStep({ w: W, h: H, ch: [c], kind: 'gray', lo: 0, hi: W * H }, blur, 0.5);
+    ok(sm.w === 3 && sm.h === 3 && sm.ch[0][0] === 10 && sm.ch[0][6] === 55 && m.ch[0].join() === '1,0' && typeof sc !== 'string' && Math.abs(sc.r.ch[0][0] - big) < 1e-4, `Image preview: shrunk by block means (${sm.ch[0][0]}, ${sm.ch[0][6]}), a mask by the majority; σ 6 px on a preview of half the size is σ 3`);
+  }
+  // a wide Gaussian (a background) on the image shrunk: the same surface as the full kernel to well under 1 % of the range
+  {
+    const N = 160;
+    const c = Float32Array.from({ length: N * N }, (_, i) => 100 + 60 * Math.sin((i % N) / 13) * Math.cos(Math.floor(i / N) / 17) + ((i * 7919) % 31));
+    const ref = gaussian(c, N, N, 20);
+    const fast = gaussianWide(c, N, N, 20);
+    let d = 0;
+    for (let i = 0; i < c.length; i++) d = Math.max(d, Math.abs(fast[i] - ref[i]));
+    const q = Float32Array.from({ length: 1001 }, (_, i) => (i * 37) % 1001);
+    ok(d / 150 < 0.01 && quantile(q, 0.25) === 250 && Math.abs(quantile(q, 0.9995) - 999.5) < 1e-9, `wide Gaussian σ 20 on the image shrunk: within ${((d / 150) * 100).toFixed(2)} % of the full kernel; quantiles by selection`);
+  }
+  // selections: the pixels inside (their centres), shape and intensity as scikit-image's regionprops, scipy, numpy
+  {
+    const RR = JSON.parse(readFileSync(new URL('./fixtures/roi-ref.json', import.meta.url), 'utf8'));
+    const img: Raster = { w, h, ch: [G], kind: 'gray', lo: 0, hi: 255 };
+    const bad: string[] = [];
+    for (const [key, ref] of Object.entries(RR) as [string, Record<string, number> & { roi: Partial<Roi> }][]) {
+      const roi = { id: key, name: key, ...ref.roi } as Roi;
+      const all = ['area', 'perimeter', 'centroid', 'ellipse', 'feret', 'shape', 'mean', 'sd', 'median', 'skew'] as const;
+      const res = measureRois({ image: img, mask: null, ox: 0, oy: 0, rois: [roi], spec: measureSpec({ keys: [...all] }), name: 't' });
+      const col = (n: string) => res.book.sheets[0].columns.find((c) => c.name === n)?.values[0] ?? NaN;
+      const near = (a: number, b: number, e = 1e-6) => Math.abs(a - b) <= e * Math.max(1, Math.abs(b));
+      const checks: [string, number, number][] = [
+        ['n', col('Area (px²)'), ref.n],
+        ['cx', col('X (px)'), ref.cx],
+        ['cy', col('Y (px)'), ref.cy],
+        ['major', col('Major (px)'), ref.major],
+        ['minor', col('Minor (px)'), ref.minor],
+        ['mean', col('Mean'), ref.mean],
+        ['sd', col('SD'), ref.sd],
+        ['median', col('Median'), ref.median],
+        ['skew', col('Skewness'), ref.skew],
+        ['kurt', col('Kurtosis'), ref.kurt],
+        ['feret', col('Feret (px)'), ref.feret],
+        ['perimeter', col('Perimeter (px)'), ref.perimeter],
+        ['solidity', col('Solidity'), Math.min(1, ref.n / ref.hull)],
+      ];
+      for (const [what, a, b] of checks) if (!near(a, b)) bad.push(`${key} ${what} ${a} ≠ ${b}`);
+    }
+    ok(!bad.length, `selections: pixels inside, centroid, fitted ellipse, intensity (mean, SD, median, skewness, kurtosis), Feret, perimeter, solidity as regionprops / scipy${bad.length ? `: ${bad.join(', ')}` : ''}`);
+  }
+  // the wand: the outline of the pixels found, its area their number; ImageJ's perimeter of one pixel; a ring around a
+  // spot as its distance says; Feret and its angle; a profile along a line
+  {
+    const W2 = 12;
+    const H2 = 10;
+    const c = new Float32Array(W2 * H2);
+    // an L with a hole, and a pixel apart
+    for (let y = 2; y < 8; y++) for (let x = 2; x < 5; x++) c[y * W2 + x] = 1;
+    for (let x = 5; x < 9; x++) for (let y = 6; y < 8; y++) c[y * W2 + x] = 1;
+    c[3 * W2 + 3] = 0;
+    c[1 * W2 + 10] = 1;
+    const out = wand(c, W2, H2, 3.5, 6.5, 0)!;
+    const one = wand(c, W2, H2, 10.2, 1.7, 0)!;
+    const lonely = measureRois({ image: { w: W2, h: H2, ch: [c], kind: 'gray', lo: 0, hi: 1 }, mask: null, ox: 0, oy: 0, rois: [{ id: 'p', name: 'p', kind: 'traced', pts: one }], spec: measureSpec({ keys: ['perimeter', 'area'] }), name: 't' });
+    const per = lonely.book.sheets[0].columns.find((q) => q.name === 'Perimeter (px)')!.values[0];
+    const filled = roiMask({ id: 'l', name: 'l', kind: 'traced', pts: out }, W2, H2);
+    const n = filled.m.reduce((a, b) => a + b, 0);
+    const spot: Roi = { id: 's', name: 's', kind: 'ellipse', box: [20, 20, 8, 8] };
+    const ring = ringMask(spot, 40, 40, 0, 0, 2, 3);
+    let wrong = 0;
+    for (let y = 0; y < ring.h; y++)
+      for (let x = 0; x < ring.w; x++) {
+        const d = Math.hypot(ring.x0 + x + 0.5 - 20, ring.y0 + y + 0.5 - 20) - 4;
+        const want = d > 2.05 && d <= 4.95;
+        const sure = d < 1.95 || d > 5.05;
+        if (sure && !!ring.m[y * ring.w + x] !== want) wrong++;
+      }
+    const fe = feret([
+      [0, 0],
+      [4, 0],
+      [4, 3],
+      [0, 3],
+    ]);
+    const pr = lineProfile(
+      Float32Array.from({ length: 100 }, (_, i) => i % 10),
+      10,
+      10,
+      [
+        [0.5, 4.5],
+        [9.5, 4.5],
+      ],
+    );
+    const st = valueStats(Float64Array.of(1, 2, 2, 3, 7));
+    ok(
+      polygonArea(out) === 26 && n === 26 && out.length === 6 && Math.abs(per - (4 - 2 * (2 - Math.SQRT2))) < 1e-12 && wrong === 0 && Math.abs(fe.max - 5) < 1e-12 && Math.abs(fe.angle - (180 - (Math.atan2(3, 4) * 180) / Math.PI)) < 1e-9 && Math.abs(fe.min - 3) < 1e-12 && pr.v.length === 10 && pr.v.every((v, i) => Math.abs(v - i) < 1e-9) && st.mode === 2 && st.median === 2 && traceOutline((x, y) => x === 0 && y === 0, 0, 0).length === 4,
+      `wand: an L with a hole outlined on its pixels' corners (${polygonArea(out)} px, ${out.length} corners, the hole inside); one pixel's perimeter 2.83 as ImageJ (${per.toFixed(3)}); a ring of background 2 px off a spot, 3 wide (${wrong} wrong); Feret, its angle and least width of a box; a profile; mode`,
+    );
+  }
+  // spots against their background (a ring, the others' pixels left out; a region; a global value), the mask's
+  // coverage of each selection and of the image, the summary by group, lines and points
+  {
+    const N = 40;
+    const c = new Float32Array(N * N).fill(10);
+    const m = new Float32Array(N * N);
+    for (let y = 0; y < N; y++)
+      for (let x = 0; x < N; x++) {
+        if (Math.hypot(x + 0.5 - 10, y + 0.5 - 10) < 4) c[y * N + x] = 110;
+        if (Math.hypot(x + 0.5 - 30, y + 0.5 - 10) < 4) c[y * N + x] = 60;
+        if (x < 20) m[y * N + x] = 1;
+      }
+    const rois: Roi[] = [
+      { id: 'a', name: 'A1', kind: 'ellipse', box: [10, 10, 8, 8], group: 'A', bg: { mode: 'ring', gap: 1, width: 3 } },
+      { id: 'b', name: 'B1', kind: 'ellipse', box: [30, 10, 8, 8], group: 'B', bg: { mode: 'region', region: 'g' } },
+      { id: 'g', name: 'bg', kind: 'rect', box: [20, 32, 30, 6], role: 'background' },
+      { id: 'c', name: 'C1', kind: 'rect', box: [20, 25, 40, 2], group: 'B', bg: { mode: 'global' } },
+      {
+        id: 'l',
+        name: 'L1',
+        kind: 'line',
+        pts: [
+          [0, 10.5],
+          [40, 10.5],
+        ],
+      },
+      {
+        id: 'p',
+        name: 'P1',
+        kind: 'points',
+        pts: [
+          [10.2, 10.7],
+          [1, 1],
+        ],
+      },
+    ];
+    const res = measureRois({ image: { w: N, h: N, ch: [c], kind: 'gray', lo: 0, hi: 255 }, mask: { w: N, h: N, ch: [m], kind: 'mask', lo: 0, hi: 1 }, ox: 0, oy: 0, cal: { size: 0.5, unit: 'um' }, rois, spec: measureSpec({ globalValue: 4 }), name: 't' });
+    const sheet = (n: string) => res.book.sheets.find((s) => s.name === n);
+    const cell = (n: string, col: string, row: number) => sheet(n)?.columns.find((q) => q.name === col)?.values[row] ?? NaN;
+    const text = (n: string, col: string) => sheet(n)?.columns.find((q) => q.name === col)?.text ?? [];
+    const got = [res.book.sheets.map((s) => s.name).join(), cell('Spots', 'Net', 0), cell('Spots', 'B SD', 0), cell('Spots', 'Net', 1), cell('Spots', 'Net', 2), cell('Selections', 'Covered (%)', 0), cell('Selections', 'Covered (%)', 1), cell('Selections', 'Covered (%)', 3), cell('Selections', 'Area (µm²)', 0), cell('Selections', 'Length (µm)', 4), cell('Selections', 'Count', 5), text('Summary', 'Group').join(), cell('Summary', 'Count', 1), cell('Summary', 'Covered (%)', 4), cell('Points', 'Value', 0), res.summary].join(' | ');
+    ok(got === 'Selections,Spots,Profiles,Points,Summary | 100 | 0 | 50 | 6 | 100 | 0 | 50 | 13 | 20 | 2 | A,B,(no group),all,image | 2 | 50 | 110 | 6 selections · coverage 50.0 %', `spots: net signal over a ring (the other spots left out), a region, a global value; the mask's cover of each selection and of the image; the summary by group; lines and points in µm (${got})`);
   }
 }

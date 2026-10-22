@@ -1,126 +1,36 @@
 // The editor of an Image analysis node, over the whole window: the steps on the left (added by group, switched on and
-// off, moved, each with all its parameters; a click on one shows the image up to it), the image in the middle (zoom,
-// pan, the original at a key, the values under the mouse), the histogram, the view and the calibration on the right
-// (a line drawn on the scale bar). The image is computed at full size in a worker of its own.
+// off, moved, each with all its parameters — Curves on the histogram of what comes into it; a click on one shows the
+// image up to it), the image in the middle (zoom, pan; compared with the original or with the image before the step
+// shown: the result alone, the original alone, side by side, or split by a line dragged — as photo editors do; the
+// values under the mouse), the histogram, the view, the crop, the calibration, the selections (ROI manager), what is
+// measured and the results on the right. Crop and Scale work on the original as it came (the data bar of an electron
+// microscope cut off; a line drawn on its scale bar, with a loupe, its ends found on the bar); the selections are drawn
+// on the image analysed (rectangle, ellipse, polygon, freehand, line, segmented line, points, angle, wand, stamp), picked
+// and edited with their handles. The image and the measurements are computed in a worker of its own.
 import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useReactFlow } from '@xyflow/react';
 import type { AppNode, ImageAnalysisData } from '../types.ts';
-import { STEP_DEFS, STEP_GROUPS, newStep, type ImgStep, type Param, type StepDef, type StepKind } from '../image/steps.ts';
-import { unpackPixels } from '../image/raster.ts';
+import { STEP_DEFS, STEP_GROUPS, newStep, type ImgStep, type StepDef, type StepKind } from '../image/steps.ts';
+import { cropBox, cropRaster, dataBarRows, luminance, unpackPixels, type Crop } from '../image/raster.ts';
 import { unitText } from '../image/node.ts';
-import type { ImgReply, ImgRequest } from '../image/imageWorker.ts';
-import type { Lut } from '../image/render.ts';
+import type { CentreReply, ImgReply, ImgRequest, MeasureReply, MeasureRequest, ValueReply, WandReply } from '../image/imageWorker.ts';
+import { isArea, moveRoi, roiCentre, roiOutline, TOOL_HINTS, type Pt, type Roi, type RoiKind, type RoiTool } from '../image/roi.ts';
+import { measureSpec, type MeasureSpec } from '../image/measure.ts';
+import type { Workbook } from '../engine/table.ts';
+import { MeasurePanel, RoiOverlay, RoiPanel } from './RoiManager.tsx';
+import { ask } from '../ui/dialogStore.ts';
+import { toRGBA, type Lut } from '../image/render.ts';
 import { COLOR_MAPS } from '../figure/colors.ts';
+import { CurvesEditor } from './CurvesEditor.tsx';
+import { ParamField, ThresholdEditor } from './ImageParams.tsx';
 import { Check, NumInput, Select } from './ui.tsx';
-import { ArrowDown, ArrowUp, Maximize, Minus, Plus, Ruler, Hand, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Circle, Crop as CropIcon, Crosshair, Hand, Maximize, Minus, Pentagon, PenTool, Plus, Ruler, Slash, Spline, Square, Stamp, Triangle, Wand, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
 
 const LUTS = Object.entries(COLOR_MAPS).map(([k, v]): [Lut, string] => [k as Lut, v.label]);
+const UNITS = ['nm', 'µm', 'mm', 'cm', 'm', 'Å'].map((u): [string, string] => [u, u]);
 const fmt = (v: number) => (Number.isFinite(v) ? (Math.abs(v) >= 1e5 || (Math.abs(v) < 1e-3 && v !== 0) ? v.toExponential(3) : +v.toPrecision(5)) : '—');
-
-// ---- a step's parameters ----
-
-// a curve of points (input, output in 0 … 1) on a small graph: drag a point, double-click to add one or take it away
-function CurveEditor({ value, onChange }: { value: [number, number][]; onChange: (v: [number, number][]) => void }) {
-  const S = 150;
-  const pts = [...value].sort((a, b) => a[0] - b[0]);
-  const [drag, setDrag] = useState<number | null>(null);
-  const svg = useRef<SVGSVGElement>(null);
-  const at = (e: { clientX: number; clientY: number }): [number, number] => {
-    const r = svg.current!.getBoundingClientRect();
-    return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, 1 - (e.clientY - r.top) / r.height))];
-  };
-  const path = useMemo(() => {
-    // the monotone curve drawn through the points (as the step computes it)
-    const n = 64;
-    const f = (t: number) => {
-      if (t <= pts[0][0]) return pts[0][1];
-      if (t >= pts[pts.length - 1][0]) return pts[pts.length - 1][1];
-      let i = 0;
-      while (i < pts.length - 2 && t > pts[i + 1][0]) i++;
-      const u = (t - pts[i][0]) / (pts[i + 1][0] - pts[i][0] || 1);
-      return pts[i][1] + (pts[i + 1][1] - pts[i][1]) * (u * u * (3 - 2 * u));
-    };
-    return Array.from({ length: n + 1 }, (_, k) => `${k ? 'L' : 'M'}${((k / n) * S).toFixed(1)},${((1 - f(k / n)) * S).toFixed(1)}`).join('');
-  }, [pts]);
-  return (
-    <svg
-      ref={svg}
-      className="nodrag curve-editor"
-      width={S}
-      height={S}
-      viewBox={`0 0 ${S} ${S}`}
-      onPointerMove={(e) => {
-        if (drag === null) return;
-        const p = at(e);
-        onChange(pts.map((q, k) => (k === drag ? p : q)));
-      }}
-      onPointerUp={() => setDrag(null)}
-      onDoubleClick={(e) => {
-        const p = at(e);
-        const near = pts.findIndex((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < 0.05);
-        if (near >= 0 && pts.length > 2) onChange(pts.filter((_, k) => k !== near));
-        else onChange([...pts, p]);
-      }}
-    >
-      <rect width={S} height={S} className="curve-bg" />
-      <path d={`M0,${S}L${S},0`} className="curve-diag" />
-      <path d={path} className="curve-line" />
-      {pts.map((q, k) => (
-        <circle
-          key={k}
-          cx={q[0] * S}
-          cy={(1 - q[1]) * S}
-          r={4}
-          className="curve-pt"
-          onPointerDown={(e) => {
-            (e.target as Element).setPointerCapture?.(e.pointerId);
-            setDrag(k);
-          }}
-        />
-      ))}
-    </svg>
-  );
-}
-
-function ParamField({ q, value, set }: { q: Param; value: unknown; set: (v: unknown) => void }) {
-  const label = (
-    <span className="ie-label" title={q.title}>
-      {q.label}
-    </span>
-  );
-  if (q.type === 'num')
-    return (
-      <>
-        {label}
-        <span className="row">
-          <NumInput className="short" value={typeof value === 'number' ? value : q.def} min={q.min} max={q.max} step={q.step} placeholder={q.auto ?? ''} title={q.title} onChange={(v) => set(v)} />
-          {q.unit && q.unit !== 'value' && <span className="muted">{q.unit}</span>}
-        </span>
-      </>
-    );
-  if (q.type === 'choice')
-    return (
-      <>
-        {label}
-        <Select<string> value={String(value ?? q.def)} options={q.options} title={q.title} onChange={(v) => set(v)} />
-      </>
-    );
-  if (q.type === 'bool')
-    return (
-      <>
-        <span />
-        <Check label={q.label} title={q.title} value={!!(value ?? q.def)} onChange={(v) => set(v)} />
-      </>
-    );
-  return (
-    <>
-      {label}
-      <CurveEditor value={(value as [number, number][]) ?? q.def} onChange={(v) => set(v)} />
-    </>
-  );
-}
 
 // ---- the histogram ----
 
@@ -148,54 +58,156 @@ function Histogram({ hist, lo, hi, marks }: { hist: Float64Array | null; lo: num
   );
 }
 
+// ---- the scale bar's ends: along the line drawn, the run of pixels like the one at its middle (the bar), a little
+// past the ends drawn; null when it is not clearly a bar (much shorter or longer than the line) ----
+function snapToBar(g: Float32Array, w: number, h: number, lo: number, hi: number, line: [number, number, number, number]): [number, number, number, number] | null {
+  const [x1, y1, x2, y2] = line;
+  const L = Math.hypot(x2 - x1, y2 - y1);
+  if (!(L > 4)) return null;
+  const [ux, uy] = [(x2 - x1) / L, (y2 - y1) / L];
+  const [mx, my] = [(x1 + x2) / 2, (y1 + y2) / 2];
+  const val = (t: number) => {
+    const x = Math.round(mx + ux * t);
+    const y = Math.round(my + uy * t);
+    return x < 0 || y < 0 || x >= w || y >= h ? NaN : g[y * w + x];
+  };
+  // (the bar's value: the most common along the middle half of the line)
+  const vals: number[] = [];
+  for (let t = -L / 4; t <= L / 4; t++) vals.push(val(t));
+  const vm = vals.filter(Number.isFinite).sort((a, b) => a - b)[Math.floor(vals.length / 2)];
+  if (!Number.isFinite(vm)) return null;
+  const tol = (hi - lo) * 0.2;
+  const like = (t: number) => Math.abs(val(t) - vm) <= tol;
+  let a = 0;
+  while (a > -L && like(a - 1)) a--;
+  let b = 0;
+  while (b < L && like(b + 1)) b++;
+  const len = b - a + 1;
+  if (len < 0.5 * L || len > 1.5 * L) return null;
+  // (the outer edges of the end pixels)
+  return [mx + ux * (a - 0.5), my + uy * (a - 0.5), mx + ux * (b + 0.5), my + uy * (b + 0.5)];
+}
+
 // ---- the editor ----
 
+type Cmp = 'edited' | 'original' | 'side' | 'split';
+type Tool = 'pan' | 'scale' | 'crop' | RoiTool;
+// the selection tools of the toolbar
+const ROI_TOOLS: [RoiTool, typeof Square, string][] = [
+  ['rect', Square, 'Rectangle'],
+  ['ellipse', Circle, 'Ellipse'],
+  ['polygon', Pentagon, 'Polygon'],
+  ['freehand', PenTool, 'Freehand'],
+  ['line', Slash, 'Line'],
+  ['polyline', Spline, 'Segmented line'],
+  ['points', Crosshair, 'Points'],
+  ['angle', Triangle, 'Angle'],
+  ['wand', Wand, 'Wand'],
+  ['stamp', Stamp, 'Stamp'],
+];
 let stepSeq = 0;
+let roiSeq = 0;
 export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnalysisData; onClose: () => void }) {
   const { updateNodeData } = useReactFlow<AppNode>();
   const set = (p: Partial<ImageAnalysisData>) => updateNodeData(id, p);
+  // the selections (in pixels of the original), the one picked, the one being drawn or edited (shown in its place)
+  const rois = useMemo(() => data.rois ?? [], [data.rois]);
+  const setRois = (r: Roi[]) => set({ rois: r });
+  // (one more, or one changed: from the node's data as it is — the worker's answers come between renders)
+  const putRoi = (r: Roi) => updateNodeData(id, (n) => {
+    const now = (n.data as ImageAnalysisData).rois ?? [];
+    return { rois: now.some((q) => q.id === r.id) ? now.map((q) => (q.id === r.id ? r : q)) : [...now, r] };
+  });
+  const [sel, setSel] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Roi | null>(null);
+  const [group, setGroup] = useState('');
+  const [labels, setLabels] = useState(true);
+  const [wandTol, setWandTol] = useState(0);
+  const [centre, setCentre] = useState<'off' | 'bright' | 'dark'>('bright');
+  const [book, setBook] = useState<Workbook | null>(null);
+  const [sheet, setSheet] = useState('Selections');
+  const spec = measureSpec(data.measure);
+  const setSpec = (p: Partial<MeasureSpec>) => set({ measure: { ...data.measure, ...p } });
   const steps = useMemo(() => data.steps ?? [], [data.steps]);
   const setSteps = (s: ImgStep[]) => set({ steps: s });
   const setStep = (sid: string, p: Partial<ImgStep>) => setSteps(steps.map((s) => (s.id === sid ? { ...s, ...p } : s)));
-  // the step the image is shown up to (absent: all), the original while held
+  // the step the image is shown up to (absent: all; 0: the original image)
   const [upTo, setUpTo] = useState<string | null>(null);
-  const [original, setOriginal] = useState(false);
+  // the comparison: the result, the original (or the image before the step shown), side by side, split; held: B, \
+  const [cmp, setCmp] = useState<Cmp>('edited');
+  const [held, setHeld] = useState(false);
+  const [before, setBefore] = useState<'original' | 'prev'>('original');
+  const [split, setSplit] = useState(0.5);
+  const [splitDir, setSplitDir] = useState<'v' | 'h'>('v');
   const [lut, setLut] = useState<Lut>(data.figure?.lut ?? 'gray');
   const [overlay, setOverlay] = useState(true);
-  const [tool, setTool] = useState<'pan' | 'scale'>('pan');
+  const [tool, setTool] = useState<Tool>('pan');
   const [zoom, setZoom] = useState(0);
   const [pan, setPan] = useState<[number, number]>([0, 0]);
   const [reply, setReply] = useState<ImgReply | null>(null);
   const [busy, setBusy] = useState(false);
-  const [hover, setHover] = useState<[number, number] | null>(null);
+  // the values under the mouse (asked of the worker, a pixel at a time)
+  const [vals, setVals] = useState<ValueReply | null>(null);
+  const [hover, setHover] = useState<{ p: [number, number]; sx: number; sy: number } | null>(null);
   const [line, setLine] = useState<[number, number, number, number] | null>(data.cal?.line ?? null);
+  const [snap, setSnap] = useState(true);
+  const [snapped, setSnapped] = useState<boolean | null>(null);
   const [known, setKnown] = useState<number>(data.cal?.length ?? NaN);
   const [unit, setUnit] = useState<string>(unitText(data.cal?.unit ?? 'µm'));
-  const base = useMemo(() => (data.pixels ? unpackPixels(data.pixels, data.pixelsId) : null), [data.pixels, data.pixelsId]);
+  const [cropDraft, setCropDraft] = useState<Crop | null>(null);
+  // the original as it came (Crop and Scale draw on it), and the part analysed
+  const full = useMemo(() => (data.pixels ? unpackPixels(data.pixels, data.pixelsId) : null), [data.pixels, data.pixelsId]);
+  const crop = full ? cropBox(data.crop, full.w, full.h) : null;
+  const base = useMemo(() => (full ? cropRaster(full, crop ?? undefined) : null), [full, crop?.join()]); // eslint-disable-line react-hooks/exhaustive-deps
+  const fullGray = useMemo(() => (full ? (full.ch.length === 1 ? full.ch[0] : luminance(full)) : null), [full]);
+  const barRows = useMemo(() => (full ? dataBarRows(full) : 0), [full]);
+  const onOriginal = tool === 'scale' || tool === 'crop';
+  const roiTool = tool in TOOL_HINTS;
+  // the corner of the part analysed in the original (the selections' places are in the original's pixels)
+  const [ox, oy] = crop ? [crop[0], crop[1]] : [0, 0];
+  // the steps give a mask (its coverage measured)
+  const masks = steps.some((s) => s.on && (s.kind === 'threshold' || s.kind === 'localthreshold'));
+  const measuring = rois.length > 0 || masks;
   const view = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
+  const canvasB = useRef<HTMLCanvasElement>(null);
+  const canvasO = useRef<HTMLCanvasElement>(null);
+  const loupe = useRef<HTMLCanvasElement>(null);
   const root = useRef<HTMLDivElement>(null);
+  const mode: Cmp = held ? 'original' : cmp;
+  const needBefore = mode !== 'edited';
 
   // the worker: the image sent once, the steps every time they change
   const worker = useRef<Worker | null>(null);
   const seq = useRef(0);
+  const mseq = useRef(0);
   const sentId = useRef<string | null>(null);
+  // the full-size images answered (the measurements asked again after each)
+  const [fullSeq, setFullSeq] = useState(0);
+  // the answers that need this render's state (a wand's outline, a stamp centred, the measurements)
+  const onAnswer = useRef<(m: MeasureReply | WandReply | CentreReply) => void>(() => {});
   useEffect(() => {
     const w = new Worker(new URL('../image/imageWorker.ts', import.meta.url), { type: 'module' });
     worker.current = w;
-    w.onmessage = (e: MessageEvent<ImgReply>) => {
+    w.onmessage = (e: MessageEvent<ImgReply | ValueReply | MeasureReply | WandReply | CentreReply>) => {
+      if (e.data.type === 'value') return setVals(e.data);
+      if (e.data.type !== 'image') return onAnswer.current(e.data);
       if (e.data.seq !== seq.current) return;
       setReply(e.data);
-      setBusy(false);
+      // (a preview first: still computing the full size)
+      if (e.data.scale === 1) {
+        setBusy(false);
+        setFullSeq((n) => n + 1);
+      }
     };
     return () => w.terminate();
   }, []);
-  const upToIndex = original ? 0 : upTo ? steps.findIndex((s) => s.id === upTo) + 1 : steps.length;
+  const upToIndex = upTo === '__none' ? 0 : upTo ? steps.findIndex((s) => s.id === upTo) + 1 : steps.length;
   useEffect(() => {
     const w = worker.current;
     if (!w || !data.pixels) return;
     const t = setTimeout(() => {
-      const q: ImgRequest = { seq: ++seq.current, steps, upTo: upToIndex, lut, ...(overlay ? { overlay: { color: data.figure?.overlay ?? '#ff3b30', alpha: data.figure?.alpha ?? 0.45 } } : {}) };
+      const q: ImgRequest = { seq: ++seq.current, steps, upTo: upToIndex, lut, ...(crop ? { crop } : {}), ...(overlay ? { overlay: { color: data.figure?.overlay ?? '#ff3b30', alpha: data.figure?.alpha ?? 0.45 } } : {}), ...(needBefore ? { before } : {}), ...(measuring ? { keep: true } : {}) };
       if (sentId.current !== data.pixelsId) {
         q.pixels = data.pixels;
         q.id = data.pixelsId ?? 'img';
@@ -205,97 +217,403 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       w.postMessage(q);
     }, 40);
     return () => clearTimeout(t);
-  }, [steps, upToIndex, lut, overlay, data.pixels, data.pixelsId, data.figure?.overlay, data.figure?.alpha]);
-  // the pixels drawn
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [steps, upToIndex, lut, overlay, data.pixels, data.pixelsId, data.figure?.overlay, data.figure?.alpha, crop?.join(), needBefore, before, measuring]);
+  // the measurements: asked when the selections or what is measured change, and after every full-size image (the
+  // steps or the crop changed)
   useEffect(() => {
-    const c = canvas.current;
-    if (!c || !reply) return;
-    c.width = reply.w;
-    c.height = reply.h;
-    c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(reply.rgba), reply.w, reply.h), 0, 0);
-  }, [reply]);
-  // the zoom that fits the view (zoom 0: fit), measured when the view or the image changes size
-  const [fit, setFit] = useState(1);
+    const w = worker.current;
+    if (!w || !data.pixels) return;
+    if (!measuring) {
+      setBook(null);
+      return;
+    }
+    const t = setTimeout(() => {
+      const q: MeasureRequest = { type: 'measure', mseq: ++mseq.current, steps, ...(crop ? { crop } : {}), rois, spec, ...(data.cal ? { cal: data.cal } : {}), ox, oy, name: `${data.name.replace(/\.[a-z0-9]+$/i, '') || 'image'} measurements` };
+      w.postMessage(q);
+    }, 150);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rois, data.measure, data.cal, fullSeq, measuring]);
+  // the pixels drawn: the result, what it is compared with, the original as it came (for Crop and Scale)
+  useEffect(() => {
+    const put = (c: HTMLCanvasElement | null, rgba: Uint8ClampedArray | undefined, w: number, h: number) => {
+      // (a reply of another size — the crop just changed — waits for the next one)
+      if (!c || !rgba || rgba.length !== 4 * w * h) return;
+      c.width = w;
+      c.height = h;
+      c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(rgba), w, h), 0, 0);
+    };
+    if (!reply) return;
+    put(canvas.current, reply.rgba, reply.w, reply.h);
+    // (what it is compared with: the same size as the result)
+    if (reply.before) put(canvasB.current, reply.before.rgba, reply.w, reply.h);
+  }, [reply, mode]);
+  useEffect(() => {
+    const c = canvasO.current;
+    if (!c || !full || !onOriginal) return;
+    c.width = full.w;
+    c.height = full.h;
+    c.getContext('2d')!.putImageData(new ImageData(toRGBA(full, { lut: 'gray' }) as Uint8ClampedArray<ArrayBuffer>, full.w, full.h), 0, 0);
+  }, [full, onOriginal]);
+
+  // the zoom that fits the view (zoom 0: fit) — side by side: half of it — measured when the view or the image changes
+  const shown = onOriginal ? full : base;
+  const [box, setBox] = useState<[number, number]>([1, 1]);
   useEffect(() => {
     const v = view.current;
-    if (!v || !base) return;
-    const measure = () => setFit(Math.min((v.clientWidth - 20) / base.w, (v.clientHeight - 20) / base.h));
+    if (!v) return;
+    const measure = () => setBox([v.clientWidth, v.clientHeight]);
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(v);
     return () => ro.disconnect();
-  }, [base]);
+  }, []);
+  const side = mode === 'side' && !onOriginal;
+  const paneW = side ? (box[0] - 6) / 2 : box[0];
+  const fit = shown ? Math.min((paneW - 20) / shown.w, (box[1] - 20) / shown.h) : 1;
   const k = zoom || fit;
   const zoomAt = (f: number, cx?: number, cy?: number) => {
     const v = view.current;
     const nk = Math.min(64, Math.max(0.02, k * f));
     if (v && cx !== undefined && cy !== undefined) {
       const r = v.getBoundingClientRect();
-      const mx = cx - r.left - r.width / 2 - pan[0];
+      // (side by side: around the middle of the pane under the mouse)
+      const left = side && cx - r.left > paneW ? r.left + paneW + 6 : r.left;
+      const mx = cx - left - paneW / 2 - pan[0];
       const my = cy - r.top - r.height / 2 - pan[1];
       setPan([pan[0] - mx * (nk / k - 1), pan[1] - my * (nk / k - 1)]);
     }
     setZoom(nk);
   };
-  // a point of the image under the mouse (pixels, fractional)
+  // a point of the image under the mouse (pixels, fractional), from the canvas under it
   const imgAt = (e: { clientX: number; clientY: number }): [number, number] => {
-    const c = canvas.current!.getBoundingClientRect();
-    return [((e.clientX - c.left) / c.width) * (base?.w ?? 1), ((e.clientY - c.top) / c.height) * (base?.h ?? 1)];
+    const els = [canvas.current, canvasB.current, canvasO.current].filter((c): c is HTMLCanvasElement => !!c && c.offsetParent !== null);
+    const c = els.find((q) => {
+      const r = q.getBoundingClientRect();
+      return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    }) ?? els[0];
+    const r = c.getBoundingClientRect();
+    const im = onOriginal ? full : base;
+    return [((e.clientX - r.left) / r.width) * (im?.w ?? 1), ((e.clientY - r.top) / r.height) * (im?.h ?? 1)];
   };
-  const drag = useRef<{ x: number; y: number; pan: [number, number]; line?: boolean } | null>(null);
+  const drag = useRef<{ x: number; y: number; pan: [number, number]; kind: 'pan' | 'line' | 'crop' | 'split' | 'draw' | 'move' | 'handle'; at?: [number, number]; roi?: Roi; handle?: string } | null>(null);
+  // ---- the selections: drawn, picked, moved, edited ----
+  const toOrig = (p: Pt): Pt => [p[0] + ox, p[1] + oy];
+  const nextName = (taken: Roi[] = rois) => `R${1 + taken.reduce((m, r) => Math.max(m, Number(/^R(\d+)$/.exec(r.name)?.[1] ?? 0)), 0)}`;
+  const newRoi = (kind: RoiKind, extra: Partial<Roi>): Roi => ({ id: `r${Date.now().toString(36)}${(roiSeq++).toString(36)}`, name: nextName(), kind, ...(group ? { group } : {}), ...extra });
+  const commit = (r: Roi) => {
+    putRoi(r);
+    setSel(r.id);
+    setDraft(null);
+  };
+  const shownRois = draft ? (rois.some((r) => r.id === draft.id) ? rois.map((r) => (r.id === draft.id ? draft : r)) : [...rois, draft]) : rois;
+  const pendingStamp = useRef(new Map<string, Roi>());
+  onAnswer.current = (m) => {
+    if (m.type === 'measure') {
+      if (m.mseq === mseq.current) setBook(m.book);
+    } else if (m.type === 'wand') {
+      if (m.pts && m.pts.length > 2) commit(newRoi('traced', { pts: m.pts.map(toOrig) }));
+    } else {
+      const st = pendingStamp.current.get(m.id);
+      pendingStamp.current.delete(m.id);
+      if (st) putRoi(moveRoi(st, m.dx, m.dy));
+    }
+  };
+  // a polygon or segmented line drawn ended (its last point, following the mouse, left out; a double-click's repeats too)
+  const finishDraft = () => {
+    if (!draft?.pts) return;
+    const pts = draft.pts.slice(0, -1).filter((q, i, a) => i === 0 || Math.hypot(q[0] - a[i - 1][0], q[1] - a[i - 1][1]) > 0.5 / k);
+    if ((draft.kind === 'polygon' && pts.length >= 3) || (draft.kind === 'polyline' && pts.length >= 2)) commit({ ...draft, kind: draft.kind === 'polyline' && pts.length === 2 ? 'line' : draft.kind, pts });
+    else setDraft(null);
+  };
+  const removeRoi = (rid: string) => {
+    setRois(rois.filter((r) => r.id !== rid));
+    if (sel === rid) setSel(null);
+  };
+  const duplicate = () => {
+    const r = rois.find((q) => q.id === sel);
+    if (!r) return;
+    const c = { ...moveRoi(r, 10, 10), id: `r${Date.now().toString(36)}${(roiSeq++).toString(36)}`, name: nextName() };
+    setRois([...rois, c]);
+    setSel(c.id);
+  };
+  const roiDown = (q: Pt, p: Pt) => {
+    const w = worker.current;
+    switch (tool) {
+      case 'rect':
+      case 'ellipse':
+      case 'line':
+      case 'freehand': {
+        const r = tool === 'rect' || tool === 'ellipse' ? newRoi(tool, { box: [q[0], q[1], 0, 0], angle: 0 }) : newRoi(tool, { pts: tool === 'line' ? [q, q] : [q] });
+        setDraft(r);
+        drag.current = { x: 0, y: 0, pan, kind: 'draw', at: q, roi: r };
+        return;
+      }
+      case 'polygon':
+      case 'polyline':
+      case 'angle': {
+        if (draft && draft.kind === tool && draft.pts) {
+          const pts = draft.pts;
+          // (a click on the first corner closes a polygon)
+          if (tool === 'polygon' && pts.length > 3 && Math.hypot(q[0] - pts[0][0], q[1] - pts[0][1]) * k < 8) return finishDraft();
+          const next: Pt[] = [...pts.slice(0, -1), q, q];
+          if (tool === 'angle' && next.length > 3) return commit({ ...draft, pts: next.slice(0, 3) });
+          setDraft({ ...draft, pts: next });
+        } else setDraft(newRoi(tool, { pts: [q, q] }));
+        return;
+      }
+      case 'points': {
+        const cur = rois.find((r) => r.id === sel && r.kind === 'points');
+        commit(cur ? { ...cur, pts: [...(cur.pts ?? []), q] } : newRoi('points', { pts: [q] }));
+        return;
+      }
+      case 'wand':
+        w?.postMessage({ type: 'wand', x: p[0], y: p[1], tol: wandTol });
+        return;
+      case 'stamp': {
+        const tpl = rois.find((r) => r.id === sel && isArea(r));
+        if (!tpl) return;
+        const [cx, cy] = roiCentre(tpl);
+        const copy: Roi = { ...moveRoi(tpl, q[0] - cx, q[1] - cy), id: `r${Date.now().toString(36)}${(roiSeq++).toString(36)}`, name: nextName([...rois, ...pendingStamp.current.values()]) };
+        if (centre !== 'off' && w) {
+          pendingStamp.current.set(copy.id, copy);
+          w.postMessage({ type: 'centre', id: copy.id, poly: roiOutline(copy).map(([x, y]): Pt => [x - ox, y - oy]), dark: centre === 'dark' });
+        } else putRoi(copy);
+        return;
+      }
+    }
+  };
+  // the selection being drawn or edited, as the mouse moves
+  const roiMove = (e: RPointerEvent, d: NonNullable<typeof drag.current>) => {
+    const q = toOrig(imgAt(e));
+    const r = d.roi!;
+    const a = d.at!;
+    if (d.kind === 'move') return setDraft(moveRoi(r, q[0] - a[0], q[1] - a[1]));
+    if (d.kind === 'draw') {
+      if (r.kind === 'rect' || r.kind === 'ellipse') {
+        let [dx, dy] = [q[0] - a[0], q[1] - a[1]];
+        if (e.shiftKey) {
+          const m = Math.max(Math.abs(dx), Math.abs(dy));
+          [dx, dy] = [Math.sign(dx) * m, Math.sign(dy) * m];
+        }
+        return setDraft({ ...r, box: [a[0] + dx / 2, a[1] + dy / 2, Math.abs(dx), Math.abs(dy)] });
+      }
+      if (r.kind === 'line') {
+        let end = q;
+        if (e.shiftKey) {
+          const L = Math.hypot(q[0] - a[0], q[1] - a[1]);
+          const t = Math.round(Math.atan2(q[1] - a[1], q[0] - a[0]) / (Math.PI / 4)) * (Math.PI / 4);
+          end = [a[0] + L * Math.cos(t), a[1] + L * Math.sin(t)];
+        }
+        return setDraft({ ...r, pts: [a, end] });
+      }
+      // freehand: a point every pixel or so of the screen
+      return setDraft((cur) => {
+        const pts = cur?.pts ?? [];
+        const last = pts[pts.length - 1];
+        return cur && (!last || Math.hypot(q[0] - last[0], q[1] - last[1]) * k >= 2) ? { ...cur, pts: [...pts, q] } : cur;
+      });
+    }
+    // a handle: the turn, a side or a corner of a box (the opposite one kept), a point
+    const h = d.handle ?? '';
+    if (h === 'rot' && r.box) {
+      let ang = (Math.atan2(q[1] - r.box[1], q[0] - r.box[0]) * 180) / Math.PI + 90;
+      if (e.shiftKey) ang = Math.round(ang / 15) * 15;
+      return setDraft({ ...r, angle: ((ang + 540) % 360) - 180 });
+    }
+    if (h[0] === 'b' && r.box) {
+      const [sx, sy] = h.slice(1).split(',').map(Number);
+      const [cx, cy, bw, bh] = r.box;
+      const t = ((r.angle ?? 0) * Math.PI) / 180;
+      const [c, s] = [Math.cos(t), Math.sin(t)];
+      const [dx, dy] = [q[0] - cx, q[1] - cy];
+      const [lu, lv] = [dx * c + dy * s, -dx * s + dy * c];
+      const [fu, fv] = [(-sx * Math.abs(bw)) / 2, (-sy * Math.abs(bh)) / 2];
+      const nw = sx ? Math.max(1, Math.abs(lu - fu)) : Math.abs(bw);
+      const nh = sy ? Math.max(1, Math.abs(lv - fv)) : Math.abs(bh);
+      const [cu, cv] = [sx ? (lu + fu) / 2 : 0, sy ? (lv + fv) / 2 : 0];
+      return setDraft({ ...r, box: [cx + cu * c - cv * s, cy + cu * s + cv * c, nw, nh] });
+    }
+    if (h[0] === 'v' && r.pts) {
+      const i = Number(h.slice(1));
+      return setDraft({ ...r, pts: r.pts.map((pt, j) => (j === i ? q : pt)) });
+    }
+  };
+  const onDouble = (e: React.MouseEvent) => {
+    if ((tool === 'polygon' || tool === 'polyline') && draft) return finishDraft();
+    // a point of the selection picked taken off
+    const hd = (e.target as Element).closest('[data-handle]') as SVGElement | null;
+    const r = rois.find((q) => q.id === sel);
+    const h = hd?.dataset.handle ?? '';
+    if (!r?.pts || h[0] !== 'v') return;
+    const pts = r.pts.filter((_, j) => j !== Number(h.slice(1)));
+    const least = r.kind === 'polygon' ? 3 : r.kind === 'points' ? 1 : r.kind === 'angle' ? 3 : 2;
+    if (pts.length >= least) setRois(rois.map((q) => (q.id === r.id ? { ...r, pts } : q)));
+    else if (r.kind === 'points') removeRoi(r.id);
+  };
   const onDown = (e: RPointerEvent) => {
     if (e.button !== 0 && e.button !== 1) return;
     (e.target as Element).setPointerCapture?.(e.pointerId);
-    if (tool === 'scale' && e.button === 0) {
-      const p = imgAt(e);
-      setLine([p[0], p[1], p[0], p[1]]);
-      drag.current = { x: e.clientX, y: e.clientY, pan, line: true };
+    const p = imgAt(e);
+    if ((e.target as Element).closest('.ie-split-handle')) {
+      drag.current = { x: e.clientX, y: e.clientY, pan, kind: 'split' };
       return;
     }
-    drag.current = { x: e.clientX, y: e.clientY, pan };
+    if (!onOriginal && e.button === 0) {
+      const t = e.target as Element;
+      const hd = t.closest('[data-handle]') as SVGElement | null;
+      const rg = t.closest('[data-roi]') as SVGElement | null;
+      const q = toOrig(p);
+      const picked = rois.find((r) => r.id === sel);
+      // (a handle of the selection picked: whatever the tool)
+      if (hd && picked && rg?.dataset.roi === sel) {
+        drag.current = { x: e.clientX, y: e.clientY, pan, kind: 'handle', at: q, roi: picked, handle: hd.dataset.handle };
+        return;
+      }
+      if (tool === 'pan' && rg) {
+        const r = rois.find((x) => x.id === rg.dataset.roi);
+        if (r) {
+          setSel(r.id);
+          drag.current = { x: e.clientX, y: e.clientY, pan, kind: 'move', at: q, roi: r };
+          return;
+        }
+      }
+      if (roiTool) return roiDown(q, p);
+    }
+    if (tool === 'scale' && e.button === 0) {
+      setLine([p[0], p[1], p[0], p[1]]);
+      setSnapped(null);
+      drag.current = { x: e.clientX, y: e.clientY, pan, kind: 'line' };
+      return;
+    }
+    if (tool === 'crop' && e.button === 0) {
+      setCropDraft([p[0], p[1], 0, 0]);
+      drag.current = { x: e.clientX, y: e.clientY, pan, kind: 'crop', at: p };
+      return;
+    }
+    drag.current = { x: e.clientX, y: e.clientY, pan, kind: 'pan' };
   };
+  const asked = useRef<string>('');
   const onMove = (e: RPointerEvent) => {
-    if (base) {
+    const im = onOriginal ? full : base;
+    if (im) {
       const p = imgAt(e);
-      setHover(p[0] >= 0 && p[1] >= 0 && p[0] < base.w && p[1] < base.h ? p : null);
+      const v = view.current!.getBoundingClientRect();
+      const inside = p[0] >= 0 && p[1] >= 0 && p[0] < im.w && p[1] < im.h;
+      setHover(inside ? { p, sx: e.clientX - v.left, sy: e.clientY - v.top } : null);
+      const key = `${Math.floor(p[0])},${Math.floor(p[1])}`;
+      if (inside && !onOriginal && key !== asked.current) {
+        asked.current = key;
+        worker.current?.postMessage({ type: 'value', x: p[0], y: p[1] });
+      }
     }
     const d = drag.current;
+    // (a polygon, segmented line or angle being drawn: its last point follows the mouse)
+    if (!d && draft?.pts && (draft.kind === 'polygon' || draft.kind === 'polyline' || draft.kind === 'angle') && !onOriginal) {
+      const q = toOrig(imgAt(e));
+      setDraft({ ...draft, pts: [...draft.pts.slice(0, -1), q] });
+    }
     if (!d) return;
-    if (d.line) {
+    if (d.kind === 'draw' || d.kind === 'move' || d.kind === 'handle') return roiMove(e, d);
+    if (d.kind === 'split') {
+      const v = view.current!.getBoundingClientRect();
+      setSplit(Math.min(0.98, Math.max(0.02, splitDir === 'v' ? (e.clientX - v.left) / v.width : (e.clientY - v.top) / v.height)));
+      return;
+    }
+    if (d.kind === 'line') {
       const p = imgAt(e);
       // Shift: horizontal or vertical
       setLine((l) => (l ? (e.shiftKey ? (Math.abs(p[0] - l[0]) > Math.abs(p[1] - l[1]) ? [l[0], l[1], p[0], l[1]] : [l[0], l[1], l[0], p[1]]) : [l[0], l[1], p[0], p[1]]) : l));
       return;
     }
+    if (d.kind === 'crop' && d.at) {
+      const p = imgAt(e);
+      setCropDraft([Math.min(d.at[0], p[0]), Math.min(d.at[1], p[1]), Math.abs(p[0] - d.at[0]), Math.abs(p[1] - d.at[1])]);
+      return;
+    }
     setPan([d.pan[0] + e.clientX - d.x, d.pan[1] + e.clientY - d.y]);
+  };
+  const onUp = (e: RPointerEvent) => {
+    const d = drag.current;
+    drag.current = null;
+    if (d?.kind === 'draw' && draft) {
+      // (a click without a drag draws nothing)
+      const big = draft.box ? draft.box[2] * k >= 3 && draft.box[3] * k >= 3 : draft.kind === 'freehand' ? (draft.pts?.length ?? 0) >= 3 : Math.hypot(draft.pts![1][0] - draft.pts![0][0], draft.pts![1][1] - draft.pts![0][1]) * k >= 3;
+      if (big) commit(draft);
+      else setDraft(null);
+    }
+    if ((d?.kind === 'move' || d?.kind === 'handle') && draft) {
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 1) commit(draft);
+      else setDraft(null);
+    }
+    // (a click on the image, not on a selection: none picked)
+    if (d?.kind === 'pan' && tool === 'pan' && e.button === 0 && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 3) setSel(null);
+    if (d?.kind === 'line' && line && snap && full && fullGray) {
+      // the ends found on the bar (else the line as drawn)
+      const s = snapToBar(fullGray, full.w, full.h, full.lo, full.hi, line);
+      if (s) setLine(s);
+      setSnapped(!!s);
+    }
+    if (d?.kind === 'crop' && cropDraft && full) {
+      const c = cropBox(cropDraft, full.w, full.h);
+      if (cropDraft[2] > 3 && cropDraft[3] > 3) set({ crop: c ?? undefined });
+      setCropDraft(null);
+    }
   };
   const lineLen = line ? Math.hypot(line[2] - line[0], line[3] - line[1]) : 0;
   const applyScale = () => {
     if (!(lineLen > 0) || !(known > 0)) return;
     set({ cal: { size: known / lineLen, unit, line: line!, length: known } });
   };
-  // the values under the mouse: the original's and the result's
+  // the values under the mouse: what it is compared with (or the original) and the result's
   const readout = (() => {
     if (!hover || !base || !reply) return null;
-    const x = Math.floor(hover[0]);
-    const y = Math.floor(hover[1]);
-    const i = y * base.w + x;
-    const o = base.ch.map((c) => c[i]);
-    const rv = reply.values.map((c) => c[i]);
+    const x = Math.floor(hover.p[0]);
+    const y = Math.floor(hover.p[1]);
     const cal = data.cal && data.cal.size > 0 ? ` = ${fmt(x * data.cal.size)}, ${fmt(y * data.cal.size)} ${unitText(data.cal.unit)}` : '';
-    return `x ${x}, y ${y}${cal} · original ${o.map(fmt).join(' / ')} · result ${rv.map(fmt).join(' / ')}`;
+    if (onOriginal && full) {
+      const i = y * full.w + x;
+      return `x ${x}, y ${y}${cal} · original ${full.ch.map((c) => fmt(c[i])).join(' / ')}`;
+    }
+    // (the values once the worker has them for this pixel)
+    const v = vals && vals.x === x && vals.y === y ? vals : null;
+    const o = v ? (before === 'prev' && needBefore ? v.before : v.base) : [];
+    return `x ${x}, y ${y}${cal}${v ? ` · ${before === 'prev' && needBefore ? 'before' : 'original'} ${o.map(fmt).join(' / ')} · result ${v.result.map(fmt).join(' / ')}` : ''}${reply.scale < 1 ? ' · preview' : ''}`;
   })();
-  // the thresholds found (or set) to mark on the histogram
+  // the loupe (Scale, Crop): the original around the mouse, enlarged
+  useEffect(() => {
+    const c = loupe.current;
+    const src = canvasO.current;
+    if (!c || !src || !hover || !onOriginal) return;
+    const g = c.getContext('2d')!;
+    const n = 24; // pixels of the image across
+    g.imageSmoothingEnabled = false;
+    g.clearRect(0, 0, c.width, c.height);
+    g.drawImage(src, hover.p[0] - n / 2, hover.p[1] - n / 2, n, n, 0, 0, c.width, c.height);
+    g.strokeStyle = '#ffd60a';
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(c.width / 2, 0);
+    g.lineTo(c.width / 2, c.height);
+    g.moveTo(0, c.height / 2);
+    g.lineTo(c.width, c.height / 2);
+    g.stroke();
+  }, [hover, onOriginal]);
+  // the histogram on the right: of the image shown — a mask: of what came into the threshold that made it, its
+  // threshold (or range) marked
+  const thr = reply?.kind === 'mask' ? [...steps.slice(0, upToIndex)].reverse().find((s) => s.on && (s.kind === 'threshold' || s.kind === 'localthreshold') && reply.stepHist[s.id]) : undefined;
+  const sideHist = thr && reply ? { h: reply.stepHist[thr.id].h[0], lo: reply.stepHist[thr.id].lo, hi: reply.stepHist[thr.id].hi } : reply ? { h: reply.hist, lo: reply.lo, hi: reply.hi } : null;
   const marks: number[] = [];
-  for (const s of steps.slice(0, upToIndex)) {
-    const note = reply?.notes[s.id];
-    const m = note && /: (-?[\d.e+-]+)$/.exec(note);
+  if (thr) {
+    const m = /: (-?[\d.e+-]+)$/.exec(reply?.notes[thr.id] ?? '');
     if (m) marks.push(Number(m[1]));
+    else if (thr.p.method === 'manual') marks.push(Number(thr.p.low), Number(thr.p.high));
   }
   const add = (kind: StepKind) => {
     const s = newStep(kind, `s${Date.now().toString(36)}${(stepSeq++).toString(36)}`);
     // added after the step shown (else at the end), and shown
-    const at = upTo ? steps.findIndex((q) => q.id === upTo) + 1 : steps.length;
+    const at = upTo && upTo !== '__none' ? steps.findIndex((q) => q.id === upTo) + 1 : steps.length;
     setSteps([...steps.slice(0, at), s, ...steps.slice(at)]);
     setUpTo(null);
   };
@@ -309,36 +627,120 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const key = (e: React.KeyboardEvent) => {
     const t = e.target as HTMLElement;
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName)) return;
-    if (e.key === 'Escape') onClose();
-    else if (e.key === 'b' || e.key === 'B') setOriginal(true);
+    const picked = rois.find((r) => r.id === sel);
+    if (e.key === 'Escape') {
+      if (draft) setDraft(null);
+      else if (tool !== 'pan') setTool('pan');
+      else onClose();
+    } else if (e.key === 'Enter' && draft) finishDraft();
+    else if ((e.key === 'Delete' || e.key === 'Backspace') && picked) removeRoi(picked.id);
+    else if ((e.key === 'd' || e.key === 'D') && (e.ctrlKey || e.metaKey) && picked) duplicate();
+    else if (e.key.startsWith('Arrow') && picked) {
+      const m = e.shiftKey ? 10 : 1;
+      const [dx, dy] = { ArrowLeft: [-m, 0], ArrowRight: [m, 0], ArrowUp: [0, -m], ArrowDown: [0, m] }[e.key] ?? [0, 0];
+      setRois(rois.map((r) => (r.id === picked.id ? moveRoi(r, dx, dy) : r)));
+    } else if (e.key === 'b' || e.key === 'B') setHeld(true);
+    else if (e.key === '\\') setCmp(cmp === 'original' ? 'edited' : 'original');
+    else if (e.key === 'y' || e.key === 'Y') setCmp(cmp === 'side' ? 'edited' : 'side');
     else if (e.key === '+' || e.key === '=') zoomAt(1.25);
     else if (e.key === '-') zoomAt(0.8);
     else if (e.key === '0') {
       setZoom(0);
       setPan([0, 0]);
-    }
-    else return;
+    } else return;
     e.preventDefault();
   };
   useEffect(() => root.current?.focus(), []);
   // the steps offered, by group
   const addOptions = STEP_GROUPS.map((g): [string, [StepKind, StepDef][]] => [g, (Object.entries(STEP_DEFS) as [StepKind, StepDef][]).filter(([, d]) => d.group === g)]);
+  const beforeLabel = before === 'prev' ? (upToIndex > 0 ? `before step ${upToIndex}` : 'original') : 'original';
+  const W = (shown?.w ?? 0) * k;
+  const H = (shown?.h ?? 0) * k;
+  const stage = (c: React.RefObject<HTMLCanvasElement | null>, label?: string, extra?: React.ReactNode, style?: React.CSSProperties) => (
+    <div className="ie-stage" style={{ transform: `translate(${pan[0]}px, ${pan[1]}px)`, ...style }}>
+      <canvas ref={c} style={{ width: W, height: H }} />
+      {extra}
+      {label && <span className="ie-pane-label">{label}</span>}
+    </div>
+  );
+  const scaleLine = line && (
+    <svg className="ie-overlay" width={W} height={H}>
+      <line x1={line[0] * k} y1={line[1] * k} x2={line[2] * k} y2={line[3] * k} className="ie-scale-line" />
+      {[0, 2].map((j) => (
+        <line key={j} x1={line[j] * k} y1={line[j + 1] * k - 6} x2={line[j] * k} y2={line[j + 1] * k + 6} className="ie-scale-line" />
+      ))}
+    </svg>
+  );
+  const cropShown = cropDraft ?? crop;
+  const cropRect = full && cropShown && (
+    <svg className="ie-overlay" width={W} height={H}>
+      <path d={`M0,0H${W}V${H}H0Z M${cropShown[0] * k},${cropShown[1] * k}v${cropShown[3] * k}h${cropShown[2] * k}v${-cropShown[3] * k}Z`} className="ie-crop-shade" fillRule="evenodd" />
+      <rect x={cropShown[0] * k} y={cropShown[1] * k} width={cropShown[2] * k} height={cropShown[3] * k} className="ie-crop-rect" />
+    </svg>
+  );
+  const roiLayer = !onOriginal && shownRois.length > 0 && <RoiOverlay rois={shownRois} sel={sel} k={k} ox={ox} oy={oy} W={W} H={H} labels={labels} interactive={tool === 'pan'} />;
+  const cmpButton = (m: Cmp, label: string, title: string) => (
+    <button className={`nodrag${cmp === m ? ' on' : ''}`} disabled={onOriginal} title={title} onClick={() => setCmp(m)}>
+      {label}
+    </button>
+  );
 
   return createPortal(
-    <div className="image-editor nowheel" ref={root} tabIndex={-1} onKeyDown={key} onKeyUp={(e) => (e.key === 'b' || e.key === 'B') && setOriginal(false)}>
+    <div className="image-editor nowheel" ref={root} tabIndex={-1} onKeyDown={key} onKeyUp={(e) => (e.key === 'b' || e.key === 'B') && setHeld(false)}>
       <div className="ie-toolbar">
         <b className="ellipsis">{data.name || 'image'}</b>
         <span className="muted">
           {base ? `${base.w} × ${base.h}` : ''}
-          {busy ? ' · computing…' : ''}
+          {crop && full ? ` (of ${full.w} × ${full.h})` : ''}
+          {busy ? (reply && reply.scale < 1 ? ' · preview, computing the full size…' : ' · computing…') : ''}
         </span>
         <span className="grow" />
-        <button className={`nodrag${tool === 'pan' ? ' on' : ''}`} title="Move the image (drag); the wheel zooms" onClick={() => setTool('pan')}>
-          <Hand {...IC} />
-        </button>
-        <button className={`nodrag${tool === 'scale' ? ' on' : ''}`} title="Set the scale: draw a line along the scale bar (Shift: straight), then give its length" onClick={() => setTool('scale')}>
-          <Ruler {...IC} /> Scale
-        </button>
+        <span className="ie-group" title="Compare the result with the original (or with the image before the step shown)">
+          {cmpButton('edited', 'Edited', 'The result alone')}
+          {cmpButton('original', 'Original', 'The original alone (\\ switches; B: while held)')}
+          {cmpButton('side', 'Side by side', 'The original and the result side by side, moved and zoomed together (Y)')}
+          {cmpButton('split', 'Split', 'One image, the original on one side of a line, the result on the other: drag the line')}
+          {cmp === 'split' && (
+            <button className="nodrag" disabled={onOriginal} title="The line vertical or horizontal" onClick={() => setSplitDir(splitDir === 'v' ? 'h' : 'v')}>
+              {splitDir === 'v' ? '⇆' : '⇅'}
+            </button>
+          )}
+          <Select<'original' | 'prev'>
+            value={before}
+            title="Compared with the original, or with the image before the step shown (what that step changes)"
+            options={[
+              ['original', 'vs the original'],
+              ['prev', 'vs before the step'],
+            ]}
+            onChange={setBefore}
+          />
+        </span>
+        <span className="ie-group">
+          <button className={`nodrag${tool === 'pan' ? ' on' : ''}`} title="Move the image (drag); the wheel zooms" onClick={() => setTool('pan')}>
+            <Hand {...IC} />
+          </button>
+          <button className={`nodrag${tool === 'crop' ? ' on' : ''}`} title="Crop: the part of the original analysed (drag a rectangle on the original as it came; the data bar of a microscope cut off)" onClick={() => setTool(tool === 'crop' ? 'pan' : 'crop')}>
+            <CropIcon {...IC} /> Crop
+          </button>
+          <button className={`nodrag${tool === 'scale' ? ' on' : ''}`} title="Set the scale: draw a line along the scale bar of the original (Shift: straight; its ends found on the bar), then give its length" onClick={() => setTool(tool === 'scale' ? 'pan' : 'scale')}>
+            <Ruler {...IC} /> Scale
+          </button>
+        </span>
+        <span className="ie-group" title="Selections: draw on the image analysed">
+          {ROI_TOOLS.map(([t, Icon, label]) => (
+            <button
+              key={t}
+              className={`nodrag${tool === t ? ' on' : ''}`}
+              title={`${label} — ${TOOL_HINTS[t]}${t === 'stamp' && !rois.some((r) => r.id === sel && isArea(r)) ? ' Pick the selection to copy first.' : ''}`}
+              onClick={() => {
+                setTool(tool === t ? 'pan' : t);
+                setDraft(null);
+              }}
+            >
+              <Icon {...IC} />
+            </button>
+          ))}
+        </span>
         <button className="nodrag" title="Zoom out (−)" onClick={() => zoomAt(0.8)}>
           <Minus {...IC} />
         </button>
@@ -351,9 +753,6 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
         </button>
         <button className="nodrag" title="1 image pixel = 1 screen pixel" onClick={() => setZoom(1)}>
           1:1
-        </button>
-        <button className={`nodrag${original ? ' on' : ''}`} title="The original image while pressed (or hold B)" onPointerDown={() => setOriginal(true)} onPointerUp={() => setOriginal(false)} onPointerLeave={() => setOriginal(false)}>
-          Original
         </button>
         <button className="nodrag ie-close" title="Close the editor (Esc); Ctrl+Z undoes" onClick={onClose}>
           <X {...IC} />
@@ -383,16 +782,16 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
               ))}
             </select>
           </div>
-          <button className={`nodrag ie-step-head ie-original${upToIndex === 0 ? ' shown' : ''}`} title="Show the original image" onClick={() => setUpTo(steps[0]?.id ? '__none' : null)}>
+          <button className={`nodrag ie-step-head ie-original${upToIndex === 0 ? ' shown' : ''}`} title="Show the original image (the part analysed)" onClick={() => setUpTo(upTo === '__none' ? null : '__none')}>
             Original image
           </button>
           {steps.map((s, k) => {
             const d = STEP_DEFS[s.kind];
-            const shown = upTo ? s.id === upTo : k === steps.length - 1;
+            const isShown = upTo && upTo !== '__none' ? s.id === upTo : upTo !== '__none' && k === steps.length - 1;
             const err = reply?.errors[s.id];
             const note = reply?.notes[s.id];
             return (
-              <div key={s.id} className={`ie-step${shown ? ' shown' : ''}${s.on ? '' : ' off'}${k >= upToIndex && upToIndex < steps.length ? ' after' : ''}`}>
+              <div key={s.id} className={`ie-step${isShown ? ' shown' : ''}${s.on ? '' : ' off'}${k >= upToIndex && upToIndex < steps.length ? ' after' : ''}`}>
                 <div className="row ie-step-head">
                   <input className="nodrag" type="checkbox" checked={s.on} title="On (off: passed over)" onChange={(e) => setStep(s.id, { on: e.target.checked })} />
                   <button className="nodrag ie-step-name grow" title={`${d?.title ?? ''} — click: show the image up to this step`} onClick={() => setUpTo(upTo === s.id ? null : s.id)}>
@@ -408,14 +807,21 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
                     <X {...IC} />
                   </button>
                 </div>
-                {d && d.params.length > 0 && (
-                  <div className="ie-params">
-                    {d.params.map((q) => (
-                      <ParamField key={q.key} q={q} value={s.p[q.key]} set={(v) => setStep(s.id, { p: { ...s.p, [q.key]: v as never } })} />
-                    ))}
-                  </div>
+                {s.kind === 'curves' ? (
+                  <CurvesEditor p={s.p} rgb={(base?.ch.length ?? 1) === 3} hist={reply?.stepHist[s.id]} set={(key, v) => setStep(s.id, { p: { ...s.p, [key]: v } })} />
+                ) : s.kind === 'threshold' ? (
+                  <ThresholdEditor p={s.p} hist={reply?.stepHist[s.id]} note={reply?.notes[s.id]} set={(patch) => setStep(s.id, { p: { ...s.p, ...(patch as ImgStep['p']) } })} />
+                ) : (
+                  d &&
+                  d.params.length > 0 && (
+                    <div className="ie-params">
+                      {d.params.map((q) => (
+                        <ParamField key={q.key} q={q} value={s.p[q.key]} hist={reply?.stepHist[s.id]} set={(v) => setStep(s.id, { p: { ...s.p, [q.key]: v as never } })} />
+                      ))}
+                    </div>
+                  )
                 )}
-                {note && <div className="hint">{note}</div>}
+                {note && s.kind !== 'threshold' && <div className="hint">{note}</div>}
                 {err && <div className="hint ie-err">{err}</div>}
               </div>
             );
@@ -423,50 +829,117 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
           {!steps.length && <div className="hint">Add steps to prepare the image: tone and colour, noise, background, edges, texture, then a threshold (a mask) and its morphology. Each works on what the steps above give.</div>}
         </div>
         <div
-          className={`ie-view${tool === 'scale' ? ' scale' : ''}`}
+          className={`ie-view${tool !== 'pan' ? ' scale' : ''}${side ? ' side' : ''}`}
           ref={view}
           onWheel={(e) => zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX, e.clientY)}
           onPointerDown={onDown}
           onPointerMove={onMove}
-          onPointerUp={() => (drag.current = null)}
+          onPointerUp={onUp}
+          onDoubleClick={onDouble}
           onPointerLeave={() => setHover(null)}
         >
-          <div className="ie-stage" style={{ transform: `translate(${pan[0]}px, ${pan[1]}px)` }}>
-            <canvas ref={canvas} style={{ width: (base?.w ?? 0) * k, height: (base?.h ?? 0) * k }} />
-            {line && (
-              <svg className="ie-overlay" width={(base?.w ?? 0) * k} height={(base?.h ?? 0) * k}>
-                <line x1={line[0] * k} y1={line[1] * k} x2={line[2] * k} y2={line[3] * k} className="ie-scale-line" />
-              </svg>
-            )}
-          </div>
+          {onOriginal ? (
+            <>
+              {stage(canvasO, tool === 'crop' ? 'original — drag the part to analyse' : 'original — draw along the scale bar', tool === 'crop' ? cropRect : scaleLine)}
+              <canvas ref={canvas} hidden />
+              <canvas ref={canvasB} hidden />
+            </>
+          ) : mode === 'side' ? (
+            <>
+              <div className="ie-pane">{stage(canvasB, beforeLabel, roiLayer)}</div>
+              <div className="ie-pane">{stage(canvas, 'edited', roiLayer)}</div>
+            </>
+          ) : mode === 'split' ? (
+            <div className="ie-pane">
+              {stage(canvas, undefined, roiLayer)}
+              <div className="ie-split-before" style={{ clipPath: splitDir === 'v' ? `inset(0 ${(1 - split) * 100}% 0 0)` : `inset(0 0 ${(1 - split) * 100}% 0)` }}>
+                {stage(canvasB)}
+              </div>
+              <div className={`ie-split-line ${splitDir}`} style={splitDir === 'v' ? { left: `${split * 100}%` } : { top: `${split * 100}%` }}>
+                <span className="ie-split-handle" title="Drag the line">
+                  {splitDir === 'v' ? '⇆' : '⇅'}
+                </span>
+              </div>
+              <span className="ie-pane-label left">{beforeLabel}</span>
+              <span className="ie-pane-label">edited</span>
+            </div>
+          ) : (
+            <div className="ie-pane">
+              {mode === 'original' ? stage(canvasB, beforeLabel, roiLayer) : stage(canvas, undefined, roiLayer)}
+              {mode === 'original' ? <canvas ref={canvas} hidden /> : <canvas ref={canvasB} hidden />}
+            </div>
+          )}
+          {onOriginal && hover && <canvas ref={loupe} className="ie-loupe" width={144} height={144} style={{ left: hover.sx + 18, top: hover.sy + 18 }} />}
           {readout && <div className="ie-readout">{readout}</div>}
         </div>
         <div className="ie-side">
-          <div className="ie-section">Histogram{upToIndex < steps.length ? ` (up to step ${upToIndex})` : ''}</div>
-          <Histogram hist={reply?.hist ?? null} lo={reply?.lo ?? 0} hi={reply?.hi ?? 1} marks={marks} />
+          <div className="ie-section">Histogram{thr ? ' (into the threshold)' : upToIndex < steps.length ? ` (up to step ${upToIndex})` : ''}</div>
+          <Histogram hist={sideHist?.h ?? null} lo={sideHist?.lo ?? 0} hi={sideHist?.hi ?? 1} marks={marks} />
           <div className="ie-section">View</div>
           <div className="row wrap">
             <Select<Lut> value={lut} options={LUTS} title="The colour table of a gray image (the view; the figure has its own in the options)" onChange={setLut} />
             {reply?.kind === 'mask' && <Check label="mask over the image" title="A mask shown in a colour over the original, else white on black" value={overlay} onChange={setOverlay} />}
           </div>
+          <div className="ie-section">Crop</div>
+          <div className="hint">{crop ? `The part analysed: x ${crop[0]}, y ${crop[1]}, ${crop[2]} × ${crop[3]} px of ${full?.w} × ${full?.h}.` : 'The whole image is analysed.'}</div>
+          <div className="row wrap">
+            {barRows > 0 && full && (
+              <button className="nodrag" title={`A data bar found under the image (${barRows} rows of the microscope's settings): cut off`} onClick={() => set({ crop: [0, 0, full.w, full.h - barRows] })}>
+                Cut the data bar ({barRows} px)
+              </button>
+            )}
+            <button className={`nodrag${tool === 'crop' ? ' on' : ''}`} title="Drag the part to analyse on the original" onClick={() => setTool(tool === 'crop' ? 'pan' : 'crop')}>
+              Draw
+            </button>
+            {crop && (
+              <button className="nodrag" title="The whole image analysed" onClick={() => set({ crop: undefined })}>
+                No crop
+              </button>
+            )}
+          </div>
           <div className="ie-section">Calibration</div>
           <div className="hint">{data.cal && data.cal.size > 0 ? `1 px = ${fmt(data.cal.size)} ${unitText(data.cal.unit)} (${fmt(1 / data.cal.size)} px per ${unitText(data.cal.unit)})` : 'Not calibrated: the results in pixels.'}</div>
-          <div className="hint">Scale: draw a line along the scale bar, give its length.</div>
+          <div className="hint">On the scale bar: Scale, draw a line along it (a loupe follows the mouse; its ends found on the bar), give its length.</div>
           <div className="row wrap">
-            <span className="muted">{lineLen > 0 ? `line ${fmt(lineLen)} px =` : 'no line yet'}</span>
+            <span className="muted">{lineLen > 0 ? `line ${fmt(lineLen)} px${snapped === true ? ' (on the bar)' : snapped === false ? ' (as drawn)' : ''} =` : 'no line yet'}</span>
             <NumInput className="short" min={0} value={known} placeholder="length" onChange={setKnown} />
-            <Select<string> value={unit} options={['nm', 'µm', 'mm', 'cm', 'm', 'Å'].map((u): [string, string] => [u, u])} onChange={setUnit} />
+            <Select<string> value={unit} options={UNITS} onChange={setUnit} />
             <button className="nodrag btn-run" disabled={!(lineLen > 0) || !(known > 0)} title="The size of a pixel from the line" onClick={applyScale}>
               Set
             </button>
+          </div>
+          <Check label="Find the bar's ends" title="When the line is let go, its ends moved to the ends of the bar under it (its pixels like those under its middle); else the line as drawn" value={snap} onChange={setSnap} />
+          <div className="hint">Or the size of a pixel, known:</div>
+          <div className="row wrap">
+            <span className="muted">1 px =</span>
+            <NumInput className="short" min={0} step={0.001} value={data.cal?.size ?? NaN} placeholder="none" onChange={(size) => set({ cal: size > 0 ? { unit: data.cal?.unit ?? unit, ...data.cal, size, line: undefined, length: undefined } : undefined })} />
+            <Select<string> value={unitText(data.cal?.unit ?? unit)} options={UNITS} onChange={(u) => (setUnit(u), data.cal && set({ cal: { ...data.cal, unit: u } }))} />
             {data.cal && (
               <button className="nodrag" title="No calibration: the results in pixels" onClick={() => (set({ cal: undefined }), setLine(null))}>
                 Remove
               </button>
             )}
           </div>
+          <RoiPanel
+            rois={rois}
+            sel={sel}
+            setSel={setSel}
+            setRois={setRois}
+            tool={tool}
+            group={group}
+            setGroup={setGroup}
+            labels={labels}
+            setLabels={setLabels}
+            wandTol={wandTol}
+            setWandTol={setWandTol}
+            centre={centre}
+            setCentre={setCentre}
+            duplicate={duplicate}
+            clearAll={() => void ask(`Remove all ${rois.length} selections?`, { ok: 'Remove' }).then((y) => y && (setRois([]), setSel(null)))}
+          />
+          <MeasurePanel spec={spec} set={setSpec} steps={steps} rgb={(base?.ch.length ?? 1) === 3} rois={rois} book={book} sheet={sheet} setSheet={setSheet} pick={(name) => setSel(rois.find((r) => r.name === name)?.id ?? sel)} />
           <div className="ie-section">Keys</div>
-          <div className="hint">Wheel: zoom · drag: move · B: the original while held · + − 0: zoom, fit · Esc: close</div>
+          <div className="hint">Wheel: zoom · drag: move · \ original / edited · Y side by side · B: the original while held · + − 0: zoom, fit · Esc: the drawing, then the tool off, then close · a selection picked: Delete removes it, Ctrl+D copies it, the arrows move it (Shift: by 10)</div>
         </div>
       </div>
     </div>,

@@ -17,6 +17,7 @@ import {
   type Edge,
   type IsValidConnection,
   type Node,
+  type NodeChange,
   type NodeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -24,7 +25,7 @@ import { ReportNodeView } from './nodes/ReportNode.tsx';
 import './App.css';
 import { EngineContext, useEngine } from './engine/engine.ts';
 import { canConnect, isMultiInput, PORT_COLORS, sourcePort, type PortContext } from './engine/ports.ts';
-import { REPORT_DEFAULTS, MATCOMP_DEFAULTS, MATRIX_DEFAULTS, COLUMNS_DEFAULTS, PEAKWIDTH_DEFAULTS, AUTOEXTRACT_DEFAULTS, CANVAS_DEFAULTS, DRAWING_DEFAULTS, COMBINE_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS, CALCULUS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, AVERAGE_DEFAULTS, DIGITIZER_DEFAULTS, IMAGE_DEFAULTS, PHASE_DEFAULTS, HISTOGRAM_DEFAULTS, BARCHART_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, CURVEMATH_DEFAULTS, TRANSLATE_DEFAULTS, PEAK_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, ANOVA_DEFAULTS, NONPAR_DEFAULTS, CORR_DEFAULTS, PICK_DEFAULTS, DATAMANIP_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, PYTHON_DEFAULTS, NOTE_DEFAULTS, NOTE_SIZE,PLOT1D_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
+import { REPORT_DEFAULTS, MATCOMP_DEFAULTS, MATRIX_DEFAULTS, COLUMNS_DEFAULTS, PEAKWIDTH_DEFAULTS, AUTOEXTRACT_DEFAULTS, CANVAS_DEFAULTS, DRAWING_DEFAULTS, COMBINE_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS, CALCULUS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, AVERAGE_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, IMAGE_DEFAULTS, PHASE_DEFAULTS, HISTOGRAM_DEFAULTS, BARCHART_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, CURVEMATH_DEFAULTS, TRANSLATE_DEFAULTS, PEAK_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, ANOVA_DEFAULTS, NONPAR_DEFAULTS, CORR_DEFAULTS, PICK_DEFAULTS, DATAMANIP_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, PYTHON_DEFAULTS, NOTE_DEFAULTS, NOTE_SIZE,PLOT1D_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
 import { NODE_HELP, NODE_SHORT } from './help.ts';
 import { DRAG_TYPE, NodePalette, type PaletteGroup } from './NodePalette.tsx';
 // side panels: separate chunks, loaded when first opened
@@ -76,6 +77,8 @@ import { TranslateNodeView } from './nodes/CurveNodes.tsx';
 import { CurveMathNodeView } from './nodes/CurveMathNode.tsx';
 import { CleanNodeView, FilterNodeView } from './nodes/CleanNodes.tsx';
 import { DigitizerNodeView } from './nodes/DigitizerNode.tsx';
+import { PhaseDigitizerNode as PhaseDigitizerNodeView } from './nodes/PhaseDigitizerNode.tsx';
+import { EisNodeView } from './nodes/EisNode.tsx';
 import { ImageNodeView } from './nodes/ImageNode.tsx';
 import { PhaseNodeView } from './nodes/PhaseNode.tsx';
 import { HistogramNodeView } from './nodes/HistogramNode.tsx';
@@ -94,14 +97,15 @@ import { MatCompNodeView, MatrixNodeView } from './nodes/MatrixNodes.tsx';
 import { AverageNodeView, ConvNodeView, FFTNodeView, InterpNodeView, NormalizeNodeView, SmoothNodeView } from './nodes/SignalNodes.tsx';
 import { AnovaNodeView, CorrNodeView, NonparNodeView, NormNodeView, TTestNodeView } from './nodes/TestNodes.tsx';
 import { RerouteNodeView } from './nodes/RerouteNode.tsx';
-import { GroupInNodeView, GroupNodeView, GroupOutNodeView } from './nodes/GroupNodes.tsx';
+import { BatchFileBar, GroupInNodeView, GroupNodeView, GroupOutNodeView } from './nodes/GroupNodes.tsx';
 import { GroupNavContext } from './nodes/groupNav.ts';
 import { forgetTemplate, listTemplates, saveTemplate, templateById, useTemplates } from './nodes/templates.ts';
-import { asBatch, composeRoot, makeGroup, NEW_OUT, ungroupNode, type Level } from './engine/subgraph.ts';
+import { asBatch, composeRoot, emptyBatch, makeGroup, NEW_OUT, ungroupNode, type Level } from './engine/subgraph.ts';
 import type { NodeResult } from './engine/evaluate.ts';
 import { canPaste, copySettings, pastedData, useClipboard } from './nodes/clipboard.ts';
 import { clearDefaultStyle, defaultStyleFor, forgetStyle, saveStyle, setDefaultStyle, styledData, stylesFor, userStylesFor, withDefaultStyle } from './nodes/styles.ts';
-import { FRAME_COLORS, GROUP_COLORS, NODE_COLORS, nodeColor, nodeTitle } from './nodeColors.ts';
+import { FRAME_COLORS, GROUP_COLORS, NODE_COLORS, nodeColor, nodeDisplayName, nodeTitle } from './nodeColors.ts';
+import { tidyOwn, type BatchOwn, type BatchSpec } from './engine/batch.ts';
 import { FindNode } from './FindNode.tsx';
 import { PlotColumnsDialog, type PlotChoice } from './PlotColumnsDialog.tsx';
 import { buildFigure } from './plotBuild.ts';
@@ -125,6 +129,8 @@ const baseNodeTypes = {
   filterrows: FilterNodeView,
   clean: CleanNodeView,
   digitizer: DigitizerNodeView,
+  phasedigitizer: PhaseDigitizerNodeView,
+  eis: EisNodeView,
   image: ImageNodeView,
   phasediagram: PhaseNodeView,
   smooth: SmoothNodeView,
@@ -187,6 +193,8 @@ const DELETE_KEYS = ['Delete', 'Backspace'];
 
 // hidden: not offered in the nodes panel nor the canvas menu (the node still opens in saved projects)
 type Template = { type: AppNode['type']; label: string; data: AppNode['data']; hidden?: boolean };
+// the Nodes panel's Batch: a group of no steps yet that runs on every file
+const BATCH_NEW = 'batch:new';
 
 const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
   {
@@ -194,8 +202,8 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
     items: [
       { type: 'import', label: 'Import', data: IMPORT_DEFAULTS },
       { type: 'digitizer', label: 'Digitizer', data: DIGITIZER_DEFAULTS },
-      // hidden (2026-10-20): not offered while it is reworked; saved projects with it still open
-      { type: 'image', label: 'Image analysis', data: IMAGE_DEFAULTS, hidden: true },
+      { type: 'phasedigitizer', label: 'Phase digitizer', data: PHASE_DIGITIZER_DEFAULTS },
+      { type: 'image', label: 'Image analysis', data: IMAGE_DEFAULTS },
       { type: 'book', label: 'Workbook', data: WORKBOOK_DEFAULTS },
       { type: 'extract', label: 'Extract column', data: EXTRACT_DEFAULTS },
       { type: 'autoextract', label: 'Auto-extract', data: AUTOEXTRACT_DEFAULTS },
@@ -226,6 +234,7 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
     name: 'Analysis',
     items: [
       { type: 'fit', label: 'Fit', data: FIT_DEFAULTS },
+      { type: 'eis', label: 'Equivalent circuit (EIS)', data: EIS_DEFAULTS },
       { type: 'python', label: 'Python script', data: PYTHON_DEFAULTS },
       { type: 'calculus', label: 'Differentiate / Integrate', data: CALCULUS_DEFAULTS },
       { type: 'peaks', label: 'Peak analyzer', data: PEAK_DEFAULTS },
@@ -374,6 +383,70 @@ function Flow() {
   const pinnedNodes = useMemo(() => pins.flatMap((pid) => nodes.filter((n) => n.id === pid)), [pins, nodes]);
   const pin = (pid: string, on: boolean) => setPins((ps) => (on ? [...ps.filter((x) => x !== pid), pid] : ps.filter((x) => x !== pid)));
   const currentGroup = stack.length ? (stack[stack.length - 1].nodes.find((n) => n.id === stack[stack.length - 1].groupId) as Extract<AppNode, { type: 'subgraph' }> | undefined)?.data ?? null : null;
+  // inside a Batch: its files (its own result, a level up) and the one its steps are shown on; another one chosen
+  const batchView = stack.length && currentGroup?.batch ? rootEngine.results.get(stack.map((l) => l.groupId).join('/'))?.view.batch : undefined;
+  const batchFiles = batchView?.list ?? [];
+  const batchShown = batchView?.shown ?? 0;
+  // the Batch opened: its spec changed (in the level above, where the Batch node is)
+  const setBatchSpec = (f: (b: BatchSpec) => BatchSpec) => setStack((st) => st.map((lv, j) => (j < st.length - 1 ? lv : { ...lv, nodes: lv.nodes.map((n) => (n.id === lv.groupId && n.type === 'subgraph' ? ({ ...n, data: { ...n.data, batch: f(n.data.batch ?? {}) } } as AppNode) : n)) })));
+  const showBatchFile = (k: number) => setBatchSpec((b) => ({ ...b, show: k || undefined }));
+  // a file's own settings: the steps shown with them (over the common ones), marked; a change made for every file (it
+  // then drops the file's own of what it changes) or only for the file shown (its own settings)
+  const [batchMode, setBatchMode] = useState<'all' | 'own'>('all');
+  const shownName = currentGroup?.batch ? batchFiles[batchShown]?.name : undefined;
+  const ownShown = useMemo(() => (shownName ? (currentGroup?.batch?.own?.[shownName] ?? {}) : {}), [currentGroup, shownName]);
+  const shownNodes = useMemo(() => (Object.keys(ownShown).length ? nodes.map((n) => (ownShown[n.id] ? ({ ...n, data: { ...n.data, ...ownShown[n.id] }, className: [n.className, 'batch-own'].filter(Boolean).join(' ') } as AppNode) : n)) : nodes), [nodes, ownShown]);
+  const setOwn = (f: (own: BatchOwn) => BatchOwn) => setBatchSpec((b) => ({ ...b, own: tidyOwn(f(structuredClone(b.own ?? {}))) }));
+  const onNodesRouted = (changes: NodeChange<AppNode>[]) => {
+    if (!shownName) return onNodesChange(changes);
+    const rest: NodeChange<AppNode>[] = [];
+    const patch: Record<string, Record<string, unknown>> = {};
+    const drop: Record<string, string[]> = {};
+    for (const c of changes) {
+      const shown = c.type === 'replace' ? shownNodes.find((n) => n.id === c.id) : undefined;
+      const common = c.type === 'replace' ? nodes.find((n) => n.id === c.id) : undefined;
+      if (c.type !== 'replace' || !shown || !common) {
+        rest.push(c);
+        continue;
+      }
+      const [a, b] = [shown.data as Record<string, unknown>, c.item.data as Record<string, unknown>];
+      const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((k) => JSON.stringify(a[k]) !== JSON.stringify(b[k]));
+      const changed = Object.fromEntries(keys.map((k) => [k, b[k]]));
+      if (batchMode === 'own' && keys.length) patch[c.id] = changed;
+      else if (keys.length && ownShown[c.id]) drop[c.id] = keys;
+      rest.push({ ...c, item: { ...c.item, className: common.className, data: (batchMode === 'own' ? common.data : { ...common.data, ...changed }) as AppNode['data'] } as AppNode });
+    }
+    onNodesChange(rest);
+    if (Object.keys(patch).length || Object.keys(drop).length)
+      setOwn((own) => {
+        const mine = (own[shownName] ??= {});
+        for (const [id, p] of Object.entries(patch)) mine[id] = { ...mine[id], ...p };
+        for (const [id, ks] of Object.entries(drop)) if (mine[id]) for (const k of ks) delete mine[id][k];
+        return own;
+      });
+  };
+  // a step's own settings of the file shown: dropped (back to the common ones), or made the common ones (for every file)
+  const ownBack = (id: string) => {
+    if (!shownName) return;
+    setOwn((own) => {
+      if (own[shownName]) delete own[shownName][id];
+      return own;
+    });
+  };
+  const ownForAll = (id: string) => {
+    const mine = shownName ? ownShown[id] : undefined;
+    if (!mine) return;
+    setNodes((ns) => ns.map((n) => (n.id === id ? ({ ...n, data: { ...n.data, ...mine } } as AppNode) : n)));
+    // (every file then takes them: the others' own of the same settings dropped too)
+    setOwn((own) => {
+      for (const f of Object.values(own)) if (f[id]) for (const k of Object.keys(mine)) delete f[id][k];
+      return own;
+    });
+  };
+  const ownSteps = Object.keys(ownShown).flatMap((id) => {
+    const n = nodes.find((q) => q.id === id);
+    return n ? [{ id, title: nodeDisplayName(n) }] : [];
+  });
   const openGroup = (id: string) => {
     const g = getNode(id);
     if (!g || g.type !== 'subgraph') return;
@@ -1037,7 +1110,15 @@ function Flow() {
   const templates = useTemplates();
   const paletteGroups: PaletteGroup[] = useMemo(
     () => [
-      ...GROUPS.map((g) => ({ name: g.name, color: GROUP_COLORS[g.name], items: g.items.filter((t) => !t.hidden).map((t) => ({ type: t.type, label: t.label, help: NODE_SHORT[t.type] ?? NODE_HELP[t.type], color: NODE_COLORS[t.type] })) })),
+      ...GROUPS.map((g) => ({
+        name: g.name,
+        color: GROUP_COLORS[g.name],
+        items: [
+          ...g.items.filter((t) => !t.hidden).map((t) => ({ type: t.type, label: t.label, help: NODE_SHORT[t.type] ?? NODE_HELP[t.type], color: NODE_COLORS[t.type] })),
+          // a Batch with no steps yet: its steps built inside, on one file
+          ...(g.name === 'Data' ? [{ type: BATCH_NEW as AppNode['type'], label: 'Batch (every file)', help: 'The same analysis on every file: connect an Import with several files (or a folder) to “files”, open it, build the steps on one file, connect to “+ keep” what to keep — a table with a row per file comes out.', color: GROUP_COLORS.Groups }] : []),
+        ],
+      })),
       ...(templates.length
         ? [
             {
@@ -1052,6 +1133,7 @@ function Flow() {
   );
   const canvasRef = useRef<HTMLDivElement>(null);
   const template = (type: AppNode['type']): Template | undefined => {
+    if ((type as string) === BATCH_NEW) return { type: 'subgraph', label: 'Batch', data: emptyBatch() };
     const m = /^template:(.+)$/.exec(type);
     if (!m) return GROUPS.flatMap((g) => g.items).find((i) => i.type === type);
     const t = templateById(m[1]);
@@ -1404,13 +1486,13 @@ function Flow() {
                     .map((l) => (l.nodes.find((n) => n.id === l.groupId)?.data as { name?: string } | undefined)?.name || 'Group')
                     .join(' › ')}
                 </b>
-                <span className="hint">{currentGroup?.batch ? 'These steps run on every file; shown here on the first one. Connect to “+ keep” what to keep from each file.' : 'The Group input and Group output nodes are its ports.'}</span>
+                {currentGroup?.batch ? <BatchFileBar files={batchFiles} shown={batchShown} kept={currentGroup.outputs.map((q) => q.label)} onShow={showBatchFile} mode={batchMode} setMode={setBatchMode} ownSteps={ownSteps} ownCount={(name) => Object.keys(currentGroup.batch?.own?.[name] ?? {}).length} onBack={ownBack} onForAll={ownForAll} /> : <span className="hint">The Group input and Group output nodes are its ports.</span>}
               </div>
             )}
             <ReactFlow
-              nodes={nodes}
+              nodes={shownNodes}
               edges={styledEdges}
-              onNodesChange={onNodesChange}
+              onNodesChange={onNodesRouted}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
               isValidConnection={isValidConnection}

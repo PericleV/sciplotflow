@@ -46,12 +46,14 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
   switch (node.type) {
     case 'import':
     case 'book':
+    case 'pick':
       return handle === 'book' ? 'workbook' : 'dataset';
     case 'autoextract':
     case 'datamanip':
       return 'dataset';
     case 'columns':
-      return handle === 'names' ? 'column' : 'dataset';
+      // every sheet of a workbook: a workbook
+      return handle === 'names' ? 'column' : node.data.sheet === '*' ? 'workbook' : 'dataset';
     case 'peakwidth':
       return 'dataset';
     case 'fit':
@@ -60,7 +62,6 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
       return handle === 'area' ? 'scalar' : 'dataset';
     case 'report':
       return null;
-    case 'pick':
     case 'peaks':
     case 'normality':
     case 'ttest':
@@ -181,6 +182,10 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
       return handle === 'figure' ? 'figure' : null;
     case 'image':
       return handle === 'figure' ? 'figure' : handle === 'matrix' ? 'matrix' : handle === 'workbook' ? 'workbook' : null;
+    case 'phasedigitizer':
+      return handle === 'workbook' ? 'workbook' : handle === 'figure' ? 'figure' : 'dataset';
+    case 'eis':
+      return handle && ['figure', 'mod', 'phase', 'bode', 'circuit'].includes(handle) ? 'figure' : handle === 'parameters' || handle === 'fitted' || handle === 'ranges' ? 'dataset' : null;
     case 'phasediagram':
       return handle === 'figure' || handle === 'cooling' ? 'figure' : handle === 'points' || handle === 'fractions' || handle === 'boundaries' ? 'dataset' : null;
     case 'canvas':
@@ -215,6 +220,7 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
     case 'fit':
       return handle === 'in' ? ['dataset'] : handle === 'irf' ? ['dataset', 'column'] : [];
     case 'pick':
+    case 'eis':
       // a workbook: the sheet chosen in the node
       return handle === 'in' ? ['dataset', 'workbook'] : [];
     case 'peaks':

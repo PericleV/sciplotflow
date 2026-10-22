@@ -1,7 +1,7 @@
 // Canny edges (as scikit-image's canny): the image smoothed by a Gaussian of σ (the edge as zeros, corrected by the
 // smoothed mask), its Sobel gradient, the thin ridges kept (non-maximum suppression, read between the neighbours along
 // the gradient), then the edges above `high` with what joins them above `low` (hysteresis, 8-connected). Pure.
-import { gaussKernel, reflect } from './raster.ts';
+import { gaussKernel, map1, reflect } from './raster.ts';
 import { label } from './morph.ts';
 
 // a channel filtered by kx along the rows, ky along the columns, the edge as zeros (scipy 'constant')
@@ -87,5 +87,5 @@ export function canny(c: Float32Array, w: number, h: number, sigma: number, low:
   const { labels, count } = label(keep, w, h, true);
   const strong = new Uint8Array(count + 1);
   for (let i = 0; i < w * h; i++) if (keep[i] && mag[i] >= high) strong[labels[i]] = 1;
-  return Float32Array.from(labels, (l) => (l && strong[l] ? 1 : 0));
+  return map1(labels, (l) => (l && strong[l] ? 1 : 0));
 }

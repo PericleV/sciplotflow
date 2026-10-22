@@ -9,6 +9,7 @@ import { DataPreview } from './DataNodes.tsx';
 import { Field, InPort, Messages, NumInput, OutPort, Select, TextInput, ResultSummary } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
 import { ColumnsPicker } from './ColumnsPicker.tsx';
+import { PickGraphView } from './PickGraph.tsx';
 import { X } from 'lucide-react';
 import { IC } from './iconProps.ts';
 
@@ -34,6 +35,10 @@ export function PickNodeView({ id, data }: NodeProps<PickNode>) {
   const r = useNodeResult(id);
   const names = (r?.view.available ?? []).map((c) => c.name);
   const out = r?.outputs.out?.t === 'dataset' ? r.outputs.out.v : undefined;
+  const book = r?.outputs.book?.t === 'workbook' ? r.outputs.book.v : undefined;
+  const sheets = book?.sheets ?? (out ? [out] : []);
+  const k = Math.min(Math.max(0, data.sheetOut ?? 0), Math.max(0, sheets.length - 1));
+  const shownDs = sheets[k] ?? out;
   // absent (an older node): all, as before
   const others = data.others ?? 'all';
   return (
@@ -50,6 +55,7 @@ export function PickNodeView({ id, data }: NodeProps<PickNode>) {
           </Field>
         </div>
       )}
+      {r?.view.pick && <PickGraphView g={r.view.pick} rules={data.rules} setRules={(rules) => set({ rules })} />}
       <div className="pick-rules">
         {data.rules.map((rule, k) => (
           <div key={k} className="row pick-rule" title={HINT[rule.kind]}>
@@ -62,7 +68,21 @@ export function PickNodeView({ id, data }: NodeProps<PickNode>) {
                 <NumInput value={rule.to ?? NaN} placeholder="all" title="Up to this X (empty: the largest)" onChange={(to) => setRule(k, { to })} />
               </>
             ) : (
-              <TextInput className="grow mono" value={rule.value} placeholder={rule.kind === 'where' ? 'x > 0.4 and y < 0' : rule.kind === 'x' ? '0.5 · 0.2, 0.5 · 0:0.1:0.8' : '0'} onChange={(value) => setRule(k, { value })} />
+              <>
+                <TextInput className="grow mono" value={rule.value} placeholder={rule.kind === 'where' ? 'x > 0.4 and y < 0' : rule.kind === 'x' ? '0.5 · 0.2, 0.5 · 0:0.1:0.8' : '0'} onChange={(value) => setRule(k, { value })} />
+                {(rule.kind === 'x' || rule.kind === 'y') && (
+                  <Select<'all' | 'first' | 'last'>
+                    value={rule.which ?? 'all'}
+                    title="Which crossing: all, the first or the last (in row order)"
+                    options={[
+                      ['all', 'all'],
+                      ['first', 'first'],
+                      ['last', 'last'],
+                    ]}
+                    onChange={(which) => setRule(k, { which })}
+                  />
+                )}
+              </>
             )}
             <button className="nodrag ts-btn" title="Remove this rule" onClick={() => set({ rules: data.rules.filter((_, j) => j !== k) })}>
               <X {...IC} />
@@ -120,12 +140,46 @@ export function PickNodeView({ id, data }: NodeProps<PickNode>) {
             onChange={(layout) => set({ layout })}
           />
         </Field>
+        <Field label="Sheets" title="Separate sheets for X and Y (a workbook); or all points in one table">
+          <Select<'auto' | 'all' | 'one'>
+            value={data.sheetsMode ?? 'auto'}
+            options={[
+              ['auto', 'separate sheets for X and Y'],
+              ['all', 'separate sheet per rule type'],
+              ['one', 'one table'],
+            ]}
+            onChange={(sheetsMode) => set({ sheetsMode })}
+          />
+        </Field>
       </div>
-      {out && <DataPreview columns={out.columns.slice(0, 10)} rows={10} />}
+      {shownDs && (
+        <div className="pick-preview">
+          {sheets.length > 1 && (
+            <div className="sheet-tabs nowheel" style={{ marginBottom: 4 }}>
+              {sheets.map((s, j) => (
+                <button key={j} className={`nodrag${j === k ? ' on' : ''}`} onClick={() => set({ sheetOut: j })}>
+                  {s.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <DataPreview columns={shownDs.columns.slice(0, 10)} rows={10} />
+        </div>
+      )}
       </NodeOptions>
       <ResultSummary result={r} />
       <Messages result={r} />
-      <OutPort label="dataset" port="dataset" title="The points picked: the Y column (its block value when cut by Split into columns), the rule, the value asked, the row found, X, Y and the other columns read there (or a row per Y column)" />
+      {sheets.length > 1 && (
+        <div className="sheet-tabs nowheel" title="The sheet shown and given on the “dataset” output (the “workbook” output gives all of them)">
+          {sheets.map((s, j) => (
+            <button key={j} className={`nodrag${j === k ? ' on' : ''}`} onClick={() => set({ sheetOut: j })}>
+              {s.name}
+            </button>
+          ))}
+        </div>
+      )}
+      <OutPort label={sheets.length > 1 ? `dataset (${shownDs?.name ?? ''})` : 'dataset'} port="dataset" title="The points picked: the Y column (its block value when cut by Split into columns), the rule, the value asked, the row found, X, Y and the other columns read there (or a row per Y column)" />
+      <OutPort label={`workbook (${sheets.length} sheet${sheets.length === 1 ? '' : 's'})`} port="workbook" id="book" title="All the sheets (at X, at Y…), for Extract column (choose the sheet), Plot, or Auto-extract" />
     </div>
   );
 }

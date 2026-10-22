@@ -1,6 +1,7 @@
 // Morphology of the Image analysis node: gray erosion, dilation, opening, closing and top-hats by a disk or a square;
 // on masks (0 / 1) the same, and holes filled, the skeleton (Zhang–Suen), the distance map (exact Euclidean), the
 // objects labelled (connected components) and touching objects cut apart (watershed of the distance map). Pure.
+import { map1 } from './raster.ts';
 import { minMaxFilter, type Shape } from './filters.ts';
 
 export const erode = (c: Float32Array, w: number, h: number, r: number, shape: Shape = 'disk') => minMaxFilter(c, w, h, r, false, shape);
@@ -11,10 +12,10 @@ export const closing = (c: Float32Array, w: number, h: number, r: number, shape:
 export function topHat(c: Float32Array, w: number, h: number, r: number, black: boolean, shape: Shape = 'disk'): Float32Array {
   if (black) {
     const cl = closing(c, w, h, r, shape);
-    return Float32Array.from(c, (v, i) => cl[i] - v);
+    return map1(c, (v, i) => cl[i] - v);
   }
   const op = opening(c, w, h, r, shape);
-  return Float32Array.from(c, (v, i) => v - op[i]);
+  return map1(c, (v, i) => v - op[i]);
 }
 
 // ---- masks ----
@@ -78,7 +79,7 @@ export function fillHoles(m: Float32Array, w: number, h: number): Float32Array {
     if (y > 0) push(p - w);
     if (y < h - 1) push(p + w);
   }
-  return Float32Array.from(m, (v, i) => (v || !outside[i] ? 1 : 0));
+  return map1(m, (v, i) => (v || !outside[i] ? 1 : 0));
 }
 
 // the Zhang–Suen table: for the 8 neighbours (weights 1 … 128 from the top-left, clockwise), whether the pixel may go
@@ -330,11 +331,11 @@ export function watershed(height: Float32Array, markers: Int32Array, m: Float32A
 export function separate(m: Float32Array, w: number, h: number, tolerance = 0.5): Float32Array {
   const dm = distanceMap(m, w, h);
   const markers = maximaMarkers(dm, m, w, h, tolerance);
-  const neg = Float32Array.from(dm, (v) => -v);
+  const neg = map1(dm, (v) => -v);
   const lab = watershed(neg, markers, m, w, h);
   // the line, one pixel wide: a pixel whose right or lower neighbour is of another basin; then a pixel still touching
   // another basin across a diagonal (the objects would stay 8-connected there)
-  const out = Float32Array.from(lab, (l) => (l ? 1 : 0));
+  const out = map1(lab, (l) => (l ? 1 : 0));
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
       const i = y * w + x;

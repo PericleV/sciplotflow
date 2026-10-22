@@ -12,6 +12,7 @@ export type BlockMode = 'auto' | 'text' | 'restart' | 'column' | 'repeat' | 'eve
 // the rule applied again inside every block (by a column, then the cycles of the potential in each)
 export type ThenMode = 'none' | 'cycles' | 'direction' | 'jump' | 'restart' | 'every';
 export type UnstackSpec = {
+  sheet?: string; // from a workbook, by name (absent: the first sheet)
   x: string; // the X column ('' = the designated X)
   ys: string; // the columns cut into blocks: a list (2, B-D, names, A*; '' = all the others but the group column)
   by: BlockMode;

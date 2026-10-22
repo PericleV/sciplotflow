@@ -6,8 +6,25 @@
 import { column, type Column, type Dataset, type Scalar, type Workbook } from './table.ts';
 
 // pattern: “{Name}” takes a number, “{Name:text}” a word, the rest is written as in the names (empty: nothing read);
-// order: the files as they come, by name (numbers in their order: run 2 before run 10), or by the first value read
-export type BatchSpec = { pattern?: string; order?: 'given' | 'name' | 'value' };
+// order: the files as they come, by name (numbers in their order: run 2 before run 10), or by the first value read;
+// show: the file the steps are shown on inside (its place in that order; absent: the first); own: a file's own
+// settings of some steps — by the file's name, the step's id, only the settings changed (the others: the common ones)
+export type BatchOwn = Record<string, Record<string, Record<string, unknown>>>;
+export type BatchSpec = { pattern?: string; order?: 'given' | 'name' | 'value'; show?: number; own?: BatchOwn };
+// the steps with a file's own settings over the common ones
+export function withOwn<T extends { id: string; data: unknown }>(nodes: T[], own: Record<string, Record<string, unknown>> | undefined): T[] {
+  if (!own || !Object.keys(own).length) return nodes;
+  return nodes.map((n) => (own[n.id] ? ({ ...n, data: { ...(n.data as object), ...own[n.id] } } as T) : n));
+}
+// the own settings tidied: no step without any, no file without any (none at all: absent)
+export function tidyOwn(own: BatchOwn): BatchOwn | undefined {
+  const out: BatchOwn = {};
+  for (const [file, steps] of Object.entries(own)) {
+    const kept = Object.fromEntries(Object.entries(steps).filter(([, v]) => v && Object.keys(v).length));
+    if (Object.keys(kept).length) out[file] = kept;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
 
 // what one file gave: the values of the steps' outputs (scalars), their tables (datasets), and its errors
 export type FileRun = { name: string; values: { label: string; value: number }[]; tables: { label: string; ds: Dataset }[]; errors: string[] };
@@ -35,6 +52,42 @@ export function readName(name: string, p: { re: RegExp; parts: Part[] }): (numbe
   const m = p.re.exec(name.trim());
   if (!m) return null;
   return p.parts.map((q, k) => (q.text ? m[k + 1] : Number(m[k + 1].replace(',', '.'))));
+}
+
+// what a name says, written out: “T = 300, run = a”
+export const readText = (read: (number | string)[] | null, parts: { name: string }[]) => (read ? parts.map((q, k) => `${q.name} = ${read[k]}`).join(', ') : '');
+
+// a pattern guessed from the names: their numbers that differ from file to file become {V1}, {V2} … (one: {V}), the
+// rest written as it is — when every name has the same shape (the same text between its numbers); null: no shape
+// shared
+export function guessPattern(names: string[]): string | null {
+  const NUM = /[-+]?\d+(?:[.,]\d+)?(?:[eE][-+]?\d+)?/g;
+  const split = (s: string) => {
+    const texts: string[] = [];
+    const nums: string[] = [];
+    let at = 0;
+    for (const m of s.trim().matchAll(NUM)) {
+      texts.push(s.trim().slice(at, m.index));
+      nums.push(m[0]);
+      at = m.index! + m[0].length;
+    }
+    texts.push(s.trim().slice(at));
+    return { texts, nums };
+  };
+  const all = names.filter((n) => n.trim()).map(split);
+  if (all.length < 2) return null;
+  const [first] = all;
+  if (!all.every((q) => q.nums.length === first.nums.length && q.texts.every((t, k) => t === first.texts[k]))) return null;
+  const varies = first.nums.map((_, k) => all.some((q) => q.nums[k] !== first.nums[k]));
+  const n = varies.filter(Boolean).length;
+  if (!n) return null;
+  let j = 0;
+  let out = first.texts[0];
+  first.nums.forEach((num, k) => {
+    out += varies[k] ? `{${n === 1 ? 'V' : `V${++j}`}}` : num;
+    out += first.texts[k + 1];
+  });
+  return out;
 }
 
 const natural = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });

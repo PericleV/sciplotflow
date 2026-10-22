@@ -13,7 +13,7 @@ import { generatedValues } from './gencol.ts';
 import { withColumnFunctions } from './colfns.ts';
 export { withColumnFunctions };
 import type { Edge } from '@xyflow/react';
-import type { AnnotationItem, AppNode, CalculusData, PeakData, PeakWidthData, PickData, CanvasData, DrawingData, DrawingComponent, CanvasItem, CanvasLayout, CurveRow, MathColData, PythonData, RowRule, FitNodeData, GenColData, PageData, Plot1DData, StatsData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from '../types.ts';
+import type { AnnotationItem, AppNode, CalculusData, ColumnsData, PeakData, PeakWidthData, PickData, CanvasData, DrawingData, DrawingComponent, CanvasItem, CanvasLayout, CurveRow, MathColData, PythonData, RowRule, FitNodeData, GenColData, PageData, Plot1DData, StatsData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from '../types.ts';
 import { axisRange } from '../figure/ticks.ts';
 import { autoFrame, axesGeometry, placeAuto, placeInsets, placeLegends } from '../figure/axes.ts';
 import { legendLayout } from '../figure/legendLayout.ts';
@@ -21,7 +21,7 @@ import { columnLetter, readTable, type CsvResult } from './csv.ts';
 import { curveColumns, digest, figPort, outValue, toPy, type PyJob, type PyResult, type PyValue } from './python.ts';
 import { applySheet, hasEdits, readSheet, type SheetMap } from './sheet.ts';
 import { flattenGroups, GROUP_IN, GROUP_OUT } from './subgraph.ts';
-import { gather, orderFiles, resultOf, type FileRun } from './batch.ts';
+import { gather, orderFiles, readText, resultOf, withOwn, type FileRun } from './batch.ts';
 import { takeRows } from './split.ts';
 import { parseRows } from './rows.ts';
 export { parseRows };
@@ -35,10 +35,12 @@ import { linearRegression, logisticRegression, type Coef } from './regression.ts
 import { surfaceModel } from './surface.ts';
 import { describe, STATS, type StatKey } from './stats.ts';
 import { combineNode, combineSettings, labelRuns, sideBySide, unstack, type BlockInfo, type CombineInput, type CombineSettings, type SplitGraph } from './reshape.ts';
-import { pickPoints, type Picked } from './pick.ts';
+import { pickPoints, type PickGraph, type PickKind, type Picked } from './pick.ts';
 import { CURVE_OP_LABELS, curveFormulas, curveMath, curveOf, curveOpPort, curveOps, translate, type Curve2, type TranslateCurve, type CurveMathData, type CurveOpView, type CurvePlotLine, stepInfo, type StepInfo } from './curvemath.ts';
 import { changesTable, cleanData, filterRows } from './cleaning.ts';
 import { digitized } from './digitize.ts';
+import { runPhaseDigitizer } from './phasedigitize.ts';
+import { colKey, colLabel, drawCircuit, rangeText, type EisRangeFit, type EisRangeSpec, fmtFreq, guessColumns, labelledPoints, looksAngular, runEis, type EisData, type EisLabelView, type EisPoints } from './eis.ts';
 import { histogram, type FitResult } from './histogram.ts';
 import { axisValues, placeColumn, type AxisValues } from './axiskinds.ts';
 import { countGrid, densityGrid, streamlines, vectorArrows } from './fields2d.ts';
@@ -63,7 +65,7 @@ import { curveThrough } from './baselines.ts';
 import { areaBetween, derivative, integrate, interp, pointsCurve, regionName, regionRows, type IntegralOptions } from './calculus.ts';
 import { bareName, column, curvesByRole, findColumn, fmtNum, roleOf, rowIndex, titleOf, unitOf, type Column, type ColumnRole, type Dataset, type Scalar, type Series, type Workbook } from './table.ts';
 import { autoExtract, pick, simpleRules } from './extract.ts';
-import { columnsOf, type ColumnLine } from './columns.ts';
+import { columnsOf, type ColumnLine, type ColumnsSpec } from './columns.ts';
 import { baseUnder, extremum, inRange, peakWidth, type Baseline as MBaseline, type Width } from './measure.ts';
 import { selectRows } from './rowsel.ts';
 import { applyManip, maskOf } from './manip.ts';
@@ -73,7 +75,9 @@ import { compare, compareTable, modelName, yorkRuns, type Scored } from './fitco
 import { parseRowHandle, rowHandle } from './ports.ts';
 import { hasGrad, type GradFill, AXIS_DEFAULTS, COLORBAR_DEFAULTS, SIDE_DEFAULTS, curveStyle, axesStyle, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, toPt, type Annotation, type AxesFig, type AxesStyle, type AxisSpec, type Curve, type CurveStyle, type Figure, type FigureBox, type LegendEntry, type LegendSpec, type LengthUnit, type Placement, type ShapeSpec, type TextDefaults, resolveText, type Side, INSET_DEFAULTS, insetBackground, scaledSize } from '../figure/spec.ts';
 import { CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, DRAWING_DEFAULTS, MATRIX_PLOT_DEFAULTS, PLOT_PAGE_DEFAULTS, REPORT_DEFAULTS } from '../defaults.ts';
-import { figurePng, imageFigure, imageMatrix, processImage, scaleBarPlace, type ImageAnalysisData } from '../image/node.ts';
+import { figurePng, imageFigure, imageMatrix, imageMeasurements, processImage, scaleBarPlace, type ImageAnalysisData } from '../image/node.ts';
+import { isArea, roiCentre, roiOutline, ROI_COLOR } from '../image/roi.ts';
+import { cropBox } from '../image/raster.ts';
 import { STEP_DEFS } from '../image/steps.ts';
 import { phaseFigures, type PhaseDiagramData } from './phasenode.ts';
 import { maxOf, minOf } from './minmax.ts';
@@ -145,6 +149,8 @@ export type NodeView = {
   inputs?: MathInput[]; // Math column
   blocks?: { list: BlockInfo[]; how: string }; // Split into columns: the blocks found
   split?: SplitGraph; // Split into columns: its graph (the column the blocks are found from, the curves, the cuts)
+  pick?: PickGraph; // Pick points: its graph (the curves, the points picked)
+  eis?: EisView; // Equivalent circuit: the data, the fit, the parameters, the columns used
   combine?: { port: number; letter: string; kind: 'column' | 'dataset' | 'workbook'; name: string; rows: number; cols: number; columns: string[]; sheets?: string[] }[]; // Combine columns: its inputs
   combineSettings?: CombineSettings; // Combine columns: its settings as it works with them (an older node's translated)
   changed?: number; // Math column: how many rows the rules changed
@@ -176,7 +182,7 @@ export type NodeView = {
   layerInputs?: { port: number; letter: string; name: string; columns: string[]; labels: Record<string, string[]> }[];
   figure?: Figure;
   cooling?: Figure; // Phase diagram: the amounts of the phases of the alloy cooled
-  image?: { w: number; h: number; ch: number; kind: string; notes: Record<string, string>; errors: Record<string, string> }; // Image analysis: the result's size, every step's note and error
+  image?: { w: number; h: number; ch: number; kind: string; notes: Record<string, string>; errors: Record<string, string>; summary?: string }; // Image analysis: the result's size, every step's note and error, what the measurements found
   under?: Figure; // Figure Drawing: the figure connected under it
   pinShift?: Record<string, [number, number]>; // … and how far its objects pinned to that figure's data are moved (mm)
   // Matrix, Contour: the matrix made / drawn; Matrix computation: its inputs and every step's results
@@ -185,7 +191,8 @@ export type NodeView = {
   matSteps?: { id: string; name: string; error?: string; warnings: string[]; parts: { key: string; label: string; info?: MatrixInfo; value?: number }[] }[];
   waiting?: string; // what is missing before the node can give a result
   // Batch: the files it ran on, those that failed and why
-  batch?: { files: number; failed: { name: string; errors: string[] }[] };
+  // a Batch: its files (in their order: what their names say, their errors), the one shown inside
+  batch?: { files: number; failed: { name: string; errors: string[] }[]; list?: { name: string; read: string; errors: string[]; own?: string[] }[]; shown?: number };
 };
 // inner: a Batch's steps as they ran on its first file (shown when the batch is opened), by their ids inside it
 export type NodeResult = { rev: number; outputs: Record<string, Value>; errors: string[]; warnings: string[]; view: NodeView; inner?: Map<string, NodeResult> };
@@ -213,8 +220,12 @@ export function logicalData(n: AppNode): unknown {
     delete rest.text;
     delete rest.sheets;
   }
-  // an image: by its id (its pixels are megabytes)
-  if (n.type === 'image') delete rest.pixels;
+  // an image: by its id (its pixels are megabytes) — and whether they are there yet (a project opened: they come back
+  // from the browser's storage after it)
+  if (n.type === 'image') {
+    delete rest.pixels;
+    rest.hasPixels = !!n.data.pixels?.data;
+  }
   return rest;
 }
 
@@ -2278,8 +2289,8 @@ function phaseNodeOut(id: string, d: PhaseDiagramData): Out {
   return { outputs, warnings, view: { figure: fixed(figure), ...(coolFig ? { cooling: coolFig } : {}), report: r.summary } };
 }
 
-// The Image analysis node: the image through its steps; the matrix of the result and a figure — the image on a page
-// of its proportions, a scale bar when calibrated
+// The Image analysis node: the image through its steps; the matrix of the result, a figure — the image on a page of
+// its proportions, its selections, a scale bar when calibrated —, the measurements of the selections as a workbook
 function imageNodeOut(id: string, d: ImageAnalysisData): Out {
   const p = processImage(d);
   if (!p) return { view: { waiting: 'Open an image (PNG, JPEG, TIFF): Open image, paste one or drop it on the node.' } };
@@ -2288,6 +2299,37 @@ function imageNodeOut(id: string, d: ImageAnalysisData): Out {
   const H = +((W * p.out.h) / p.out.w).toFixed(3);
   const href = figurePng(p, f);
   const ann: AnnotationItem[] = [{ id: 'img', type: 'shape', spec: { ...SHAPE_DEFAULTS, kind: 'image', coords: 'data', href, x1: 0, y1: 0, x2: W, y2: H, width: 0, stretch: true } }];
+  // the selections shown: their outlines (lines, the points as dots), their names (mm on the page from the pixels of
+  // the original: the crop's corner taken off), drawn as they are (locked: no handles)
+  if (f.rois !== 'none' && d.rois?.length && d.pixels) {
+    const c = cropBox(d.crop, d.pixels.w, d.pixels.h);
+    const [ox, oy] = [c?.[0] ?? 0, c?.[1] ?? 0];
+    const mm = W / p.out.w;
+    const at = (x: number, y: number) => [+((x - ox) * mm).toFixed(4), +((y - oy) * mm).toFixed(4)] as const;
+    for (const r of d.rois) {
+      if (r.hidden) continue;
+      const color = r.color ?? ROI_COLOR;
+      const line = { ...SHAPE_DEFAULTS, kind: 'line' as const, coords: 'data' as const, color, width: 0.75, head1: 'none' as const, head2: 'none' as const };
+      const pts = roiOutline(r);
+      if (isArea(r)) ann.push({ id: `roi-${r.id}`, locked: true, type: 'shape', spec: { ...SHAPE_DEFAULTS, kind: 'polygon', coords: 'data', points: pts.map(([x, y]) => at(x, y).join(' ')).join('; '), color, width: 0.75, fill: '' } });
+      else if (r.kind === 'points')
+        pts.forEach(([x, y], k) => {
+          const [px, py] = at(x, y);
+          ann.push({ id: `roi-${r.id}-${k}`, locked: true, type: 'shape', spec: { ...SHAPE_DEFAULTS, kind: 'ellipse', coords: 'data', x1: px - 0.6, y1: py - 0.6, x2: px + 0.6, y2: py + 0.6, color, width: 0.5, fill: color } });
+        });
+      else
+        pts.slice(1).forEach(([x, y], k) => {
+          const [x1, y1] = at(pts[k][0], pts[k][1]);
+          const [x2, y2] = at(x, y);
+          ann.push({ id: `roi-${r.id}-${k}`, locked: true, type: 'shape', spec: { ...line, x1, y1, x2, y2 } });
+        });
+      if (f.rois === 'labels') {
+        const [cx, cy] = roiCentre(r);
+        const [tx, ty] = at(cx, cy);
+        ann.push({ id: `roi-${r.id}-name`, locked: true, type: 'text', spec: { ...TEXT_SPEC_DEFAULTS, text: r.name, coords: 'data', x: tx, y: ty, anchor: 'c', style: { color, size: 6 } } });
+      }
+    }
+  }
   const bar = scaleBarPlace(p.out.w, p.out.h, W, d.cal, f.bar);
   if (bar) {
     ann.push({ id: 'bar', type: 'shape', spec: { ...SHAPE_DEFAULTS, kind: 'line', coords: 'data', x1: bar.x1, y1: bar.y, x2: bar.x2, y2: bar.y, color: f.bar.color, width: f.bar.thickness, head1: 'none', head2: 'none', cap: 'butt' } });
@@ -2296,10 +2338,11 @@ function imageNodeOut(id: string, d: ImageAnalysisData): Out {
   const page: DrawingData = { ...DRAWING_DEFAULTS, name: d.name.replace(/\.[a-z0-9]+$/i, '') || 'image', ...d.page, width: W, height: H, unit: 'mm', annotations: ann };
   const figure = drawingFigure(id, page);
   const warnings = (d.steps ?? []).flatMap((s, k) => (p.errors[s.id] ? [`Step ${k + 1} (${STEP_DEFS[s.kind]?.label ?? s.kind}): ${p.errors[s.id]}.`] : []));
+  const m = imageMeasurements(d, p);
   return {
-    outputs: { matrix: { t: 'matrix', v: imageMatrix(p.out, d.name || 'image', d.cal) }, figure: { t: 'figure', v: figure } },
+    outputs: { matrix: { t: 'matrix', v: imageMatrix(p.out, d.name || 'image', d.cal) }, figure: { t: 'figure', v: figure }, ...(m ? { workbook: { t: 'workbook' as const, v: m.book } } : {}) },
     warnings,
-    view: { figure, image: { w: p.out.w, h: p.out.h, ch: p.base.ch.length, kind: p.out.kind, notes: p.notes, errors: p.errors } },
+    view: { figure, image: { w: p.out.w, h: p.out.h, ch: p.base.ch.length, kind: p.out.kind, notes: p.notes, errors: p.errors, ...(m?.summary ? { summary: m.summary } : {}) } },
   };
 }
 
@@ -4003,7 +4046,7 @@ function pickNode(d: PickData, v: Value | undefined): Out {
   if (!one && also !== 'none' && d.others) warnings.push('Also read: only with one Y column (with several, the rows of the other columns are not those of each curve).');
   const letters: Record<string, ArrayLike<number>> = {};
   if (v.t === 'dataset') v.v.columns.forEach((c, j) => (letters[columnLetter(j)] = c.values));
-  type Row = { run: Run; p: Picked };
+  type Row = { run: Run; p: Picked; kind: PickKind };
   const got: Row[] = [];
   const errors: string[] = [];
   for (const run of runs) {
@@ -4013,50 +4056,325 @@ function pickNode(d: PickData, v: Value | undefined): Out {
     const rows = run.rows.filter((i) => Number.isFinite(xv[i]) && Number.isFinite(yv[i]) && !mask?.[i]);
     const r = pickPoints(xv, yv, rows, d.rules, d, letters);
     errors.push(...r.errors);
-    for (const p of r.points) got.push({ run, p });
+    for (const p of r.points) {
+      const k: PickKind = p.kind ?? (p.rule.startsWith('x =') ? 'x' : p.rule.startsWith('y =') ? 'y' : p.rule.startsWith('max') ? 'max' : p.rule.startsWith('min') ? 'min' : 'where');
+      got.push({ run, p, kind: k });
+    }
   }
-  if (errors.length) return { errors: [...new Set(errors)], view: { available } };
-  if (!got.length) warnings.push('No point found by the rules.');
   const xName = new Set(XsOk.map((c) => c.name)).size === 1 ? XsOk[0].name : 'X';
   const yName = Ys.length === 1 ? Ys[0].name : 'Y';
+  const pickGraph: PickGraph = {
+    xName,
+    yName,
+    curves: runs.map((run) => ({ name: run.label, x: XsOk[run.slot].values, y: run.y.values })),
+    points: got.map((g) => ({
+      x: g.p.x,
+      y: g.p.y,
+      at: g.p.at,
+      rule: g.p.rule,
+      kind: g.kind,
+    })),
+  };
+  if (errors.length) return { errors: [...new Set(errors)], view: { available, pick: pickGraph } };
+  if (!got.length) warnings.push('No point found by the rules.');
   const read = (c: Column, p: Picked) => (p.a < c.values.length && p.b < c.values.length ? c.values[p.a] + (c.values[p.b] - c.values[p.a]) * p.t : NaN);
   const key = (p: Picked) => p.rule;
-  let columns: Column[];
-  if (d.layout === 'wide') {
-    // a row per run; a column per point (its occurrence on the run: #2 …) — Y, and X when the rule finds X
-    const keys: string[] = [];
-    const per = runs.map((run) => {
-      const m = new Map<string, Picked>();
-      const count = new Map<string, number>();
-      for (const g of got.filter((q) => q.run === run)) {
-        const kk = key(g.p);
-        const c = (count.get(kk) ?? 0) + 1;
-        count.set(kk, c);
-        const full = c > 1 ? `${kk} #${c}` : kk;
-        m.set(full, g.p);
-        if (!keys.includes(full)) keys.push(full);
+
+  function buildDataset(name: string, pts: Row[], catKind?: string): Dataset {
+    let columns: Column[];
+    if (d.layout === 'wide') {
+      // a row per run; a column per point (its occurrence on the run: #2 …) — Y, and X when the rule finds X
+      const keys: string[] = [];
+      const per = runs.map((run) => {
+        const m = new Map<string, Picked>();
+        const count = new Map<string, number>();
+        for (const g of pts.filter((q) => q.run === run)) {
+          const kk = key(g.p);
+          const c = (count.get(kk) ?? 0) + 1;
+          count.set(kk, c);
+          const full = c > 1 ? `${kk} #${c}` : kk;
+          m.set(full, g.p);
+          if (!keys.includes(full)) keys.push(full);
+        }
+        return m;
+      });
+      columns = [{ ...column(runName, Float64Array.from(runs, (r) => r.value), rk.name ? undefined : runs.map((r) => r.label)), role: 'x' }];
+      for (const kk of keys) {
+        const sample = per.find((m) => m.has(kk))!.get(kk)!;
+        if (!sample.rule.startsWith('x =')) columns.push({ ...column(`${xName} @ ${kk}`, Float64Array.from(per, (m) => m.get(kk)?.x ?? NaN)), role: 'y' });
+        columns.push({ ...column(`${yName} @ ${kk}`, Float64Array.from(per, (m) => m.get(kk)?.y ?? NaN)), role: 'y' });
       }
-      return m;
-    });
-    columns = [{ ...column(runName, Float64Array.from(runs, (r) => r.value), rk.name ? undefined : runs.map((r) => r.label)), role: 'x' }];
-    for (const kk of keys) {
-      const sample = per.find((m) => m.has(kk))!.get(kk)!;
-      if (!sample.rule.startsWith('x =')) columns.push({ ...column(`${xName} @ ${kk}`, Float64Array.from(per, (m) => m.get(kk)?.x ?? NaN)), role: 'y' });
-      columns.push({ ...column(`${yName} @ ${kk}`, Float64Array.from(per, (m) => m.get(kk)?.y ?? NaN)), role: 'y' });
+    } else {
+      columns = [
+        { ...column(runName, Float64Array.from(pts, (g) => g.run.value), rk.name ? undefined : pts.map((g) => g.run.label)), role: 'x' },
+        { ...column('pick', Float64Array.from(pts, () => NaN), pts.map((g) => key(g.p))), role: 'label' },
+        // the value the rule asked for (at X = 0.5: 0.5)
+        { ...column('at', Float64Array.from(pts, (g) => g.p.at)), role: 'none' },
+        { ...column('row', Float64Array.from(pts, (g) => +(g.p.a + 1 + (g.p.b - g.p.a) * g.p.t).toFixed(4))), role: 'none' },
+        { ...column(xName, Float64Array.from(pts, (g) => g.p.x)), role: catKind === 'y' ? 'y' : 'none' },
+        { ...column(yName, Float64Array.from(pts, (g) => g.p.y)), role: catKind === 'y' ? 'none' : 'y' },
+        ...extra.map((c) => ({ ...column(c.name, Float64Array.from(pts, (g) => read(c, g.p))), role: 'none' as const })),
+      ];
     }
-  } else {
-    columns = [
-      { ...column(runName, Float64Array.from(got, (g) => g.run.value), rk.name ? undefined : got.map((g) => g.run.label)), role: 'x' },
-      { ...column('pick', Float64Array.from(got, () => NaN), got.map((g) => key(g.p))), role: 'label' },
-      // the value the rule asked for (at X = 0.5: 0.5)
-      { ...column('at', Float64Array.from(got, (g) => g.p.at)), role: 'none' },
-      { ...column('row', Float64Array.from(got, (g) => +(g.p.a + 1 + (g.p.b - g.p.a) * g.p.t).toFixed(4))), role: 'none' },
-      { ...column(xName, Float64Array.from(got, (g) => g.p.x)), role: 'none' },
-      { ...column(yName, Float64Array.from(got, (g) => g.p.y)), role: 'y' },
-      ...extra.map((c) => ({ ...column(c.name, Float64Array.from(got, (g) => read(c, g.p))), role: 'none' as const })),
-    ];
+    return { name, columns };
   }
-  return { outputs: { out: { t: 'dataset', v: { name: `picked from ${v.v.name}`, columns } } }, warnings, view: { available } };
+
+  let sheets: Dataset[];
+  if (d.sheetsMode === 'one') {
+    sheets = [buildDataset(`picked from ${v.v.name}`, got)];
+  } else if (d.sheetsMode === 'all') {
+    const categories: { kind: string; name: string }[] = [];
+    for (const r of d.rules) {
+      const cat = r.kind === 'x' ? 'at X' : r.kind === 'y' ? 'at Y' : r.kind === 'max' || r.kind === 'min' ? 'extrema' : 'where';
+      if (!categories.some((c) => c.name === cat)) categories.push({ kind: r.kind, name: cat });
+    }
+    if (!categories.length) categories.push({ kind: 'x', name: 'picked' });
+    sheets = categories.map((cat) => {
+      const match = got.filter((g) => (cat.name === 'at X' ? g.kind === 'x' : cat.name === 'at Y' ? g.kind === 'y' : cat.name === 'extrema' ? g.kind === 'max' || g.kind === 'min' : g.kind === 'where'));
+      return buildDataset(cat.name, match, cat.kind);
+    });
+  } else {
+    // 'auto': separate sheets for X readings and Y readings
+    const hasX = d.rules.some((r) => r.kind === 'x');
+    const hasExtrema = d.rules.some((r) => r.kind === 'max' || r.kind === 'min');
+    const order: ('x' | 'y')[] = [];
+    for (const r of d.rules) {
+      const side = r.kind === 'y' ? 'y' : 'x';
+      if (!order.includes(side)) order.push(side);
+    }
+    if (!order.length) order.push('x');
+    sheets = order.map((side) => {
+      const isY = side === 'y';
+      const name = isY ? 'at Y' : hasX ? 'at X' : hasExtrema ? 'extrema' : 'where';
+      const match = got.filter((g) => (isY ? g.kind === 'y' : g.kind !== 'y'));
+      return buildDataset(name, match, isY ? 'y' : 'x');
+    });
+  }
+  // one sheet: named as before (the points picked from the data)
+  if (sheets.length === 1) sheets[0] = { ...sheets[0], name: `picked from ${v.v.name}` };
+  const activeIndex = Math.min(Math.max(0, d.sheetOut ?? 0), Math.max(0, sheets.length - 1));
+  const activeSheet = sheets[activeIndex] ?? sheets[0];
+  return {
+    outputs: {
+      out: { t: 'dataset', v: activeSheet },
+      book: { t: 'workbook', v: { name: `picked from ${v.v.name}`, sheets } },
+    },
+    warnings,
+    view: { available, pick: pickGraph },
+  };
+}
+
+// ---- Equivalent circuit (EIS): the fit, the Nyquist, |Z|, phase and Bode figures, the circuit's figure, the tables ----
+export type EisView = {
+  pts: EisPoints;
+  curve: { f: number[]; re: number[]; im: number[] };
+  params: { name: string; value: number; se: number; unit: string; fixed: boolean }[];
+  starts: { name: string; value: number; fixed?: boolean }[]; // the starts used (stored or guessed)
+  cols: { freq: string; a: string; b: string }; // the columns used (chosen or guessed): their keys (a name, or #k)
+  colNames: [string, string][]; // every column: its key and how it is shown (its letter and name)
+  valueTexts: { id: string; x: number; y: number }[]; // the fitted values on the circuit's figure, where they are drawn
+  by: { freq: 'name' | 'place' | 'chosen'; a: 'name' | 'place' | 'chosen'; b: 'name' | 'place' | 'chosen' }; // how
+  angular: boolean; // the frequencies look like ω (2πf) while read as Hz
+  preview: { freq: number[]; a: number[]; b: number[] }; // the first values of each column used
+  signNote: string;
+  chi2: number;
+  redChi2: number;
+  r2: { all: number; re: number; im: number };
+  n: number;
+  circuit?: Figure; // the circuit drawn (its figure)
+  use: boolean[]; // the points fitted (in a range, not left out); in a range
+  inRange: boolean[];
+  // the fits per range (with their curves), the fit on demand: not done yet, or done with other settings
+  rangeFits: { range: EisRangeSpec; circuit: string; params?: { name: string; value: number; se: number; unit: string }[]; r2?: number; n?: number; error?: string; curve?: { f: number[]; re: number[]; im: number[] } }[];
+  fittedYet: boolean;
+  outdated: boolean;
+};
+// the frequencies written on a graph: those not crowding a label already kept (5 % of its width and height apart, in
+// the units it is drawn in)
+const uncrowded = (idx: number[], x: (i: number) => number, y: (i: number) => number) => {
+  const xs = idx.map(x);
+  const ys = idx.map(y);
+  const [sx, sy] = [Math.max(...xs) - Math.min(...xs) || 1, Math.max(...ys) - Math.min(...ys) || 1];
+  const keep: number[] = [];
+  for (const i of idx) if (keep.every((j) => Math.hypot((x(i) - x(j)) / sx, (y(i) - y(j)) / sy) > 0.05)) keep.push(i);
+  return keep;
+};
+function eisNode(id: string, d: EisData, v: Value | undefined): Out {
+  if (v?.t !== 'dataset') return { view: { waiting: 'Connect the impedance spectrum: a dataset (or a sheet of a workbook) with the frequency, Z′ and Z″ (or |Z| and the phase).' } };
+  const available = v.v.columns.map(colInfo);
+  const r = runEis(v.v, d);
+  if (typeof r === 'string') return { errors: [r], view: { available } };
+  const { pts, curve } = r;
+  const ex = new Set(d.excluded);
+  // the points fitted (in a range, not left out); left out by hand; outside the ranges
+  const used = r.use;
+  const num = (name: string, vals: number[]) => column(name, Float64Array.from(vals));
+  const series = (x: number[], y: number[], xName: string, name: string) => ({ name, x: num(xName, x), y: num(name, y) });
+  const pick = (vals: number[], keep: boolean) => vals.filter((_, i) => used[i] === keep);
+  const text = (key: string, spec: object): AnnotationItem => ({ id: key, locked: true, type: 'text', spec: { ...TEXT_SPEC_DEFAULTS, coords: 'data', ...spec } });
+  const warnings: string[] = [...r.warnings];
+  const mod = (re: number[], im: number[]) => re.map((q, i) => Math.hypot(q, im[i]));
+  const ph = (re: number[], im: number[]) => re.map((q, i) => (-Math.atan2(im[i], q) * 180) / Math.PI);
+  const [pm, pp, ny] = [mod(pts.re, pts.im), ph(pts.re, pts.im), pts.im.map((q) => -q)];
+  const lab0 = labelledPoints(pts.f, d.labels);
+  // the labels of a graph: the frequency (and the values) at the point, or where it was moved — then, far from its
+  // point, a thin line back to it; X, Y of the points and the scale of each axis (log: the distance in decades)
+  const labels = (view: EisLabelView, px: number[], py: number[], logX: boolean, logY: boolean, value: (i: number) => string): AnnotationItem[] => {
+    const tx = (q: number) => (logX ? Math.log10(q) : q);
+    const ty = (q: number) => (logY ? Math.log10(q) : q);
+    const lab = uncrowded(lab0, (i) => tx(px[i]), (i) => ty(py[i]));
+    const [sx, sy] = [Math.max(...px.map(tx)) - Math.min(...px.map(tx)) || 1, Math.max(...py.map(ty)) - Math.min(...py.map(ty)) || 1];
+    const at = d.labelAt?.[view] ?? {};
+    return lab.flatMap((i): AnnotationItem[] => {
+      const p = at[String(pts.rows[i])];
+      const [x, y] = p ?? [px[i], py[i]];
+      const t = text(`eis-f-${i}`, { text: d.values ? `${fmtFreq(pts.f[i])}\n${value(i)}` : fmtFreq(pts.f[i]), x, y, anchor: 'bl', style: { size: 6.5, color: '#444444' }, z: 3 });
+      const far = !!p && Math.hypot((tx(x) - tx(px[i])) / sx, (ty(y) - ty(py[i])) / sy) > 0.04;
+      if (!far) return [t];
+      return [{ id: `eis-l-${i}`, locked: true, type: 'shape', spec: { ...SHAPE_DEFAULTS, kind: 'line', coords: 'data', x1: px[i], y1: py[i], x2: x, y2: y, color: '#888888', width: 0.5, head1: 'none', head2: 'none', z: 2 } }, t];
+    });
+  };
+  const st = axesStyle(undefined);
+  const side = (title: string) => ({ ...SIDE_DEFAULTS, title });
+  const open = (color: string, symbol: 'circle' | 'square', right?: boolean) => curveStyle({ mode: 'scatter', color, symbol, symbolSize: 4, symbolFill: 'open', ...(right ? { axisY: 'right' as const } : {}) });
+  const gone = pts.rows.map((row) => ex.has(row));
+  const outside = pts.rows.map((row, i) => !ex.has(row) && !r.inRange[i]);
+  const on = (vals: number[], keep: boolean[]) => vals.filter((_, i) => keep[i]);
+  const ax = (right?: boolean) => (right ? { axisY: 'right' as const } : {});
+  const leftOut = (x: number[], y: number[], xName: string, right?: boolean): Curve[] => [
+    ...(gone.some(Boolean) ? [{ key: `eis:out${right ? 'r' : ''}`, label: 'left out', noLegend: right, series: series(on(x, gone), on(y, gone), xName, 'left out'), style: curveStyle({ mode: 'scatter', color: '#9e9e9e', symbol: 'cross', symbolSize: 4, ...ax(right) }) }] : []),
+    ...(outside.some(Boolean) ? [{ key: `eis:outside${right ? 'r' : ''}`, label: 'outside the ranges', noLegend: right, series: series(on(x, outside), on(y, outside), xName, 'outside the ranges'), style: curveStyle({ mode: 'scatter', color: '#bdbdbd', symbol: 'circle', symbolSize: 3, symbolFill: 'open', ...ax(right) }) }] : []),
+  ];
+  // the fits per range: dashed, over their ranges only
+  const RANGE_COLORS = ['#2f9e44', '#9c36b5', '#e8590c', '#1098ad', '#5c940d'];
+  const rangeCurves = (x: (c: NonNullable<EisRangeFit['curve']>) => number[], y: (c: NonNullable<EisRangeFit['curve']>) => number[], xName: string): Curve[] =>
+    r.rangeFits.flatMap((rf, k): Curve[] => (rf.curve ? [{ key: `eis:range${k}`, label: `${rf.circuit} (${rangeText(rf.range)})`, series: series(x(rf.curve), y(rf.curve), xName, `range ${k + 1}`), style: curveStyle({ mode: 'line', color: RANGE_COLORS[k % RANGE_COLORS.length], lineWidth: 1.2, dash: 'dash' }) }] : []));
+  const fitLabel = `fit ${d.circuit.replace(/\s+/g, '')}`;
+  const legend = { show: true, x: 96, y: 4, anchor: 'tr' as const };
+  // Nyquist: −Z″ against Z′, an ohm as long on both axes
+  const nyCurves: Curve[] = [
+    { key: 'eis:data', label: 'data', series: series(pick(pts.re, true), pick(ny, true), "Z' (Ω)", "-Z'' (Ω)"), style: open('#1f77b4', 'circle') },
+    ...leftOut(pts.re, ny, "Z' (Ω)"),
+    { key: 'eis:fit', label: fitLabel, series: series(curve.re, curve.im.map((q) => -q), "Z' (Ω)", 'fit'), style: curveStyle({ mode: 'line', color: '#d62728', lineWidth: 1.2 }) },
+    ...rangeCurves((c) => c.re, (c) => c.im.map((q) => -q), "Z' (Ω)"),
+  ];
+  const nyAnn = labels('nyquist', pts.re, ny, false, false, (i) => `(${fmtNum(pts.re[i], 4)}, ${fmtNum(ny[i], 4)})`);
+  const nyFig = plotFigure({ id, data: { label: '', style: {}, axes: { ...st, aspect: 1, sides: { ...st.sides, bottom: side("Z' (Ω)"), left: side("-Z'' (Ω)") } }, legend, annotations: nyAnn, page: { name: 'nyquist' } } }, nyCurves, warnings).figure;
+  // |Z| and −phase against the frequency (logarithmic): each alone, and both on two axes (Bode)
+  const [cm, cp] = [mod(curve.re, curve.im), ph(curve.re, curve.im)];
+  const F = 'Frequency (Hz)';
+  const modCurves = (both: boolean): Curve[] => [
+    { key: 'eis:mod', label: '|Z|', series: series(pick(pts.f, true), pick(pm, true), F, '|Z| (Ω)'), style: open('#1f77b4', 'circle') },
+    ...leftOut(pts.f, pm, F),
+    { key: 'eis:modfit', label: both ? '|Z| fit' : fitLabel, noLegend: both, series: series(curve.f, cm, F, '|Z| fit'), style: curveStyle({ mode: 'line', color: both ? '#1f77b4' : '#d62728', lineWidth: 1.1 }) },
+  ];
+  const phCurves = (both: boolean): Curve[] => [
+    { key: 'eis:ph', label: '−phase', series: series(pick(pts.f, true), pick(pp, true), F, '-Phase (°)'), style: open(both ? '#ff7f0e' : '#1f77b4', both ? 'square' : 'circle', both) },
+    ...leftOut(pts.f, pp, F, both),
+    { key: 'eis:phfit', label: both ? '−phase fit' : fitLabel, noLegend: both, series: series(curve.f, cp, F, '-phase fit'), style: curveStyle({ mode: 'line', color: both ? '#ff7f0e' : '#d62728', lineWidth: 1.1, ...(both ? { dash: 'dash' as const, axisY: 'right' as const } : {}) }) },
+  ];
+  const modAnn = labels('mod', pts.f, pm, true, true, (i) => `${fmtNum(pm[i], 4)} Ω`);
+  const phAnn = labels('phase', pts.f, pp, true, false, (i) => `${fmtNum(pp[i], 3)}°`);
+  const logX = { ...st.x, scale: 'log' as const };
+  const modOf = (c: { re: number[]; im: number[] }) => mod(c.re, c.im);
+  const phOf = (c: { re: number[]; im: number[] }) => ph(c.re, c.im);
+  const modFig = plotFigure({ id: `${id}:mod`, data: { label: '', style: {}, axes: { ...st, x: logX, y: { ...st.y, scale: 'log' }, sides: { ...st.sides, bottom: side(F), left: side('|Z| (Ω)') } }, legend, annotations: modAnn, page: { name: 'bode_modulus' } } }, [...modCurves(false), ...rangeCurves((c) => c.f, modOf, F)], warnings).figure;
+  const phFig = plotFigure({ id: `${id}:phase`, data: { label: '', style: {}, axes: { ...st, x: logX, sides: { ...st.sides, bottom: side(F), left: side('-Phase (°)') } }, legend, annotations: phAnn, page: { name: 'bode_phase' } } }, [...phCurves(false), ...rangeCurves((c) => c.f, phOf, F)], warnings).figure;
+  const bodeAxes: Partial<AxesStyle> = {
+    ...st,
+    x: logX,
+    y: { ...st.y, scale: 'log' },
+    right: { ...st.right, mode: 'own', scale: { ...AXIS_DEFAULTS } },
+    sides: { ...st.sides, bottom: side(F), left: side('|Z| (Ω)'), right: side('-Phase (°)') },
+  };
+  const bode = plotFigure({ id: `${id}:bode`, data: { label: '', style: {}, axes: bodeAxes, legend, annotations: modAnn, page: { name: 'bode' } } }, [...modCurves(true), ...phCurves(true)], warnings).figure;
+  // the circuit drawn, on a white or transparent page of its own size
+  const values = Object.fromEntries(r.result.params.map((q) => [q.name, q.value]));
+  const dr = drawCircuit(r.result.tree, d.circuitValues ? values : undefined);
+  const ink = '#000000';
+  const items: AnnotationItem[] = [
+    ...dr.pieces.map((q, k): AnnotationItem => ({ id: `eis-c${k}`, locked: true, type: 'shape', spec: { ...SHAPE_DEFAULTS, kind: 'path', coords: 'data', d: q.d, color: ink, width: 0.75, fill: '', join: 'round', cap: 'round', head1: 'none', head2: 'none' } })),
+    ...dr.texts.map((q, k): AnnotationItem => {
+      const spec = { ...TEXT_SPEC_DEFAULTS, coords: 'data' as const, text: q.text, x: q.x, y: q.y, anchor: q.anchor, style: { size: q.size, color: ink } };
+      if (!q.value) return { id: `eis-t${k}`, locked: true, type: 'text', spec };
+      // the fitted values: where they were moved (and their look changed) on the figure — not locked
+      const own = d.annotations?.find((it) => it.id === `eis-v-${q.value}`);
+      return { id: `eis-v-${q.value}`, type: 'text', spec: { ...spec, ...(own?.type === 'text' ? own.spec : {}), text: q.text } };
+    }),
+  ];
+  // (its node the EIS node: a value dragged on the figure is kept there)
+  const circuit = drawingFigure(id, { ...DRAWING_DEFAULTS, name: 'circuit', ...d.circuitPage, width: dr.w, height: dr.h, unit: 'mm', background: d.circuitBg ?? 'white', annotations: items });
+  const g = guessColumns(v.v.columns, d.form);
+  const view: EisView = {
+    pts,
+    curve,
+    params: r.result.params,
+    starts: r.result.params.map((q) => d.params.find((s) => s.name === q.name) ?? { name: q.name, value: NaN }),
+    cols: { freq: colKey(v.v.columns, r.cols.freq), a: colKey(v.v.columns, r.cols.a), b: colKey(v.v.columns, r.cols.b) },
+    colNames: v.v.columns.map((c) => [colKey(v.v.columns, c), colLabel(v.v.columns, c)] as [string, string]),
+    valueTexts: dr.texts.flatMap((q) => (q.value ? [{ id: `eis-v-${q.value}`, x: q.x, y: q.y }] : [])),
+    by: { freq: d.freq ? 'chosen' : g.by.freq, a: d.re ? 'chosen' : g.by.a, b: d.im ? 'chosen' : g.by.b },
+    angular: d.freqUnit !== 'rad/s' && looksAngular(r.cols.freq.values),
+    preview: { freq: Array.from(r.cols.freq.values.slice(0, 4)), a: Array.from(r.cols.a.values.slice(0, 4)), b: Array.from(r.cols.b.values.slice(0, 4)) },
+    signNote: r.signNote,
+    chi2: r.result.chi2,
+    redChi2: r.result.redChi2,
+    r2: r.result.r2,
+    n: r.result.n,
+    circuit,
+    use: r.use,
+    inRange: r.inRange,
+    rangeFits: r.rangeFits.map((rf) => ({ range: rf.range, circuit: rf.circuit, ...(rf.result ? { params: rf.result.params, r2: rf.result.r2.all, n: rf.result.n } : {}), ...(rf.error ? { error: rf.error } : {}), ...(rf.curve ? { curve: rf.curve } : {}) })),
+    fittedYet: r.fittedYet,
+    outdated: r.outdated,
+  };
+  return {
+    outputs: {
+      parameters: { t: 'dataset', v: r.parameters },
+      fitted: { t: 'dataset', v: r.fitted },
+      figure: { t: 'figure', v: nyFig },
+      mod: { t: 'figure', v: modFig },
+      phase: { t: 'figure', v: phFig },
+      bode: { t: 'figure', v: bode },
+      circuit: { t: 'figure', v: circuit },
+      ranges: { t: 'dataset', v: r.ranges },
+    },
+    warnings,
+    view: { available, eis: view, report: r.summary },
+  };
+}
+
+// Columns on every sheet of a workbook: the same settings for all, or each sheet its own (else the common ones); a
+// workbook out, the names of the first sheet; the list shown: of the sheet being edited
+const columnsHeadOf = (ds: Dataset) => {
+  const cell = (c: Column, i: number) => c.text?.[i]?.trim() || (Number.isFinite(c.values[i]) ? fmtNum(c.values[i], 6) : '');
+  const nHead = Math.min(8, Math.max(0, maxOf(ds.columns.map((c) => c.values.length))));
+  return { names: ds.columns.map((c) => c.name), rows: Array.from({ length: nHead }, (_, i) => ds.columns.map((c) => cell(c, i))) };
+};
+function columnsEverySheet(book: Workbook, d: ColumnsData, vals: Record<string, Column | Scalar>, ins: MathInput[]): Out {
+  const { sheet: _s, perSheet, sheets: own, editSheet, ...common } = d;
+  const specOf = (name: string): ColumnsSpec => (perSheet === 'own' ? (own?.[name] ?? common) : common);
+  const edited = book.sheets.find((q) => q.name === editSheet) ?? book.sheets[0];
+  if (!edited) return { errors: ['The workbook has no sheets.'], view: { inputs: ins } };
+  const warnings: string[] = [];
+  const out: Dataset[] = [];
+  let shown: ReturnType<typeof columnsOf> | null = null;
+  let names: Column | undefined;
+  for (const q of book.sheets) {
+    const r = columnsOf(q, specOf(q.name), vals);
+    if (q === edited) shown = r;
+    if (typeof r === 'string') {
+      warnings.push(`Sheet “${q.name}”: ${r}`);
+      out.push(q);
+      continue;
+    }
+    names ??= r.names;
+    warnings.push(...r.warnings.map((w) => `Sheet “${q.name}”: ${w}`));
+    out.push({ ...r.dataset, name: q.name });
+  }
+  const columnsHead = columnsHeadOf(edited);
+  const view = { inputs: ins, columnsHead, ...(shown && typeof shown !== 'string' ? { available: shown.dataset.columns.map(colInfo), columnLines: shown.lines } : { available: edited.columns.map(colInfo) }) };
+  return { outputs: { out: { t: 'workbook', v: { ...book, sheets: out } }, ...(names ? { names: { t: 'column', v: names } } : {}) }, warnings, view };
 }
 
 function evalNode(n: AppNode, inputs: Inputs): Out {
@@ -4472,6 +4790,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       // the columns (or single values) on the ports A, B, C …: for the formulas, a copy, the names
       const { ins, vals } = lettered(inputs);
       const ds = one('in');
+      if (ds?.t === 'workbook') return columnsEverySheet(ds.v, n.data, vals, ins);
       if (ds?.t !== 'dataset') return { view: { waiting: 'Connect a dataset.', inputs: ins } };
       const r = columnsOf(ds.v, n.data, vals);
       // the first rows as they come in: a row of them can give the names
@@ -4532,6 +4851,50 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
     }
     case 'image':
       return imageNodeOut(n.id, n.data);
+    case 'phasedigitizer': {
+      const r = runPhaseDigitizer(n.data);
+      if (typeof r === 'string') return { view: { waiting: r } };
+      const warnings: string[] = [];
+      const st = axesStyle(undefined);
+      const axes: Partial<AxesStyle> = {
+        ...st,
+        x: { ...st.x, min: r.xRange[0], max: r.xRange[1], range: 'tight' },
+        y: { ...st.y, min: r.yRange[0], max: r.yRange[1], range: 'tight' },
+        sides: {
+          ...st.sides,
+          bottom: { ...st.sides.bottom, title: r.xLabel },
+          left: { ...st.sides.left, title: r.yLabel },
+        },
+      };
+      const { figure } = plotFigure(
+        {
+          id: n.id,
+          data: {
+            label: '',
+            style: {},
+            axes,
+            legend: { show: false, x: 98, y: 2, anchor: 'tr' },
+            annotations: r.annotations,
+            page: { name: 'phase_digitizer' },
+          },
+        },
+        r.curves,
+        warnings,
+      );
+      // the shapes and texts it draws locked (no handles: they follow the diagram); the figure annotations added kept
+      const locked: Figure = { ...figure, axes: figure.axes.map((ax) => ({ ...ax, annotations: ax.annotations.map((x) => (/^pd-/.test(x.key.split('/')[1] ?? '') ? { ...x, owner: undefined, locked: true } : x)) })) };
+      return {
+        outputs: {
+          dataset: { t: 'dataset', v: r.dataset },
+          workbook: { t: 'workbook', v: r.workbook },
+          figure: { t: 'figure', v: locked },
+        },
+        warnings,
+        view: { figure: locked, available: r.dataset.columns.map(colInfo) },
+      };
+    }
+    case 'eis':
+      return eisNode(n.id, n.data, one('in'));
     case 'phasediagram':
       return phaseNodeOut(n.id, n.data);
     case 'drawing': {
@@ -4587,11 +4950,11 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
 // outputs from the nodes feeding its Group output, its errors when nodes inside have errors. The nodes inside a group
 // have results under `group/inner` ids.
 // The nodes that take one sheet of a workbook on a port (its name: the node's `sheet`): the graphs on their dataset
-// port, Columns, Extract column, Pick points, Filter & sort rows on their input
-const SHEET_PORTS: Record<string, string> = { columns: 'in', extract: 'in', pick: 'in', filterrows: 'in', ...Object.fromEntries(['histogram', 'barchart', 'boxviolin', 'probplot', 'blandaltman', 'pie', 'polar', 'waterfall', 'contour', 'ternary', 'plot3d'].map((t) => [t, 'dataset'])) };
+// port, Columns, Extract column, Pick points, Filter & sort rows, Split into columns on their input
+const SHEET_PORTS: Record<string, string> = { columns: 'in', extract: 'in', pick: 'in', eis: 'in', filterrows: 'in', unstack: 'in', ...Object.fromEntries(['histogram', 'barchart', 'boxviolin', 'probplot', 'blandaltman', 'pie', 'polar', 'waterfall', 'contour', 'ternary', 'plot3d'].map((t) => [t, 'dataset'])) };
 export const sheetPort = (type: string | undefined): string | undefined => (type ? SHEET_PORTS[type] : undefined);
 // the nodes that can also take every sheet (`sheet` '*': the workbook itself, a workbook out)
-export const everySheet = (type: string | undefined) => type === 'filterrows';
+export const everySheet = (type: string | undefined) => type === 'filterrows' || type === 'columns';
 
 export function evaluateGraph(nodes: AppNode[], edges: Edge[], cache: EvalCache = newCache()): Map<string, NodeResult> {
   if (!nodes.some((n) => n.type === 'subgraph')) return evaluateFlat(nodes, edges, cache);
@@ -4645,13 +5008,18 @@ function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cac
   const outerPy = pyNow;
   const runs: FileRun[] = [];
   let preview: Map<string, NodeResult> | undefined;
+  // the file the steps are shown on inside (chosen; else the first)
+  const shown = Math.min(Math.max(0, Math.floor(spec.show ?? 0)), ordered.files.length - 1);
   ordered.files.forEach((f, k) => {
     const key = `${n.id}#${k}`;
     const sub = cache.sub!.get(key) ?? newCache();
     cache.sub!.set(key, sub);
     const rev = Object.values(others).reduce((a, o) => a * 7919 + revOf(o.v as object), revOf(f));
     const seed = new Map<string, NodeResult>([[GROUP_IN, { rev, outputs: { [first!]: { t: 'dataset', v: f }, ...others }, errors: [], warnings: [], view: {} }]]);
-    const res = evaluateFlat(inner.nodes, inner.edges, sub, seed);
+    // (a file with its own settings of some steps: its steps with them)
+    const own = spec.own?.[f.name];
+    const steps = own ? flattenGroups(withOwn(g.nodes, own), g.edges) : inner;
+    const res = evaluateFlat(steps.nodes, steps.edges, sub, seed);
     const run: FileRun = { name: f.name, values: [], tables: [], errors: [] };
     for (const p of g.outputs) {
       const e = inner.edges.find((x) => x.target === GROUP_OUT && x.targetHandle === p.id);
@@ -4659,7 +5027,7 @@ function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cac
     }
     for (const q of inner.nodes) for (const err of res.get(q.id)?.errors ?? []) run.errors.push(`${q.type}: ${err}`);
     runs.push(run);
-    if (k === 0) preview = res;
+    if (k === shown) preview = res;
   });
   pyNow = outerPy;
   // the caches of files no longer there: forgotten
@@ -4668,10 +5036,16 @@ function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cac
   const failed = runs.filter((r) => r.errors.length).map((r) => ({ name: r.name, errors: r.errors }));
   if (failed.length) warnings.push(`${failed.length} of ${runs.length} file${runs.length > 1 ? 's' : ''} had errors (see the options).`);
   const out = gather(runs, ordered.read, ordered.parts);
+  // the files with their own settings: which steps (a column of the table, when any file has them)
+  const ownOf = (name: string) => Object.keys(spec.own?.[name] ?? {}).flatMap((sid) => {
+    const q = g.nodes.find((x) => x.id === sid);
+    return q ? [nodeDisplayName(q)] : [];
+  });
+  if (runs.some((r) => ownOf(r.name).length)) out.table.columns.push(column('Own settings', new Float64Array(runs.length).fill(NaN), runs.map((r) => ownOf(r.name).join(', '))));
   return {
     outputs: { table: { t: 'dataset', v: out.table }, sheets: { t: 'workbook', v: out.sheets }, ...(out.stacked ? { stacked: { t: 'dataset', v: out.stacked } } : {}) },
     warnings,
-    view: { batch: { files: runs.length, failed } },
+    view: { batch: { files: runs.length, failed, list: runs.map((r, k) => ({ name: r.name, read: readText(ordered.read[k], ordered.parts), errors: r.errors, own: ownOf(r.name) })), shown } },
     inner: preview,
   };
 }

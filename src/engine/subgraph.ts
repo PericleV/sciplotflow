@@ -95,6 +95,18 @@ export function makeGroup(nodes: AppNode[], edges: Edge[], ids: string[], label:
   return { nodes: [...nodes.filter((n) => !sel.has(n.id)).map((n) => ({ ...n, selected: false }) as AppNode), group], edges: outerEdges, groupId: gid };
 }
 
+// A Batch with no steps yet (from the Nodes panel): its files in, nothing kept; the steps added inside on one file
+export function emptyBatch(): GroupData {
+  return {
+    name: 'Batch',
+    nodes: [{ id: GROUP_IN, type: 'groupin', position: { x: -400, y: 0 }, data: {} } as AppNode, { id: GROUP_OUT, type: 'groupout', position: { x: 400, y: 0 }, data: {} } as AppNode],
+    edges: [],
+    inputs: [{ id: 'in-0', label: 'files', type: 'dataset' }],
+    outputs: [],
+    batch: {},
+  };
+}
+
 // The port a Group output offers to add an output: what is connected to it becomes a new output of the group
 export const NEW_OUT = 'new-out';
 

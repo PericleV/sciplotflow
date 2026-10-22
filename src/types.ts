@@ -46,6 +46,10 @@ import type { ColumnRole } from './engine/table.ts';
 import type { ColumnsSpec } from './engine/columns.ts';
 import type { ImageAnalysisData } from './image/node.ts';
 import type { PhaseDiagramData } from './engine/phasenode.ts';
+import type { PhaseDigitizerData } from './engine/phasedigitize.ts';
+export type { PhaseDigitizerData };
+import type { EisData } from './engine/eis.ts';
+export type { EisData };
 import type { Baseline as WidthBaseline, WidthKind } from './engine/measure.ts';
 import type { ModelSpec } from './engine/fitModels.ts';
 import type { FitBand, FitParamSpec, FitWeight } from './engine/fit.ts';
@@ -199,7 +203,9 @@ export type CalculusData = {
 // others: the other columns read at every point (one Y): 'none', 'all' (absent: all, as older projects had it), or a
 // list (2, B-D, names, A*)
 // sheet: of a workbook on the input (absent: the first)
-export type PickData = PickOptions & { x: string; ys: string; rules: PickRule[]; layout: 'long' | 'wide'; others?: string; sheet?: string };
+// sheetOut: which sheet of the output workbook is active (dataset output and preview, 0-based)
+// sheetsMode: 'auto' (separate sheets for X and Y) | 'all' (separate sheet per rule type) | 'one' (all in a single table)
+export type PickData = PickOptions & { x: string; ys: string; rules: PickRule[]; layout: 'long' | 'wide'; others?: string; sheet?: string; sheetOut?: number; sheetsMode?: 'auto' | 'all' | 'one' };
 // Peak analyzer: every Y column (with its X) between from and to; a baseline (fitted with the
 // peaks, or fixed: the ends, the rubber band, points placed on the graph, a column), subtracted or not; the peaks of the
 // list (none: found in every run, of `shape`); measured on the data, or fitted together (every peak its shape).
@@ -272,7 +278,10 @@ export type PeakWidthData = {
   runRegions?: Record<string, Region[]>;
 };
 // Columns: the columns of a dataset renamed, designated, left out, moved; every name changed at once; names from a row.
-export type ColumnsData = ColumnsSpec;
+// A workbook in: one sheet (`sheet`), or every sheet (`sheet` '*': a workbook out) — with the same settings for all
+// (perSheet 'same', absent) or each sheet its own (perSheet 'own': `sheets` by name; a sheet without its own takes the
+// common ones, those of the node); editSheet: the sheet whose settings are shown and changed.
+export type ColumnsData = ColumnsSpec & { sheet?: string; perSheet?: 'same' | 'own'; sheets?: Record<string, ColumnsSpec>; editSheet?: string };
 // A rule of Math column: chosen rows (a list, a condition, all) given a formula.
 export type RowRule = { mode: 'rows' | 'condition' | 'all'; rows: string; formula: string };
 // Statistics: on columns (absent `on`) — of a column, or of the columns of a dataset chosen by a list (1, 3-5, B-D, A*;
@@ -526,6 +535,9 @@ export type RerouteNode = Node<RerouteData, 'reroute'>;
 export type GroupNode = Node<GroupData, 'subgraph'>;
 export type GroupInNode = Node<GroupIoData, 'groupin'>;
 export type GroupOutNode = Node<GroupIoData, 'groupout'>;
+export type PhaseDigitizerNode = Node<PhaseDigitizerData, 'phasedigitizer'>;
+// Equivalent circuit (EIS): an impedance spectrum fitted with an equivalent circuit
+export type EisNode = Node<EisData, 'eis'>;
 
 export type AppNode =
   | ImportNode
@@ -549,6 +561,8 @@ export type AppNode =
   | AverageNode
   | ReportNode
   | DigitizerNode
+  | PhaseDigitizerNode
+  | EisNode
   | ImageNode
   | PhaseDiagramNode
   | HistogramNode
