@@ -10,9 +10,11 @@
 // classifier come with the steps.
 import { cropRaster, histogram, luminance, shrinkRaster, unpackPixels, type Crop, type ImgPixels, type Raster } from './raster.ts';
 import { measureInputs, measureRois, type MeasureSpec } from './measure.ts';
-import { fillPolygon, wand, type Pt, type Roi } from './roi.ts';
+import { fillPolygon, polygonArea, wand, type Pt, type Roi } from './roi.ts';
 import { findParticles, PARTICLE_DEFAULTS, type ParticleOpts } from './particles.ts';
 import { findLike, fitBox, MATCH_DEFAULTS, type Match, type MatchOpts } from './match.ts';
+import { fitRegular, snapToEdges, type Fitted, type RegularShape } from './refine.ts';
+import { clickOutline, RAYS_DEFAULTS, seedsAndRays } from './rays.ts';
 import type { TrainExample } from './classify.ts';
 import type { Workbook } from '../engine/table.ts';
 import { applyStep, STEP_DEFS, type ImgStep } from './steps.ts';
@@ -35,13 +37,22 @@ export type ParticlesReply = { type: 'particles'; outlines: Pt[][]; found: numbe
 // ellipse whose edges are fitted — its sides and turn), on the last image of the steps that is not a mask; every match
 // the model it is like (its place in the list)
 // poly: its outline (in the part analysed), for a context other than the disc
-export type MatchModel = { cx: number; cy: number; R: number; box?: { w: number; h: number; angle: number }; poly?: Pt[] };
+// opts: its own settings (over those of the request)
+export type MatchModel = { cx: number; cy: number; R: number; box?: { w: number; h: number; angle: number }; poly?: Pt[]; opts?: Partial<MatchOpts> };
 export type MatchRequest = { type: 'match'; steps: ImgStep[]; crop?: Crop; train?: TrainExample[]; models: MatchModel[]; opts: Partial<MatchOpts> };
 export type MatchReply = { type: 'match'; matches: (Match & { model: number; w?: number; h?: number })[] };
+// Refine: the particles' outlines (in the part analysed), each made the regular shape most like it among those chosen,
+// snapped to the edges of the last image of the steps that is not a mask if asked; null: none fits
+export type RefineRequest = { type: 'refine'; steps: ImgStep[]; crop?: Crop; train?: TrainExample[]; outlines: Pt[][]; shapes: RegularShape[]; snap: boolean };
+export type RefineReply = { type: 'refine'; fits: (Fitted | null)[] };
 export type MeasureReply = { type: 'measure'; mseq: number; book: Workbook; summary: string };
 // the wand at a point of the image shown (the part analysed): the pixels within tol of it, joined; their outline
 export type WandRequest = { type: 'wand'; x: number; y: number; tol: number };
 export type WandReply = { type: 'wand'; pts: Pt[] | null };
+// the Rays tool at a point of the image shown: the outline of the particle clicked (light: bright on a dark ground;
+// absent: as the pixel clicked)
+export type RaysRequest = { type: 'rays'; x: number; y: number; light?: boolean };
+export type RaysReply = { type: 'rays'; pts: Pt[] | null };
 // a spot stamped: where its outline (in the part analysed) is moved to be centred on the bright (or dark) pixels under it
 export type CentreRequest = { type: 'centre'; poly: Pt[]; dark: boolean; id: string };
 export type CentreReply = { type: 'centre'; id: string; dx: number; dy: number };
@@ -195,6 +206,20 @@ async function particles(m: ParticlesRequest) {
   const b = basesFor({ seq: latest, steps: m.steps, upTo: 0, lut: 'gray', ...(m.crop ? { crop: m.crop } : {}) });
   const out = await run(m.steps, m.steps.length, 'full', b.full, 1, () => false, true, m.train);
   const mask = out ? measureInputs(b.full, out.outs, m.steps, 'original').mask : null;
+  // seeds and rays: on the last image of the steps that is not a mask (its seeds from the mask when there is one)
+  if (m.opts.method === 'rays') {
+    const img = [...(out?.outs ?? [])].reverse().find((x) => x.kind !== 'mask') ?? b.full;
+    const gray: Raster = img.ch.length === 1 ? img : { ...img, ch: [luminance(img)], kind: 'gray' };
+    if (!mask && !(m.opts.size && m.opts.size > 0)) {
+      post({ type: 'particles', outlines: [], found: 0, error: 'seeds and rays: give the particles’ size (or put a Threshold in the steps for their seeds)' } satisfies ParticlesReply);
+      return;
+    }
+    const res = seedsAndRays(gray, mask, { ...RAYS_DEFAULTS, size: m.opts.size ?? 0, light: m.opts.light ?? true });
+    const minA = m.opts.minSize ?? PARTICLE_DEFAULTS.minSize;
+    const outlines = res.outlines.filter((o) => Math.abs(polygonArea(o)) >= minA);
+    post({ type: 'particles', outlines, found: outlines.length } satisfies ParticlesReply);
+    return;
+  }
   if (!mask) {
     post({ type: 'particles', outlines: [], found: 0, error: 'no mask: put a Threshold (or a trainable classifier) in the steps' } satisfies ParticlesReply);
     return;
@@ -211,7 +236,7 @@ async function match(m: MatchRequest) {
   const img = [...(out?.outs ?? [])].reverse().find((x) => x.kind !== 'mask') ?? b.full;
   const g = img.ch.length === 1 ? img.ch[0] : luminance(img);
   // (every model's matches; where several models found the same particle, the most alike kept)
-  const all = m.models.flatMap((md, k) => findLike(g, img.w, img.h, md.cx, md.cy, md.R, { ...MATCH_DEFAULTS, ...m.opts }, md.poly).map((f) => ({ ...f, model: k })));
+  const all = m.models.flatMap((md, k) => findLike(g, img.w, img.h, md.cx, md.cy, md.R, { ...MATCH_DEFAULTS, ...m.opts, ...md.opts }, md.poly).map((f) => ({ ...f, model: k })));
   all.sort((a, b) => b.score - a.score);
   const best: typeof all = [];
   for (const f of all) if (!best.some((q) => Math.hypot(q.x - f.x, q.y - f.y) < 0.75 * Math.min(m.models[q.model].R, m.models[f.model].R))) best.push(f);
@@ -223,11 +248,28 @@ async function match(m: MatchRequest) {
   });
   post({ type: 'match', matches } satisfies MatchReply);
 }
+async function refine(m: RefineRequest) {
+  await imageRun;
+  if (!kept) return;
+  const b = basesFor({ seq: latest, steps: m.steps, upTo: 0, lut: 'gray', ...(m.crop ? { crop: m.crop } : {}) });
+  const out = await run(m.steps, m.steps.length, 'full', b.full, 1, () => false, true, m.train);
+  const img = [...(out?.outs ?? [])].reverse().find((x) => x.kind !== 'mask') ?? b.full;
+  const g = img.ch.length === 1 ? img.ch[0] : luminance(img);
+  const fits = m.outlines.map((o) => {
+    const f = fitRegular(o, m.shapes);
+    return f && m.snap ? snapToEdges(f, g, img.w, img.h) : f;
+  });
+  post({ type: 'refine', fits } satisfies RefineReply);
+}
 // the gray of the image shown at full size (its luminance)
 const shownGray = () => (last.result ? (last.result.ch.length === 1 ? last.result.ch[0] : luminance(last.result)) : null);
 
-self.onmessage = (e: MessageEvent<ImgRequest | ValueRequest | MeasureRequest | WandRequest | CentreRequest | ParticlesRequest | MatchRequest>) => {
+self.onmessage = (e: MessageEvent<ImgRequest | ValueRequest | MeasureRequest | WandRequest | RaysRequest | CentreRequest | ParticlesRequest | MatchRequest | RefineRequest>) => {
   const q = e.data;
+  if (q.type === 'refine') {
+    void refine(q);
+    return;
+  }
   if (q.type === 'match') {
     void match(q);
     return;
@@ -245,6 +287,12 @@ self.onmessage = (e: MessageEvent<ImgRequest | ValueRequest | MeasureRequest | W
     const g = shownGray();
     const r = last.result;
     post({ type: 'wand', pts: g && r ? wand(g, r.w, r.h, q.x, q.y, r.kind === 'mask' ? 0 : q.tol) : null } satisfies WandReply);
+    return;
+  }
+  if (q.type === 'rays') {
+    const g = shownGray();
+    const r = last.result;
+    post({ type: 'rays', pts: g && r ? clickOutline(g, r.w, r.h, [q.x, q.y], q.light) : null } satisfies RaysReply);
     return;
   }
   if (q.type === 'centre') {

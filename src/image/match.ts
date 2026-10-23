@@ -13,6 +13,9 @@ import type { Pt } from './roi.ts';
 // (alone: a particle on its own, not one in a cluster nor a piece of the ground)
 export type MatchContext = 'disc' | 'cluster' | 'alone';
 export type MatchOpts = { symmetry: 90 | 180 | 360; step: number; sizes: number; min: number; max: number; context?: MatchContext; ring?: number };
+// A model of Find like this kept in a list, each with its own settings: the selection it is (by its id), what is compared
+// around it, its turns and sizes, the group its particles go in (absent: the settings and the group of all)
+export type MatchModelSpec = { roi: string; context?: MatchContext; ring?: number; symmetry?: MatchOpts['symmetry']; sizes?: number; group?: string };
 // the band outside the particle's outline still compared in a cluster (its edge), pixels
 export const EDGE_BAND = 1.5;
 export const MATCH_DEFAULTS: MatchOpts = { symmetry: 90, step: 5, sizes: 0.1, min: 0.5, max: 2000 };

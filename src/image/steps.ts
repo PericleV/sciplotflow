@@ -2,7 +2,7 @@
 // what it does to a raster. The steps are applied in their order, each on what the ones above gave; a step that cannot
 // run says why and is passed over. Pure.
 import { gaussian, gaussianWide, luminance, map1, type Raster } from './raster.ts';
-import { anisotropic, bilateral, entropyFilter, gabor, gradient, hessianEigen, laplace, laplacianOfGaussian, lbp, meanFilter, medianFilter, minMaxFilter, nonLocalMeans, removeOutliers, rollingBall, scanLines, slidingParaboloid, varianceFilter, type Shape } from './filters.ts';
+import { anisotropic, bilateral, entropyFilter, frangi, gabor, gradient, hessianEigen, laplace, laplacianOfGaussian, lbp, meanFilter, medianFilter, minMaxFilter, nonLocalMeans, removeOutliers, rollingBall, scanLines, slidingParaboloid, varianceFilter, type Shape } from './filters.ts';
 import { autoContrast, balance, brightness, clahe, contrast, curves, equalize, hueSaturation, invert, levels, logTone, minMax, pickChannel, weightedGray, type ChannelPick } from './tone.ts';
 import { closing, dilate, distanceMap, erode, fillHoles, opening, separate, skeleton, topHat } from './morph.ts';
 import { canny } from './canny.ts';
@@ -117,6 +117,18 @@ export const STEP_DEFS = {
   logfilter: { group: 'Edges', label: 'LoG', title: 'Laplacian of Gaussian: spots and edges at the scale σ', params: [num('sigma', 'σ', 2, { min: 0.3, step: 0.1, unit: 'px' }), bool('negate', 'Bright spots positive', true)] },
   dog: { group: 'Edges', label: 'DoG', title: 'Difference of Gaussians: details between two sizes (band-pass)', params: [num('s1', 'σ small', 1, { min: 0.3, step: 0.1, unit: 'px' }), num('s2', 'σ large', 3, { min: 0.3, step: 0.1, unit: 'px' })] },
   canny: { group: 'Edges', label: 'Canny', title: 'Thin edges (a mask): smoothed, gradient, hysteresis between two thresholds', params: [num('sigma', 'σ', 1.5, { min: 0.3, step: 0.1, unit: 'px' }), num('low', 'Low', 0.1, { min: 0, step: 0.01, title: 'A fraction of the range' }), num('high', 'High', 0.2, { min: 0, step: 0.01, title: 'A fraction of the range' })] },
+  ridges: {
+    group: 'Edges',
+    label: 'Ridges (Frangi)',
+    title: 'Thin lines brought out, at several widths (as Frangi’s filter): the dark gaps between touching particles, or bright lines; 0 … 1',
+    params: [choice('kind', 'Lines', 'dark', [['dark', 'dark (gaps)'], ['bright', 'bright']]), num('smin', 'Width from', 1, { min: 0.3, step: 0.1, unit: 'px', title: 'The thinnest lines (σ of the Gaussian)' }), num('smax', 'to', 3, { min: 0.3, step: 0.1, unit: 'px', title: 'The widest lines' })],
+  },
+  edgesub: {
+    group: 'Edges',
+    label: 'Edges subtracted',
+    title: 'The image minus its edges (the gradient, scaled to its range): every edge becomes a valley, so a threshold or a watershed keeps touching particles apart',
+    params: [num('sigma', 'σ', 1, { min: 0.3, step: 0.1, unit: 'px', title: 'The edges smoothed at this scale first' }), num('k', 'Strength', 1, { min: 0, step: 0.1, title: 'How much of the edges is taken off (1: as much as the image’s range)' })],
+  },
   hessian: { group: 'Edges', label: 'Hessian', title: 'Ridges and valleys (filaments, fibres): an eigenvalue of the Hessian at the scale σ', params: [num('sigma', 'σ', 2, { min: 0.3, step: 0.1, unit: 'px' }), choice('which', 'Eigenvalue', 'smaller', [['smaller', 'smaller (bright ridges)'], ['larger', 'larger (dark valleys)']])] },
   // texture
   localsd: { group: 'Texture', label: 'Local SD', title: 'The standard deviation (or variance) around every pixel', params: [radius(3), SHAPE, bool('variance', 'Variance', false)] },
@@ -138,6 +150,16 @@ export const STEP_DEFS = {
       num('width', 'Line width', 1, { min: 0.5, step: 0.1, unit: 'px', title: 'About as wide as the dark lines between the particles' }),
       num('depth', 'Depth', NaN, { unit: 'value', auto: '1.5 % of the range', title: 'How much darker than either side a line must be to cut' }),
       num('grow', 'Widen the cut', 0, { min: 0, step: 1, unit: 'px', title: 'The cut made wider (particles kept apart)' }),
+    ],
+  },
+  cutedges: {
+    group: 'Morphology',
+    label: 'Cut along edges',
+    title: 'A mask: cut inside its objects where the image under it has a strong edge (the border between touching particles, dark line or not)',
+    params: [
+      num('sigma', 'σ', 1, { min: 0.3, step: 0.1, unit: 'px', title: 'The image smoothed at this scale before its edges are taken' }),
+      num('strength', 'Edges above', 30, { min: 1, max: 100, step: 1, unit: '%', title: 'How strong an edge must be to cut, % of the strongest' }),
+      num('grow', 'Widen the cut', 0, { min: 0, step: 1, unit: 'px' }),
     ],
   },
   watershed: { group: 'Morphology', label: 'Watershed', title: 'A mask: touching round objects cut apart along the narrowings', params: [num('tolerance', 'Tolerance', 0.5, { min: 0, step: 0.1, unit: 'px', title: 'How deep a narrowing must be to cut' })] },
@@ -191,7 +213,7 @@ function param<T>(s: ImgStep, key: string): T {
 // a number that may be automatic (NaN): its own, else the fallback
 const or = (v: number, f: number) => (Number.isFinite(v) ? v : f);
 
-const MASK_ONLY = new Set<StepKind>(['fillholes', 'skeleton', 'distance', 'watershed', 'splitlines']);
+const MASK_ONLY = new Set<StepKind>(['fillholes', 'skeleton', 'distance', 'watershed', 'splitlines', 'cutedges']);
 // the steps that work on a gray image (an RGB one is made gray by its luminance first)
 const GRAY_ONLY = new Set<StepKind>(['gradient', 'laplace', 'logfilter', 'dog', 'canny', 'hessian', 'localsd', 'entropy', 'range', 'gabor', 'lbp', 'threshold', 'localthreshold', 'equalize', 'clahe']);
 const RGB_ONLY = new Set<StepKind>(['channel', 'grayweights', 'huesat', 'balance']);
@@ -369,6 +391,20 @@ export function applyStep(r: Raster, s: ImgStep, scale = 1, ctx: StepCtx = {}): 
     }
     case 'canny':
       return { r: mask1(r, canny(g.ch[0], w, h, P<number>('sigma'), P<number>('low') * sp, P<number>('high') * sp)) };
+    case 'ridges': {
+      const [a, b] = [Math.max(0.3, P<number>('smin')), Math.max(0.3, P<number>('smax'))];
+      const [lo, hi] = [Math.min(a, b) * scale, Math.max(a, b) * scale];
+      // (three scales or so between the two widths)
+      const sig = hi - lo < 0.2 ? [lo] : [lo, (lo + hi) / 2, hi];
+      return { r: gray1(r, frangi(g.ch[0], w, h, sig.map((x) => Math.max(0.3, x)), P<string>('kind') !== 'bright'), 0, 1) };
+    }
+    case 'edgesub': {
+      const sm = gaussian(g.ch[0], w, h, Math.max(0.3, P<number>('sigma') * scale));
+      const gm = gradient(sm, w, h, 'sobel', 'magnitude');
+      const top = rangeOfData(gm)[1] || 1;
+      const k = P<number>('k') * ((g.hi - g.lo) || 1);
+      return { r: gray1(r, map1(g.ch[0], (v, i) => v - (k * gm[i]) / top), g.lo - k, g.hi) };
+    }
     case 'hessian': {
       const which = P<'larger' | 'smaller'>('which');
       const e = hessianEigen(g.ch[0], w, h, P<number>('sigma'), which);
@@ -428,6 +464,27 @@ export function applyStep(r: Raster, s: ImgStep, scale = 1, ctx: StepCtx = {}): 
       const m = map1(r.ch[0], (x, i) => (x > 0.5 && !cut[i] ? 1 : 0));
       for (let i = 0; i < m.length; i++) if (r.ch[0][i] > 0.5 && cut[i]) n++;
       return { r: mask1(r, m), note: `${n} px cut (depth ${+depth.toPrecision(3)})` };
+    }
+    case 'cutedges': {
+      const u = ctx.under && ctx.under.w === w && ctx.under.h === h ? ctx.under : null;
+      if (!u) return 'needs the image the mask was made from';
+      const ug = gaussian(u.ch.length === 1 ? u.ch[0] : luminance(u), w, h, Math.max(0.3, P<number>('sigma') * scale));
+      const gm = gradient(ug, w, h, 'sobel', 'magnitude');
+      const thr = (P<number>('strength') / 100) * (rangeOfData(gm)[1] || 1);
+      const m0 = r.ch[0];
+      // (only inside the objects: a pixel whose 8 neighbours are all in the mask — their outer edge is not cut)
+      const inside = (i: number) => {
+        const [x, y] = [i % w, (i / w) | 0];
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (!(m0[Math.min(h - 1, Math.max(0, y + dy)) * w + Math.min(w - 1, Math.max(0, x + dx))] > 0.5)) return false;
+        return true;
+      };
+      let cut = map1(m0, (v, i) => (v > 0.5 && gm[i] > thr && inside(i) ? 1 : 0));
+      const grow = Math.round(P<number>('grow'));
+      if (grow > 0) cut = dilate(cut, w, h, grow);
+      let n = 0;
+      const m = map1(m0, (v, i) => (v > 0.5 && !cut[i] ? 1 : 0));
+      for (let i = 0; i < m.length; i++) if (m0[i] > 0.5 && cut[i]) n++;
+      return { r: mask1(r, m), note: `${n} px cut` };
     }
     case 'watershed':
       return { r: mask1(r, separate(r.ch[0], w, h, P<number>('tolerance'))) };

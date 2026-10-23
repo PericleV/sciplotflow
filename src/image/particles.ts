@@ -9,7 +9,9 @@ import { convexHull, pathLength, polygonArea, traceOutline, type Pt, type Roi } 
 // separate: touching objects cut apart (tolerance: how deep a narrowing must be, px; neck: how narrow, at most, against
 // the thinner part — a long or flat particle is not cut along itself); the size (px², of the outline: holes inside
 // counted; a largest of 0: none) and circularity kept; edges: those touching the image's edge left out
-export type ParticleOpts = { separate: boolean; tolerance: number; neck: number; minSize: number; maxSize: number; minCirc: number; maxCirc: number; excludeEdges: boolean };
+// method: the particles of the mask (absent), or seeds and rays (rays.ts: size, the particles' diameter, px — absent or 0:
+// from the mask; light: brighter than the ground)
+export type ParticleOpts = { separate: boolean; tolerance: number; neck: number; minSize: number; maxSize: number; minCirc: number; maxCirc: number; excludeEdges: boolean; method?: 'mask' | 'rays'; size?: number; light?: boolean };
 export const PARTICLE_DEFAULTS: ParticleOpts = { separate: false, tolerance: 0.5, neck: 0.75, minSize: 10, maxSize: 0, minCirc: 0, maxCirc: 1, excludeEdges: false };
 export const MAX_PARTICLES = 5000;
 

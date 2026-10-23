@@ -398,6 +398,7 @@ export function measureRois(q0: MeasureInput): MeasureResult {
         sel.set(i, 'Corners', r.kind === 'ellipse' ? 0 : sf.corners, 54);
         sel.set(i, 'Shape', shapeName(sf), 49);
       }
+      if (r.layer) sel.set(i, 'Layer', r.layer, 60);
       if (r.role !== 'background' && n > 0) placed.push({ i, r, c: [cx, cy], poly });
       if (has('eqdiam')) sel.set(i, `Eq. diameter (${u})`, 2 * Math.sqrt(n / Math.PI) * k, 55);
       if (has('box')) {

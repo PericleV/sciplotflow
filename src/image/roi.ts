@@ -25,6 +25,9 @@ export type Roi = {
   role?: 'background'; // a region of background (for spots): measured, left out of the spots and the summary
   train?: string; // an example of a class for the trainable classifier (its name): not measured
   auto?: boolean; // found as a particle (found again: replaced)
+  hand?: boolean; // a particle found then changed by hand (Refine leaves it as it is)
+  shape?: string; // the regular shape it was made by Refine (circle, square …)
+  layer?: number; // the layer it lies in (1: nothing on it), estimated (Layers)
   bg?: RoiBg;
 };
 export type Pt = [number, number];
@@ -32,7 +35,7 @@ export type Pt = [number, number];
 export const ROI_KINDS: Record<RoiKind, string> = { rect: 'rectangle', ellipse: 'ellipse', polygon: 'polygon', freehand: 'freehand', traced: 'wand', line: 'line', polyline: 'segmented line', points: 'points', angle: 'angle' };
 export const ROI_COLOR = '#ffd60a';
 // the editor's selection tools, and how each draws
-export type RoiTool = 'rect' | 'ellipse' | 'polygon' | 'freehand' | 'line' | 'polyline' | 'points' | 'angle' | 'wand' | 'stamp';
+export type RoiTool = 'rect' | 'ellipse' | 'polygon' | 'freehand' | 'line' | 'polyline' | 'points' | 'angle' | 'wand' | 'rays' | 'stamp';
 export const TOOL_HINTS: Record<RoiTool, string> = {
   rect: 'Rectangle: drag (Shift: a square).',
   ellipse: 'Ellipse: drag (Shift: a circle).',
@@ -43,6 +46,7 @@ export const TOOL_HINTS: Record<RoiTool, string> = {
   points: 'Points: every click adds a point (to the points picked, else a new set).',
   angle: 'Angle: click one arm’s end, the vertex, the other arm’s end.',
   wand: 'Wand: click an object. On a mask: the object; on an image: the pixels joined to the one clicked within the tolerance.',
+  rays: 'Rays: click inside a particle. Rays from there, each stopped at its first edge (or the gap to a particle touching it), give its outline, its size found by itself; its corners can then be dragged. A model for Find like this: pick it, + Add model.',
   stamp: 'Stamp: every click puts a copy of the selection picked there (its size, background, group).',
 };
 

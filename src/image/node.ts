@@ -8,7 +8,8 @@ import { measureInputs, measureRois, measureSpec, type MeasureResult, type Measu
 import type { Roi } from './roi.ts';
 import { trainingExamples } from './classify.ts';
 import type { ParticleOpts } from './particles.ts';
-import type { MatchOpts } from './match.ts';
+import type { MatchOpts, MatchModelSpec } from './match.ts';
+import type { RegularShape } from './refine.ts';
 import { pngDataUrl, toRGBA, type Lut } from './render.ts';
 import type { Matrix } from '../engine/matrix.ts';
 import type { PageData } from '../types.ts';
@@ -33,8 +34,12 @@ export type ImageAnalysisData = {
   page?: Partial<PageData>; // the figure's page: its name, dpi, background … (its size from the figure's width)
   rois?: Roi[]; // the selections (in pixels of the original as it came)
   measure?: Partial<MeasureSpec>; // what is measured of them, on which image
-  particles?: Partial<ParticleOpts> & { group?: string }; // how particles are found (the group they are put in)
-  match?: Partial<MatchOpts> & { fit?: boolean }; // Find like this: its turns, sizes, least similarity; the edges fitted
+  // how particles are found (the group they are put in); Refine: the regular shapes it may make them, snapped to the
+  // edges or not
+  // layers: the layers of the particles estimated whenever they are found
+  particles?: Partial<ParticleOpts> & { group?: string; shapes?: RegularShape[]; snap?: boolean; layers?: boolean };
+  // Find like this: its turns, sizes, least similarity; the edges fitted; models: the list of models, each its settings
+  match?: Partial<MatchOpts> & { fit?: boolean; models?: MatchModelSpec[] };
 };
 export const BAR_DEFAULTS: ScaleBar = { show: true, length: NaN, at: 'br', color: '#ffffff', thickness: 3, label: true, size: 8 };
 export const IMAGE_FIGURE_DEFAULTS: ImageFigure = { width: 80, show: 'result', lut: 'gray', lo: NaN, hi: NaN, overlay: '#ff3b30', alpha: 0.45, bar: BAR_DEFAULTS, rois: 'outlines' };

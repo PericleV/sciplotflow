@@ -7,7 +7,24 @@ import { isArea, isLine, roiOutline, ROI_COLOR, ROI_KINDS, RING_DEFAULTS, TOOL_H
 import { MEASURE_KEYS, type MeasureKey, type MeasureSpec } from '../image/measure.ts';
 import { STEP_DEFS, type ImgStep } from '../image/steps.ts';
 import type { ParticleOpts } from '../image/particles.ts';
-import type { MatchContext, MatchOpts } from '../image/match.ts';
+import type { MatchContext, MatchModelSpec, MatchOpts } from '../image/match.ts';
+import { REGULAR_SHAPES, type RegularShape } from '../image/refine.ts';
+const CONTEXTS: [MatchContext, string][] = [
+  ['disc', 'a disc around it'],
+  ['cluster', 'only the particle (in clusters)'],
+  ['alone', 'the particle and the ground (alone)'],
+];
+const TURNS: [string, string][] = [
+  ['90', 'square (0 to 90°)'],
+  ['180', 'rectangle (0 to 180°)'],
+  ['360', 'any (0 to 360°)'],
+];
+const SIZES: [string, string][] = [
+  ['0', 'as the model'],
+  ['0.1', '± 10 %'],
+  ['0.2', '± 20 %'],
+  ['0.3', '± 30 %'],
+];
 import type { Workbook } from '../engine/table.ts';
 import { Check, NumInput, Select, TextInput } from './ui.tsx';
 import { Copy, Eye, EyeOff, X } from 'lucide-react';
@@ -132,6 +149,8 @@ export type RoiPanelProps = {
   setRings: (v: boolean) => void;
   wandTol: number;
   setWandTol: (v: number) => void;
+  raysOf: 'auto' | 'bright' | 'dark';
+  setRaysOf: (v: 'auto' | 'bright' | 'dark') => void;
   centre: 'off' | 'bright' | 'dark';
   setCentre: (v: 'off' | 'bright' | 'dark') => void;
   duplicate: () => void;
@@ -150,6 +169,21 @@ export function RoiPanel(p: RoiPanelProps) {
         <div className="row wrap">
           <span className="muted">Tolerance</span>
           <NumInput className="short" min={0} value={p.wandTol} title="The values taken: within this of the pixel clicked (a mask: its object, whatever this)" onChange={(v) => p.setWandTol(v >= 0 ? v : 0)} />
+        </div>
+      )}
+      {p.tool === 'rays' && (
+        <div className="row wrap">
+          <span className="muted">Particles</span>
+          <Select<'auto' | 'bright' | 'dark'>
+            value={p.raysOf}
+            title="The particles brighter or darker than the ground (as the pixel clicked: brighter or darker than the middle value around it)"
+            options={[
+              ['auto', 'as clicked'],
+              ['bright', 'bright'],
+              ['dark', 'dark'],
+            ]}
+            onChange={p.setRaysOf}
+          />
         </div>
       )}
       {p.tool === 'stamp' && (
@@ -201,7 +235,7 @@ export function RoiPanel(p: RoiPanelProps) {
           ))}
         </div>
       ) : (
-        <div className="hint">No selections yet: pick a tool at the top (rectangle, ellipse, polygon, freehand, line, points, angle, wand, stamp) and draw on the image.</div>
+        <div className="hint">No selections yet: pick a tool at the top (rectangle, ellipse, polygon, freehand, line, points, angle, wand, rays, stamp) and draw on the image.</div>
       )}
       <div className="row wrap">
         <button className="nodrag" disabled={!picked} title="A copy of the selection picked, a little aside (Ctrl+D)" onClick={p.duplicate}>
@@ -283,10 +317,27 @@ export function ParticlesPanel(p: {
   models: number;
   findLike: () => void;
   setMin: (min: number) => void;
+  // the list of models, each with its settings (and its name), added from the selection picked
+  modelList: (MatchModelSpec & { name: string })[];
+  canAdd: boolean;
+  addModel: () => void;
+  setModel: (k: number, p: Partial<MatchModelSpec>) => void;
+  removeModel: (k: number) => void;
+  pickModel: (k: number) => void;
+  modelColors: string[];
   review: boolean;
   setReview: (on: boolean) => void;
   canMore: boolean;
   findMore: () => void;
+  // Refine: the regular shapes allowed, snapped to the edges; the particles changed by hand (left as they are)
+  refine: (alsoHand: boolean) => void;
+  shapes: RegularShape[];
+  setShapes: (s: RegularShape[]) => void;
+  snap: boolean;
+  setSnap: (on: boolean) => void;
+  handCount: number;
+  layers: boolean;
+  setLayers: (on: boolean) => void;
 }) {
   const { opts, set, group, setGroup, k, u, find, msg, count, byShape, likeExamples, match, setMatch } = p;
   const a = k * k;
@@ -295,6 +346,24 @@ export function ParticlesPanel(p: {
       <div className="ie-section">Particles</div>
       <div className="hint">The objects of the last mask of the steps (a threshold, a trainable classifier), as selections: measured as the others, found again as asked.</div>
       <div className="ie-params">
+        <span className="ie-label">From</span>
+        <span className="row">
+          <Select<'mask' | 'rays'>
+            value={opts.method ?? 'mask'}
+            title="The particles of the mask (a threshold, a trainable classifier), cut apart if asked; or seeds and rays: a seed in every particle (the mask's centres when there is one, else the bright or dark blobs of the image at their size), from each 32 rays stopped at the first edge: touching particles found one by one, a dark gap between them or not"
+            options={[
+              ['mask', 'the mask'],
+              ['rays', 'seeds and rays'],
+            ]}
+            onChange={(method) => set({ method: method === 'mask' ? undefined : method })}
+          />
+          {opts.method === 'rays' && (
+            <>
+              <NumInput className="short" min={0} value={opts.size && opts.size > 0 ? +(opts.size * k).toPrecision(6) : NaN} placeholder="auto" title={`The particles' diameter (${u}): empty, from the mask (a Threshold in the steps); needed without a mask`} onChange={(v) => set({ size: v > 0 ? v / k : undefined })} />
+              <Select<string> value={opts.light === false ? 'dark' : 'light'} title="The particles brighter or darker than the ground" options={[['light', 'bright'], ['dark', 'dark']]} onChange={(v) => set({ light: v === 'dark' ? false : undefined })} />
+            </>
+          )}
+        </span>
         <span className="ie-label">Clusters</span>
         <span className="row">
           <Check label="cut apart" title="Touching or overlapping particles cut apart along their necks (watershed on the distance map), as ImageJ" value={opts.separate} onChange={(separate) => set({ separate })} />
@@ -328,49 +397,83 @@ export function ParticlesPanel(p: {
         <span className="muted">{msg}</span>
       </div>
       <div className="hint">Or like some of them: draw a rectangle (or any shape) around one good particle, pick it, then Find like this. Every place that looks like it is found, turned any way and a little larger or smaller, on the last image of the steps that is not a mask. The dashed line around the selection shows what is compared. Several models (particles that look different: lit otherwise, tilted): give them one group in the list and pick one of them; each place is given the model most like it.</div>
+      <div className="row wrap">
+        <button className="nodrag" disabled={!p.canAdd} title={p.canAdd ? 'The selection picked added to the models, with the settings below (then each changed in its row)' : 'Pick a selection around a particle (not one of the models yet)'} onClick={p.addModel}>
+          + Add model
+        </button>
+        {p.modelList.length > 0 && <span className="muted">{p.modelList.length} model{p.modelList.length === 1 ? '' : 's'}: each its own settings and group</span>}
+      </div>
+      {p.modelList.length > 0 && (
+        <div className="ie-models">
+          {p.modelList.map((m, j) => (
+            <div key={m.roi} className="ie-model">
+              <div className="row">
+                <span className="ie-class-dot" style={{ background: p.modelColors[j % p.modelColors.length] }} />
+                <button className="nodrag ie-model-name grow" title="Pick it (its dashed line shows what is compared)" onClick={() => p.pickModel(j)}>
+                  {m.name}
+                </button>
+                <TextInput className="short" value={m.group ?? ''} placeholder={group} title="The group its particles go in (empty: the group below)" onChange={(g) => p.setModel(j, { group: g || undefined })} />
+                <button className="nodrag ts-btn" title="Take it out of the models (the selection stays)" onClick={() => p.removeModel(j)}>
+                  <X {...IC} />
+                </button>
+              </div>
+              <div className="row wrap">
+                <Select<MatchContext> value={m.context ?? 'disc'} title="What is compared besides the particle" options={CONTEXTS} onChange={(context) => p.setModel(j, { context })} />
+                {m.context === 'alone' && <NumInput className="tiny" min={1} max={200} step={1} value={m.ring ?? 6} title="How far around the particle the ground is compared (px)" onChange={(v) => p.setModel(j, { ring: Math.max(1, Math.round(v || 6)) })} />}
+                <Select<string> value={String(m.symmetry ?? 90)} title="The turns that look the same" options={TURNS} onChange={(v) => p.setModel(j, { symmetry: Number(v) as MatchOpts['symmetry'] })} />
+                <Select<string> value={String(m.sizes ?? 0.1)} title="How much larger or smaller than the model" options={SIZES} onChange={(v) => p.setModel(j, { sizes: Number(v) })} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="ie-params">
+        {p.modelList.length === 0 && (
+          <>
         <span className="ie-label">Around it</span>
-        <span className="row">
-          <Select<MatchContext>
-            value={match.context ?? 'disc'}
-            title="What is compared besides the particle: a disc around the selection (its corners and a little around them); only the particle and its edge (in clusters: the neighbours, whatever they are, left out); or the particle and the ground around it out to the dashed line (a particle on its own: one in a cluster, or a piece of the ground, is less alike)"
+          <span className="row">
+            <Select<MatchContext>
+              value={match.context ?? 'disc'}
+              title="What is compared besides the particle: a disc around the selection (its corners and a little around them); only the particle and its edge (in clusters: the neighbours, whatever they are, left out); or the particle and the ground around it out to the dashed line (a particle on its own: one in a cluster, or a piece of the ground, is less alike)"
+              options={[
+                ['disc', 'a disc around it'],
+                ['cluster', 'only the particle (in clusters)'],
+                ['alone', 'the particle and the ground (alone)'],
+              ]}
+              onChange={(context) => setMatch({ context: context === 'disc' ? undefined : context })}
+            />
+            {match.context === 'alone' && (
+              <>
+                <NumInput className="tiny" min={1} max={200} step={1} value={match.ring ?? 6} title="How far around the particle the ground is compared (px; also dragged by the handle on the dashed line)" onChange={(v) => setMatch({ ring: Math.max(1, Math.round(v || 6)) })} />
+                <span className="muted">px</span>
+              </>
+            )}
+          </span>
+          <span className="ie-label">Turns</span>
+          <Select<string>
+            value={String(match.symmetry)}
+            title="The turns that look the same: a square every 90°, a rectangle every 180°"
             options={[
-              ['disc', 'a disc around it'],
-              ['cluster', 'only the particle (in clusters)'],
-              ['alone', 'the particle and the ground (alone)'],
+              ['90', 'square (0 to 90°)'],
+              ['180', 'rectangle (0 to 180°)'],
+              ['360', 'any (0 to 360°)'],
             ]}
-            onChange={(context) => setMatch({ context: context === 'disc' ? undefined : context })}
+            onChange={(v) => setMatch({ symmetry: Number(v) as MatchOpts['symmetry'] })}
           />
-          {match.context === 'alone' && (
-            <>
-              <NumInput className="tiny" min={1} max={200} step={1} value={match.ring ?? 6} title="How far around the particle the ground is compared (px; also dragged by the handle on the dashed line)" onChange={(v) => setMatch({ ring: Math.max(1, Math.round(v || 6)) })} />
-              <span className="muted">px</span>
-            </>
-          )}
-        </span>
-        <span className="ie-label">Turns</span>
-        <Select<string>
-          value={String(match.symmetry)}
-          title="The turns that look the same: a square every 90°, a rectangle every 180°"
-          options={[
-            ['90', 'square (0 to 90°)'],
-            ['180', 'rectangle (0 to 180°)'],
-            ['360', 'any (0 to 360°)'],
-          ]}
-          onChange={(v) => setMatch({ symmetry: Number(v) as MatchOpts['symmetry'] })}
-        />
-        <span className="ie-label">Sizes</span>
-        <Select<string>
-          value={String(match.sizes)}
-          title="How much larger or smaller than the model the particles may be"
-          options={[
-            ['0', 'as the model'],
-            ['0.1', '± 10 %'],
-            ['0.2', '± 20 %'],
-            ['0.3', '± 30 %'],
-          ]}
-          onChange={(v) => setMatch({ sizes: Number(v) })}
-        />
+          <span className="ie-label">Sizes</span>
+          <Select<string>
+            value={String(match.sizes)}
+            title="How much larger or smaller than the model the particles may be"
+            options={[
+              ['0', 'as the model'],
+              ['0.1', '± 10 %'],
+              ['0.2', '± 20 %'],
+              ['0.3', '± 30 %'],
+            ]}
+            onChange={(v) => setMatch({ sizes: Number(v) })}
+          />
+          </>
+        )}
         <span className="ie-label">Similarity</span>
         <span className="row" title="The least similarity kept (the correlation with the model: 1 the same, 0 nothing alike): lower, more found and more mistakes. After a search it changes the particles found at once">
           <input className="nodrag grow" type="range" min={0.3} max={1} step={0.01} value={match.min} onChange={(e) => p.setMin(Number(e.target.value))} />
@@ -394,6 +497,30 @@ export function ParticlesPanel(p: {
           </button>
         )}
       </div>
+      {count > 0 && (
+        <>
+          <div className="ie-section">Layers</div>
+          <Check label="estimate the layers (which lie on others)" title="Where two particles touch, the one whose outline stays whole there is on top, the one cut by it under it (else the brighter on top): every particle its layer, 1 when nothing lies on it, its outline in the colour of its layer (green, orange, red …) and a Layer column in the measurements. A curiosity: an estimate" value={p.layers} onChange={p.setLayers} />
+          <div className="ie-section">Refine</div>
+          <div className="hint">Every particle found made the regular shape most like it, among those ticked, its place, size and turn fitted; then each can still be moved, turned or resized by hand (a particle changed by hand, ✎, is left as it is when refined again).</div>
+          <div className="ie-shapes">
+            {REGULAR_SHAPES.map((sh) => (
+              <Check key={sh} label={sh} value={p.shapes.includes(sh)} onChange={(on) => p.setShapes(on ? [...p.shapes, sh] : p.shapes.filter((x) => x !== sh))} />
+            ))}
+          </div>
+          <Check label="snapped to the edges" title="Each shape then moved onto the edges under it on the image (a square or a rectangle: its sides where the image crosses half-way from inside to outside; the others: scaled to the strongest edge)" value={p.snap} onChange={p.setSnap} />
+          <div className="row wrap">
+            <button className="nodrag btn-run" disabled={!p.shapes.length} title="The particles found made regular shapes (those changed by hand left as they are)" onClick={() => p.refine(false)}>
+              Refine
+            </button>
+            {p.handCount > 0 && (
+              <button className="nodrag" title={`Refine the ${p.handCount} changed by hand too`} onClick={() => p.refine(true)}>
+                Refine all ({p.handCount} by hand too)
+              </button>
+            )}
+          </div>
+        </>
+      )}
       {count > 0 && (
         <div className="row wrap">
           <button className="nodrag" title="Every particle put in the group of its shape: circle, ellipse, triangle, square, rectangle, polygon, irregular (by its corners and roundness)" onClick={byShape}>

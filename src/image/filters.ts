@@ -546,6 +546,31 @@ export function hessianEigen(c: Float32Array, w: number, h: number, sigma: numbe
   });
 }
 
+// Ridges at several scales (as Frangi's vesselness, in 2-D): at every σ, a pixel on a line has the Hessian's
+// eigenvalue across it large (positive for a dark line, negative for a bright one) and the one along it small; the
+// response exp(−Rb²/2β²)·(1 − exp(−S²/2c²)) — Rb the ratio of the two, S their norm, β = 0.5, c half the largest S —
+// the largest over the scales, 0 … 1
+export function frangi(c: Float32Array, w: number, h: number, sigmas: number[], dark: boolean): Float32Array {
+  const out = new Float32Array(w * h);
+  for (const s of sigmas) {
+    const big = hessianEigen(c, w, h, s, 'larger');
+    const small = hessianEigen(c, w, h, s, 'smaller');
+    let smax = 0;
+    for (let i = 0; i < out.length; i++) smax = Math.max(smax, Math.hypot(big[i], small[i]));
+    const c2 = 2 * (0.5 * smax || 1) ** 2;
+    for (let i = 0; i < out.length; i++) {
+      const across = dark ? big[i] : small[i];
+      const along = dark ? small[i] : big[i];
+      if (dark ? across <= 0 : across >= 0) continue;
+      const rb = along / across;
+      const S2 = big[i] ** 2 + small[i] ** 2;
+      const v = Math.exp(-(rb * rb) / 0.5) * (1 - Math.exp(-S2 / c2));
+      if (v > out[i]) out[i] = v;
+    }
+  }
+  return out;
+}
+
 // ---- texture ----
 
 // Gabor (as scikit-image's gabor_kernel / gabor): a Gaussian envelope (σx, σy; from the bandwidth when not given)

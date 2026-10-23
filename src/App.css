@@ -1676,3 +1676,11 @@ input[type='checkbox'], input[type='radio'] { box-shadow: none; }
 .ie-context polygon, .ie-context circle { fill: none; stroke: #ffd60a; stroke-width: 1.2; stroke-dasharray: 5 3; }
 .ie-context .ie-context-handle { pointer-events: all; fill: #ffd60a; stroke: #000; stroke-dasharray: none; cursor: ew-resize; }
 .ie-rejected polygon { fill: rgba(255, 69, 58, 0.12); stroke: #ff453a; stroke-width: 1; stroke-dasharray: 2 2; cursor: pointer; pointer-events: all; }
+/* Find like this: the list of models, each a card with its settings */
+.image-editor .ie-models { display: flex; flex-direction: column; gap: 4px; }
+.image-editor .ie-model { border: 1px solid var(--border); border-radius: 5px; padding: 3px 5px; display: flex; flex-direction: column; gap: 3px; }
+.image-editor .ie-model .row { display: flex; align-items: center; gap: 4px; }
+.image-editor .ie-model .ie-model-name { text-align: left; border: none; background: none; padding: 0; font-weight: 600; color: var(--text); cursor: pointer; }
+.image-editor .ie-model select { max-width: 100%; }
+.image-editor .ie-shapes { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1px 6px; }
+/* a particle seen in 3D: its visible faces, each its colour */

@@ -4,9 +4,12 @@ import { readFileSync } from 'node:fs';
 import { cropRaster, dataBarRows, gaussian, gaussianWide, packPixels, quantile, shrinkRaster, unpackPixels, type Raster } from '../src/image/raster.ts';
 import { semScale } from '../src/image/load.ts';
 import { measureRois, measureSpec, valueStats, feret, lineProfile } from '../src/image/measure.ts';
-import { nearRoi, offsetDistance, offsetOutline, ringMask, roiMask, traceOutline, wand, polygonArea, type Roi } from '../src/image/roi.ts';
+import { nearRoi, offsetDistance, offsetOutline, ringMask, roiMask, traceOutline, wand, polygonArea, type Pt, type Roi } from '../src/image/roi.ts';
 import { alignment, findParticles, groupLikeExamples, minAreaRect, PARTICLE_DEFAULTS, shapeFeatures, shapeName, tracedPerimeter } from '../src/image/particles.ts';
 import { findLike, fitBox, MATCH_DEFAULTS } from '../src/image/match.ts';
+import { fitRegular, REGULAR_SHAPES, snapToEdges } from '../src/image/refine.ts';
+import { clickOutline, RAYS_DEFAULTS, seedsAndRays } from '../src/image/rays.ts';
+import { estimateLayers } from '../src/image/layers.ts';
 import { clustersImage, cubesImage, shapesImage, textureImage, type TestImage } from '../src/image/testImages.ts';
 import { edgeRing, type TrainExample } from '../src/image/classify.ts';
 import { bilateral, entropyFilter, gabor, gradient, hessianEigen, laplace, laplacianOfGaussian, lbp, meanFilter, medianFilter, minMaxFilter, nonLocalMeans, rollingBall, varianceFilter } from '../src/image/filters.ts';
@@ -522,6 +525,116 @@ export function checkImage(ok: Ok) {
     const byForest = findParticles(a.r.ch[0], tx.w, tx.h, { ...PARTICLE_DEFAULTS, minSize: 60 }).found;
     const none = applySteps(r, [step], 1, undefined, 1, { train: train.slice(0, 4) });
     ok(a.r.kind === 'mask' && Math.abs(byForest - tx.truth.length) <= 1 && Math.abs(byOtsu - tx.truth.length) > 3 && a.r.ch[0].every((v, i) => v === b.r.ch[0][i]) && /^object: \d+ px, background: \d+ px → object$/.test(a.notes.c ?? '') && /two classes/.test(none.errors.c ?? ''), `trainable classifier: ${byForest} textured particles of ${tx.truth.length} from 4 lines and 3 background examples (Otsu: ${byOtsu} pieces); the same twice; one class only: said (${a.notes.c})`);
+  }
+  // layers: a square drawn over two others (brighter, their corners cut by it) is on top, they under it; one alone on top
+  {
+    const [w, h] = [120, 80];
+    const img = new Float32Array(w * h).fill(40);
+    const sq = (x0: number, y0: number, s: number, v: number) => {
+      for (let y = y0; y < y0 + s; y++) for (let x = x0; x < x0 + s; x++) img[y * w + x] = v;
+    };
+    sq(10, 10, 24, 150);
+    sq(50, 20, 24, 150);
+    sq(28, 18, 26, 210);
+    sq(85, 30, 20, 200);
+    const outl = [150, 210, 200].flatMap((v) => findParticles(Float32Array.from(img, (x) => (x === v ? 1 : 0)), w, h, { ...PARTICLE_DEFAULTS, minSize: 5 }).outlines);
+    const res = estimateLayers(outl, img, w, h);
+    const cx = (o: [number, number][]) => o.reduce((s2, p) => s2 + p[0], 0) / o.length;
+    const layerAt = (lo: number, hi: number) => res.layer[outl.findIndex((o) => cx(o) >= lo && cx(o) < hi)];
+    ok(layerAt(0, 25) === 2 && layerAt(25, 45) === 1 && layerAt(45, 80) === 2 && layerAt(80, 120) === 1 && res.above.length === 2, `layers: the square over two others on top (layer ${layerAt(25, 45)}), they under it (${layerAt(0, 25)}, ${layerAt(45, 80)}), one alone on top`);
+  }
+  // seeds and rays: the nanocubes touching found one by one from the image's blobs (their size given), the clusters of
+  // discs from their mask's centres — none missed, none wrong; then made squares (Refine), their side within 3 %
+  {
+    const run = (t: TestImage, useMask: boolean, size: number) => {
+      const r: Raster = { w: t.w, h: t.h, ch: [Float32Array.from(t.px)], kind: 'gray', lo: 0, hi: 255 };
+      const mask = useMask ? applySteps(r, [{ ...newStep('threshold', 'o'), p: { ...newStep('threshold', 'o').p, method: 'otsu' } }]).r : null;
+      const res = seedsAndRays(r, mask, { ...RAYS_DEFAULTS, size });
+      const cent = res.outlines.map((o) => [o.reduce((a2, p) => a2 + p[0], 0) / o.length, o.reduce((a2, p) => a2 + p[1], 0) / o.length]);
+      const rad = (q: (typeof t.truth)[number]) => (q.side ? q.side / 2 : 10);
+      const hit = t.truth.filter((q) => cent.some(([x, y]) => Math.hypot(x - q.cx, y - q.cy) < rad(q) * 0.6)).length;
+      const wrong = cent.filter(([x, y]) => !t.truth.some((q) => Math.hypot(x - q.cx, y - q.cy) < rad(q) * 0.6)).length;
+      return { r, res, hit, wrong };
+    };
+    const cu = cubesImage();
+    const a1 = run(cu, false, 20);
+    const a2 = run(clustersImage(), true, 0);
+    const errs = a1.res.outlines
+      .map((o) => {
+        const f = snapToEdges(fitRegular(o, ['square'])!, a1.r.ch[0], cu.w, cu.h);
+        const q = cu.truth.find((t2) => Math.hypot(t2.cx - f.cx, t2.cy - f.cy) < t2.side! * 0.4);
+        return q ? Math.abs(f.w / q.side! - 1) : NaN;
+      })
+      .filter(Number.isFinite)
+      .sort((x, y) => x - y);
+    ok(a1.hit === cu.truth.length && a1.wrong === 0 && a1.res.outlines.length === cu.truth.length && a2.hit === 42 && a2.wrong === 0 && errs[errs.length >> 1] < 0.03, `seeds and rays: nanocubes ${a1.hit} of ${cu.truth.length} (from the image), discs in clusters ${a2.hit} of 42 (from the mask), none wrong; made squares, their side within ${(errs[errs.length >> 1] * 100).toFixed(1)} %`);
+  }
+  // the Rays tool: a click in every nanocube touching others (no size, no bright or dark given) outlines it alone, its
+  // area within 10 % of the cube's; a dark disc of radius 30 and one of 4 on a bright ground, their radius within 6 %
+  {
+    const cu = cubesImage();
+    const g = Float32Array.from(cu.px);
+    const errs = cu.truth.map((q) => {
+      const o = clickOutline(g, cu.w, cu.h, [q.cx, q.cy]);
+      return o ? Math.abs(Math.abs(polygonArea(o)) / (q.side! * q.side!) - 1) : 1;
+    });
+    const good = errs.filter((e) => e < 0.1).length;
+    const [w, h] = [160, 100];
+    const disc = new Float32Array(w * h).fill(200);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const [d1, d2] = [Math.hypot(x + 0.5 - 50, y + 0.5 - 50), Math.hypot(x + 0.5 - 120, y + 0.5 - 50)];
+        if (d1 < 30 || d2 < 4) disc[y * w + x] = 60 + 10 * Math.sin(x * 1.7 + y * 2.3);
+      }
+    const radius = (o: Pt[] | null) => (o ? Math.sqrt(Math.abs(polygonArea(o)) / Math.PI) : 0);
+    const [big, small] = [radius(clickOutline(disc, w, h, [55, 45])), radius(clickOutline(disc, w, h, [120, 50]))];
+    ok(good === cu.truth.length && Math.abs(big / 30 - 1) < 0.06 && Math.abs(small / 4 - 1) < 0.06, `rays tool: ${good} of ${cu.truth.length} nanocubes outlined alone from a click (area within 10 %); dark discs of radius 30 and 4 seen ${big.toFixed(1)} and ${small.toFixed(1)}`);
+  }
+  // the edge steps on nanocubes touching: Otsu alone keeps clusters whole; cut along the edges inside, or the edges
+  // subtracted before it, more cubes apart; the ridges bright in the gaps, dark inside the cubes
+  {
+    const t = cubesImage();
+    const r: Raster = { w: t.w, h: t.h, ch: [Float32Array.from(t.px)], kind: 'gray', lo: 0, hi: 255 };
+    const st = (k: string, p: Record<string, unknown> = {}) => ({ ...newStep(k as never, k), p: { ...newStep(k as never, k).p, ...p } });
+    const count = (steps: ReturnType<typeof st>[]) => findParticles(applySteps(r, steps).r.ch[0], t.w, t.h, { ...PARTICLE_DEFAULTS, minSize: 40 }).found;
+    const plain = count([st('threshold', { method: 'otsu' })]);
+    const cut = count([st('threshold', { method: 'otsu' }), st('cutedges', { strength: 20 })]);
+    const sub = count([st('edgesub', { k: 1 }), st('threshold', { method: 'otsu' })]);
+    const fr = applySteps(r, [st('ridges')]).r.ch[0];
+    const inside = t.truth.map((q) => fr[Math.round(q.cy) * t.w + Math.round(q.cx)]);
+    const top = fr.reduce((a2, b2) => Math.max(a2, b2), 0);
+    ok(cut >= plain + 10 && sub >= 40 && top > 0.5 && Math.max(...inside) < 0.1, `edges: Otsu ${plain} pieces of ${t.truth.length} cubes; cut along edges ${cut}; edges subtracted then Otsu ${sub}; ridges up to ${top.toFixed(2)} in the gaps, ${Math.max(...inside).toFixed(2)} at most inside`);
+  }
+  // Refine: every particle of the shapes image made the regular shape it is (the irregular ones, the nearest allowed);
+  // the nanocubes made squares, snapped to the edges: their side within 1.5 % (median); only the shapes allowed
+  {
+    const ras = (t: TestImage): Raster => ({ w: t.w, h: t.h, ch: [Float32Array.from(t.px)], kind: 'gray', lo: 0, hi: 255 });
+    const sh = shapesImage();
+    const otsuL = { ...newStep('threshold', 'o'), p: { ...newStep('threshold', 'o').p, method: 'otsu', light: true } };
+    const sm = applySteps(ras(sh), [otsuL, newStep('fillholes', 'f')]).r.ch[0];
+    const outl = findParticles(sm, sh.w, sh.h, { ...PARTICLE_DEFAULTS, separate: true }).outlines;
+    let [right, n] = [0, 0];
+    for (const o of outl) {
+      const fit = fitRegular(o, REGULAR_SHAPES)!;
+      const q = sh.truth.reduce((a2, b2) => (Math.hypot(b2.cx - fit.cx, b2.cy - fit.cy) < Math.hypot(a2.cx - fit.cx, a2.cy - fit.cy) ? b2 : a2));
+      if (q.shape === 'irregular' || Math.hypot(q.cx - fit.cx, q.cy - fit.cy) > 15) continue;
+      n++;
+      if (fit.shape === q.shape) right++;
+    }
+    const cu = cubesImage();
+    const cr = ras(cu);
+    const otsu0 = { ...newStep('threshold', 'o'), p: { ...newStep('threshold', 'o').p, method: 'otsu' } };
+    const cm = applySteps(cr, [otsu0, newStep('splitlines', 's')]).r.ch[0];
+    const errs: number[] = [];
+    for (const o of findParticles(cm, cu.w, cu.h, { ...PARTICLE_DEFAULTS, minSize: 40 }).outlines) {
+      const f = snapToEdges(fitRegular(o, ['square'])!, cr.ch[0], cu.w, cu.h);
+      const q = cu.truth.find((t2) => Math.hypot(t2.cx - f.cx, t2.cy - f.cy) < t2.side! * 0.4);
+      if (q) errs.push(Math.abs(f.w / q.side! - 1));
+    }
+    errs.sort((x, y) => x - y);
+    const med = errs[errs.length >> 1];
+    const only = fitRegular(outl[0], ['hexagon']);
+    ok(n >= 30 && right === n && errs.length >= 45 && med < 0.015 && only?.shape === 'hexagon', `Refine: ${right} of ${n} regular particles made their shape; ${errs.length} nanocubes made squares snapped to the edges, their side within ${(med * 100).toFixed(1)} % (median); only the shapes allowed`);
   }
   // Find like this in the shape of the particle: only it and its edge (in clusters) finds every cube; with the ground
   // around it (alone), the cubes on their own are the most alike (those in clusters less: their neighbours in the ring)

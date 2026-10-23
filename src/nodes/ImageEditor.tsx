@@ -5,7 +5,7 @@
 // values under the mouse), the histogram, the view, the crop, the calibration, the selections (ROI manager), what is
 // measured and the results on the right. Crop and Scale work on the original as it came (the data bar of an electron
 // microscope cut off; a line drawn on its scale bar, with a loupe, its ends found on the bar); the selections are drawn
-// on the image analysed (rectangle, ellipse, polygon, freehand, line, segmented line, points, angle, wand, stamp), picked
+// on the image analysed (rectangle, ellipse, polygon, freehand, line, segmented line, points, angle, wand, rays, stamp), picked
 // and edited with their handles; the particles of the mask found as selections, grouped by their shape; a trainable
 // classifier taught by selections given a class. The image and the measurements are computed in a worker of its own.
 import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
@@ -15,12 +15,14 @@ import type { AppNode, ImageAnalysisData } from '../types.ts';
 import { STEP_DEFS, STEP_GROUPS, newStep, stepClasses, type ImgStep, type StepDef, type StepKind } from '../image/steps.ts';
 import { cropBox, cropRaster, dataBarRows, luminance, unpackPixels, type Crop } from '../image/raster.ts';
 import { unitText } from '../image/node.ts';
-import type { CentreReply, ImgReply, ImgRequest, MatchReply, MatchRequest, MeasureReply, MeasureRequest, ParticlesReply, ParticlesRequest, ValueReply, WandReply } from '../image/imageWorker.ts';
+import type { CentreReply, ImgReply, ImgRequest, MatchReply, MatchRequest, MeasureReply, MeasureRequest, ParticlesReply, ParticlesRequest, RaysReply, RefineReply, RefineRequest, ValueReply, WandReply } from '../image/imageWorker.ts';
 import { MATCH_DEFAULTS, placeLike, type MatchOpts } from '../image/match.ts';
 import { trainingExamples } from '../image/classify.ts';
 import { groupLikeExamples, PARTICLE_DEFAULTS, SHAPE_COLORS, shapeFeatures, shapeName, type ParticleOpts } from '../image/particles.ts';
 import { ClassifierEditor, type PaintTool } from './ClassifierEditor.tsx';
-import { EDGE_BAND, type Match } from '../image/match.ts';
+import { EDGE_BAND, type Match, type MatchModelSpec } from '../image/match.ts';
+import { REGULAR_SHAPES, type RegularShape } from '../image/refine.ts';
+import { estimateLayers } from '../image/layers.ts';
 import { offsetDistance, offsetOutline } from '../image/roi.ts';
 import { classColor } from '../image/classify.ts';
 import { isArea, moveRoi, nearRoi, roiCentre, roiOutline, TOOL_HINTS, type Pt, type Roi, type RoiKind, type RoiTool } from '../image/roi.ts';
@@ -33,7 +35,7 @@ import { COLOR_MAPS } from '../figure/colors.ts';
 import { CurvesEditor } from './CurvesEditor.tsx';
 import { ParamField, ThresholdEditor } from './ImageParams.tsx';
 import { Check, NumInput, Select } from './ui.tsx';
-import { ArrowDown, ArrowUp, Circle, Crop as CropIcon, Crosshair, Hand, Maximize, Minus, Pentagon, PenTool, Plus, Ruler, Slash, Spline, Square, Stamp, Triangle, Wand, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Circle, Crop as CropIcon, Crosshair, Hand, Maximize, Minus, Pentagon, PenTool, Plus, Ruler, Slash, Spline, Square, Stamp, Sun, Triangle, Wand, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
 
 const LUTS = Object.entries(COLOR_MAPS).map(([k, v]): [Lut, string] => [k as Lut, v.label]);
@@ -112,6 +114,7 @@ const ROI_TOOLS: [RoiTool, typeof Square, string][] = [
   ['points', Crosshair, 'Points'],
   ['angle', Triangle, 'Angle'],
   ['wand', Wand, 'Wand'],
+  ['rays', Sun, 'Rays'],
   ['stamp', Stamp, 'Stamp'],
 ];
 let stepSeq = 0;
@@ -133,6 +136,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const [labels, setLabels] = useState(true);
   const [rings, setRings] = useState(true);
   const [wandTol, setWandTol] = useState(0);
+  const [raysOf, setRaysOf] = useState<'auto' | 'bright' | 'dark'>('auto');
   const [centre, setCentre] = useState<'off' | 'bright' | 'dark'>('bright');
   const [book, setBook] = useState<Workbook | null>(null);
   const [sheet, setSheet] = useState('Selections');
@@ -190,11 +194,17 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   // the particles: how they are found, the group they go in, what the last search found
   const partOpts: ParticleOpts = { ...PARTICLE_DEFAULTS, ...data.particles };
   const partGroup = data.particles?.group ?? 'particles';
-  const setPart = (p: Partial<ParticleOpts> & { group?: string }) => set({ particles: { ...data.particles, ...p } });
+  const setPart = (p: Partial<ParticleOpts> & { group?: string; shapes?: RegularShape[]; snap?: boolean; layers?: boolean }) => set({ particles: { ...data.particles, ...p } });
   const [partMsg, setPartMsg] = useState('');
   // Find like this: its options
-  const matchOpts: MatchOpts & { fit: boolean } = { ...MATCH_DEFAULTS, fit: true, ...data.match };
-  const setMatch = (p: Partial<MatchOpts> & { fit?: boolean }) => set({ match: { ...data.match, ...p } });
+  const matchOpts: MatchOpts & { fit: boolean; models?: MatchModelSpec[] } = { ...MATCH_DEFAULTS, fit: true, ...data.match };
+  const setMatch = (p: Partial<MatchOpts> & { fit?: boolean; models?: MatchModelSpec[] }) => set({ match: { ...data.match, ...p } });
+  // the list of models (those whose selection is still there), each with its own settings
+  const modelList = (data.match?.models ?? []).filter((m) => rois.some((r) => r.id === m.roi));
+  const setModels = (models: MatchModelSpec[]) => setMatch({ models: models.length ? models : undefined });
+  // a model's settings: its own over those of all
+  const specOf = (rid: string): MatchModelSpec => ({ roi: rid, context: matchOpts.context, ring: matchOpts.ring, symmetry: matchOpts.symmetry, sizes: matchOpts.sizes, ...modelList.find((m) => m.roi === rid) });
+  const MODEL_COLORS = ['#30d158', '#0a84ff', '#ff9f0a', '#bf5af2', '#ff453a', '#64d2ff', '#ffd60a'];
   // (the models of the last search, their matches turned into selections when they come)
   const models = useRef<Roi[]>([]);
   const view = useRef<HTMLDivElement>(null);
@@ -214,11 +224,11 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   // the full-size images answered (the measurements asked again after each)
   const [fullSeq, setFullSeq] = useState(0);
   // the answers that need this render's state (a wand's outline, a stamp centred, the measurements)
-  const onAnswer = useRef<(m: MeasureReply | WandReply | CentreReply | ParticlesReply | MatchReply) => void>(() => {});
+  const onAnswer = useRef<(m: MeasureReply | WandReply | RaysReply | CentreReply | ParticlesReply | MatchReply | RefineReply) => void>(() => {});
   useEffect(() => {
     const w = new Worker(new URL('../image/imageWorker.ts', import.meta.url), { type: 'module' });
     worker.current = w;
-    w.onmessage = (e: MessageEvent<ImgReply | ValueReply | MeasureReply | WandReply | CentreReply | ParticlesReply | MatchReply>) => {
+    w.onmessage = (e: MessageEvent<ImgReply | ValueReply | MeasureReply | WandReply | RaysReply | CentreReply | ParticlesReply | MatchReply | RefineReply>) => {
       if (e.data.type === 'value') return setVals(e.data);
       if (e.data.type !== 'image') return onAnswer.current(e.data);
       if (e.data.seq !== seq.current) return;
@@ -362,7 +372,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const pendingStamp = useRef(new Map<string, Roi>());
   // Find like this: every match found (down to a floor of similarity, so the least kept is changed live), the models, the
   // matches left out by a click (by their place in the list); review: a click on a particle found leaves it out (or back)
-  const lastMatch = useRef<{ seq: string; list: (Match & { model: number; w?: number; h?: number })[]; ms: Roi[] } | null>(null);
+  const lastMatch = useRef<{ seq: string; list: (Match & { model: number; w?: number; h?: number })[]; ms: Roi[]; specs: MatchModelSpec[] } | null>(null);
   const [rejected, setRejected] = useState<number[]>([]);
   const [review, setReview] = useState(false);
   const MATCH_FLOOR = 0.3;
@@ -378,20 +388,44 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       if (m.mseq === mseq.current) setBook(m.book);
     } else if (m.type === 'wand') {
       if (m.pts && m.pts.length > 2) commit(newRoi('traced', { pts: m.pts.map(toOrig) }));
+    } else if (m.type === 'rays') {
+      // (a polygon: its corners dragged by hand)
+      if (m.pts && m.pts.length > 2) commit(newRoi('polygon', { pts: m.pts.map(toOrig) }));
+      else setPartMsg('Rays: no edge around the point clicked');
     } else if (m.type === 'match') {
       const ms = models.current;
       if (!ms.length) return;
       // (the models' own matches left out: they stay as they are)
       const list = m.matches.filter((q) => !ms.some((t) => Math.hypot(q.x + ox - roiCentre(t)[0], q.y + oy - roiCentre(t)[1]) < 0.5 * modelRadius(t)));
-      lastMatch.current = { seq: Date.now().toString(36), list, ms };
+      lastMatch.current = { seq: Date.now().toString(36), list, ms, specs: modelSpecs.current };
       setRejected([]);
-      placeMatches(matchOpts.min, []);
+      const placed = placeMatches(matchOpts.min, []);
+      if (data.particles?.layers) layersFor(placed);
+    } else if (m.type === 'refine') {
+      // (every particle its shape: a square or rectangle as a box, a circle or ellipse as one, the others as polygons;
+      // its turn, its sides; changed by hand no longer)
+      const ids = refining.current;
+      const made = new Map<string, Partial<Roi>>();
+      const counts = new Map<string, number>();
+      m.fits.forEach((f, k) => {
+        if (!f) return;
+        counts.set(f.shape, (counts.get(f.shape) ?? 0) + 1);
+        const [cx, cy] = [f.cx + ox, f.cy + oy];
+        const geo: Partial<Roi> =
+          f.shape === 'square' || f.shape === 'rectangle' ? { kind: 'rect', box: [cx, cy, f.w, f.h], angle: f.angle, pts: undefined }
+          : f.shape === 'circle' || f.shape === 'ellipse' ? { kind: 'ellipse', box: [cx, cy, f.w, f.h], angle: f.angle, pts: undefined }
+          : { kind: 'polygon', pts: f.pts.map(([x, y]): Pt => [x + ox, y + oy]), box: undefined, angle: undefined };
+        made.set(ids[k], { ...geo, shape: f.shape, hand: undefined });
+      });
+      updateNodeData(id, (n) => ({ rois: ((n.data as ImageAnalysisData).rois ?? []).map((r) => (made.has(r.id) ? ({ ...r, ...made.get(r.id) } as Roi) : r)) }));
+      setPartMsg(`${made.size} refined: ${[...counts].map(([s, c]) => `${c} ${s}${c === 1 ? '' : 's'}`).join(', ')}`);
     } else if (m.type === 'particles') {
       if (m.error) return setPartMsg(m.error);
       // (those found before replaced; named P1, P2 … in the order met, row after row)
       const names = particleNames(m.outlines.length);
       const found: Roi[] = m.outlines.map((o, i) => ({ id: `p${Date.now().toString(36)}${i.toString(36)}`, name: names[i], kind: 'traced', pts: o.map(toOrig), group: partGroup, auto: true }));
       updateNodeData(id, (n) => ({ rois: [...((n.data as ImageAnalysisData).rois ?? []).filter((r) => !r.auto), ...found] }));
+      if (data.particles?.layers) layersFor(found);
       setSel(null);
       setPartMsg(`${m.found} particle${m.found === 1 ? '' : 's'}${m.found > found.length ? ` (the first ${found.length} kept)` : ''}`);
     } else {
@@ -404,20 +438,24 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const matchRoi = (q: Match & { model: number; w?: number; h?: number }, i: number, seq: string, ms: Roi[]): Roi => {
     const t = ms[q.model];
     const [tx, ty] = roiCentre(t);
-    const base = { id: `m${seq}-${i}`, name: '', group: partGroup, auto: true, ...(t.color ? { color: t.color } : {}) };
+    const spec = lastMatch.current?.specs[q.model];
+    const listed = modelList.findIndex((m) => m.roi === spec?.roi);
+    const color = listed >= 0 ? MODEL_COLORS[listed % MODEL_COLORS.length] : t.color;
+    const base = { id: `m${seq}-${i}`, name: '', group: spec?.group?.trim() || partGroup, auto: true, ...(color ? { color } : {}) };
     if (t.box) return { ...base, kind: t.kind, box: [q.x + ox, q.y + oy, q.w ?? t.box[2] * q.scale, q.h ?? t.box[3] * q.scale], angle: (t.angle ?? 0) + q.angle };
     return { ...base, kind: 'polygon', pts: placeLike(roiOutline(t), tx, ty, q.angle, q.scale, q.x + ox, q.y + oy) };
   };
   // the matches as alike as `min` or more, not left out: the particles found (named P1, P2 … in the group of particles)
-  const placeMatches = (min: number, out: number[]) => {
+  const placeMatches = (min: number, out: number[]): Roi[] => {
     const lm = lastMatch.current;
-    if (!lm) return;
+    if (!lm) return [];
     const keep = lm.list.map((q, i) => ({ q, i })).filter(({ q, i }) => q.score >= min && !out.includes(i));
     const names = particleNames(keep.length);
     const found = keep.map(({ q, i }, k) => ({ ...matchRoi(q, i, lm.seq, lm.ms), name: names[k] }));
     updateNodeData(id, (n) => ({ rois: [...((n.data as ImageAnalysisData).rois ?? []).filter((r) => !r.auto), ...found] }));
     const below = lm.list.filter((q) => q.score < min).length;
     setPartMsg(`${found.length} like ${lm.ms.length === 1 ? lm.ms[0].name : `the ${lm.ms.length} models`}${out.length ? `, ${out.length} left out by hand` : ''}${below ? ` (${below} less alike than ${min})` : ''}`);
+    return found;
   };
   // the least similarity changed: the particles found again from the matches already there
   const setMatchMin = (min: number) => {
@@ -441,18 +479,23 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const modelRadius = (t: Roi) => (t.box ? 0.5 * Math.hypot(t.box[2], t.box[3]) : Math.max(...roiOutline(t).map(([x, y]) => Math.hypot(x - roiCentre(t)[0], y - roiCentre(t)[1]))));
   // the models: the selection picked, and the others drawn in its group (not found ones, not examples, not background)
   const modelsOf = (t: Roi) => (t.group ? rois.filter((r) => r.group === t.group && isArea(r) && !r.auto && !r.train && r.role !== 'background') : [t]);
-  const findWith = (ms: Roi[]) => {
+  // the settings of every model of the last search (the list's own, else those of all)
+  const modelSpecs = useRef<MatchModelSpec[]>([]);
+  const findWith = (ms: Roi[], specs: MatchModelSpec[] = ms.map((r) => specOf(r.id))) => {
     models.current = ms;
-    const { fit, ...opts } = matchOpts;
-    const shaped = (opts.context ?? 'disc') !== 'disc';
+    modelSpecs.current = specs;
+    const { fit, models: _list, ...opts } = matchOpts;
     const q: MatchRequest = {
       type: 'match',
       steps,
       ...(crop ? { crop } : {}),
       ...(train.length ? { train } : {}),
-      models: ms.map((r) => {
+      models: ms.map((r, j) => {
         const [cx, cy] = roiCentre(r);
-        return { cx: cx - ox, cy: cy - oy, R: modelRadius(r), ...(fit && r.box ? { box: { w: r.box[2], h: r.box[3], angle: r.angle ?? 0 } } : {}), ...(shaped ? { poly: roiOutline(r).map(([x, y]): Pt => [x - ox, y - oy]) } : {}) };
+        const sp = specs[j] ?? specOf(r.id);
+        const shaped = (sp.context ?? 'disc') !== 'disc';
+        const own = { context: sp.context ?? 'disc', ...(sp.ring !== undefined ? { ring: sp.ring } : {}), ...(sp.symmetry ? { symmetry: sp.symmetry } : {}), ...(sp.sizes !== undefined ? { sizes: sp.sizes } : {}) };
+        return { cx: cx - ox, cy: cy - oy, R: modelRadius(r), ...(fit && r.box ? { box: { w: r.box[2], h: r.box[3], angle: r.angle ?? 0 } } : {}), ...(shaped ? { poly: roiOutline(r).map(([x, y]): Pt => [x - ox, y - oy]) } : {}), opts: own };
       }),
       // (every match down to a floor: the least similarity is then changed live)
       opts: { ...opts, min: Math.min(opts.min, MATCH_FLOOR) },
@@ -461,9 +504,17 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     worker.current?.postMessage(q);
   };
   const findLikePicked = () => {
+    // (the list of models when there is one; else the selection picked, with its group)
+    if (modelList.length) return findWith(modelList.map((m) => rois.find((r) => r.id === m.roi)!), modelList.map((m) => specOf(m.roi)));
     const t = rois.find((r) => r.id === sel && isArea(r) && !r.train);
     if (!t) return setPartMsg('pick a selection around one particle first');
     findWith(modelsOf(t));
+  };
+  // the selection picked added to the list of models, with the settings of all
+  const addModel = () => {
+    const t = rois.find((r) => r.id === sel && isArea(r) && !r.train);
+    if (!t || modelList.some((m) => m.roi === t.id)) return;
+    setModels([...modelList, { roi: t.id, context: matchOpts.context ?? 'disc', ring: matchOpts.ring, symmetry: matchOpts.symmetry, sizes: matchOpts.sizes }]);
   };
   // again, with the particles found as models too: the least alike of them (they differ most from the first model)
   const findMore = () => {
@@ -471,8 +522,33 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     if (!lm) return;
     const found = rois.filter((r) => r.auto && r.id.startsWith(`m${lm.seq}-`));
     const score = (r: Roi) => lm.list[Number(r.id.split('-')[1])]?.score ?? 1;
-    const more = [...found].sort((a, b) => score(a) - score(b)).slice(0, 4).map((r) => ({ ...r, auto: undefined }));
-    findWith([...lm.ms, ...more]);
+    const more = [...found].sort((a, b) => score(a) - score(b)).slice(0, 4);
+    // (each with the settings of the model it was found by)
+    const specOf2 = (r: Roi) => ({ ...lm.specs[lm.list[Number(r.id.split('-')[1])]?.model ?? 0], roi: r.id });
+    findWith([...lm.ms, ...more.map((r) => ({ ...r, auto: undefined }))], [...lm.specs, ...more.map(specOf2)]);
+  };
+  // Layers: the particles given, each its layer (1: nothing on it) and the colour of its layer
+  const LAYER_COLORS = ['#30d158', '#ff9f0a', '#ff453a', '#bf5af2', '#64d2ff'];
+  const layersFor = (list: Roi[]) => {
+    const parts = list.filter((r) => isArea(r));
+    if (!parts.length || !base) return;
+    const g = base.ch.length === 1 ? base.ch[0] : luminance(base);
+    const res = estimateLayers(parts.map((r) => roiOutline(r).map(([x, y]): Pt => [x - ox, y - oy])), g, base.w, base.h);
+    const of = new Map(parts.map((r, k) => [r.id, res.layer[k]]));
+    updateNodeData(id, (n) => ({ rois: ((n.data as ImageAnalysisData).rois ?? []).map((r) => (of.has(r.id) ? { ...r, layer: of.get(r.id), color: LAYER_COLORS[(of.get(r.id)! - 1) % LAYER_COLORS.length] } : r)) }));
+    const counts = res.layer.reduce<Record<number, number>>((a, l) => ((a[l] = (a[l] ?? 0) + 1), a), {});
+    setPartMsg(`layers: ${Object.entries(counts).map(([l, c]) => `${c} in layer ${l}`).join(', ')}`);
+  };
+  // Refine: the particles found (but those changed by hand, unless asked) made regular shapes; the answer applied to
+  // the same particles (by their ids, kept while it works)
+  const refining = useRef<string[]>([]);
+  const refineParticles = (alsoHand: boolean) => {
+    const list = rois.filter((r) => r.auto && (alsoHand || !r.hand));
+    if (!list.length) return setPartMsg('find particles first');
+    refining.current = list.map((r) => r.id);
+    const q: RefineRequest = { type: 'refine', steps, ...(crop ? { crop } : {}), ...(train.length ? { train } : {}), outlines: list.map((r) => roiOutline(r).map(([x, y]): Pt => [x - ox, y - oy])), shapes: data.particles?.shapes ?? REGULAR_SHAPES, snap: data.particles?.snap ?? true };
+    setPartMsg('refining…');
+    worker.current?.postMessage(q);
   };
   const findParticles = () => {
     const q: ParticlesRequest = { type: 'particles', steps, ...(crop ? { crop } : {}), ...(train.length ? { train } : {}), opts: partOpts };
@@ -556,6 +632,9 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       }
       case 'wand':
         w?.postMessage({ type: 'wand', x: p[0], y: p[1], tol: wandTol });
+        return;
+      case 'rays':
+        w?.postMessage({ type: 'rays', x: p[0], y: p[1], ...(raysOf === 'auto' ? {} : { light: raysOf === 'bright' }) });
         return;
       case 'stamp': {
         const tpl = rois.find((r) => r.id === sel && isArea(r));
@@ -738,7 +817,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       else setDraft(null);
     }
     if ((d?.kind === 'move' || d?.kind === 'handle') && draft) {
-      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 1) commit(draft);
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 1) commit(draft.auto ? { ...draft, hand: true } : draft);
       else setDraft(null);
     }
     // (a click on the image, not on a selection: none picked)
@@ -838,7 +917,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     else if (e.key.startsWith('Arrow') && picked) {
       const m = e.shiftKey ? 10 : 1;
       const [dx, dy] = { ArrowLeft: [-m, 0], ArrowRight: [m, 0], ArrowUp: [0, -m], ArrowDown: [0, m] }[e.key] ?? [0, 0];
-      setRois(rois.map((r) => (r.id === picked.id ? moveRoi(r, dx, dy) : r)));
+      setRois(rois.map((r) => (r.id === picked.id ? { ...moveRoi(r, dx, dy), ...(r.auto ? { hand: true } : {}) } : r)));
     } else if (e.key === 'b' || e.key === 'B') setHeld(true);
     else if (e.key === '\\') setCmp(cmp === 'original' ? 'edited' : 'original');
     else if (e.key === 'y' || e.key === 'Y') setCmp(cmp === 'side' ? 'edited' : 'side');
@@ -882,7 +961,8 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   // Find like this: around the selection picked, what is compared (a disc; the particle and its edge; the particle and
   // the ground out to the ring, whose handle drags it); the matches left out by hand, faint (a click puts one back)
   const modelPicked = !onOriginal && rois.find((r) => r.id === sel && isArea(r) && !r.train);
-  const context = matchOpts.context ?? 'disc';
+  const pickedSpec = modelPicked ? specOf(modelPicked.id) : null;
+  const context = pickedSpec?.context ?? 'disc';
   const dragRing = (e: RPointerEvent) => {
     if (!modelPicked) return;
     e.stopPropagation();
@@ -890,7 +970,10 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     const outline = roiOutline(modelPicked);
     const move = (m: PointerEvent) => {
       const q = toOrig(imgAt(m));
-      setMatch({ ring: Math.max(1, Math.round(offsetDistance(outline, q))) });
+      const ring = Math.max(1, Math.round(offsetDistance(outline, q)));
+      // (a model of the list: its own ring; else that of all)
+      if (modelList.some((m) => m.roi === modelPicked.id)) setModels(modelList.map((m) => (m.roi === modelPicked.id ? { ...m, ring } : m)));
+      else setMatch({ ring });
     };
     const up = () => {
       window.removeEventListener('pointermove', move);
@@ -910,7 +993,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
         </svg>
       );
     }
-    const d = context === 'alone' ? Math.max(EDGE_BAND, matchOpts.ring ?? 6) : EDGE_BAND;
+    const d = context === 'alone' ? Math.max(EDGE_BAND, pickedSpec?.ring ?? 6) : EDGE_BAND;
     const off = offsetOutline(roiOutline(modelPicked), d);
     const top = off.reduce((a, b) => (b[1] < a[1] ? b : a), off[0]);
     return (
@@ -1195,6 +1278,8 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
             setRings={setRings}
             wandTol={wandTol}
             setWandTol={setWandTol}
+            raysOf={raysOf}
+            setRaysOf={setRaysOf}
             centre={centre}
             setCentre={setCentre}
             duplicate={duplicate}
@@ -1221,10 +1306,28 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
             })()}
             findLike={findLikePicked}
             setMin={setMatchMin}
+            modelList={modelList.map((m) => ({ ...specOf(m.roi), name: rois.find((r) => r.id === m.roi)?.name ?? '?' }))}
+            canAdd={!!rois.find((r) => r.id === sel && isArea(r) && !r.train && !modelList.some((m) => m.roi === r.id))}
+            addModel={addModel}
+            setModel={(k, p) => setModels(modelList.map((m, j) => (j === k ? { ...m, ...p } : m)))}
+            removeModel={(k) => setModels(modelList.filter((_, j) => j !== k))}
+            pickModel={(k) => setSel(modelList[k]?.roi ?? sel)}
+            modelColors={MODEL_COLORS}
             review={review}
             setReview={setReview}
             canMore={!!lastMatch.current && rois.some((r) => r.auto)}
             findMore={findMore}
+            refine={refineParticles}
+            shapes={data.particles?.shapes ?? REGULAR_SHAPES}
+            setShapes={(shapes) => setPart({ shapes: shapes.length === REGULAR_SHAPES.length ? undefined : shapes })}
+            snap={data.particles?.snap ?? true}
+            setSnap={(snap) => setPart({ snap: snap ? undefined : false })}
+            handCount={rois.filter((r) => r.auto && r.hand).length}
+            layers={!!data.particles?.layers}
+            setLayers={(on) => {
+              setPart({ layers: on || undefined });
+              if (on) layersFor(rois.filter((r) => r.auto));
+            }}
           />
           <MeasurePanel spec={spec} set={setSpec} steps={steps} rgb={(base?.ch.length ?? 1) === 3} rois={rois} book={book} sheet={sheet} setSheet={setSheet} pick={(name) => setSel(rois.find((r) => r.name === name)?.id ?? sel)} />
           <div className="ie-section">Keys</div>
