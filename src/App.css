@@ -1637,3 +1637,7 @@ input[type='checkbox'], input[type='radio'] { box-shadow: none; }
 .eis-ghost { position: fixed; z-index: 100000; pointer-events: none; padding: 2px 6px; border-radius: 4px; background: #1971c2; color: #ffffff; font-size: 12px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3); }
 .eis-ghost.del { background: #e03131; }
 .node-eis .eis-rangefit { margin: 4px 0; padding: 3px 0; border-top: 1px solid var(--border); }
+.image-editor .ie-paint { gap: 4px; align-items: center; padding: 2px 4px; border-radius: 4px; background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.image-editor .ie-paint input { width: 48px; }
+.image-editor .ie-class-row, .image-editor .ie-paint { display: flex; flex-wrap: nowrap; }
+.image-editor .ie-class-row .grow, .image-editor .ie-paint .grow { flex: 1; min-width: 0; }

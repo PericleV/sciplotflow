@@ -8,7 +8,7 @@ import { ringMask, roiMask, traceOutline, wand, polygonArea, type Roi } from '..
 import { alignment, findParticles, groupLikeExamples, minAreaRect, PARTICLE_DEFAULTS, shapeFeatures, shapeName, tracedPerimeter } from '../src/image/particles.ts';
 import { findLike, fitBox, MATCH_DEFAULTS } from '../src/image/match.ts';
 import { clustersImage, cubesImage, shapesImage, textureImage, type TestImage } from '../src/image/testImages.ts';
-import type { TrainExample } from '../src/image/classify.ts';
+import { edgeRing, type TrainExample } from '../src/image/classify.ts';
 import { bilateral, entropyFilter, gabor, gradient, hessianEigen, laplace, laplacianOfGaussian, lbp, meanFilter, medianFilter, minMaxFilter, nonLocalMeans, rollingBall, varianceFilter } from '../src/image/filters.ts';
 import { closing, distanceMap, fillHoles, label, opening, separate, skeleton } from '../src/image/morph.ts';
 import { canny } from '../src/image/canny.ts';
@@ -522,6 +522,49 @@ export function checkImage(ok: Ok) {
     const byForest = findParticles(a.r.ch[0], tx.w, tx.h, { ...PARTICLE_DEFAULTS, minSize: 60 }).found;
     const none = applySteps(r, [step], 1, undefined, 1, { train: train.slice(0, 4) });
     ok(a.r.kind === 'mask' && Math.abs(byForest - tx.truth.length) <= 1 && Math.abs(byOtsu - tx.truth.length) > 3 && a.r.ch[0].every((v, i) => v === b.r.ch[0][i]) && /^object: \d+ px, background: \d+ px → object$/.test(a.notes.c ?? '') && /two classes/.test(none.errors.c ?? ''), `trainable classifier: ${byForest} textured particles of ${tx.truth.length} from 4 lines and 3 background examples (Otsu: ${byOtsu} pieces); the same twice; one class only: said (${a.notes.c})`);
+  }
+  // the classifier on nanocubes touching (a gap of a pixel): three outlined, the edges made from their outlines, the
+  // objects split by the edges — every cube apart, its size; without edges the clusters stay whole; where it hesitates
+  {
+    const t = cubesImage();
+    const r: Raster = { w: t.w, h: t.h, ch: [Float32Array.from(t.px)], kind: 'gray', lo: 0, hi: 255 };
+    const sq = (q: (typeof t.truth)[number]): [number, number][] => {
+      const a = (-q.angle! * Math.PI) / 180;
+      const h = q.side! / 2;
+      return ([[-h, -h], [h, -h], [h, h], [-h, h]] as [number, number][]).map(([u, v]) => [q.cx + u * Math.cos(a) - v * Math.sin(a), q.cy + u * Math.sin(a) + v * Math.cos(a)]);
+    };
+    const train: TrainExample[] = [
+      ...t.truth.filter((q) => q.cluster !== undefined).slice(0, 3).map((q): TrainExample => ({ cls: 'object', pts: sq(q), line: false, width: 1 })),
+      { cls: 'background', pts: [[5, 5], [60, 5], [60, 15], [5, 15]], line: false, width: 1 },
+      { cls: 'background', pts: [[400, 340], [470, 340], [470, 355], [400, 355]], line: false, width: 1 },
+    ];
+    const step = (p: Record<string, unknown>) => ({ ...newStep('classify', 'c'), p: { ...newStep('classify', 'c').p, ...p } });
+    const count = (p: Record<string, unknown>) => {
+      const a = applySteps(r, [step(p)], 1, undefined, 1, { train });
+      return { a, f: findParticles(a.r.ch[0], t.w, t.h, { ...PARTICLE_DEFAULTS, minSize: 40 }) };
+    };
+    const plain = count({ edges: 0, output: 'mask' });
+    const old = count({ edges: undefined, output: 'mask' });
+    const split = count({ output: 'split' });
+    const errs: number[] = [];
+    for (const q of t.truth) {
+      const o = split.f.outlines.find((pts) => Math.hypot(pts.reduce((m, p) => m + p[0], 0) / pts.length - q.cx, pts.reduce((m, p) => m + p[1], 0) / pts.length - q.cy) < q.side! * 0.4);
+      if (o) errs.push(Math.abs(Math.sqrt(polygonArea(o)) / q.side! - 1));
+    }
+    errs.sort((x, y) => x - y);
+    const med = errs[errs.length >> 1];
+    const unsure = applySteps(r, [step({ output: 'uncertainty' })], 1, undefined, 1, { train }).r.ch[0];
+    const at = (x: number, y: number) => unsure[Math.round(y) * t.w + Math.round(x)];
+    // (sure inside the cubes, hesitating somewhere: at their edges)
+    const sureInside = t.truth.filter((q) => at(q.cx, q.cy) < 0.5).length;
+    ok(
+      plain.f.found < 25 && old.f.found === plain.f.found && split.f.found >= 46 && split.f.found <= 48 && errs.length >= 45 && med < 0.03 && /edge: \d+ px → object; \d+ objects$/.test(split.a.notes.c ?? '') && unsure.every((v) => v >= 0 && v <= 1) && sureInside >= 0.9 * t.truth.length && unsure.reduce((m, v) => Math.max(m, v), 0) > 0.5,
+      `classifier: 3 nanocubes outlined, the edges from their outlines, split by edges: ${split.f.found} of ${t.truth.length} apart (a mask without edges: ${plain.f.found}; an older step: none made); their side within ${(med * 100).toFixed(1)} % (median); sure inside ${sureInside} of them, hesitating at the edges`,
+    );
+    // the ring: around a square outlined 2 px wide outside it, none inside; the gap between two touching ones in it
+    const ring = edgeRing([{ cls: 'o', pts: [[10, 10], [20, 10], [20, 20], [10, 20]], line: false, width: 1 }, { cls: 'o', pts: [[21, 10], [31, 10], [31, 20], [21, 20]], line: false, width: 1 }], 'o', 2, 40, 30);
+    const has = (x: number, y: number) => ring.includes(y * 40 + x);
+    ok(has(20, 15) && has(9, 15) && has(8, 15) && !has(7, 15) && !has(15, 15) && !has(25, 15), 'classifier: edges from outlines, a ring just outside them and the gap between two touching');
   }
   // nanocubes touching side to side (their place, side and turn known): found like one of them, at any turn, their
   // edges fitted; the mask cut along the dark lines between them; their smallest rectangle, its turn and the alignment

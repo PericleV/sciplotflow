@@ -9,6 +9,7 @@ import { fillPolygon, isArea, roiOutline, type Pt, type Roi } from './roi.ts';
 
 // the colours of the classes (their examples drawn in them)
 export const CLASS_COLORS = ['#ff453a', '#0a84ff', '#30d158', '#ffd60a', '#bf5af2', '#ff9f0a', '#64d2ff'];
+export const classColor = (classes: string[], c: string) => CLASS_COLORS[Math.max(0, classes.indexOf(c)) % CLASS_COLORS.length];
 // an example: its class, its outline (an area) or its line (pixels along it, `width` across), in pixels of the image
 // classified
 export type TrainExample = { cls: string; pts: Pt[]; line: boolean; width: number };
@@ -26,7 +27,8 @@ export function trainingExamples(rois: Roi[], ox: number, oy: number): TrainExam
 
 // ---- the features ----
 
-const SIGMAS = [1, 2, 4, 8];
+// (16: large particles on an enlarged image)
+const SIGMAS = [1, 2, 4, 8, 16];
 // every pixel's features (scale: the image is a preview shrunk by it — the scales shrunk with it)
 export function pixelFeatures(r: Raster, scale = 1): { names: string[]; f: Float32Array[] } {
   const { w, h } = r;
@@ -74,8 +76,49 @@ export function pixelFeatures(r: Raster, scale = 1): { names: string[]; f: Float
   return { names, f };
 }
 
-// the pixels of every example (an area: inside it; a line: along it, its width across), by class
-export function examplePixels(ex: TrainExample[], w: number, h: number): Map<string, number[]> {
+// Edges made from the outlines of the objects: the pixels just outside every area example of the class `from` (within
+// `ring` px of it, inside none of them) — the ring around a particle outlined, and the gap where two outlined ones touch
+export function edgeRing(ex: TrainExample[], from: string, ring: number, w: number, h: number): number[] {
+  const areas = ex.filter((e) => e.cls === from && !e.line);
+  if (!areas.length || !(ring > 0)) return [];
+  const inside = new Uint8Array(w * h);
+  let [x0, y0, x1, y1] = [w, h, -1, -1];
+  for (const e of areas) {
+    const win = fillPolygon(e.pts, w, h);
+    for (let y = 0; y < win.h; y++)
+      for (let x = 0; x < win.w; x++)
+        if (win.m[y * win.w + x]) {
+          const [gx, gy] = [win.x0 + x, win.y0 + y];
+          inside[gy * w + gx] = 1;
+          [x0, y0, x1, y1] = [Math.min(x0, gx), Math.min(y0, gy), Math.max(x1, gx), Math.max(y1, gy)];
+        }
+  }
+  if (x1 < 0) return [];
+  // (the offsets of a disc of the ring's radius)
+  const R = Math.ceil(ring);
+  const disc: [number, number][] = [];
+  for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) if ((dx || dy) && Math.hypot(dx, dy) <= ring + 0.5) disc.push([dx, dy]);
+  const out: number[] = [];
+  for (let y = Math.max(0, y0 - R); y <= Math.min(h - 1, y1 + R); y++)
+    for (let x = Math.max(0, x0 - R); x <= Math.min(w - 1, x1 + R); x++) {
+      if (inside[y * w + x]) continue;
+      for (const [dx, dy] of disc) {
+        const [u, v] = [x + dx, y + dy];
+        if (u >= 0 && v >= 0 && u < w && v < h && inside[v * w + u]) {
+          out.push(y * w + x);
+          break;
+        }
+      }
+    }
+  return out;
+}
+
+// the class the edges made from the outlines go to: the one named edge (or border), else “edge”
+export const edgeClassOf = (classes: string[]) => classes.find((c) => /^(edge|border)/i.test(c)) ?? 'edge';
+
+// the pixels of every example (an area: inside it; a line: along it, its width across), by class; auto: edges made
+// from the outlines of the class `from` (edgeRing), added to the class `to`
+export function examplePixels(ex: TrainExample[], w: number, h: number, auto?: { from: string; to: string; ring: number }): Map<string, number[]> {
   const out = new Map<string, number[]>();
   for (const e of ex) {
     const list = out.get(e.cls) ?? [];
@@ -105,6 +148,10 @@ export function examplePixels(ex: TrainExample[], w: number, h: number): Map<str
           }
       }
     }
+  }
+  if (auto && auto.ring > 0) {
+    const ring = edgeRing(ex, auto.from, auto.ring, w, h);
+    if (ring.length) out.set(auto.to, [...new Set([...(out.get(auto.to) ?? []), ...ring])]);
   }
   return out;
 }
@@ -221,9 +268,10 @@ export function predictForest(forest: Forest, f: Float32Array[], n: number): Flo
 }
 
 // The classes of the examples (in the order first met), the forest trained on at most `perClass` pixels of each, the
-// share of the votes for every class at every pixel; null with fewer than two classes of examples
-export function classifyPixels(r: Raster, ex: TrainExample[], o: { trees: number; scale?: number; perClass?: number; seed?: number }): { classes: string[]; prob: Float32Array[]; samples: number[] } | null {
-  const px = examplePixels(ex, r.w, r.h);
+// share of the votes for every class at every pixel; null with fewer than two classes of examples. auto: edges made
+// from the outlines (examplePixels)
+export function classifyPixels(r: Raster, ex: TrainExample[], o: { trees: number; scale?: number; perClass?: number; seed?: number; auto?: { from: string; to: string; ring: number } }): { classes: string[]; prob: Float32Array[]; samples: number[] } | null {
+  const px = examplePixels(ex, r.w, r.h, o.auto);
   const classes = [...px.keys()].filter((c) => (px.get(c)?.length ?? 0) > 0);
   if (classes.length < 2) return null;
   const { f } = pixelFeatures(r, o.scale ?? 1);
@@ -253,4 +301,116 @@ export function classifyPixels(r: Raster, ex: TrainExample[], o: { trees: number
   });
   const forest = trainForest(x, Uint8Array.from(lab), classes, { trees: Math.max(1, Math.round(o.trees)), depth: 14, minLeaf: 2, seed: o.seed ?? 7 });
   return { classes, prob: predictForest(forest, f, r.w * r.h), samples };
+}
+
+// ---- what is made of the votes ----
+
+// Where the forest hesitates: 1 − (the share of the class most voted − that of the next), 0 … 1 (high: an example
+// there teaches it most)
+export function uncertainty(prob: Float32Array[]): Float32Array {
+  const n = prob[0]?.length ?? 0;
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let [a, b] = [0, 0];
+    for (const p of prob) {
+      const v = p[i];
+      if (v > a) [a, b] = [v, a];
+      else if (v > b) b = v;
+    }
+    out[i] = Math.min(1, Math.max(0, 1 - (a - b)));
+  }
+  return out;
+}
+
+// The objects split by the edges: seeds where the target class is sure (most votes and few for the edge class), grown
+// over the pixels of the target or the edge class in the order of the edge's share (a watershed on it: two objects
+// meet on its crest), then the pixels of the target class kept, a line of none where two objects meet (so they are not
+// joined, not even by a corner). Without an edge class: the target's pixels, those of two seeds kept apart all the same.
+export function splitByEdges(prob: Float32Array[], target: number, edge: number, w: number, h: number): { mask: Float32Array; objects: number } {
+  const n = w * h;
+  const best = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    let b = 0;
+    for (let c = 1; c < prob.length; c++) if (prob[c][i] > prob[b][i]) b = c;
+    best[i] = b;
+  }
+  const pe = edge >= 0 ? prob[edge] : new Float32Array(n);
+  const region = (i: number) => best[i] === target || (edge >= 0 && best[i] === edge);
+  // the seeds: the sure pixels of the target, joined (4-neighbours); the tiny ones left out
+  const label = new Int32Array(n);
+  const sure = (i: number) => best[i] === target && pe[i] < 0.25;
+  let objects = 0;
+  const stack: number[] = [];
+  for (let s = 0; s < n; s++) {
+    if (label[s] || !sure(s)) continue;
+    const id = ++objects;
+    const members = [s];
+    label[s] = id;
+    stack.push(s);
+    while (stack.length) {
+      const i = stack.pop()!;
+      const [x, y] = [i % w, (i / w) | 0];
+      for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1])
+        if (j >= 0 && !label[j] && sure(j)) {
+          label[j] = id;
+          members.push(j);
+          stack.push(j);
+        }
+    }
+    if (members.length < 4) {
+      for (const i of members) label[i] = -1;
+      objects--;
+    }
+  }
+  // (the labels numbered again without the tiny seeds)
+  const renum = new Map<number, number>();
+  for (let i = 0; i < n; i++) if (label[i] > 0) label[i] = renum.get(label[i]) ?? (renum.set(label[i], renum.size + 1), renum.size);
+  for (let i = 0; i < n; i++) if (label[i] < 0) label[i] = 0;
+  // the watershed: a queue by the edge's share (256 levels), the lowest first
+  const buckets: number[][] = Array.from({ length: 256 }, () => []);
+  const lvl = (i: number) => Math.min(255, Math.max(0, Math.round(pe[i] * 255)));
+  const queued = new Uint8Array(n);
+  const push = (i: number) => {
+    if (!queued[i]) {
+      queued[i] = 1;
+      buckets[lvl(i)].push(i);
+    }
+  };
+  for (let i = 0; i < n; i++) if (label[i]) push(i);
+  for (let b = 0; b < 256; b++) {
+    const q = buckets[b];
+    for (let k = 0; k < q.length; k++) {
+      const i = q[k];
+      const [x, y] = [i % w, (i / w) | 0];
+      for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1]) {
+        if (j < 0 || label[j] || !region(j)) continue;
+        label[j] = label[i];
+        // (a pixel lower than the one it came from: taken at this level, so the flood keeps to the valley)
+        if (lvl(j) <= b) {
+          queued[j] = 1;
+          q.push(j);
+        } else push(j);
+      }
+    }
+    q.length = 0;
+  }
+  // the target's pixels of an object, none where an 8-neighbour belongs to another object
+  const mask = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    if (!label[i] || best[i] !== target) continue;
+    const [x, y] = [i % w, (i / w) | 0];
+    let apart = true;
+    for (let dy = -1; dy <= 1 && apart; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        const [u, v] = [x + dx, y + dy];
+        if (u < 0 || v < 0 || u >= w || v >= h) continue;
+        const l = label[v * w + u];
+        if (l && l !== label[i] && l < label[i]) {
+          apart = false;
+          break;
+        }
+      }
+    if (apart) mask[i] = 1;
+  }
+  return { mask, objects: renum.size };
 }

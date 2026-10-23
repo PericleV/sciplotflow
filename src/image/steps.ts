@@ -7,7 +7,7 @@ import { autoContrast, balance, brightness, clahe, contrast, curves, equalize, h
 import { closing, dilate, distanceMap, erode, fillHoles, opening, separate, skeleton, topHat } from './morph.ts';
 import { canny } from './canny.ts';
 import { GLOBAL_METHODS, LOCAL_METHODS, globalThreshold, localThreshold, type GlobalMethod, type LocalMethod } from './threshold.ts';
-import { classifyPixels, type TrainExample } from './classify.ts';
+import { classifyPixels, edgeClassOf, splitByEdges, uncertainty, type TrainExample } from './classify.ts';
 
 export type StepGroup = 'Tone' | 'Colour' | 'Noise' | 'Background' | 'Edges' | 'Texture' | 'Morphology' | 'Threshold';
 export const STEP_GROUPS: StepGroup[] = ['Tone', 'Colour', 'Noise', 'Background', 'Edges', 'Texture', 'Morphology', 'Threshold'];
@@ -160,9 +160,12 @@ export const STEP_DEFS = {
     params: [
       num('trees', 'Trees', 30, { min: 1, max: 200, step: 1, title: 'The trees of the forest: more, steadier, slower' }),
       num('smooth', 'Smoothing', 2, { min: 0, step: 0.5, unit: 'px', title: 'The classes’ probabilities smoothed before the pixel is given one (fewer stray pixels)' }),
+      num('edges', 'Edges from outlines', 2, { min: 0, max: 10, step: 1, unit: 'px', title: 'A ring this wide just outside every object outlined (an area example of the target class: wand, polygon …) taught as the edge class, and the gap where two outlined objects touch; 0: none' }),
       choice('output', 'Output', 'mask', [
         ['mask', 'a mask of the target class'],
+        ['split', 'objects split by edges'],
         ['probability', 'its probability (0–1)'],
+        ['uncertainty', 'uncertainty (where to add examples)'],
       ]),
     ],
   },
@@ -225,6 +228,8 @@ export type StepCtx = { train?: TrainExample[]; under?: Raster };
 // the classes of a trainable classifier: its own (absent: object, background and edge — the rim just outside a particle
 // and the line between touching ones), then those of its examples; only the classes with examples are learnt
 export const classesOf = (s: ImgStep, train: TrainExample[] = []) => [...new Set([...String(s.p.classes ?? 'object,background,edge').split(',').map((c) => c.trim()).filter(Boolean), ...train.map((e) => e.cls)])];
+// the classes of a classifier step with those of the selections given a class (its examples)
+export const stepClasses = (s: ImgStep, rois: { train?: string }[]) => classesOf(s, rois.filter((r) => r.train).map((r) => ({ cls: r.train!, pts: [], line: false, width: 1 })));
 // the class that makes its mask: the one chosen, else the first that is not background or an edge
 export function targetClass(s: ImgStep, classes: string[]): string {
   const t = String(s.p.target ?? '');
@@ -442,13 +447,27 @@ export function applyStep(r: Raster, s: ImgStep, scale = 1, ctx: StepCtx = {}): 
     }
     case 'classify': {
       const ex = (ctx.train ?? []).map((e) => ({ ...e, pts: e.pts.map(([x, y]): [number, number] => [x * scale, y * scale]), width: Math.max(1, e.width * scale) }));
-      const res = classifyPixels(r, ex, { trees: P<number>('trees'), scale });
-      if (!res) return 'needs examples of two classes: draw selections on the image, then add them to the classes';
-      const k = Math.max(0, res.classes.indexOf(targetClass(s, res.classes)));
+      // (edges from the outlines: absent in a step of an older project, none)
+      const named = classesOf(s, ex);
+      const target = targetClass(s, named);
+      const edgeCls = edgeClassOf(named);
+      const ring = Number(s.p.edges ?? 0) * scale;
+      const res = classifyPixels(r, ex, { trees: P<number>('trees'), scale, ...(ring > 0 ? { auto: { from: target, to: edgeCls, ring } } : {}) });
+      if (!res) return 'needs examples of two classes: paint on the image with a class chosen (or add selections to the classes)';
+      const k = Math.max(0, res.classes.indexOf(target));
       const sm = P<number>('smooth');
       const prob = sm > 0 ? res.prob.map((c) => gaussian(c, w, h, sm)) : res.prob;
-      const note = `${res.classes.map((c, j) => `${c}: ${res.samples[j]} px`).join(', ')} → ${res.classes[k]}`;
-      if (P<string>('output') === 'probability') return { r: gray1(r, prob[k], 0, 1), note };
+      const out = P<string>('output');
+      let note = `${res.classes.map((c, j) => `${c}: ${res.samples[j]} px`).join(', ')} → ${res.classes[k]}`;
+      if (out === 'probability') return { r: gray1(r, prob[k], 0, 1), note };
+      if (out === 'uncertainty') return { r: gray1(r, uncertainty(prob), 0, 1), note: `${note}; bright: where it hesitates` };
+      if (out === 'split') {
+        // (the edge's share as voted: smoothed, a gap of a pixel or two between objects would fade)
+        const e = res.classes.indexOf(edgeCls);
+        const sp = splitByEdges(prob.map((c, j) => (j === e ? res.prob[j] : c)), k, e, w, h);
+        note += `; ${sp.objects} object${sp.objects === 1 ? '' : 's'}${res.classes.includes(edgeCls) ? '' : ' (no edge class: not split)'}`;
+        return { r: mask1(r, sp.mask), note };
+      }
       // (the pixels where the target class has more votes than any other)
       const m = new Float32Array(w * h);
       for (let i = 0; i < m.length; i++) {

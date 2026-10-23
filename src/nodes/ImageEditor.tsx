@@ -12,7 +12,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEven
 import { createPortal } from 'react-dom';
 import { useReactFlow } from '@xyflow/react';
 import type { AppNode, ImageAnalysisData } from '../types.ts';
-import { STEP_DEFS, STEP_GROUPS, newStep, type ImgStep, type StepDef, type StepKind } from '../image/steps.ts';
+import { STEP_DEFS, STEP_GROUPS, newStep, stepClasses, type ImgStep, type StepDef, type StepKind } from '../image/steps.ts';
 import { cropBox, cropRaster, dataBarRows, luminance, unpackPixels, type Crop } from '../image/raster.ts';
 import { unitText } from '../image/node.ts';
 import type { CentreReply, ImgReply, ImgRequest, MatchReply, MatchRequest, MeasureReply, MeasureRequest, ParticlesReply, ParticlesRequest, ValueReply, WandReply } from '../image/imageWorker.ts';
@@ -20,6 +20,7 @@ import { MATCH_DEFAULTS, placeLike, type MatchOpts } from '../image/match.ts';
 import { trainingExamples } from '../image/classify.ts';
 import { groupLikeExamples, PARTICLE_DEFAULTS, SHAPE_COLORS, shapeFeatures, shapeName, type ParticleOpts } from '../image/particles.ts';
 import { ClassifierEditor } from './ClassifierEditor.tsx';
+import { classColor } from '../image/classify.ts';
 import { isArea, moveRoi, roiCentre, roiOutline, TOOL_HINTS, type Pt, type Roi, type RoiKind, type RoiTool } from '../image/roi.ts';
 import { measureSpec, roiPerimeter, type MeasureSpec } from '../image/measure.ts';
 import type { Workbook } from '../engine/table.ts';
@@ -96,7 +97,8 @@ function snapToBar(g: Float32Array, w: number, h: number, lo: number, hi: number
 // ---- the editor ----
 
 type Cmp = 'edited' | 'original' | 'side' | 'split';
-type Tool = 'pan' | 'scale' | 'crop' | RoiTool;
+// (brush: the trainable classifier's strokes, with a class picked)
+type Tool = 'pan' | 'scale' | 'crop' | 'brush' | RoiTool;
 // the selection tools of the toolbar
 const ROI_TOOLS: [RoiTool, typeof Square, string][] = [
   ['rect', Square, 'Rectangle'],
@@ -148,6 +150,9 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const [lut, setLut] = useState<Lut>(data.figure?.lut ?? 'gray');
   const [overlay, setOverlay] = useState(true);
   const [tool, setTool] = useState<Tool>('pan');
+  // the class of the trainable classifier painted (whatever is drawn meanwhile is an example of it) and the brush's width
+  const [paint, setPaintCls] = useState<string | null>(null);
+  const [brush, setBrush] = useState(4);
   const [zoom, setZoom] = useState(0);
   const [pan, setPan] = useState<[number, number]>([0, 0]);
   const [reply, setReply] = useState<ImgReply | null>(null);
@@ -168,7 +173,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const fullGray = useMemo(() => (full ? (full.ch.length === 1 ? full.ch[0] : luminance(full)) : null), [full]);
   const barRows = useMemo(() => (full ? dataBarRows(full) : 0), [full]);
   const onOriginal = tool === 'scale' || tool === 'crop';
-  const roiTool = tool in TOOL_HINTS;
+  const roiTool = tool in TOOL_HINTS || tool === 'brush';
   // the corner of the part analysed in the original (the selections' places are in the original's pixels)
   const [ox, oy] = crop ? [crop[0], crop[1]] : [0, 0];
   // the steps give a mask (its coverage measured)
@@ -323,13 +328,31 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const toOrig = (p: Pt): Pt => [p[0] + ox, p[1] + oy];
   const nextName = (taken: Roi[] = rois) => `R${1 + taken.reduce((m, r) => Math.max(m, Number(/^R(\d+)$/.exec(r.name)?.[1] ?? 0)), 0)}`;
   const newRoi = (kind: RoiKind, extra: Partial<Roi>): Roi => ({ id: `r${Date.now().toString(36)}${(roiSeq++).toString(36)}`, name: nextName(), kind, ...(group ? { group } : {}), ...extra });
-  const commit = (r: Roi) => {
+  // the classifier (its classes give the examples painted their colour)
+  const classifier = steps.find((s) => s.kind === 'classify');
+  const setPaint = (c: string | null) => {
+    setPaintCls(c);
+    if (c) setTool('brush');
+    else if (tool === 'brush') setTool('pan');
+    setDraft(null);
+  };
+  const commit = (r0: Roi) => {
+    // (a new selection while a class is painted: an example of it)
+    const painted = paint && classifier && !rois.some((x) => x.id === r0.id);
+    const r = painted ? { ...r0, train: paint, color: classColor(stepClasses(classifier, rois), paint), group: undefined } : r0;
     putRoi(r);
     setSel(r.id);
     setDraft(null);
   };
   const shownRois = draft ? (rois.some((r) => r.id === draft.id) ? rois.map((r) => (r.id === draft.id ? draft : r)) : [...rois, draft]) : rois;
   const pendingStamp = useRef(new Map<string, Roi>());
+  // the names of the particles found: P1, P2 … but those the selections kept already have (the examples made of them)
+  const particleNames = (n: number) => {
+    const taken = new Set(rois.filter((r) => !r.auto).map((r) => r.name));
+    const out: string[] = [];
+    for (let k = 1; out.length < n; k++) if (!taken.has(`P${k}`)) out.push(`P${k}`);
+    return out;
+  };
   onAnswer.current = (m) => {
     if (m.type === 'measure') {
       if (m.mseq === mseq.current) setBook(m.book);
@@ -340,12 +363,13 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       if (!ms.length) return;
       // (the models' own matches left out: they stay as they are; the others named P1, P2 …, in the group of particles,
       // each the shape of the model it is like)
-      const found: Roi[] = m.matches
-        .filter((q) => !ms.some((t) => Math.hypot(q.x + ox - roiCentre(t)[0], q.y + oy - roiCentre(t)[1]) < 0.5 * modelRadius(t)))
+      const kept = m.matches.filter((q) => !ms.some((t) => Math.hypot(q.x + ox - roiCentre(t)[0], q.y + oy - roiCentre(t)[1]) < 0.5 * modelRadius(t)));
+      const names = particleNames(kept.length);
+      const found: Roi[] = kept
         .map((q, i): Roi => {
           const t = ms[q.model];
           const [tx, ty] = roiCentre(t);
-          const base = { id: `p${Date.now().toString(36)}${i.toString(36)}`, name: `P${i + 1}`, group: partGroup, auto: true, ...(t.color ? { color: t.color } : {}) };
+          const base = { id: `p${Date.now().toString(36)}${i.toString(36)}`, name: names[i], group: partGroup, auto: true, ...(t.color ? { color: t.color } : {}) };
           if (t.box) return { ...base, kind: t.kind, box: [q.x + ox, q.y + oy, q.w ?? t.box[2] * q.scale, q.h ?? t.box[3] * q.scale], angle: (t.angle ?? 0) + q.angle };
           return { ...base, kind: 'polygon', pts: placeLike(roiOutline(t), tx, ty, q.angle, q.scale, q.x + ox, q.y + oy) };
         });
@@ -354,7 +378,8 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     } else if (m.type === 'particles') {
       if (m.error) return setPartMsg(m.error);
       // (those found before replaced; named P1, P2 … in the order met, row after row)
-      const found: Roi[] = m.outlines.map((o, i) => ({ id: `p${Date.now().toString(36)}${i.toString(36)}`, name: `P${i + 1}`, kind: 'traced', pts: o.map(toOrig), group: partGroup, auto: true }));
+      const names = particleNames(m.outlines.length);
+      const found: Roi[] = m.outlines.map((o, i) => ({ id: `p${Date.now().toString(36)}${i.toString(36)}`, name: names[i], kind: 'traced', pts: o.map(toOrig), group: partGroup, auto: true }));
       updateNodeData(id, (n) => ({ rois: [...((n.data as ImageAnalysisData).rois ?? []).filter((r) => !r.auto), ...found] }));
       setSel(null);
       setPartMsg(`${m.found} particle${m.found === 1 ? '' : 's'}${m.found > found.length ? ` (the first ${found.length} kept)` : ''}`);
@@ -436,6 +461,13 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const roiDown = (q: Pt, p: Pt) => {
     const w = worker.current;
     switch (tool) {
+      case 'brush': {
+        // (a stroke: a line as wide as the brush, a point every pixel or so of the screen)
+        const r = newRoi('polyline', { pts: [q], width: brush });
+        setDraft(r);
+        drag.current = { x: 0, y: 0, pan, kind: 'draw', at: q, roi: r };
+        return;
+      }
       case 'rect':
       case 'ellipse':
       case 'line':
@@ -632,7 +664,10 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const onUp = (e: RPointerEvent) => {
     const d = drag.current;
     drag.current = null;
-    if (d?.kind === 'draw' && draft) {
+    if (d?.kind === 'draw' && draft && tool === 'brush' && draft.pts) {
+      // (a click of the brush: a dot)
+      commit(draft.pts.length > 1 ? draft : { ...draft, pts: [draft.pts[0], draft.pts[0]] });
+    } else if (d?.kind === 'draw' && draft) {
       // (a click without a drag draws nothing)
       const big = draft.box ? draft.box[2] * k >= 3 && draft.box[3] * k >= 3 : draft.kind === 'freehand' ? (draft.pts?.length ?? 0) >= 3 : Math.hypot(draft.pts![1][0] - draft.pts![0][0], draft.pts![1][1] - draft.pts![0][1]) * k >= 3;
       if (big) commit(draft);
@@ -725,8 +760,14 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     const picked = rois.find((r) => r.id === sel);
     if (e.key === 'Escape') {
       if (draft) setDraft(null);
+      else if (paint) setPaint(null);
       else if (tool !== 'pan') setTool('pan');
       else onClose();
+    } else if (/^[1-9]$/.test(e.key) && classifier && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // (the classifier's classes: 1, 2, 3 … paints that one; again: stops)
+      const c = stepClasses(classifier, rois)[Number(e.key) - 1];
+      if (!c) return;
+      setPaint(paint === c ? null : c);
     } else if (e.key === 'Enter' && draft) finishDraft();
     else if ((e.key === 'Delete' || e.key === 'Backspace') && picked) removeRoi(picked.id);
     else if ((e.key === 'd' || e.key === 'D') && (e.ctrlKey || e.metaKey) && picked) duplicate();
@@ -905,7 +946,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
                 {s.kind === 'curves' ? (
                   <CurvesEditor p={s.p} rgb={(base?.ch.length ?? 1) === 3} hist={reply?.stepHist[s.id]} set={(key, v) => setStep(s.id, { p: { ...s.p, [key]: v } })} />
                 ) : s.kind === 'classify' ? (
-                  <ClassifierEditor s={s} set={(patch) => setStep(s.id, { p: { ...s.p, ...(patch as ImgStep['p']) } })} rois={rois} sel={sel} setRois={setRois} note={reply?.notes[s.id]} hist={reply?.stepHist[s.id]} />
+                  <ClassifierEditor s={s} set={(patch) => setStep(s.id, { p: { ...s.p, ...(patch as ImgStep['p']) } })} rois={rois} sel={sel} setRois={setRois} note={reply?.notes[s.id]} hist={reply?.stepHist[s.id]} paint={paint} setPaint={setPaint} brush={brush} setBrush={setBrush} />
                 ) : s.kind === 'threshold' ? (
                   <ThresholdEditor p={s.p} hist={reply?.stepHist[s.id]} note={reply?.notes[s.id]} set={(patch) => setStep(s.id, { p: { ...s.p, ...(patch as ImgStep['p']) } })} />
                 ) : (
