@@ -159,6 +159,7 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
   return (
     <div
       className={`node node-import${over ? ' drop-over' : ''}`}
+      style={data.look?.w ? { width: data.look.w } : undefined}
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes('Files')) return;
         e.preventDefault();
@@ -213,7 +214,7 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
       )}
       {r?.outputs.out?.t === 'dataset' && r.view.sheet && (
         <>
-          <Worksheet key={shownSheet?.name ?? ''} dataset={r.outputs.out.v} map={r.view.sheet} edits={edits} onEdits={setEdits} />
+          <Worksheet key={shownSheet?.name ?? ''} dataset={r.outputs.out.v} map={r.view.sheet} edits={edits} onEdits={setEdits} look={data.look} onLook={(look) => set({ look })} />
           {sheets.length > 1 && (
             <div className="sheet-tabs nowheel" title="The sheet shown here and given on the “dataset” output (the “workbook” output gives all of them)">
               {sheets.map((x, j) => (
@@ -725,7 +726,7 @@ const RENAME_LABEL: Record<RenameHow, string> = { list: 'new names, in order', r
 const RENAME_CLEAR: Record<RenameHow, Partial<ColumnsData>> = { list: { names: undefined }, replace: { find: '', replace: '' }, affix: { prefix: '', suffix: '' }, row: { namesRow: 0 }, column: { namesFrom: undefined } };
 const RENAME_HOWS = Object.keys(RENAME_LABEL) as RenameHow[];
 
-// Rename several columns in Columns: one way on screen at a time (the others set before stay on, listed under it), the
+// Rename columns in Columns: one way on screen at a time (the others set before stay on, listed under it), the
 // names before → after
 function RenameSeveral({ data, set, lines, head, refOptions }: { data: ColumnsData; set: (p: Partial<ColumnsData>) => void; lines: ColumnLine[]; head?: { names: string[]; rows: string[][] }; refOptions: [string, string][] }) {
   const on: Record<RenameHow, boolean> = {
@@ -743,10 +744,10 @@ function RenameSeveral({ data, set, lines, head, refOptions }: { data: ColumnsDa
   const row = data.namesRow ?? 0;
   return (
     <details className="sub">
-      <summary>Rename several columns</summary>
+      <summary>Rename columns</summary>
       <div className="col-form">
         <span>How</span>
-        <Select<RenameHow> value={how} options={RENAME_HOWS.map((k): [RenameHow, string] => [k, `${RENAME_LABEL[k]}${on[k] ? ' ✓' : ''}`])} onChange={setHow} />
+        <Select<RenameHow> value={how} options={RENAME_HOWS.map((k): [RenameHow, string] => [k, RENAME_LABEL[k]])} onChange={setHow} />
         {(how === 'list' || how === 'replace' || how === 'affix') && (
           <>
             <span title="The columns these changes apply to (a name written by hand on a column wins)">Columns</span>
@@ -1042,7 +1043,7 @@ export function ColumnsNodeView({ id, data: nodeData }: NodeProps<ColumnsNode>) 
                 {lineLetter(k)}
               </span>
               <input className="nodrag" type="checkbox" checked={L.keep} title="Kept (untick: left out — a formula may still use it)" onChange={(e) => setItem(L.from, { keep: e.target.checked ? undefined : false })} />
-              {picking && (L.computed ? <span /> : <input className="nodrag pick" type="checkbox" checked={picked.includes(L.from)} title="Renamed with the others ticked (Rename several columns)" onChange={(e) => setPick(L.from, e.target.checked)} />)}
+              {picking && (L.computed ? <span /> : <input className="nodrag pick" type="checkbox" checked={picked.includes(L.from)} title="Renamed with the others ticked (Rename columns)" onChange={(e) => setPick(L.from, e.target.checked)} />)}
               {L.computed ? (
                 <TextInput value={computed.find((c) => `=${c.id}` === L.from)?.name ?? L.name} placeholder={L.name} title="The name of the column added (its settings below)" onChange={(name) => setComputed(L.from.slice(1), { name })} />
               ) : (

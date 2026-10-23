@@ -101,12 +101,16 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
         }
       : undefined;
   const addSheet = (s: BookSheet) => set({ sheets: [...own, s], sheet: own.length });
+  // a sheet of its own removed (asked first when it holds a table); one of the inputs taken out of the workbook (the input
+  // stays as it is; Show hidden sheets brings it back)
   const removeSheet = async (j: number) => {
     const s = own[j];
-    if (names.length < 2) return;
+    const next = Math.max(0, Math.min(k, names.length - 2));
+    if (!s) return set({ hideSheets: [...new Set([...(data.hideSheets ?? []), names[j]])], sheet: next });
     if ((s.text || s.edits?.cells) && !(await ask(`Remove the sheet “${s.name}” and its table?`, { ok: 'Remove', danger: true }))) return;
-    set({ sheets: own.filter((_, i) => i !== j), sheet: Math.max(0, Math.min(k, own.length - 2)) });
+    set({ sheets: own.filter((_, i) => i !== j), sheet: next });
   };
+  const hiddenSheets = r?.view.book?.hiddenSheets ?? [];
   const rename = (j: number, name: string) => {
     const nm = name.trim();
     setRenaming(null);
@@ -137,7 +141,7 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
     setEdges((es) => es.filter((e) => !(e.target === id && /^in-\d+$/.test(e.targetHandle ?? ''))));
   };
   return (
-    <div className="node node-book">
+    <div className="node node-book" style={data.look?.w ? { width: data.look.w } : undefined}>
       {Array.from({ length: count }, (_, j) => {
         const inp = ins.get(columnLetter(j));
         return (
@@ -199,6 +203,8 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
           onEdits={(e: SheetEdits) => !viewOnly && setSheet(k, { edits: e })}
           readOnly={viewOnly}
           layout={layout}
+          look={data.look}
+          onLook={(look) => set({ look })}
           onRole={kinds[k] !== 'own' ? (j, role) => setRole(names[k], ds.columns[j]?.name, role) : undefined}
           plain
         />
@@ -222,10 +228,10 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
           ) : (
             <button key={j} className={`nodrag${j === k ? ' on' : ''}`} onClick={() => set({ sheet: j })} onDoubleClick={() => j < own.length && setRenaming(j)}>
               {kinds[j] === 'own' ? nm : `⇢ ${nm}`}
-              {j < own.length && j === k && names.length > 1 && (
+              {(names.length > 1 || j >= own.length) && (
                 <span
                   className="sheet-tab-x"
-                  title="Remove this sheet"
+                  title={j < own.length ? 'Remove this sheet' : 'Take this sheet of the inputs out of the workbook (the input stays as it is; Show hidden sheets brings it back)'}
                   onClick={(e) => {
                     e.stopPropagation();
                     removeSheet(j);
@@ -240,6 +246,11 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
         <button className="nodrag" title="A new empty sheet (2 columns × 10 rows)" onClick={() => addSheet(newSheet(freeName(names.map((name) => ({ name })))))}>
           +
         </button>
+        {hiddenSheets.length > 0 && (
+          <button className="nodrag" title={`Taken out: ${hiddenSheets.join(', ')}`} onClick={() => set({ hideSheets: undefined })}>
+            Show {hiddenSheets.length} hidden sheet{hiddenSheets.length === 1 ? '' : 's'}
+          </button>
+        )}
       </div>
       <Messages result={r} />
       <OutPort label={names[k] ? `dataset (${names[k]})` : 'dataset'} port="dataset" />

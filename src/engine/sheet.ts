@@ -16,6 +16,9 @@ export type SheetEdits = {
   order?: number[]; // the columns (by their place as read) in the order shown — moved with the mouse; others after them
   rowOrder?: number[]; // the rows (by their place as read) in the order shown — a row inserted between; others after them
 };
+// How the worksheet of an Import or a Workbook is drawn: the node's width and the table's height (dragged at its corner),
+// the rows' height (one for all), every column's width (by its name). Pixels of the canvas; absent: the defaults.
+export type SheetLook = { w?: number; h?: number; rowH?: number; cols?: Record<string, number> };
 // The table as shown: which row / column of the table as read each shown one is.
 export type SheetMap = { rows: number[]; cols: number[]; baseRows: number; baseCols: number };
 
@@ -121,3 +124,57 @@ export function pasteSplitter(rows: string[]): (l: string) => string[] {
   return (l) => [l];
 }
 
+
+// ---- Fill (the handle at the corner of the selection dragged, as in a spreadsheet) ----
+
+// a number as typed in a cell (a decimal comma too), else NaN
+const cellNumber = (t: string) => (/^\s*[-+]?(\d+[.,]?\d*|[.,]\d+)([eE][-+]?\d+)?\s*$/.test(t) ? Number(t.trim().replace(',', '.')) : NaN);
+const decimals = (t: string) => {
+  const m = /[.,](\d+)(?![\d])/.exec(t.trim());
+  return /e/i.test(t) ? -1 : m ? m[1].length : 0;
+};
+// The cells after `src` (count of them), going on from them: numbers — one copied (more: +1 each with `more`), several
+// continued along their straight line (the least-squares one: their step when two), as many decimals as they have;
+// texts ending in a number (Run 1, S01) — the number continued (zeros kept), the text before it the same; anything
+// else repeated in turn. `more`: Ctrl held — the other way (a number counted on, a series copied).
+export function fillSeries(src: string[], count: number, more = false): string[] {
+  if (!src.length || count <= 0) return [];
+  const cyc = () => Array.from({ length: count }, (_, k) => src[k % src.length]);
+  const nums = src.map(cellNumber);
+  if (nums.every(Number.isFinite)) {
+    if ((src.length === 1) !== more) return cyc();
+    const n = src.length;
+    let [a, b] = [nums[0], 1];
+    if (n > 1) {
+      const mx = (n - 1) / 2;
+      const my = nums.reduce((s, v) => s + v, 0) / n;
+      let [sxy, sxx] = [0, 0];
+      nums.forEach((v, i) => ((sxy += (i - mx) * (v - my)), (sxx += (i - mx) ** 2)));
+      b = sxy / sxx;
+      a = my - b * mx;
+    }
+    const d = Math.max(...src.map(decimals));
+    const comma = src.some((t) => t.includes(','));
+    return Array.from({ length: count }, (_, k) => {
+      const v = a + b * (n + k);
+      // (as many decimals as the cells; a trend that needs more: as it comes)
+      const fixed = d < 0 ? '' : v.toFixed(Math.min(12, d));
+      const t = fixed && Math.abs(Number(fixed) - v) <= 1e-9 * Math.max(1, Math.abs(v)) ? fixed : String(+v.toPrecision(10));
+      return comma ? t.replace('.', ',') : t;
+    });
+  }
+  // texts ending in a number, the same text before it
+  const parts = src.map((t) => /^(.*?)(\d+)(\D*)$/.exec(t));
+  if (!more && parts.every((p) => p && p[1] === parts[0]![1] && p[3] === parts[0]![3])) {
+    const vals = parts.map((p) => Number(p![2]));
+    const step = vals.length > 1 ? (vals[vals.length - 1] - vals[0]) / (vals.length - 1) : 1;
+    const width = parts[0]![2].startsWith('0') ? parts[0]![2].length : 0;
+    if (Number.isInteger(step))
+      return Array.from({ length: count }, (_, k) => {
+        const v = vals[vals.length - 1] + step * (k + 1);
+        const t = String(Math.abs(v)).padStart(width, '0');
+        return `${parts[0]![1]}${v < 0 ? '-' : ''}${t}${parts[0]![3]}`;
+      });
+  }
+  return cyc();
+}

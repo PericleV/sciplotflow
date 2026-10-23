@@ -117,7 +117,7 @@ import { darkShade, loadColors, SWATCHES } from '../src/theme.ts';
 import { doStep, figureSaved, importWithData, plotOfImport, stepsOf, TOURS, uvVisText, type TourState } from '../src/tour/tours.ts';
 import { groupNodes } from '../src/groups.ts';
 import { asBatch, emptyBatch, GROUP_IN, GROUP_OUT } from '../src/engine/subgraph.ts';
-import { guessPattern, patternOf, readName, tidyOwn, withOwn } from '../src/engine/batch.ts';
+import { columnRuns, guessPattern, patternOf, readName, tidyOwn, withOwn } from '../src/engine/batch.ts';
 import type { GroupData } from '../src/types.ts';
 import { fileProject, isPng, makeEmbedded, openEmbedded, pngProject, pngWithProject, projectRevision, svgProject, svgWithProject, withoutImported } from '../src/figure/embed.ts';
 import { EMU_PER_PT, readOffice, writeOffice } from '../src/figure/office.ts';
@@ -697,7 +697,7 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   const rs = run({ rowSel: '22-42' });
   ok(rs.cs.length === 1 && rs.cs[0].series.y.values.length === 21 && rs.cs[0].series.y.values[0] === 1, 'rows drawn: 22-42');
   // the legend: one entry for many coloured curves (auto above 8), one each when asked
-  const many = run({ cols: { x: 'θ (°)', y: 'R' }, rows: Array.from({ length: 10 }, (_, k) => ({ label: '', style: {}, cols: { x: 'θ (°)', y: `R_${k + 2}` } })), curveColors: { map: 'viridis' } }, { by: 'every', every: 10 }).cs;
+  const many = run({ cols: { x: 'θ (°)', y: 'R · 1' }, rows: Array.from({ length: 10 }, (_, k) => ({ label: '', style: {}, cols: { x: 'θ (°)', y: `R · ${k + 2}` } })), curveColors: { map: 'viridis' } }, { by: 'every', every: 10 }).cs;
   ok(many.length === 11 && collapseGroups(many).length === 1 && collapseGroups(many)[0].groupSpan?.count === 11 && collapseGroups(many, 'each').length === 11 && collapseGroups(a.cs).length === 5, `legend: coloured curves as one entry above 8 (${many.length})`);
   // several datasets on the port: equal names made distinct
   const two = evaluateGraph([imp, { ...imp, id: 'j' }, { id: 'p', type: 'plot1d', position: { x: 0, y: 0 }, data: { label: '', style: {}, cols: { x: 'θ (°)', y: 'R' }, rows: [{ label: '', style: {}, cols: { x: 'θ (°) (2)', y: 'R (2)' } }] } } as AppNode], [
@@ -1301,7 +1301,18 @@ for (const ex of EXAMPLES) {
     const res = evaluateGraph([wb, un], [{ id: 'e', source: 'w', sourceHandle: 'book', target: 'u', targetHandle: 'in' }]);
     const uOut = res.get('u')?.outputs.out;
     const out = uOut && uOut.t === 'dataset' ? (uOut as { v: Dataset }).v : null;
-    ok(!!out && out.columns.map((c) => c.name).join(',') === 'a,b,b_2' && res.get('u')?.view.sheets?.join(',') === 'Sheet1,Sheet2', 'split: workbook input — reads from chosen sheet');
+    ok(!!out && out.columns.map((c) => c.name).join(',') === 'a,b · 1,b · 2' && res.get('u')?.view.sheets?.join(',') === 'Sheet1,Sheet2', 'split: workbook input — reads from chosen sheet');
+    // a Workbook fed by this one: a sheet of the input taken out (and listed, to show it again)
+    const wb2 = { id: 'w2', type: 'book', position: { x: 0, y: 0 }, data: { ...WORKBOOK_DEFAULTS, sheets: [], hideSheets: ['Sheet1'] } } as AppNode;
+    const r2 = evaluateGraph([wb, wb2], [{ id: 'e2', source: 'w', sourceHandle: 'book', target: 'w2', targetHandle: 'in-0' }]).get('w2');
+    const b2 = r2?.outputs.book;
+    ok(b2?.t === 'workbook' && b2.v.sheets.map((q) => q.name).join(',') === 'Sheet2' && r2?.view.book?.hiddenSheets?.join(',') === 'Sheet1', `workbook: a sheet of the input taken out, listed to show it again (${b2?.t === 'workbook' ? b2.v.sheets.map((q) => q.name).join(',') : '?'})`);
+    // the names: an older node's (b, b_2); blocks named in the node (one Y: the name; several: “Y · name”)
+    const named = (d: object) => {
+      const o = evaluateGraph([wb, { ...un, data: { ...un.data, ...d } } as AppNode], [{ id: 'e', source: 'w', sourceHandle: 'book', target: 'u', targetHandle: 'in' }]).get('u')?.outputs.out;
+      return o?.t === 'dataset' ? o.v.columns.map((c) => c.name).join(',') : '';
+    };
+    ok(named({ naming: undefined }) === 'a,b,b_2' && named({ blockNames: ['first run', ''] }) === 'a,first run,b · 2', `split: an older node's names kept (${named({ naming: undefined })}); a block named in the node (${named({ blockNames: ['first run', ''] })})`);
   }
 
   // a scan as a cyclic voltammogram is saved: from 0 up to 1, down to −1, up to 1, down to −1, up to 0 (step 0.1) —
@@ -5801,6 +5812,27 @@ for (const ex of EXAMPLES) {
     const eb = { id: 'b2', type: 'subgraph', position: { x: 0, y: 0 }, data: emptyBatch() } as AppNode;
     const er = evaluateGraph([imp, eb], [{ id: 'f2', source: 'files', sourceHandle: 'book', target: 'b2', targetHandle: 'in-0' }]).get('b2')!;
     ok(er.view.batch?.files === 3 && !er.errors.length && (eb.data as GroupData).inputs[0].label === 'files' && (eb.data as GroupData).nodes.length === 2, 'Batch: an empty one from the Nodes panel — its files counted, no steps, nothing kept yet');
+    // over columns: one table (x, then R at three thicknesses with the error of one), the same steps on every column
+    // chosen, each with the X chosen; its names read by a pattern; X on the left of each (X, Y pairs); the row number
+    const rows = Array.from({ length: 101 }, (_, i) => i);
+    const g3 = (c: number) => rows.map((i) => Math.exp(-(((i - c) / 8) ** 2)).toFixed(6));
+    const tsv = [['t', 'x', 'R · d = 150', 'dR', 'R · d = 200', 'R · d = 250'].join('\t'), ...rows.map((i) => [i * 2, i, g3(30)[i], '0.01', g3(50)[i], g3(70)[i]].join('\t'))].join('\n');
+    const one = { id: 'tbl', type: 'book', position: { x: 0, y: 0 }, data: { ...structuredClone(WORKBOOK_DEFAULTS), sheets: [{ name: 'S', text: tsv, edits: { cols: { 0: { role: 'none' }, 1: { role: 'x' }, 3: { role: 'yerr' } } } }] } } as AppNode;
+    const overCols = (b: object) => {
+      const bb = { ...batch, data: { ...(batch.data as GroupData), batch: { over: 'columns', ...b } } } as AppNode;
+      return evaluateGraph([one, bb], [{ id: 'c', source: 'tbl', sourceHandle: 'out', target: 'b1', targetHandle: 'in-0' }]);
+    };
+    const oc1 = overCols({ pattern: 'R · d = {d}' });
+    const t1 = oc1.get('b1')!.outputs.table;
+    const ct = (t: typeof t1, name: string) => (t?.t === 'dataset' ? t.v.columns.find((c) => c.name === name) : undefined);
+    const inner1 = oc1.get('b1/pk')?.outputs.out;
+    ok(Array.from(ct(t1, 'x')?.values ?? []).join(' ') === '30 50 70' && Array.from(ct(t1, 'd')?.values ?? []).join(' ') === '150 200 250' && oc1.get('b1')!.view.batch?.over === 'columns' && oc1.get('b1')!.view.batch?.cols?.length === 6, `Batch over columns: every Y column a run (its maximum at 30, 50, 70), the thickness read from the names (${Array.from(ct(t1, 'd')?.values ?? []).join(', ')}; ${oc1.get('b1')!.errors.join(' ')})`);
+    const oc2 = overCols({ cols: 'C, E', x: 't' });
+    const t2b = oc2.get('b1')!.outputs.table;
+    ok(Array.from(ct(t2b, 't')?.values ?? []).join(' ') === '60 100' && inner1?.t === 'dataset', `Batch over columns: the columns listed (C, E), with another X (t = 2 x: maxima at 60, 100 — ${Array.from(ct(t2b, 't')?.values ?? []).join(', ')}; ${oc2.get('b1')!.errors.join(' ')})`);
+    const runsOf = columnRuns({ name: 'p', columns: [{ ...column('x1', [1, 2]), role: 'x' }, { ...column('a', [5, 6]), role: 'y' }, { ...column('x2', [3, 4]), role: 'x' }, { ...column('b', [7, 8]), role: 'y' }, { ...column('db', [1, 1]), role: 'yerr' }] }, { xFrom: 'left' });
+    const rowRuns = columnRuns({ name: 'p', columns: [{ ...column('a', [5, 6, 7]), role: 'y' }, { ...column('b', [1, 2, 3]), role: 'y' }] }, { xFrom: 'row', cols: 'a, b' });
+    ok(typeof runsOf !== 'string' && runsOf.map((d) => d.columns.map((c) => c.name).join('+')).join(' | ') === 'x1+a | x2+b+db' && typeof rowRuns !== 'string' && rowRuns[1].columns[0].name === 'Row' && Array.from(rowRuns[1].columns[0].values).join() === '1,2,3' && columnRuns({ name: 'p', columns: [] }, { cols: 'Z' }) === 'Columns: not found: Z.', 'Batch over columns: the X on the left of each (pairs; the ±Y with its column), the row number, a column not found said');
   }
   {
     // tour 2 done by Show me alone: every step done, no node in error, the data as the steps say

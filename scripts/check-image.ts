@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { cropRaster, dataBarRows, gaussian, gaussianWide, packPixels, quantile, shrinkRaster, unpackPixels, type Raster } from '../src/image/raster.ts';
 import { semScale } from '../src/image/load.ts';
 import { measureRois, measureSpec, valueStats, feret, lineProfile } from '../src/image/measure.ts';
-import { ringMask, roiMask, traceOutline, wand, polygonArea, type Roi } from '../src/image/roi.ts';
+import { nearRoi, offsetDistance, offsetOutline, ringMask, roiMask, traceOutline, wand, polygonArea, type Roi } from '../src/image/roi.ts';
 import { alignment, findParticles, groupLikeExamples, minAreaRect, PARTICLE_DEFAULTS, shapeFeatures, shapeName, tracedPerimeter } from '../src/image/particles.ts';
 import { findLike, fitBox, MATCH_DEFAULTS } from '../src/image/match.ts';
 import { clustersImage, cubesImage, shapesImage, textureImage, type TestImage } from '../src/image/testImages.ts';
@@ -522,6 +522,28 @@ export function checkImage(ok: Ok) {
     const byForest = findParticles(a.r.ch[0], tx.w, tx.h, { ...PARTICLE_DEFAULTS, minSize: 60 }).found;
     const none = applySteps(r, [step], 1, undefined, 1, { train: train.slice(0, 4) });
     ok(a.r.kind === 'mask' && Math.abs(byForest - tx.truth.length) <= 1 && Math.abs(byOtsu - tx.truth.length) > 3 && a.r.ch[0].every((v, i) => v === b.r.ch[0][i]) && /^object: \d+ px, background: \d+ px → object$/.test(a.notes.c ?? '') && /two classes/.test(none.errors.c ?? ''), `trainable classifier: ${byForest} textured particles of ${tx.truth.length} from 4 lines and 3 background examples (Otsu: ${byOtsu} pieces); the same twice; one class only: said (${a.notes.c})`);
+  }
+  // Find like this in the shape of the particle: only it and its edge (in clusters) finds every cube; with the ground
+  // around it (alone), the cubes on their own are the most alike (those in clusters less: their neighbours in the ring)
+  {
+    const t = cubesImage();
+    const c = Float32Array.from(t.px);
+    const tpl = t.truth.find((q) => q.cluster === undefined)!;
+    const a = (-tpl.angle! * Math.PI) / 180;
+    const hs = tpl.side! / 2;
+    const poly = ([[-hs, -hs], [hs, -hs], [hs, hs], [-hs, hs]] as [number, number][]).map(([u, v]): [number, number] => [tpl.cx + u * Math.cos(a) - v * Math.sin(a), tpl.cy + u * Math.sin(a) + v * Math.cos(a)]);
+    const hits = (f: { x: number; y: number }[]) => t.truth.filter((q) => f.some((m) => Math.hypot(m.x - q.cx, m.y - q.cy) < 0.4 * q.side!));
+    const cl = findLike(c, t.w, t.h, tpl.cx, tpl.cy, 1, { ...MATCH_DEFAULTS, sizes: 0.2, context: 'cluster' }, poly);
+    const al = findLike(c, t.w, t.h, tpl.cx, tpl.cy, 1, { ...MATCH_DEFAULTS, sizes: 0.2, context: 'alone', ring: 8, min: 0.2 }, poly);
+    const scoreOf = (q: (typeof t.truth)[number]) => al.find((m) => Math.hypot(m.x - q.cx, m.y - q.cy) < 0.4 * q.side!)?.score ?? 0;
+    const lone = t.truth.filter((q) => q.cluster === undefined).map(scoreOf);
+    const inCl = t.truth.filter((q) => q.cluster !== undefined).map(scoreOf);
+    ok(hits(cl).length === t.truth.length && cl.length === t.truth.length && Math.min(...lone) > 0.95 && Math.max(...inCl) < 0.9, `Find like this in the particle's shape: in clusters ${hits(cl).length} of ${t.truth.length}, none wrong; alone (ring 8 px): the cubes on their own ${Math.min(...lone).toFixed(2)} or more alike, those in clusters ${Math.max(...inCl).toFixed(2)} at most`);
+    // the dashed line: a square moved out by 2 px is 4 px larger; the eraser finds the examples it passes over
+    const off = offsetOutline([[0, 0], [10, 0], [10, 10], [0, 10]], 2);
+    const sq: Roi = { id: 'a', name: 'a', kind: 'polygon', pts: [[0, 0], [10, 0], [10, 10], [0, 10]], train: 'object' };
+    const ln: Roi = { id: 'b', name: 'b', kind: 'polyline', pts: [[20, 0], [30, 0]], width: 4, train: 'edge' };
+    ok(Math.abs(polygonArea(off) - 196) < 1e-6 && nearRoi(sq, [5, 5], 1) && nearRoi(sq, [11.5, 5], 1) && !nearRoi(sq, [14, 5], 1) && nearRoi(ln, [25, 2.5], 1) && !nearRoi(ln, [25, 5], 1) && Math.abs(offsetDistance(sq.pts!, [13, 5]) - 3) < 1e-9, 'the dashed line around a model (a square 2 px out: 14 × 14); the eraser over an area, near its edge, on a stroke of its width');
   }
   // the classifier on nanocubes touching (a gap of a pixel): three outlined, the edges made from their outlines, the
   // objects split by the edges — every cube apart, its size; without edges the clusters stay whole; where it hesitates

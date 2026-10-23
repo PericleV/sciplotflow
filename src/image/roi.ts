@@ -49,6 +49,65 @@ export const TOOL_HINTS: Record<RoiTool, string> = {
 export const RING_DEFAULTS = { gap: 2, width: 4 };
 export const isArea = (r: Roi) => r.kind === 'rect' || r.kind === 'ellipse' || r.kind === 'polygon' || r.kind === 'freehand' || r.kind === 'traced';
 export const isLine = (r: Roi) => r.kind === 'line' || r.kind === 'polyline';
+// An outline moved outwards by d (each corner along the bisector of its sides, as far as keeps the sides d away)
+export function offsetOutline(pts: Pt[], d: number): Pt[] {
+  const n = pts.length;
+  if (n < 3) return pts;
+  // (the outline's turning: the outward side of every edge)
+  const area = pts.reduce((s, [x, y], i) => s + x * pts[(i + 1) % n][1] - pts[(i + 1) % n][0] * y, 0);
+  const sgn = area > 0 ? 1 : -1;
+  return pts.map(([x, y], i) => {
+    const [px, py] = pts[(i - 1 + n) % n];
+    const [nx, ny] = pts[(i + 1) % n];
+    const nrm = (ax: number, ay: number): Pt => {
+      const l = Math.hypot(ax, ay) || 1;
+      return [(sgn * ay) / l, (-sgn * ax) / l];
+    };
+    const [n1x, n1y] = nrm(x - px, y - py);
+    const [n2x, n2y] = nrm(nx - x, ny - y);
+    const [bx, by] = [n1x + n2x, n1y + n2y];
+    const bl = Math.hypot(bx, by) || 1;
+    const cos = Math.max(0.35, (bx / bl) * n1x + (by / bl) * n1y);
+    return [x + ((bx / bl) * d) / cos, y + ((by / bl) * d) / cos];
+  });
+}
+// How far a point is from an outline (outside it; 0 inside)
+export function offsetDistance(pts: Pt[], [x, y]: Pt): number {
+  let d = Infinity;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [ax, ay] = pts[j];
+    const [bx, by] = pts[i];
+    const [vx, vy] = [bx - ax, by - ay];
+    const t = Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / (vx * vx + vy * vy || 1)));
+    d = Math.min(d, Math.hypot(x - ax - t * vx, y - ay - t * vy));
+  }
+  return d;
+}
+// A selection under a disc of radius rad at p (the eraser): an area it overlaps, a line (its width) it touches
+export function nearRoi(r: Roi, [x, y]: Pt, rad: number): boolean {
+  const pts = roiOutline(r);
+  if (!pts.length) return false;
+  let d = Infinity;
+  const n = pts.length;
+  const closed = isArea(r);
+  for (let i = closed ? 0 : 1; i < n; i++) {
+    const [ax, ay] = pts[(i - 1 + n) % n];
+    const [bx, by] = pts[i];
+    const [vx, vy] = [bx - ax, by - ay];
+    const t = Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / (vx * vx + vy * vy || 1)));
+    d = Math.min(d, Math.hypot(x - ax - t * vx, y - ay - t * vy));
+  }
+  if (n === 1) d = Math.hypot(x - pts[0][0], y - pts[0][1]);
+  if (d <= rad + (r.width ?? 1) / 2) return true;
+  if (!closed) return false;
+  let inside = false;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const [xi, yi] = pts[i];
+    const [xj, yj] = pts[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
 
 // a point of the shape's own frame (u, v from its centre) on the image
 const turn = (cx: number, cy: number, a: number, u: number, v: number): Pt => {

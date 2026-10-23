@@ -192,7 +192,7 @@ export const PREPARE: Tour = {
         adds('Add Columns', 'Columns', 'Now give the runs proper names. Add **Columns** and connect Split into columns to it.', columns, (s) => ({ type: 'columns', data: structuredClone(COLUMNS_DEFAULTS), from: wire(split(s)?.id, 'in') })),
         sets<'columns'>(
           'Name the runs',
-          'Open **Rename several columns**. Choose **the Y columns** and write `Run 1, Run 2, Run 3` in **New names**.\n\nColumns can also hide columns, reorder them and say which one is X or Y.',
+          'Open **Rename columns**. Choose **the Y columns** and write `Run 1, Run 2, Run 3` in **New names**.\n\nColumns can also hide columns, reorder them and say which one is X or Y.',
           columns,
           (n) => !!n.data.names?.trim(),
           (n) => [

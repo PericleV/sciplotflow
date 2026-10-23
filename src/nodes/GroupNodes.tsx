@@ -11,6 +11,8 @@ import type { AppNode, GroupNode } from '../types.ts';
 import { useGroupNav } from './groupNav.ts';
 import { Field, InPort, Messages, OutPort, Select, TextInput } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
+import { ColumnsPicker } from './ColumnsPicker.tsx';
+import { sheetOptions } from './sheetOptions.ts';
 import { DataPreview } from './DataNodes.tsx';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { IC } from './iconProps.ts';
@@ -66,14 +68,19 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
   const list = b?.list ?? [];
   const table = r?.outputs.table?.t === 'dataset' ? r.outputs.table.v : undefined;
   const [guessNote, setGuessNote] = useState('');
+  // over the columns of one table, not the files: the runs are its columns
+  const cols = spec.over === 'columns';
+  const unit = cols ? 'column' : 'file';
   // the three steps: the files connected, steps inside, something kept
   const kept = data.outputs.map((p) => p.label);
   const done = [!!b, steps.length > 0, kept.length > 0];
   const stepNames = [...new Set(steps.map((n) => nodeTitle(n)))];
   const guide: [string, string][] = [
-    ['Files', done[0] ? `${b!.files} file${b!.files === 1 ? '' : 's'}` : 'Connect the workbook output of an Import (several files opened together, or Open a folder) to “files”.'],
-    ['Steps', done[1] ? `${steps.length} step${steps.length === 1 ? '' : 's'}: ${stepNames.slice(0, 3).join(', ')}${stepNames.length > 3 ? ' …' : ''}` : 'Open the batch and build the analysis on one file (it starts from “one file”).'],
-    ['Keep', done[2] ? `kept: ${kept.join(', ')}` : 'Inside, connect what to keep from each file (a value, a table) to “+ keep”.'],
+    cols
+      ? ['Columns', done[0] ? `${b!.files} column${b!.files === 1 ? '' : 's'}` : 'Connect a table (an Import, a Workbook …) to “table”, then choose its columns and their X in the options.']
+      : ['Files', done[0] ? `${b!.files} file${b!.files === 1 ? '' : 's'}` : 'Connect the workbook output of an Import (several files opened together, or Open a folder) to “files”.'],
+    ['Steps', done[1] ? `${steps.length} step${steps.length === 1 ? '' : 's'}: ${stepNames.slice(0, 3).join(', ')}${stepNames.length > 3 ? ' …' : ''}` : `Open the batch and build the analysis on one ${unit} (it starts from it: X and the ${unit}${cols ? ' as Y' : ''}).`],
+    ['Keep', done[2] ? `kept: ${kept.join(', ')}` : `Inside, connect what to keep from each ${unit} (a value, a table) to “+ keep”.`],
   ];
   const ready = done.every(Boolean);
   // what the pattern reads from the first file's name (or that it does not match)
@@ -95,7 +102,7 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
       </div>
       {ready ? (
         <div className="hint">
-          ✓ {b!.files} file{b!.files === 1 ? '' : 's'} · {steps.length} step{steps.length === 1 ? '' : 's'} · kept: {kept.join(', ')}
+          ✓ {b!.files} {unit}{b!.files === 1 ? '' : 's'} · {steps.length} step{steps.length === 1 ? '' : 's'} · kept: {kept.join(', ')}
           {b?.failed.length ? <span className="warn-text"> · {b.failed.length} with errors</span> : null}
         </div>
       ) : (
@@ -111,9 +118,40 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
         </ol>
       )}
       {data.inputs.map((p, k) => (
-        <InPort key={p.id} label={k === 0 ? 'files' : p.label} port={k === 0 ? 'workbook' : known(targetAccepts(self, p.id)[0] ?? p.type)} id={p.id} title={k === 0 ? 'The files: an Import with several files opened together (or a folder), a sheet each' : 'The same for every file'} />
+        <InPort key={p.id} label={k === 0 ? (cols ? 'table' : 'files') : p.label} port={k === 0 ? (cols ? 'dataset' : 'workbook') : known(targetAccepts(self, p.id)[0] ?? p.type)} id={p.id} title={k === 0 ? (cols ? 'The table whose columns the steps run on (a workbook: its sheet chosen in the options)' : 'The files: an Import with several files opened together (or a folder), a sheet each') : `The same for every ${unit}`} />
       ))}
       <NodeOptions>
+        <Field label="Over" title="What the steps run on: every file (every sheet of a workbook), or every column of one table (each with its X)">
+          <Select<'files' | 'columns'> value={cols ? 'columns' : 'files'} options={[['files', 'every file (sheet)'], ['columns', 'every column of a table']]} onChange={(o) => set({ over: o === 'columns' ? 'columns' : undefined, show: undefined })} />
+        </Field>
+        {cols && b?.sheets && (
+          <Field label="Sheet" title="The sheet of the workbook whose columns are run on">
+            <Select<string> {...sheetOptions(b.sheets, spec.sheet ?? '')} onChange={(sheet) => set({ sheet: sheet || undefined, show: undefined })} />
+          </Field>
+        )}
+        {cols && (
+          <Field label="Columns" title="The columns the steps run on, each in turn: 2-6, B-F (letters), names, R* (a pattern), !C (not); empty: every Y column. A ±Y designated right after a column goes with it">
+            <ColumnsPicker value={spec.cols ?? ''} names={b?.cols ?? []} auto="auto: every Y column" onChange={(c) => set({ cols: c || undefined, show: undefined })} />
+          </Field>
+        )}
+        {cols && (
+          <Field label="X" title="The X of every column: one column for all (the designated X unless chosen), the X on the left of each column (a table of X, Y, X, Y … pairs, by their designations), or the row number">
+            <span className="row">
+              <Select<NonNullable<BatchSpec['xFrom']>>
+                value={spec.xFrom ?? 'one'}
+                options={[
+                  ['one', 'one column for all'],
+                  ['left', 'the X on the left of each'],
+                  ['row', 'the row number'],
+                ]}
+                onChange={(xFrom) => set({ xFrom: xFrom === 'one' ? undefined : xFrom })}
+              />
+              {(spec.xFrom ?? 'one') === 'one' && (
+                <Select<string> value={spec.x ?? ''} options={[['', 'the designated X'], ...(b?.cols ?? []).map((c): [string, string] => [c, c]), ...(spec.x && !(b?.cols ?? []).includes(spec.x) ? [[spec.x, `${spec.x} (missing)`] as [string, string]] : [])]} onChange={(x) => set({ x: x || undefined })} />
+              )}
+            </span>
+          </Field>
+        )}
         <Field label="Names" title="What the file names say, as columns of the table: {Name} takes a number, {Name:text} a word, the rest is written as in the names. Example: sample_{T}C_{t}h reads T = 25 and t = 2 from sample_25C_2h">
           <TextInput value={spec.pattern ?? ''} placeholder="e.g. sample_{T}C_{t}h" onChange={(pattern) => set({ pattern: pattern || undefined })} />
           <button className="nodrag" disabled={list.length < 2} title="A pattern guessed from the names: the numbers that change from file to file become {V1}, {V2} … — then name them" onClick={guess}>
@@ -126,7 +164,7 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
           </div>
         )}
         {guessNote && <div className="msg warn">{guessNote}</div>}
-        <Field label="Order" title="The order of the files in the table and the workbook">
+        <Field label="Order" title={`The order of the ${unit}s in the table and the workbook`}>
           <Select<NonNullable<BatchSpec['order']>>
             value={spec.order ?? 'given'}
             options={[
@@ -138,7 +176,7 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
           />
         </Field>
         <div className="hint">
-          {kept.length ? `Kept from every file: ${kept.join(', ')}.` : 'Nothing is kept yet.'} To keep more, open the batch and connect a value or a table to “+ keep” on its Group output.
+          {kept.length ? `Kept from every ${unit}: ${kept.join(', ')}.` : 'Nothing is kept yet.'} To keep more, open the batch and connect a value or a table to “+ keep” on its Group output.
         </div>
         {list.length > 0 && (
           <div className="batch-files nowheel">
@@ -146,14 +184,14 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
               <thead>
                 <tr>
                   <th>#</th>
-                  <th>File</th>
+                  <th>{cols ? 'Column' : 'File'}</th>
                   <th>Its name says</th>
                   <th />
                 </tr>
               </thead>
               <tbody>
                 {list.map((f, k) => (
-                  <tr key={`${k}-${f.name}`} className={`nodrag${k === (b?.shown ?? 0) ? ' shown' : ''}`} title={f.errors.length ? f.errors.join('\n') : 'Click: the file the steps are shown on inside'} onClick={() => set({ show: k || undefined })}>
+                  <tr key={`${k}-${f.name}`} className={`nodrag${k === (b?.shown ?? 0) ? ' shown' : ''}`} title={f.errors.length ? f.errors.join('\n') : `Click: the ${unit} the steps are shown on inside`} onClick={() => set({ show: k || undefined })}>
                     <td>{k + 1}</td>
                     <td className="mono">{f.name}</td>
                     <td className="mono">{f.read}</td>
@@ -170,9 +208,9 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
         {table && <DataPreview columns={table.columns} rows={6} />}
       </NodeOptions>
       <Messages result={r} />
-      <OutPort label="table" port="dataset" id="table" title="A row per file: its name, what the name says, the values kept (and the one row of a table kept)" />
-      <OutPort label="sheets" port="workbook" id="sheets" title="A sheet per file: the tables kept (Auto-extract or a Plot of a workbook draws them all)" />
-      <OutPort label="all rows" port="dataset" id="stacked" title="The rows of every file one under the other, the file and what its name says before them" />
+      <OutPort label="table" port="dataset" id="table" title={`A row per ${unit}: its name, what the name says, the values kept (and the one row of a table kept)`} />
+      <OutPort label="sheets" port="workbook" id="sheets" title={`A sheet per ${unit}: the tables kept (Auto-extract or a Plot of a workbook draws them all)`} />
+      <OutPort label="all rows" port="dataset" id="stacked" title={`The rows of every ${unit} one under the other, the ${unit} and what its name says before them`} />
     </div>
   );
 }

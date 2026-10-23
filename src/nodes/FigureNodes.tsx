@@ -28,6 +28,7 @@ import { FigureTabs, InsetsPort } from './FigureTabs.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
 import { parsePoints, pointsText } from './points.ts';
 import { Check, Field, InPort, Messages, NumInput, OutPort, Select, TextInput } from './ui.tsx';
+import { sheetOptions } from './sheetOptions.ts';
 import { maxOf } from '../engine/minmax.ts';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, ClipboardPaste, Copy, CopyPlus, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
@@ -458,7 +459,7 @@ export function Plot1DNodeView({ id, data }: NodeProps<Plot1DNode>) {
                   {sheets.length > 0 && !connected(rowHandle('series', k)) && (
                     <>
                       <span title="A workbook on the dataset port: the sheet this curve's columns come from">Sheet</span>
-                      <Select<string> value={row.sheet ?? ''} options={[['', `first (${sheets[0]})`], ...sheets.map((nm): [string, string] => [nm, nm]), ...(row.sheet && !sheets.includes(row.sheet) ? [[row.sheet, `${row.sheet} (missing)`] as [string, string]] : [])]} onChange={(sheet) => setRow(k, { sheet: sheet || undefined })} />
+                      <Select<string> {...sheetOptions(sheets, row.sheet ?? '')} onChange={(sheet) => setRow(k, { sheet: sheet || undefined })} />
                     </>
                   )}
                   {parts

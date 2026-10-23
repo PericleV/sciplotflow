@@ -7,8 +7,14 @@
 import type { Pt } from './roi.ts';
 
 // symmetry: the turns that look the same (a square: 90°, a rectangle: 180°, none: 360°); step: between the turns tried
-// (degrees); sizes: ± that part (0.1: 10 %); min: the least similarity kept (0–1); max: the most found
-export type MatchOpts = { symmetry: 90 | 180 | 360; step: number; sizes: number; min: number; max: number };
+// (degrees); sizes: ± that part (0.1: 10 %); min: the least similarity kept (0–1); max: the most found; context: what is
+// compared around the particle — a disc around the selection (absent, as before), only the particle and its edge
+// (cluster: its neighbours, whatever they are, left out), or the particle and the ground around it out to `ring` px
+// (alone: a particle on its own, not one in a cluster nor a piece of the ground)
+export type MatchContext = 'disc' | 'cluster' | 'alone';
+export type MatchOpts = { symmetry: 90 | 180 | 360; step: number; sizes: number; min: number; max: number; context?: MatchContext; ring?: number };
+// the band outside the particle's outline still compared in a cluster (its edge), pixels
+export const EDGE_BAND = 1.5;
 export const MATCH_DEFAULTS: MatchOpts = { symmetry: 90, step: 5, sizes: 0.1, min: 0.5, max: 2000 };
 export type Match = { x: number; y: number; angle: number; scale: number; score: number };
 
@@ -92,6 +98,70 @@ function discStats(c: Float32Array, w: number, h: number, dx: Int32Array, dy: In
     }
   return { s1, s2 };
 }
+// ---- a model in the shape of the particle (and the ground around it): only the points of the disc inside it ----
+
+const inPoly = (poly: Pt[], x: number, y: number) => {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i];
+    const [xj, yj] = poly[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+};
+const distPoly = (poly: Pt[], x: number, y: number) => {
+  let d = Infinity;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [ax, ay] = poly[j];
+    const [bx, by] = poly[i];
+    const [vx, vy] = [bx - ax, by - ay];
+    const t = Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / (vx * vx + vy * vy || 1)));
+    d = Math.min(d, Math.hypot(x - ax - t * vx, y - ay - t * vy));
+  }
+  return d;
+};
+// The model turned by a and scaled by s in the shape of the region (the outline and `extra` px around it): the offsets of
+// the disc whose point of the model falls in it, the model's values there (zero mean, unit norm); null: flat or empty
+function regionModel(c: Float32Array, w: number, h: number, cx: number, cy: number, dx: Int32Array, dy: Int32Array, a: number, s: number, poly: Pt[], extra: number): { dx: Int32Array; dy: Int32Array; v: Float32Array } | null {
+  const t = (a * Math.PI) / 180;
+  const [co, si] = [Math.cos(t), Math.sin(t)];
+  const ox: number[] = [];
+  const oy: number[] = [];
+  const vals: number[] = [];
+  for (let k = 0; k < dx.length; k++) {
+    const [u, q] = [dx[k] / s, dy[k] / s];
+    const [mx, my] = [cx + u * co + q * si, cy - u * si + q * co];
+    if (!inPoly(poly, mx, my) && distPoly(poly, mx, my) > extra) continue;
+    ox.push(dx[k]);
+    oy.push(dy[k]);
+    vals.push(at(c, w, h, mx, my));
+  }
+  const n = vals.length;
+  if (n < 6) return null;
+  const m = vals.reduce((a2, b) => a2 + b, 0) / n;
+  let ss = 0;
+  const v = Float32Array.from(vals, (x) => x - m);
+  for (const x of v) ss += x * x;
+  if (!(ss > 1e-9)) return null;
+  const sc = 1 / Math.sqrt(ss);
+  for (let k = 0; k < n; k++) v[k] *= sc;
+  return { dx: Int32Array.from(ox), dy: Int32Array.from(oy), v };
+}
+// the similarity of a region model at a place: the image's sums over its own points
+function nccOwn(c: Float32Array, w: number, x: number, y: number, m: { dx: Int32Array; dy: Int32Array; v: Float32Array }): number {
+  let [s, s1, s2] = [0, 0, 0];
+  const n = m.dx.length;
+  const o = y * w + x;
+  for (let k = 0; k < n; k++) {
+    const p = c[o + m.dy[k] * w + m.dx[k]];
+    s += p * m.v[k];
+    s1 += p;
+    s2 += p * p;
+  }
+  const varr = s2 - (s1 * s1) / n;
+  return varr > 1e-9 ? s / Math.sqrt(varr) : 0;
+}
+
 // the similarity of the model (zero mean, unit norm) with the image at a place: the correlation with the image's
 // values there (their own mean and spread: from their sums s1, s2)
 function ncc(c: Float32Array, w: number, x: number, y: number, dx: Int32Array, dy: Int32Array, v: Float32Array, s1: number, s2: number): number {
@@ -105,13 +175,19 @@ function ncc(c: Float32Array, w: number, x: number, y: number, dx: Int32Array, d
 
 // The places like the model: c (w × h) the image; (cx, cy) the model's centre and R the radius of the disc it is taken
 // in (pixels of the image); the places of the centres, the turn (0 … symmetry), the size against the model's, the
-// similarity; the best first
-export function findLike(c: Float32Array, w: number, h: number, cx: number, cy: number, R: number, o: MatchOpts): Match[] {
+// similarity; the best first. poly: the model's outline (pixels of the image) — with the context cluster or alone, only
+// it (and its edge, or the ground around it) is compared
+export function findLike(c: Float32Array, w: number, h: number, cx: number, cy: number, R0: number, o: MatchOpts, poly?: Pt[]): Match[] {
+  const shaped = !!poly && poly.length >= 3 && (o.context === 'cluster' || o.context === 'alone');
+  const extra = o.context === 'alone' ? Math.max(EDGE_BAND, o.ring ?? 0) : EDGE_BAND;
+  // (a shaped model: the disc holds its outline and what is compared around it)
+  const R = shaped ? Math.max(...poly!.map(([x, y]) => Math.hypot(x - cx, y - cy))) + extra + 1 : R0;
   // (shrunk so the model's disc is about 5 px in radius)
   const f = Math.max(1, Math.round(R / 5));
   const sm = shrink(c, w, h, f);
   const Rs = R / f;
-  const step = Math.max(1, o.step);
+  // (a shaped model: the turns tried every 10° at least on the image shrunk, refined at 1° after — it costs more a place)
+  const step = shaped ? Math.max(10, o.step) : Math.max(1, o.step);
   const angles: number[] = [];
   for (let a = 0; a < o.symmetry - 1e-9; a += step) angles.push(a);
   const scales = o.sizes > 0 ? [1 - o.sizes, 1, 1 + o.sizes] : [1];
@@ -122,6 +198,21 @@ export function findLike(c: Float32Array, w: number, h: number, cx: number, cy: 
   for (const s of scales) {
     const [dx, dy] = disc(Rs * s);
     const r = Math.ceil(Rs * s);
+    if (shaped) {
+      const pf = poly!.map(([x, y]): Pt => [x / f, y / f]);
+      const rm = angles.map((a) => regionModel(sm.c, sm.w, sm.h, cx / f, cy / f, dx, dy, a, s, pf, extra / f));
+      for (let y = r; y < sm.h - r; y++)
+        for (let x = r; x < sm.w - r; x++) {
+          const i = y * sm.w + x;
+          for (let k = 0; k < angles.length; k++) {
+            const m = rm[k];
+            if (!m) continue;
+            const q = nccOwn(sm.c, sm.w, x, y, m);
+            if (q > best[i]) [best[i], bestA[i], bestS[i]] = [q, angles[k], s];
+          }
+        }
+      continue;
+    }
     const st = discStats(sm.c, sm.w, sm.h, dx, dy, r);
     const models = angles.map((a) => model(sm.c, sm.w, sm.h, cx / f, cy / f, dx, dy, a, s));
     for (let y = r; y < sm.h - r; y++)
@@ -151,6 +242,7 @@ export function findLike(c: Float32Array, w: number, h: number, cx: number, cy: 
   const reach = 0.75 * R;
   const ds = o.sizes > 0 ? o.sizes / 2 : 0;
   const discs = new Map<string, [Int32Array, Int32Array]>();
+  const shapedCache = new Map<string, ReturnType<typeof regionModel>>();
   const discOf = (s: number) => {
     const key = s.toFixed(4);
     if (!discs.has(key)) discs.set(key, disc(R * s) as [Int32Array, Int32Array]);
@@ -166,9 +258,46 @@ export function findLike(c: Float32Array, w: number, h: number, cx: number, cy: 
       const r = Math.ceil(R * s);
       const n = dx.length;
       const turns: { a: number; v: Float32Array }[] = [];
+      const shapedTurns: { a: number; m: NonNullable<ReturnType<typeof regionModel>> }[] = [];
       for (let a = bestA[i] - step; a <= bestA[i] + step + 1e-9; a += 1) {
+        if (shaped) {
+          // (the same turn and size for every candidate: made once)
+          const key = `${a}|${s.toFixed(4)}`;
+          if (!shapedCache.has(key)) shapedCache.set(key, regionModel(c, w, h, cx, cy, dx, dy, a, s, poly!, extra));
+          const rm = shapedCache.get(key);
+          if (rm) shapedTurns.push({ a, m: rm });
+          continue;
+        }
         const v = model(c, w, h, cx, cy, dx, dy, a, s);
         if (v) turns.push({ a, v });
+      }
+      if (shaped) {
+        // (in steps, each a fraction of all the places × turns: the place at the turn found on the image shrunk, the turn
+        // at that place, the place again within a pixel)
+        if (!shapedTurns.length) continue;
+        const fits = (x: number, y: number) => x >= r && y >= r && x < w - r && y < h - r;
+        let bt = shapedTurns.reduce((p, q) => (Math.abs(q.a - bestA[i]) < Math.abs(p.a - bestA[i]) ? q : p), shapedTurns[0]);
+        let [bx, by, bq] = [Math.round(x0), Math.round(y0), -2];
+        for (let y = Math.floor(y0 - f); y <= Math.ceil(y0 + f); y++)
+          for (let x = Math.floor(x0 - f); x <= Math.ceil(x0 + f); x++) {
+            if (!fits(x, y)) continue;
+            const q = nccOwn(c, w, x, y, bt.m);
+            if (q > bq) [bx, by, bq] = [x, y, q];
+          }
+        if (!fits(bx, by)) continue;
+        for (const t of shapedTurns) {
+          const q = nccOwn(c, w, bx, by, t.m);
+          if (q > bq) [bt, bq] = [t, q];
+        }
+        const [cx0, cy0] = [bx, by];
+        for (let y = cy0 - 1; y <= cy0 + 1; y++)
+          for (let x = cx0 - 1; x <= cx0 + 1; x++) {
+            if (!fits(x, y)) continue;
+            const q = nccOwn(c, w, x, y, bt.m);
+            if (q > bq) [bx, by, bq] = [x, y, q];
+          }
+        if (bq > m.score) m = { x: bx + 0.5, y: by + 0.5, angle: bt.a, scale: s, score: bq };
+        continue;
       }
       for (let y = Math.floor(y0 - f); y <= Math.ceil(y0 + f); y++)
         for (let x = Math.floor(x0 - f); x <= Math.ceil(x0 + f); x++) {

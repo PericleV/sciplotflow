@@ -3,14 +3,18 @@
 // pattern (“sample_{T}C_{t}h”), the order of the files, and the three outputs made of every file's results: a table
 // with a row per file, a workbook with a sheet per file, every file's rows one under the other. The run itself is in
 // evaluate.ts (it evaluates the group's graph once per file).
-import { column, type Column, type Dataset, type Scalar, type Workbook } from './table.ts';
+import { column, findColumn, roleOf, type Column, type Dataset, type Scalar, type Workbook } from './table.ts';
+import { pick } from './extract.ts';
 
 // pattern: “{Name}” takes a number, “{Name:text}” a word, the rest is written as in the names (empty: nothing read);
 // order: the files as they come, by name (numbers in their order: run 2 before run 10), or by the first value read;
 // show: the file the steps are shown on inside (its place in that order; absent: the first); own: a file's own
 // settings of some steps — by the file's name, the step's id, only the settings changed (the others: the common ones)
 export type BatchOwn = Record<string, Record<string, Record<string, unknown>>>;
-export type BatchSpec = { pattern?: string; order?: 'given' | 'name' | 'value'; show?: number; own?: BatchOwn };
+// over 'columns': the steps run on every column of one table (not on every file) — sheet: of a workbook, by its name
+// (absent: the first); cols: the columns (2-6, B-F, names, R*, !C; empty: every Y); xFrom: their X — one column for all
+// (x: its name; empty: the designated X), the X on the left of each (its designations: X, Y, X, Y …), or the row number
+export type BatchSpec = { pattern?: string; order?: 'given' | 'name' | 'value'; show?: number; own?: BatchOwn; over?: 'columns'; sheet?: string; cols?: string; xFrom?: 'one' | 'left' | 'row'; x?: string };
 // the steps with a file's own settings over the common ones
 export function withOwn<T extends { id: string; data: unknown }>(nodes: T[], own: Record<string, Record<string, unknown>> | undefined): T[] {
   if (!own || !Object.keys(own).length) return nodes;
@@ -124,9 +128,10 @@ const partCol = (q: Part, vals: (number | string | undefined)[]): Column =>
 // the three outputs: a row per file (its name, what its name says, its values, the one row of a table it gave);
 // a sheet per file (and per table when the steps give several); every file's rows one under the other (of its first
 // table), the file and what its name says before them
-export function gather(runs: FileRun[], read: ((number | string)[] | null)[], parts: Part[]): { table: Dataset; sheets: Workbook; stacked: Dataset | null } {
+// (unit: what a run is — its column in the table and the rows: File, or Column for a batch over columns)
+export function gather(runs: FileRun[], read: ((number | string)[] | null)[], parts: Part[], unit = 'File'): { table: Dataset; sheets: Workbook; stacked: Dataset | null } {
   const n = runs.length;
-  const cols: Column[] = [textCol('File', runs.map((r) => r.name)), ...parts.map((q, k) => partCol(q, read.map((r) => r?.[k])))];
+  const cols: Column[] = [textCol(unit, runs.map((r) => r.name)), ...parts.map((q, k) => partCol(q, read.map((r) => r?.[k])))];
   // the values, by their label (a file without one: empty)
   const labels = [...new Set(runs.flatMap((r) => r.values.map((v) => v.label)))];
   for (const l of labels) cols.push(numCol(l, runs.map((r) => r.values.find((v) => v.label === l)?.value ?? NaN)));
@@ -156,7 +161,7 @@ export function gather(runs: FileRun[], read: ((number | string)[] | null)[], pa
     const rows = firsts.map((ds) => Math.max(0, ...(ds?.columns.map((c) => c.values.length) ?? [0])));
     const total = rows.reduce((a, b) => a + b, 0);
     const rep = <T,>(f: (i: number) => T) => runs.flatMap((_, i) => Array.from({ length: rows[i] }, () => f(i)));
-    const out: Column[] = [textCol('File', rep((i) => runs[i].name)), ...parts.map((q, k) => partCol(q, rep((i) => read[i]?.[k])))];
+    const out: Column[] = [textCol(unit, rep((i) => runs[i].name)), ...parts.map((q, k) => partCol(q, rep((i) => read[i]?.[k])))];
     for (const name of names) {
       const values = new Float64Array(total).fill(NaN);
       let text: string[] | undefined;
@@ -186,4 +191,46 @@ export function resultOf(label: string, v: { t: string; v: unknown } | undefined
   if (v.t === 'scalar') run.values.push({ label, value: (v.v as Scalar).value });
   else if (v.t === 'dataset') run.tables.push({ label, ds: v.v as Dataset });
   else if (v.t === 'column') run.tables.push({ label, ds: { name: label, columns: [v.v as Column] } });
+}
+
+// ---- Over columns: every column of a table a run of its own ----
+
+// The runs of a Batch over the columns of a table: for every column chosen, a table of its X (designated X) and it
+// (designated Y), with the ±Y designated right after it; named as the column. A list that finds nothing, an X not
+// there: said.
+export function columnRuns(ds: Dataset, spec: Pick<BatchSpec, 'cols' | 'xFrom' | 'x'>): Dataset[] | string {
+  const cols = ds.columns;
+  const names = cols.map((c) => c.name);
+  const role = (j: number) => roleOf(cols, j);
+  const how = spec.xFrom ?? 'one';
+  // the X of all (one): chosen by its name, else the designated one, else the first column
+  let xAll = -1;
+  if (how === 'one') {
+    xAll = spec.x?.trim() ? cols.indexOf(findColumn(cols, spec.x) as Column) : cols.findIndex((_, j) => role(j) === 'x');
+    if (spec.x?.trim() && xAll < 0) return `X: no column “${spec.x}”.`;
+    if (xAll < 0) xAll = 0;
+  }
+  let chosen: number[];
+  if (spec.cols?.trim()) {
+    const p = pick(spec.cols, names, true);
+    if (p.missing.length) return `Columns: not found: ${p.missing.join(', ')}.`;
+    chosen = p.found;
+  } else chosen = cols.flatMap((_, j) => (role(j) === 'y' && j !== xAll ? [j] : []));
+  chosen = chosen.filter((j) => j !== xAll);
+  if (!chosen.length) return 'Columns: none to run on (write them, e.g. B-F, or designate some columns Y).';
+  const rowNumber = (n: number): Column => ({ ...column('Row', Float64Array.from({ length: n }, (_, i) => i + 1)), role: 'x' });
+  return chosen.map((j) => {
+    const Y = cols[j];
+    let X: Column;
+    if (how === 'row') X = rowNumber(Y.values.length);
+    else if (how === 'left') {
+      let k = j - 1;
+      while (k >= 0 && role(k) !== 'x') k--;
+      X = k >= 0 ? cols[k] : rowNumber(Y.values.length);
+    } else X = cols[xAll];
+    const out: Column[] = [{ ...X, role: 'x' }, { ...Y, role: 'y' }];
+    // (its error, designated ±Y right after it, goes with it)
+    if (role(j + 1) === 'yerr' && !chosen.includes(j + 1)) out.push({ ...cols[j + 1], role: 'yerr' });
+    return { name: Y.name, columns: out };
+  });
 }

@@ -22,6 +22,7 @@ import { ZoomTools } from './ZoomTools.tsx';
 import { ReaderButton, ReaderLayer, ReaderOptions, type ReadCurve, type ReaderProp } from './CanvasReader.tsx';
 import { READER_OFF, type ReaderState } from './readerState.ts';
 import { Check, Field, InPort, Messages, NumInput, OutPort, ResultSummary, Select, TextInput } from './ui.tsx';
+import { sheetOptions } from './sheetOptions.ts';
 
 const OPS = (Object.keys(CURVE_OP_LABELS) as CurveMathOp[]).map((k): [CurveMathOp, string] => [k, CURVE_OP_LABELS[k]]);
 const opColor = (k: number) => REGION_COLORS[k % REGION_COLORS.length];
@@ -653,8 +654,7 @@ export function CurveMathNodeView({ id, data }: NodeProps<CurveMathNode>) {
           <>
             <span>Sheet</span>
             <Select<string>
-              value={sheet ?? ''}
-              options={[['', sh.viaShown ? 'the one shown in the source' : `first (${sh.sheets[0] ?? ''})`], ...sh.sheets.map((nm): [string, string] => [nm, nm])]}
+              {...sheetOptions(sh.sheets, sheet ?? '', { via: sh.viaShown })}
               onChange={(v) => {
                 set(isA ? { sheetA: v || undefined } : { sheetB: v || undefined });
                 sh.rewire();

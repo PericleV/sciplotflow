@@ -3,11 +3,12 @@
 // the curves (a Y over X, block by block). A block left out is grey, a piece that is not a whole cycle dashed. Zoom, pan,
 // the reader, the graph large; and the edits made on it: + Cut (a click puts a cut at that row — on the curves, at the
 // nearest point), a cut line dragged to another row or removed by a double-click, Blocks (a click keeps a block or
-// leaves it out), Rows (dragged across the rows used).
+// leaves it out), Rows (dragged across the rows used), Cut on Y (a click puts a level line at that value: the data cut
+// wherever they cross it; the line dragged up or down, removed by a double-click).
 import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { InPanel } from './inspectorStore.ts';
 import { createPortal } from 'react-dom';
-import { Maximize2, Scissors, SquareDashedMousePointer, MousePointerClick, X as XIcon } from 'lucide-react';
+import { Maximize2, Scissors, SeparatorHorizontal, SquareDashedMousePointer, MousePointerClick, X as XIcon } from 'lucide-react';
 import type { SplitGraph } from '../engine/reshape.ts';
 import { turnPoints } from '../engine/split.ts';
 import { fmtNum } from '../engine/table.ts';
@@ -26,7 +27,7 @@ const M = { l: 56, r: 10, t: 16, b: 30 };
 const GREY = '#c4c4c4';
 const colorOf = (k: number) => REGION_COLORS[k % REGION_COLORS.length];
 
-export type SplitTool = 'none' | 'cut' | 'pick' | 'range';
+export type SplitTool = 'none' | 'cut' | 'level' | 'pick' | 'range';
 // Where a cut placed or dragged lands: on the nearest data point; on the nearest maximum and / or minimum (along the
 // rows: where the column turns — a scan's vertices; on the curves: the peaks of the Y drawn), else on the nearest data
 // point; or at the row under the mouse (off; Alt does the same at any time)
@@ -40,8 +41,13 @@ export type SplitEdits = {
   moveCut: (c: SplitGraph['cuts'][number], row: number) => void;
   toggleBlock: (k: number) => void;
   setRange: (a: number, b: number) => void; // the rows used, from 1
+  // the level lines: one added at a value (on the column along the rows, or the first Y on the curves), moved, removed
+  addLevel: (value: number, on: 'from' | 'y') => void;
+  moveLevel: (k: number, value: number) => void;
+  removeLevel: (k: number) => void;
 };
-type Drag = { kind: 'cut'; cut: SplitGraph['cuts'][number]; row: number } | { kind: 'range'; a: number; b: number } | null;
+type Drag = { kind: 'cut'; cut: SplitGraph['cuts'][number]; row: number } | { kind: 'range'; a: number; b: number } | { kind: 'level'; k: number; value: number } | null;
+const LEVEL_COLOR = '#7b3fb5';
 
 function Graph({ g, view, W, H, zoom, box: zbox, onView, zoomOut, tool, snap, tol, edits, yAt, reader }: { g: SplitGraph; view: 'rows' | 'curves'; W: number; H: number; zoom: ZoomMode; box: View | null; onView: (v: View | null) => void; zoomOut: number; tool: SplitTool; snap: SplitSnap; tol: number; edits: SplitEdits; yAt: number; reader: { r: ReaderState; onRead: (t: string) => void } }) {
   const cv = useRef<HTMLCanvasElement>(null);
@@ -99,6 +105,9 @@ function Graph({ g, view, W, H, zoom, box: zbox, onView, zoomOut, tool, snap, to
   const ix = (p: number) => box.x0 + ((p - M.l) / pw) * (box.x1 - box.x0);
   const iy = (p: number) => box.y0 + (1 - (p - M.t) / ph) * (box.y1 - box.y0);
   const cutsShown = rowsView && g.contiguous;
+  // the level lines drawn here: along the rows those on its column, on the curves those on the first Y (when it is drawn)
+  const levelsShown = g.levels.map((L, k) => ({ ...L, k })).filter((L) => (rowsView ? L.on === 'from' : L.on === 'y' && yAt === 0));
+  const nearLevel = (qy: number) => levelsShown.find((L) => Math.abs(fy(L.value) - qy) <= 5);
   useEffect(() => {
     const c = cv.current;
     if (!c) return;
@@ -165,8 +174,8 @@ function Graph({ g, view, W, H, zoom, box: zbox, onView, zoomOut, tool, snap, to
     if (cutsShown) {
       for (const cut of g.cuts) {
         if (drag?.kind === 'cut' && drag.cut === cut) continue;
-        ctx.strokeStyle = cut.hand ? '#d62728' : '#555555';
-        ctx.setLineDash(cut.hand ? [5, 3] : []);
+        ctx.strokeStyle = cut.hand ? '#d62728' : cut.level ? LEVEL_COLOR : '#555555';
+        ctx.setLineDash(cut.hand ? [5, 3] : cut.level ? [1, 2] : []);
         ctx.lineWidth = 1;
         const x = Math.round(fx(cut.row)) + 0.5;
         ctx.beginPath();
@@ -183,6 +192,32 @@ function Graph({ g, view, W, H, zoom, box: zbox, onView, zoomOut, tool, snap, to
         ctx.lineTo(x, M.t + ph);
         ctx.stroke();
       }
+      ctx.setLineDash([]);
+    }
+    // the level lines (the one dragged where it is going), its way written at its end
+    for (const L of levelsShown) {
+      const v = drag?.kind === 'level' && drag.k === L.k ? drag.value : L.value;
+      const y = Math.round(fy(v)) + 0.5;
+      ctx.strokeStyle = LEVEL_COLOR;
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([6, 3]);
+      ctx.beginPath();
+      ctx.moveTo(M.l, y);
+      ctx.lineTo(M.l + pw, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = LEVEL_COLOR;
+      ctx.font = '10px system-ui, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(`${L.dir === 'up' ? '↑ ' : L.dir === 'down' ? '↓ ' : '↕ '}${fmtNum(v, 4)}`, M.l + pw - 3, y - 3);
+    }
+    if (tool === 'level' && hover !== null && drag?.kind !== 'level') {
+      ctx.strokeStyle = 'rgba(123, 63, 181, 0.5)';
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath();
+      ctx.moveTo(M.l, Math.round(hover) + 0.5);
+      ctx.lineTo(M.l + pw, Math.round(hover) + 0.5);
+      ctx.stroke();
       ctx.setLineDash([]);
     }
     if (drag?.kind === 'range') {
@@ -330,7 +365,14 @@ function Graph({ g, view, W, H, zoom, box: zbox, onView, zoomOut, tool, snap, to
           const [qx, qy] = at(e);
           if (z.down(qx, qy, e)) return;
           if (tool === 'range' && rowsView) return setDrag({ kind: 'range', a: rowAt(qx), b: rowAt(qx) });
+          const L = tool !== 'pick' ? nearLevel(qy) : undefined;
+          if (L) return setDrag({ kind: 'level', k: L.k, value: L.value });
+          if (tool === 'level') {
+            setHover(null);
+            return edits.addLevel(+iy(qy).toPrecision(4), rowsView ? 'from' : 'y');
+          }
           const cut = tool !== 'pick' ? nearCut(qx) : undefined;
+          if (cut?.level) return;
           if (cut) return setDrag({ kind: 'cut', cut, row: cut.row });
           if (tool === 'cut') {
             const r = snapRow(qx, qy, e.altKey);
@@ -344,33 +386,44 @@ function Graph({ g, view, W, H, zoom, box: zbox, onView, zoomOut, tool, snap, to
         onPointerMove={(e) => {
           const [qx, qy] = at(e);
           if (z.move(qx, qy)) return setCursor(zoom === 'pan' ? 'grab' : 'crosshair');
+          if (drag?.kind === 'level') return setDrag({ ...drag, value: +iy(qy).toPrecision(4) });
+          if (tool === 'level') {
+            setHover(nearLevel(qy) ? null : qy);
+            return setCursor(nearLevel(qy) ? 'ns-resize' : 'copy');
+          }
+          if (nearLevel(qy) && tool !== 'pick') setCursor('ns-resize');
           if (drag?.kind === 'cut') {
             const row = snapRow(qx, qy, e.altKey) ?? rowAt(qx);
             setDrag({ ...drag, row });
             setHover(row);
           } else if (drag?.kind === 'range') setDrag({ ...drag, b: rowAt(qx) });
           else if (tool === 'cut') setHover(nearCut(qx) ? null : snapRow(qx, qy, e.altKey));
-          setCursor(drag?.kind === 'cut' || (tool !== 'pick' && nearCut(qx)) ? 'ew-resize' : tool === 'cut' ? 'copy' : tool === 'pick' ? 'pointer' : tool === 'range' && rowsView ? 'col-resize' : 'default');
+          setCursor(tool !== 'pick' && nearLevel(qy) ? 'ns-resize' : drag?.kind === 'cut' || (tool !== 'pick' && nearCut(qx) && !nearCut(qx)?.level) ? 'ew-resize' : tool === 'cut' ? 'copy' : tool === 'pick' ? 'pointer' : tool === 'range' && rowsView ? 'col-resize' : 'default');
         }}
         onPointerLeave={() => setHover(null)}
         onPointerUp={(e) => {
           if (z.up(...at(e))) return;
           if (drag?.kind === 'cut' && drag.row !== drag.cut.row) edits.moveCut(drag.cut, drag.row);
+          if (drag?.kind === 'level' && drag.value !== g.levels[drag.k]?.value) edits.moveLevel(drag.k, drag.value);
           if (drag?.kind === 'range' && drag.a !== drag.b) edits.setRange(Math.min(drag.a, drag.b), Math.max(drag.a, drag.b));
           setDrag(null);
           if (drag?.kind === 'cut') setHover(null);
         }}
         onDoubleClick={(e) => {
+          const L = nearLevel(at(e)[1]);
+          if (L) return edits.removeLevel(L.k);
           const cut = nearCut(at(e)[0]);
-          if (cut) edits.removeCut(cut);
+          if (cut && !cut.level) edits.removeCut(cut);
         }}
         onContextMenu={(e) => {
-          // a right-click on a cut removes it (as a double-click)
-          const cut = nearCut(at(e)[0]);
-          if (!cut) return;
+          // a right-click on a level line or a cut removes it (as a double-click)
+          const L = nearLevel(at(e)[1]);
+          const cut = L ? undefined : nearCut(at(e)[0]);
+          if (!L && (!cut || cut.level)) return;
           e.preventDefault();
           e.stopPropagation();
-          edits.removeCut(cut);
+          if (L) edits.removeLevel(L.k);
+          else if (cut) edits.removeCut(cut);
         }}
         onWheel={(e) => z.wheel(...at(e), e.deltaY, e)}
         onKeyDown={(e) => {
@@ -457,7 +510,8 @@ export function SplitGraphView({ g, view, setView, edits, tol }: { g: SplitGraph
           />
         )}
         <span className="grow" />
-        {toolBtn('cut', <Scissors {...IC} />, 'Cut', 'A click puts a cut where the marker shows (Snap). On a cut line: drag it to another row; a double-click or a right-click removes it (a cut of the rule too). Esc: off', !g.contiguous)}
+        {toolBtn('cut', <Scissors {...IC} />, 'Cut on X', 'A click puts a cut where the marker shows (Snap). On a cut line: drag it to another row; a double-click or a right-click removes it (a cut of the rule too). Esc: off', !g.contiguous)}
+        {toolBtn('level', <SeparatorHorizontal {...IC} />, 'Cut on Y', `A click puts a line across at that value (${view === 'rows' ? g.f.name || 'X' : g.ys[0]?.name || 'Y'}): the data are cut wherever they cross it (going up, down or either: chosen under the options). Drag the line up or down; a double-click or a right-click removes it. Esc: off`, view === 'curves' && yAt > 0)}
         {g.contiguous && (
           <Select<SplitSnap>
             value={snap}

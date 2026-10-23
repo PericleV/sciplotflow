@@ -7,7 +7,7 @@ import { isArea, isLine, roiOutline, ROI_COLOR, ROI_KINDS, RING_DEFAULTS, TOOL_H
 import { MEASURE_KEYS, type MeasureKey, type MeasureSpec } from '../image/measure.ts';
 import { STEP_DEFS, type ImgStep } from '../image/steps.ts';
 import type { ParticleOpts } from '../image/particles.ts';
-import type { MatchOpts } from '../image/match.ts';
+import type { MatchContext, MatchOpts } from '../image/match.ts';
 import type { Workbook } from '../engine/table.ts';
 import { Check, NumInput, Select, TextInput } from './ui.tsx';
 import { Copy, Eye, EyeOff, X } from 'lucide-react';
@@ -282,6 +282,11 @@ export function ParticlesPanel(p: {
   canMatch: boolean;
   models: number;
   findLike: () => void;
+  setMin: (min: number) => void;
+  review: boolean;
+  setReview: (on: boolean) => void;
+  canMore: boolean;
+  findMore: () => void;
 }) {
   const { opts, set, group, setGroup, k, u, find, msg, count, byShape, likeExamples, match, setMatch } = p;
   const a = k * k;
@@ -322,8 +327,27 @@ export function ParticlesPanel(p: {
         </button>
         <span className="muted">{msg}</span>
       </div>
-      <div className="hint">Or like some of them: draw a rectangle (or any shape) around one good particle, pick it, then Find like this. Every place that looks like it is found, turned any way and a little larger or smaller, touching others or not, on the last image of the steps that is not a mask. Several models (particles that look different: lit otherwise, tilted): give them one group in the list and pick one of them; each place is given the model most like it.</div>
+      <div className="hint">Or like some of them: draw a rectangle (or any shape) around one good particle, pick it, then Find like this. Every place that looks like it is found, turned any way and a little larger or smaller, on the last image of the steps that is not a mask. The dashed line around the selection shows what is compared. Several models (particles that look different: lit otherwise, tilted): give them one group in the list and pick one of them; each place is given the model most like it.</div>
       <div className="ie-params">
+        <span className="ie-label">Around it</span>
+        <span className="row">
+          <Select<MatchContext>
+            value={match.context ?? 'disc'}
+            title="What is compared besides the particle: a disc around the selection (its corners and a little around them); only the particle and its edge (in clusters: the neighbours, whatever they are, left out); or the particle and the ground around it out to the dashed line (a particle on its own: one in a cluster, or a piece of the ground, is less alike)"
+            options={[
+              ['disc', 'a disc around it'],
+              ['cluster', 'only the particle (in clusters)'],
+              ['alone', 'the particle and the ground (alone)'],
+            ]}
+            onChange={(context) => setMatch({ context: context === 'disc' ? undefined : context })}
+          />
+          {match.context === 'alone' && (
+            <>
+              <NumInput className="tiny" min={1} max={200} step={1} value={match.ring ?? 6} title="How far around the particle the ground is compared (px; also dragged by the handle on the dashed line)" onChange={(v) => setMatch({ ring: Math.max(1, Math.round(v || 6)) })} />
+              <span className="muted">px</span>
+            </>
+          )}
+        </span>
         <span className="ie-label">Turns</span>
         <Select<string>
           value={String(match.symmetry)}
@@ -348,7 +372,10 @@ export function ParticlesPanel(p: {
           onChange={(v) => setMatch({ sizes: Number(v) })}
         />
         <span className="ie-label">Similarity</span>
-        <NumInput className="tiny" min={0} max={1} step={0.05} value={match.min} title="The least similarity kept (the correlation with the model: 1 the same, 0 nothing alike): lower, more found and more mistakes" onChange={(v) => setMatch({ min: Math.min(1, Math.max(0, Number.isFinite(v) ? v : 0.5)) })} />
+        <span className="row" title="The least similarity kept (the correlation with the model: 1 the same, 0 nothing alike): lower, more found and more mistakes. After a search it changes the particles found at once">
+          <input className="nodrag grow" type="range" min={0.3} max={1} step={0.01} value={match.min} onChange={(e) => p.setMin(Number(e.target.value))} />
+          <NumInput className="tiny" min={0} max={1} step={0.01} value={match.min} onChange={(v) => p.setMin(Math.min(1, Math.max(0, Number.isFinite(v) ? v : 0.5)))} />
+        </span>
       </div>
       <Check label="fit the edges" title="A rectangle or ellipse found: its sides and centre moved to the edges under it (its size measured, not only its place)" value={match.fit} onChange={(fit) => setMatch({ fit })} />
       <div className="row wrap">
@@ -356,6 +383,16 @@ export function ParticlesPanel(p: {
           Find like this
         </button>
         {p.models > 1 && <span className="muted">{p.models} models (its group)</span>}
+        {p.canMore && (
+          <button className="nodrag" title="Search again with the particles found as models too (the least alike of them: they differ most from the first): more of those that look a little different" onClick={p.findMore}>
+            Find more like these
+          </button>
+        )}
+        {p.canMore && (
+          <button className={`nodrag${p.review ? ' on' : ''}`} title="Review: a click on a particle found leaves it out; on one left out (faint), puts it back" onClick={() => p.setReview(!p.review)}>
+            Review
+          </button>
+        )}
       </div>
       {count > 0 && (
         <div className="row wrap">

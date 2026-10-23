@@ -107,7 +107,7 @@ export const AUTOEXTRACT_DEFAULTS: AutoExtractData = {
   names: 'sheet',
   mode: 'simple',
 };
-export const UNSTACK_DEFAULTS: UnstackData = { x: '', ys: '', by: 'auto', names: '', xs: 'first' };
+export const UNSTACK_DEFAULTS: UnstackData = { x: '', ys: '', by: 'auto', names: '', xs: 'first', naming: 'block' };
 export const COMBINE_DEFAULTS: CombineData = { how: 'after', at: 0, match: 'name', x: '', dup: 'all', name: '' };
 export const MATHCOL_DEFAULTS: MathColData = { name: '', formula: '' };
 export const PYTHON_DEFAULTS: PythonData = { code: '# The inputs A, B … are variables here; the variables you make are the outputs.\nimport numpy as np\n\n' };

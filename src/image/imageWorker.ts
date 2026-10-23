@@ -34,7 +34,8 @@ export type ParticlesReply = { type: 'particles'; outlines: Pt[][]; found: numbe
 // Find like this: the models (each its centre and the radius of its disc, in the part analysed; box: a rectangle or
 // ellipse whose edges are fitted — its sides and turn), on the last image of the steps that is not a mask; every match
 // the model it is like (its place in the list)
-export type MatchModel = { cx: number; cy: number; R: number; box?: { w: number; h: number; angle: number } };
+// poly: its outline (in the part analysed), for a context other than the disc
+export type MatchModel = { cx: number; cy: number; R: number; box?: { w: number; h: number; angle: number }; poly?: Pt[] };
 export type MatchRequest = { type: 'match'; steps: ImgStep[]; crop?: Crop; train?: TrainExample[]; models: MatchModel[]; opts: Partial<MatchOpts> };
 export type MatchReply = { type: 'match'; matches: (Match & { model: number; w?: number; h?: number })[] };
 export type MeasureReply = { type: 'measure'; mseq: number; book: Workbook; summary: string };
@@ -210,7 +211,7 @@ async function match(m: MatchRequest) {
   const img = [...(out?.outs ?? [])].reverse().find((x) => x.kind !== 'mask') ?? b.full;
   const g = img.ch.length === 1 ? img.ch[0] : luminance(img);
   // (every model's matches; where several models found the same particle, the most alike kept)
-  const all = m.models.flatMap((md, k) => findLike(g, img.w, img.h, md.cx, md.cy, md.R, { ...MATCH_DEFAULTS, ...m.opts }).map((f) => ({ ...f, model: k })));
+  const all = m.models.flatMap((md, k) => findLike(g, img.w, img.h, md.cx, md.cy, md.R, { ...MATCH_DEFAULTS, ...m.opts }, md.poly).map((f) => ({ ...f, model: k })));
   all.sort((a, b) => b.score - a.score);
   const best: typeof all = [];
   for (const f of all) if (!best.some((q) => Math.hypot(q.x - f.x, q.y - f.y) < 0.75 * Math.min(m.models[q.model].R, m.models[f.model].R))) best.push(f);

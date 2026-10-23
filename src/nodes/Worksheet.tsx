@@ -5,10 +5,10 @@
 // needed), Delete empties it. Right-click (or Ctrl+Shift+= / Ctrl+−): insert, delete and move columns and rows. Every
 // column has its designation (X, Y, ±Y …), used by the quick plot. Only the rows in view are drawn, so large files
 // scroll at once. The changes are kept apart from the file.
-import { useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { columnLetter } from '../engine/csv.ts';
-import { editCount, pasteSplitter, type SheetEdits, type SheetMap } from '../engine/sheet.ts';
+import { editCount, fillSeries, pasteSplitter, type SheetEdits, type SheetLook, type SheetMap } from '../engine/sheet.ts';
 import { cellText, ROLE_LABELS, roleOf, type ColumnRole, type Dataset } from '../engine/table.ts';
 import { maxOf } from '../engine/minmax.ts';
 import { X } from 'lucide-react';
@@ -17,6 +17,11 @@ import { ask } from '../ui/dialogStore.ts';
 
 const ROW_H = 21;
 const VIEW_H = 300;
+// the widths a column is dragged to, the rows' height, the table's least size
+const COL_MIN = 36;
+const COL_MAX = 600;
+const ROW_MIN = 16;
+const ROW_MAX = 80;
 const ROLES = Object.entries(ROLE_LABELS) as [ColumnRole, string][];
 
 type Cell = { r: number; c: number } | null;
@@ -34,13 +39,29 @@ export type SheetLayout = { keys: string[]; onOrder: (keys: string[]) => void; o
 // readOnly: a view (Workbook with something connected): select and copy only — but for the designations when onRole is
 // given. plain: a table of its own (a Workbook sheet): every cell typed in, so nothing is marked as changed by hand.
 // layout: a Workbook sheet with inputs (its own columns editable, as are the rows of its own table).
-export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain, onRole, layout }: { dataset: Dataset; map?: SheetMap; edits: SheetEdits | undefined; onEdits: (e: SheetEdits) => void; readOnly?: boolean; plain?: boolean; onRole?: (j: number, role: ColumnRole) => void; layout?: SheetLayout }) {
+// look / onLook: how it is drawn (the node's width, the table's height, the rows' height, the columns' widths), changed by
+// dragging the table's corner, the border under a row number, the border right of a column letter (double-click: the
+// column fits its values)
+export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain, onRole, layout, look, onLook }: { dataset: Dataset; map?: SheetMap; edits: SheetEdits | undefined; onEdits: (e: SheetEdits) => void; readOnly?: boolean; plain?: boolean; onRole?: (j: number, role: ColumnRole) => void; layout?: SheetLayout; look?: SheetLook; onLook?: (l: SheetLook) => void }) {
+  // (while a border or the corner is dragged: the look shown, kept when the mouse is let go)
+  const [live, setLive] = useState<SheetLook | null>(null);
+  const lk = live ?? look ?? {};
+  const rowH = lk.rowH ?? ROW_H;
+  const viewH = lk.h ?? VIEW_H + 5 * ROW_H + 8;
+  const colW = (name: string) => lk.cols?.[name];
+  // a column's own width on its cells (else the table's)
+  const wide = (j: number) => {
+    const w = colW(dataset.columns[j]?.name ?? '');
+    return w ? { width: w, minWidth: w, maxWidth: w } : undefined;
+  };
   const nAll = Math.max(0, maxOf(dataset.columns.map((c) => c.values.length)));
   const map: SheetMap = given ?? { rows: Array.from({ length: nAll }, (_, i) => i), cols: dataset.columns.map((_, j) => j), baseRows: nAll, baseCols: dataset.columns.length };
   const [top, setTop] = useState(0);
   const [editing, setEditing] = useState<Cell>(null);
   const [draft, setDraft] = useState('');
   const [sel, setSel] = useState<Sel | null>(null);
+  // whole columns or rows picked one by one (Ctrl + click on their letters or numbers): not side by side, unlike `sel`
+  const [picks, setPicks] = useState<{ on: 'col' | 'row'; list: number[] } | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
   const dragging = useRef(false);
   const box = useRef<HTMLDivElement>(null);
@@ -63,13 +84,15 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   const canArrange = (c: number) => (layout ? c < layout.keys.length : !lockedCol(c));
   const canAddCol = layout ? !!layout.onAdd : !readOnly;
   const rowsEditable = !readOnly && !layout;
-  const first = Math.max(0, Math.floor(top / ROW_H) - 5);
-  const last = Math.min(n, Math.ceil((top + VIEW_H) / ROW_H) + 5);
+  // the rows that can be left out: any (a table of its own), or those of its own table (with inputs)
+  const rowGone = (r: number) => !readOnly && (rowsEditable || (!!layout && r < nOwn));
+  const first = Math.max(0, Math.floor(top / rowH) - 5);
+  const last = Math.min(n, Math.ceil((top + viewH) / rowH) + 5);
   const key = (r: number, c: number) => `${map.rows[r]}:${reads[c]}`;
   const shown = (r: number, c: number) => (cols[c] && r < cols[c].values.length ? cellText(cols[c], r).replace(/^—$/, '') : '');
   const lo = sel && { r: Math.min(sel.r0, sel.r1), c: Math.min(sel.c0, sel.c1) };
   const hi = sel && { r: Math.max(sel.r0, sel.r1), c: Math.max(sel.c0, sel.c1) };
-  const isSel = (r: number, c: number) => !!lo && !!hi && r >= lo.r && r <= hi.r && c >= lo.c && c <= hi.c;
+  const isSel = (r: number, c: number) => (picks ? picks.list.includes(picks.on === 'col' ? c : r) : !!lo && !!hi && r >= lo.r && r <= hi.r && c >= lo.c && c <= hi.c);
   const span = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, k) => a + k);
 
   // a column dragged by its letter to another place (the order kept in the edits, by the columns' places as read; with
@@ -91,14 +114,15 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
     }
     setSel(null);
   };
-  // the columns a to b left out: those of its own table (deleted), the inputs' (hidden)
-  const removeCols = (a: number, b: number) => {
-    const list = span(a, b).filter(canArrange);
+  // the columns listed left out: those of its own table (deleted), the inputs' (hidden)
+  const removeCols = (cs: number[]) => {
+    const list = cs.filter(canArrange);
     const ownCols = list.filter((c) => reads[c] >= 0).map((c) => reads[c]);
     if (ownCols.length) onEdits({ ...e, delCols: [...(e.delCols ?? []), ...ownCols] });
     const inCols = layout ? list.filter((c) => reads[c] < 0).map((c) => layout.keys[c]) : [];
     if (inCols.length) layout?.onHide(inCols);
     setSel(null);
+    setPicks(null);
   };
   // an empty column at the place `at` (0 … the number of columns)
   const insertCol = (at: number) => {
@@ -109,10 +133,11 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
     onEdits({ ...e, addCols: (e.addCols ?? 0) + 1, order });
     setSel({ r0: 0, c0: at, r1: Math.max(0, n - 1), c1: at });
   };
-  const removeRows = (a: number, b: number) => {
-    if (!rowsEditable) return;
-    onEdits({ ...e, delRows: [...(e.delRows ?? []), ...span(a, Math.min(b, n - 1)).map((r) => map.rows[r])] });
+  const removeRows = (rs: number[]) => {
+    const list = rs.filter((r) => r < n && rowGone(r));
+    if (list.length) onEdits({ ...e, delRows: [...(e.delRows ?? []), ...list.map((r) => map.rows[r])] });
     setSel(null);
+    setPicks(null);
   };
   const insertRow = (at: number) => {
     if (!rowsEditable) return;
@@ -123,6 +148,11 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   };
   const wholeCols = !!lo && !!hi && lo.r === 0 && hi.r === n - 1;
   const wholeRows = !!lo && !!hi && lo.c === 0 && hi.c === cols.length - 1 && cols.length > 0;
+  // the whole columns (rows) chosen: picked one by one, or a block of them
+  const chosenCols = picks?.on === 'col' ? picks.list : !picks && wholeCols && lo && hi ? span(lo.c, hi.c) : [];
+  const chosenRows = picks?.on === 'row' ? picks.list : !picks && wholeRows && lo && hi ? span(lo.r, hi.r) : [];
+  const goneCols = chosenCols.filter(canArrange);
+  const goneRows = chosenRows.filter(rowGone);
 
   useEffect(() => {
     const up = () => (dragging.current = false);
@@ -147,14 +177,131 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   }, [menu]);
 
   const focus = () => box.current?.focus({ preventScroll: true });
+  // a border or the corner dragged: the look followed live (f: from the move, in pixels of the canvas), kept at the end
+  const dragLook = (ev: ReactPointerEvent, f: (dx: number, dy: number) => SheetLook, live?: (l: SheetLook) => void) => {
+    if (!onLook || ev.button !== 0) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const el = box.current;
+    // (the canvas's zoom: screen pixels to the table's)
+    const zoom = el && el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1;
+    const [x0, y0] = [ev.clientX, ev.clientY];
+    let cur: SheetLook | null = null;
+    const move = (e: PointerEvent) => {
+      cur = f((e.clientX - x0) / zoom, (e.clientY - y0) / zoom);
+      setLive(cur);
+      live?.(cur);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      setLive(null);
+      if (cur) onLook(cur);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  const clamp = (v: number, lo: number, hi: number) => Math.round(Math.min(hi, Math.max(lo, v)));
+  // ---- the fill handle: the selection's corner dragged down, up, right or left goes on from its cells (fillSeries) ----
+  const [fillTo, setFillTo] = useState<{ r: number; c: number } | null>(null);
+  // the cells a fill to `t` writes: down / up (each column goes on) or right / left (each row), the larger way
+  const fillRange = (t: { r: number; c: number }) => {
+    if (!lo || !hi) return null;
+    const dr = t.r > hi.r ? t.r - hi.r : t.r < lo.r ? t.r - lo.r : 0;
+    const dc = t.c > hi.c ? t.c - hi.c : t.c < lo.c ? t.c - lo.c : 0;
+    if (!dr && !dc) return null;
+    return Math.abs(dr) >= Math.abs(dc) ? { rows: dr > 0 ? span(hi.r + 1, t.r) : span(t.r, lo.r - 1), cols: span(lo.c, hi.c), down: dr > 0, vertical: true } : { rows: span(lo.r, hi.r), cols: dc > 0 ? span(hi.c + 1, t.c) : span(t.c, lo.c - 1), down: dc > 0, vertical: false };
+  };
+  const doFill = (t: { r: number; c: number }, more: boolean) => {
+    const f = fillRange(t);
+    if (!f || !lo || !hi) return;
+    const cells = { ...e.cells };
+    const lines = f.vertical ? f.cols : f.rows;
+    for (const line of lines) {
+      const src = f.vertical ? span(lo.r, hi.r).map((r) => shown(r, line)) : span(lo.c, hi.c).map((c) => shown(line, c));
+      const n2 = f.vertical ? f.rows.length : f.cols.length;
+      // (up or left: going on backwards from the first cell)
+      const vals = f.down ? fillSeries(src, n2, more) : fillSeries([...src].reverse(), n2, more).reverse();
+      vals.forEach((v, k) => {
+        const [r, c] = f.vertical ? [f.rows[k], line] : [line, f.cols[k]];
+        if (!locked(r, c)) cells[key(r, c)] = v;
+      });
+    }
+    onEdits({ ...e, cells });
+    setSel({ r0: Math.min(lo.r, ...f.rows), c0: Math.min(lo.c, ...f.cols), r1: Math.max(hi.r, ...f.rows), c1: Math.max(hi.c, ...f.cols) });
+  };
+  const startFill = (ev: ReactPointerEvent) => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    let t: { r: number; c: number } | null = null;
+    const move = (m: PointerEvent) => {
+      const td = document.elementFromPoint(m.clientX, m.clientY)?.closest('td[data-r]') as HTMLElement | null;
+      if (!td) return;
+      t = { r: Number(td.dataset.r), c: Number(td.dataset.c) };
+      setFillTo(t);
+    };
+    const up = (u: PointerEvent) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      setFillTo(null);
+      if (t) doFill(t, u.ctrlKey || u.metaKey);
+      focus();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  // a double-click on the handle: down as far as the column beside it (left, else right) has values
+  const fillDown = (ev: ReactMouseEvent) => {
+    ev.stopPropagation();
+    if (!lo || !hi) return;
+    const adj = lo.c > 0 ? lo.c - 1 : hi.c + 1;
+    let end = hi.r;
+    while (end + 1 < n && adj < cols.length && shown(end + 1, adj) !== '') end++;
+    if (end > hi.r) doFill({ r: end, c: hi.c }, ev.ctrlKey || ev.metaKey);
+  };
+  const preview = fillTo ? fillRange(fillTo) : null;
+  const inFill = (r: number, c: number) => !!preview && preview.rows.includes(r) && preview.cols.includes(c);
+  const showHandle = !readOnly && !editing && !picks && !!lo && !!hi;
+  const base = look ?? {};
+  const dragCol = (ev: ReactPointerEvent, j: number) => {
+    const th = (ev.currentTarget as HTMLElement).closest('th');
+    const w0 = colW(cols[j].name) ?? th?.offsetWidth ?? 92;
+    dragLook(ev, (dx) => ({ ...base, cols: { ...base.cols, [cols[j].name]: clamp(w0 + dx, COL_MIN, COL_MAX) } }));
+  };
+  const dragRow = (ev: ReactPointerEvent) => {
+    const h0 = rowH;
+    dragLook(ev, (_dx, dy) => ({ ...base, rowH: clamp(h0 + dy, ROW_MIN, ROW_MAX) }));
+  };
+  // the corner: the node as wide, the table as high (the node's width shown live on it)
+  const dragCorner = (ev: ReactPointerEvent) => {
+    const node = box.current?.closest('.node') as HTMLElement | null;
+    const [w0, h0] = [node?.offsetWidth ?? 400, box.current?.offsetHeight ?? viewH];
+    dragLook(
+      ev,
+      (dx, dy) => ({ ...base, w: clamp(w0 + dx, 260, 2400), h: clamp(h0 + dy, 90, 2400) }),
+      (l) => node && l.w && (node.style.width = `${l.w}px`),
+    );
+  };
+  // a column fitted to its name and values (the first thousand rows), on a double-click of its border
+  const fitCol = (j: number) => {
+    if (!onLook) return;
+    const g = document.createElement('canvas').getContext('2d');
+    if (!g) return;
+    g.font = getComputedStyle(box.current ?? document.body).font;
+    const c = cols[j];
+    let m = g.measureText(c.name).width + 12;
+    for (let r = 0; r < Math.min(n, 1000); r++) m = Math.max(m, g.measureText(shown(r, j)).width + 12);
+    onLook({ ...base, cols: { ...base.cols, [c.name]: clamp(m, COL_MIN, COL_MAX) } });
+  };
   // the row r in view
   const reveal = (r: number) => {
     const el = box.current;
     if (!el) return;
     const head = el.querySelector('thead')?.getBoundingClientRect().height ?? 0;
-    const y = r * ROW_H;
+    const y = r * rowH;
     if (y < el.scrollTop) el.scrollTop = y;
-    else if (y + ROW_H > el.scrollTop + el.clientHeight - head) el.scrollTop = y + ROW_H - el.clientHeight + head;
+    else if (y + rowH > el.scrollTop + el.clientHeight - head) el.scrollTop = y + rowH - el.clientHeight + head;
   };
   const start = (r: number, c: number, typed?: string) => {
     if (locked(r, c)) return;
@@ -197,8 +344,19 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   };
   // the keys of the table when no cell is being changed
   const tableKeys = (ev: KeyboardEvent) => {
-    if (editing || !sel) return;
+    if (editing || (!sel && !picks)) return;
     const mod = ev.ctrlKey || ev.metaKey;
+    // (columns or rows picked one by one: Delete or Ctrl+− leaves them out, Escape lets them go)
+    if (!sel) {
+      if (ev.key === 'Delete' || ev.key === 'Backspace' || (mod && (ev.key === '-' || ev.key === '_')) || ev.key === 'Escape') {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (ev.key === 'Escape') setPicks(null);
+        else if (goneCols.length) removeCols(goneCols);
+        else if (goneRows.length) removeRows(goneRows);
+      }
+      return;
+    }
     const moves: Record<string, [number, number]> = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1], PageUp: [-12, 0], PageDown: [12, 0] };
     if (moves[ev.key]) {
       ev.preventDefault();
@@ -213,18 +371,22 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
       ev.stopPropagation();
       start(sel.r0, sel.c0);
     } else if (ev.key === 'Delete' || ev.key === 'Backspace') {
+      // (whole columns or rows chosen: left out; else the cells emptied)
       ev.preventDefault();
       ev.stopPropagation();
-      clear();
+      if (goneCols.length) removeCols(goneCols);
+      else if (goneRows.length) removeRows(goneRows);
+      else clear();
     } else if (ev.key === 'Escape') {
       ev.stopPropagation();
       setSel(null);
-    } else if (mod && (ev.key === '-' || ev.key === '_') && lo && hi) {
-      // the whole columns or rows selected left out
+      setPicks(null);
+    } else if (mod && (ev.key === '-' || ev.key === '_')) {
+      // the whole columns or rows chosen left out
       ev.preventDefault();
       ev.stopPropagation();
-      if (wholeCols) removeCols(lo.c, hi.c);
-      else if (wholeRows) removeRows(lo.r, hi.r);
+      if (goneCols.length) removeCols(goneCols);
+      else if (goneRows.length) removeRows(goneRows);
     } else if (mod && ev.shiftKey && (ev.key === '+' || ev.key === '=') && lo) {
       // an empty column (row) before the whole column (row) selected
       ev.preventDefault();
@@ -307,19 +469,37 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   };
   const edited = (r: number, c: number) => !plain && (e.cells?.[key(r, c)] !== undefined || map.rows[r] >= map.baseRows || reads[c] >= map.baseCols);
   const count = plain ? 0 : editCount(e);
-  const selCols = (c: number, shift: boolean) => {
-    setSel(shift && sel ? { r0: 0, c0: sel.c0, r1: n - 1, c1: c } : { r0: 0, c0: c, r1: n - 1, c1: c });
+  // a column letter clicked: that column; Shift: up to it; Ctrl: added to (or taken from) the columns picked
+  const selCols = (c: number, shift: boolean, add = false) => {
+    if (add) {
+      const had = picks?.on === 'col' ? picks.list : chosenCols;
+      const list = had.includes(c) ? had.filter((x) => x !== c) : [...had, c].sort((a, b) => a - b);
+      setPicks(list.length ? { on: 'col', list } : null);
+      setSel(null);
+    } else {
+      setPicks(null);
+      setSel(shift && sel ? { r0: 0, c0: sel.c0, r1: n - 1, c1: c } : { r0: 0, c0: c, r1: n - 1, c1: c });
+    }
     focus();
   };
-  const selRows = (r: number, shift: boolean) => {
-    setSel(shift && sel ? { r0: sel.r0, c0: 0, r1: r, c1: cols.length - 1 } : { r0: r, c0: 0, r1: r, c1: cols.length - 1 });
+  const selRows = (r: number, shift: boolean, add = false) => {
+    if (add) {
+      const had = picks?.on === 'row' ? picks.list : chosenRows;
+      const list = had.includes(r) ? had.filter((x) => x !== r) : [...had, r].sort((a, b) => a - b);
+      setPicks(list.length ? { on: 'row', list } : null);
+      setSel(null);
+    } else {
+      setPicks(null);
+      setSel(shift && sel ? { r0: sel.r0, c0: 0, r1: r, c1: cols.length - 1 } : { r0: r, c0: 0, r1: r, c1: cols.length - 1 });
+    }
     focus();
   };
   // right-click: on the selection it keeps it, else selects what was clicked (the column, the row, the cell)
   const openMenu = (ev: ReactMouseEvent, on: Menu['on'], r: number, c: number) => {
     ev.preventDefault();
     ev.stopPropagation();
-    const inside = on === 'col' ? !!lo && !!hi && wholeCols && c >= lo.c && c <= hi.c : on === 'row' ? !!lo && !!hi && wholeRows && r >= lo.r && r <= hi.r : isSel(r, c);
+    const inside = on === 'col' ? chosenCols.includes(c) : on === 'row' ? chosenRows.includes(r) : !picks && isSel(r, c);
+    if (!inside) setPicks(null);
     if (!inside) setSel(on === 'col' ? { r0: 0, c0: c, r1: n - 1, c1: c } : on === 'row' ? { r0: r, c0: 0, r1: r, c1: cols.length - 1 } : { r0: r, c0: c, r1: r, c1: c });
     setMenu({ x: ev.clientX, y: ev.clientY, on });
     focus();
@@ -328,9 +508,14 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
 
   // the entries of the menu for the selection (columns: when a column or a cell was clicked; rows: a row or a cell)
   const items: { label: string; run: () => void; danger?: boolean; kbd?: string }[] = [];
-  if (menu && lo && hi) {
+  if (menu && picks) {
+    if (picks.on === 'col' && goneCols.length) {
+      const hides = goneCols.every(lockedCol);
+      items.push({ label: `${hides ? 'Hide' : 'Delete'} ${goneCols.length === 1 ? 'column' : `${goneCols.length} columns`}`, run: () => removeCols(goneCols), danger: true, kbd: 'Delete' });
+    }
+    if (picks.on === 'row' && goneRows.length) items.push({ label: `Delete ${goneRows.length === 1 ? 'row' : `${goneRows.length} rows`}`, run: () => removeRows(goneRows), danger: true, kbd: 'Delete' });
+  } else if (menu && lo && hi) {
     const nc = hi.c - lo.c + 1;
-    const nr = hi.r - lo.r + 1;
     if (menu.on !== 'row') {
       if (canAddCol) items.push({ label: 'Insert column left', run: () => insertCol(lo.c), kbd: menu.on === 'col' ? 'Ctrl+Shift+=' : undefined }, { label: 'Insert column right', run: () => insertCol(hi.c + 1) });
       if (nc === 1 && canArrange(lo.c)) {
@@ -340,18 +525,17 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
       const gone = span(lo.c, hi.c).filter(canArrange);
       if (gone.length) {
         const hides = gone.every(lockedCol);
-        items.push({ label: `${hides ? 'Hide' : 'Delete'} ${gone.length === 1 ? 'column' : `${gone.length} columns`}`, run: () => removeCols(lo.c, hi.c), danger: true, kbd: menu.on === 'col' ? 'Ctrl+−' : undefined });
+        items.push({ label: `${hides ? 'Hide' : 'Delete'} ${gone.length === 1 ? 'column' : `${gone.length} columns`}`, run: () => removeCols(gone), danger: true, kbd: menu.on === 'col' ? 'Delete' : undefined });
       }
     }
-    if (menu.on !== 'col' && rowsEditable) {
-      items.push({ label: 'Insert row above', run: () => insertRow(lo.r), kbd: menu.on === 'row' ? 'Ctrl+Shift+=' : undefined }, { label: 'Insert row below', run: () => insertRow(Math.min(n, hi.r + 1)) });
-      items.push({ label: `Delete ${nr === 1 ? 'row' : `${nr} rows`}`, run: () => removeRows(lo.r, hi.r), danger: true, kbd: menu.on === 'row' ? 'Ctrl+−' : undefined });
-    }
+    if (menu.on !== 'col' && rowsEditable) items.push({ label: 'Insert row above', run: () => insertRow(lo.r), kbd: menu.on === 'row' ? 'Ctrl+Shift+=' : undefined }, { label: 'Insert row below', run: () => insertRow(Math.min(n, hi.r + 1)) });
+    const rowsOut = span(lo.r, Math.min(hi.r, n - 1)).filter(rowGone);
+    if (menu.on !== 'col' && rowsOut.length) items.push({ label: `Delete ${rowsOut.length === 1 ? 'row' : `${rowsOut.length} rows`}`, run: () => removeRows(rowsOut), danger: true, kbd: menu.on === 'row' ? 'Delete' : undefined });
   }
 
   return (
     <div className="worksheet">
-      <div ref={box} tabIndex={0} className="sheet-scroll nowheel nodrag nokey" style={{ maxHeight: VIEW_H + 5 * ROW_H + 8 }} onScroll={(ev) => setTop(ev.currentTarget.scrollTop)} onKeyDown={tableKeys} onCopy={onCopy} onPaste={onPaste}>
+      <div ref={box} tabIndex={0} className="sheet-scroll nowheel nodrag nokey" style={{ maxHeight: viewH, ...(lk.h ? { height: viewH } : {}) }} onScroll={(ev) => setTop(ev.currentTarget.scrollTop)} onKeyDown={tableKeys} onCopy={onCopy} onPaste={onPaste}>
         <table>
           <thead>
             <tr>
@@ -361,9 +545,9 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
               {cols.map((_c, j) => (
                 <th
                   key={j}
-                  className={`col-letter${lo && hi && j >= lo.c && j <= hi.c && lo.r === 0 && hi.r === n - 1 ? ' sel' : ''}${dropAt === j && moving !== null && moving !== j ? (moving < j ? ' drop-after' : ' drop-before') : ''}`}
+                  className={`col-letter${chosenCols.includes(j) ? ' sel' : ''}${dropAt === j && moving !== null && moving !== j ? (moving < j ? ' drop-after' : ' drop-before') : ''}`}
                   title={canArrange(j) ? 'Select the whole column (Shift: up to this one); drag it to move the column; right-click: insert, delete, move' : 'Select the whole column (Shift: up to this one)'}
-                  onClick={(ev) => selCols(j, ev.shiftKey)}
+                  onClick={(ev) => selCols(j, ev.shiftKey, ev.ctrlKey || ev.metaKey)}
                   onContextMenu={(ev) => openMenu(ev, 'col', 0, j)}
                   draggable={canArrange(j)}
                   onDragStart={(ev) => {
@@ -388,13 +572,14 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
                   }}
                 >
                   {columnLetter(j)}({ROLE_LABELS[roleOf(cols, j)]})
+                  {onLook && <span className="col-grip" title="Drag: the column's width; double-click: it fits its values" onPointerDown={(ev) => dragCol(ev, j)} onClick={(ev) => ev.stopPropagation()} onDoubleClick={(ev) => (ev.stopPropagation(), fitCol(j))} />}
                   {canArrange(j) && (
                     <button
                       className="sheet-x"
                       title={lockedCol(j) ? 'Hide this column of the inputs (it comes back from the foot of the table)' : 'Leave this column out'}
                       onClick={(ev) => {
                         ev.stopPropagation();
-                        removeCols(j, j);
+                        removeCols([j]);
                       }}
                     >
                       <X {...IC} />
@@ -408,7 +593,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
                 plot as
               </th>
               {cols.map((_c, j) => (
-                <th key={j}>
+                <th key={j} style={wide(j)}>
                   <select className={`nodrag${!plain && !lockedCol(j) && e.cols?.[reads[j]]?.role ? ' edited' : ''}`} disabled={lockedCol(j) && !onRole} value={roleOf(cols, j)} onChange={(ev) => (lockedCol(j) && onRole ? onRole(j, ev.target.value as ColumnRole) : setHead(j, { role: ev.target.value as ColumnRole }))}>
                     {ROLES.map(([v, l]) => (
                       <option key={v} value={v}>
@@ -422,29 +607,30 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
             <tr className="head-name">
               <th className="rowhead">name</th>
               {cols.map((c, j) => (
-                <th key={j}>
-                  <input className={!plain && !lockedCol(j) && e.cols?.[reads[j]]?.name !== undefined ? 'edited' : ''} value={c.name} placeholder={columnLetter(j)} spellCheck={false} readOnly={lockedCol(j)} title="The name of the column, with its unit if it has one: “Wavelength (nm)”" onChange={(ev) => setHead(j, { name: ev.target.value })} />
+                <th key={j} style={wide(j)}>
+                  <input style={colW(c.name) ? { width: colW(c.name) } : undefined} className={!plain && !lockedCol(j) && e.cols?.[reads[j]]?.name !== undefined ? 'edited' : ''} value={c.name} placeholder={columnLetter(j)} spellCheck={false} readOnly={lockedCol(j)} title="The name of the column, with its unit if it has one: “Wavelength (nm)”" onChange={(ev) => setHead(j, { name: ev.target.value })} />
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {first > 0 && (
-              <tr style={{ height: first * ROW_H }}>
+              <tr style={{ height: first * rowH }}>
                 <td colSpan={cols.length + 1} />
               </tr>
             )}
             {Array.from({ length: last - first }, (_, k) => first + k).map((r) => (
-              <tr key={r} style={{ height: ROW_H }}>
-                <td className="rowhead" title={rowsEditable ? 'Select the whole row (Shift: up to this one); right-click: insert, delete' : 'Select the whole row (Shift: up to this one)'} onClick={(ev) => selRows(r, ev.shiftKey)} onContextMenu={(ev) => openMenu(ev, 'row', r, 0)}>
+              <tr key={r} style={{ height: rowH }}>
+                <td className="rowhead" title={rowsEditable ? 'Select the whole row (Shift: up to this one); right-click: insert, delete' : 'Select the whole row (Shift: up to this one)'} onClick={(ev) => selRows(r, ev.shiftKey, ev.ctrlKey || ev.metaKey)} onContextMenu={(ev) => openMenu(ev, 'row', r, 0)}>
                   {r + 1}
-                  {rowsEditable && (
+                  {onLook && <span className="row-grip" title="Drag: the rows' height (all of them)" onPointerDown={dragRow} onClick={(ev) => ev.stopPropagation()} />}
+                  {rowGone(r) && (
                     <button
                       className="sheet-x"
                       title="Leave this row out"
                       onClick={(ev) => {
                         ev.stopPropagation();
-                        removeRows(r, r);
+                        removeRows([r]);
                       }}
                     >
                       <X {...IC} />
@@ -453,16 +639,20 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
                 </td>
                 {cols.map((_c, j) =>
                   editing && editing.r === r && editing.c === j ? (
-                    <td key={j} className="editing">
+                    <td key={j} className="editing" style={wide(j)}>
                       <input autoFocus value={draft} spellCheck={false} onChange={(ev) => setDraft(ev.target.value)} onBlur={() => commit()} onKeyDown={editKeys} />
                     </td>
                   ) : (
                     <td
                       key={j}
-                      className={`${!locked(r, j) && edited(r, j) ? 'edited' : ''}${isSel(r, j) ? ' sel' : ''}`}
+                      style={wide(j)}
+                      data-r={r}
+                      data-c={j}
+                      className={`${!locked(r, j) && edited(r, j) ? 'edited' : ''}${isSel(r, j) ? ' sel' : ''}${inFill(r, j) ? ' fill-preview' : ''}${showHandle && hi && r === hi.r && j === hi.c ? ' fill-at' : ''}`}
                       onMouseDown={(ev) => {
                         if (ev.button !== 0) return;
                         dragging.current = true;
+                        setPicks(null);
                         setSel(ev.shiftKey && sel ? { ...sel, r1: r, c1: j } : { r0: r, c0: j, r1: r, c1: j });
                         focus();
                         ev.preventDefault();
@@ -472,19 +662,21 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
                       onContextMenu={(ev) => openMenu(ev, 'cell', r, j)}
                     >
                       {shown(r, j)}
+                      {showHandle && hi && r === hi.r && j === hi.c && <span className="fill-grip" title="Drag down, up, right or left: the cells go on from these (numbers as a series, Run 1 → Run 2; one number copied, Ctrl: counted on); double-click: down as far as the column beside" onPointerDown={startFill} onDoubleClick={fillDown} onMouseDown={(ev) => ev.stopPropagation()} />}
                     </td>
                   ),
                 )}
               </tr>
             ))}
             {last < n && (
-              <tr style={{ height: (n - last) * ROW_H }}>
+              <tr style={{ height: (n - last) * rowH }}>
                 <td colSpan={cols.length + 1} />
               </tr>
             )}
           </tbody>
         </table>
       </div>
+      {onLook && <span className="sheet-grip nodrag" title="Drag: the node's width and the table's height" onPointerDown={dragCorner} />}
       <div className="row wrap sheet-foot">
         {rowsEditable || (layout && !readOnly) ? (
           <>
@@ -501,9 +693,14 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
             + Column
           </button>
         )}
-        <span className="hint" title="Double-click, Enter or type to change a cell; Ctrl+C / Ctrl+V copy and paste (Ctrl+Shift+C: with the names); Delete empties the selection; right-click: insert, delete, move columns and rows">
+        {(goneCols.length > 0 || goneRows.length > 0) && (
+          <button className="nodrag danger" title="Leave out the whole columns (rows) chosen (Delete); Ctrl + click on a letter or a number picks several, not side by side" onClick={() => (goneCols.length ? removeCols(goneCols) : removeRows(goneRows))}>
+            {goneCols.length ? `${goneCols.every(lockedCol) ? 'Hide' : 'Delete'} ${goneCols.length === 1 ? 'column' : `${goneCols.length} columns`}` : `Delete ${goneRows.length === 1 ? 'row' : `${goneRows.length} rows`}`}
+          </button>
+        )}
+        <span className="hint" title="Double-click, Enter or type to change a cell; Ctrl+C / Ctrl+V copy and paste (Ctrl+Shift+C: with the names); Delete empties the cells selected, and leaves out whole columns or rows chosen (a letter or a number clicked; Shift: up to it; Ctrl: several, not side by side); right-click: insert, delete, move columns and rows">
           {n} rows × {cols.length} columns
-          {selText && ` · ${selText}`}
+          {picks ? ` · ${picks.list.length} ${picks.on === 'col' ? 'columns' : 'rows'} picked` : selText && ` · ${selText}`}
           {count > 0 && ` · ${count} change${count > 1 ? 's' : ''} by hand (marked)`}
         </span>
         {!!layout?.hidden?.length && (

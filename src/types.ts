@@ -6,7 +6,7 @@ import type { Edge, Node as FlowNode } from '@xyflow/react';
 import type { CsvOptions } from './engine/csv.ts';
 import type { ReportData } from './engine/reportDoc.ts';
 import type { TableExport } from './engine/exportTable.ts';
-import type { SheetEdits } from './engine/sheet.ts';
+import type { SheetEdits, SheetLook } from './engine/sheet.ts';
 import type { ExtractNames, ExtractRule } from './engine/extract.ts';
 import type { ManipOp } from './engine/manip.ts';
 import type { CombineMode, CombinePort, CombineSpec, UnstackSpec } from './engine/reshape.ts';
@@ -71,7 +71,8 @@ type Node<D extends Record<string, unknown>, T extends string> = FlowNode<D & No
 // textRef: in a project kept in the browser, a big text is in IndexedDB (src/textStore.ts) under this key
 export type ImportSheet = { name: string; text: string; excel?: boolean; textRef?: string };
 // export: the settings of its Export (src/engine/exportTable.ts)
-export type ImportData = { name: string; fileName: string; text: string; textId: string; csv: CsvOptions; edits?: SheetEdits; sheets?: ImportSheet[]; sheet?: number; sheetEdits?: Record<string, SheetEdits>; textRef?: string; export?: Partial<TableExport> };
+// look: how its worksheet is drawn (the node's size, the rows' height, the columns' widths)
+export type ImportData = { name: string; fileName: string; text: string; textId: string; csv: CsvOptions; edits?: SheetEdits; sheets?: ImportSheet[]; sheet?: number; sheetEdits?: Record<string, SheetEdits>; textRef?: string; export?: Partial<TableExport>; look?: SheetLook };
 // Workbook: tables typed or pasted in, on several sheets — or, with something connected, a view of
 // that dataset / workbook. A sheet: its table as tab-separated text (a line of names, then the rows; '' = none yet) and
 // the worksheet changes over it; sheet: the one shown and given on the dataset output.
@@ -81,7 +82,8 @@ export type BookSheet = { name: string; text: string; edits?: SheetEdits; textRe
 // columns as arranged when it has inputs (keys: o<n> a column of its own table, n its place as read; i:<name> an
 // input's): the order moved by hand, the inputs' columns left out
 export type BookLayout = { order?: string[]; hide?: string[] };
-export type WorkbookData = { name: string; sheets: BookSheet[]; sheet: number; into?: string[]; roles?: Record<string, Record<string, ColumnRole>>; layout?: Record<string, BookLayout>; export?: Partial<TableExport> };
+// hideSheets: sheets of the inputs taken out of the workbook (by their names; shown again from the node)
+export type WorkbookData = { name: string; sheets: BookSheet[]; sheet: number; into?: string[]; roles?: Record<string, Record<string, ColumnRole>>; layout?: Record<string, BookLayout>; hideSheets?: string[]; export?: Partial<TableExport>; look?: SheetLook };
 // The column is chosen by its name (a file with the columns in another order still works), the index when names repeat.
 // sheet: from a workbook, by name; value: one value (the row `row`, 1 … n) instead of the column
 export type ExtractData = { column: string; index: number; sheet?: string; value?: boolean; row?: number };

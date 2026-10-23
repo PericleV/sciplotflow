@@ -17,6 +17,7 @@ import { Check, Field, InPort, Messages, NumInput, OutPort, Select, TextInput, R
 import { NodeOptions } from './NodeOptions.tsx';
 import { ColumnsPicker } from './ColumnsPicker.tsx';
 import { maxOf } from '../engine/minmax.ts';
+import { sheetOptions } from './sheetOptions.ts';
 
 // A column of the input chosen by its name (auto: the designated one).
 function ColumnSelect({ value, onChange, avail, auto }: { value: string; onChange: (v: string) => void; avail: { name: string }[]; auto: string }) {
@@ -45,14 +46,14 @@ const BLOCK_MODES: [BlockMode, string][] = [
   ['jump', 'where it jumps'],
 ];
 const THEN_MODES: [ThenMode, string][] = [
-  ['none', 'nothing more'],
   ['cycles', 'the cycles in each block'],
   ['direction', 'where it changes direction'],
   ['jump', 'where it jumps'],
   ['restart', 'where it starts again'],
   ['every', 'every N rows'],
 ];
-const SHOWN_BLOCKS = 6;
+// the rules that look at a column (where it starts again, repeats, turns, jumps; its equal values)
+const NEEDS_COLUMN = new Set<BlockMode | ThenMode>(['restart', 'column', 'repeat', 'cycles', 'direction', 'jump']);
 
 // The blocks kept written short: "" (all), "!2, !5" (all but these), or the list kept ("1-3, 7").
 function keepText(kept: boolean[]): string {
@@ -77,23 +78,36 @@ export function UnstackNodeView({ id, data }: NodeProps<UnstackNode>) {
   const out = r?.outputs.out?.t === 'dataset' ? r.outputs.out.v : undefined;
   const then = data.then ?? 'none';
   const has = (m: BlockMode | ThenMode) => data.by === m || then === m;
-  // the column the rules look at: not for the header lines, every N rows, or a column's equal values alone
-  const fromShown = (data.by !== 'text' && data.by !== 'every' && data.by !== 'column') || (then !== 'none' && then !== 'every');
+  // the column the rule looks at, beside it: by a column, the column of the equal values; the others, From (X if none)
+  const byColumn = data.by === 'column';
+  const ruleCol = byColumn ? (data.column ?? '') : (data.from ?? '');
+  const setRuleCol = (v: string) => set(byColumn ? { column: v || undefined } : { from: v || undefined });
+  // (the second rule looks at From: shown on its own when the first does not)
+  const fromAlone = !NEEDS_COLUMN.has(data.by) && then !== 'none' && NEEDS_COLUMN.has(then);
   const sweep = has('cycles') || has('direction');
   // the edits made on the graph (the cuts by hand keep the table's row count, to warn when it changes)
   const n = g?.n ?? 0;
   const cuts = data.cuts ?? [];
   const uncut = data.uncut ?? [];
   const kept = (blocks?.list ?? []).map((b) => b.kept !== false);
+  const levels = data.levels ?? [];
+  // a block named in the list (by its place; '' : automatic)
+  const nameBlock = (k: number, name: string) => {
+    const list = Array.from({ length: Math.max(k + 1, data.blockNames?.length ?? 0) }, (_, i) => (i === k ? name.trim() : (data.blockNames?.[i] ?? '')));
+    set({ blockNames: list.some(Boolean) ? list : undefined });
+  };
   const edits: SplitEdits = {
     addCut: (row) => (uncut.includes(row) ? set({ uncut: uncut.filter((u) => u !== row), cutRows: n }) : set({ cuts: [...new Set([...cuts, row])].sort((a, b) => a - b), cutRows: n })),
-    removeCut: (c) => (c.hand ? set({ cuts: cuts.filter((u) => u !== c.row), cutRows: n }) : set({ uncut: [...new Set([...uncut, c.row])], cutRows: n })),
+    removeCut: (c) => c.level ? undefined : (c.hand ? set({ cuts: cuts.filter((u) => u !== c.row), cutRows: n }) : set({ uncut: [...new Set([...uncut, c.row])], cutRows: n })),
     moveCut: (c, row) =>
       c.hand
         ? set({ cuts: [...new Set([...cuts.filter((u) => u !== c.row), row])].sort((a, b) => a - b), cutRows: n })
         : set({ uncut: [...new Set([...uncut, c.row])], cuts: [...new Set([...cuts, row])].sort((a, b) => a - b), cutRows: n }),
     toggleBlock: (k) => set({ keep: keepText(kept.map((v, i) => (i === k ? !v : v))) }),
     setRange: (a, b) => set({ rows: `${a}-${b}` }),
+    addLevel: (value, on) => set({ levels: [...levels, { value, ...(on === 'y' ? { on: 'y' as const } : {}) }] }),
+    moveLevel: (k, value) => set({ levels: levels.map((L, i) => (i === k ? { ...L, value } : L)) }),
+    removeLevel: (k) => set({ levels: levels.filter((_, i) => i !== k).length ? levels.filter((_, i) => i !== k) : undefined }),
   };
   return (
     <div className="node node-unstack">
@@ -106,19 +120,17 @@ export function UnstackNodeView({ id, data }: NodeProps<UnstackNode>) {
         <Field label="Columns" title="The columns cut into blocks: 2, B-D (letters), names, A* (a pattern), !C (not); empty: all the others (but a group column)">
           <ColumnsPicker value={data.ys} names={(r?.view.available ?? []).map((c) => c.name)} auto="auto: all the others" onChange={(ys) => set({ ys })} />
         </Field>
-        <Field label="Blocks" title="Where a block ends: auto — at lines where X is not a number (a header written again, an empty line), else where it starts again; or by the equal values of a column, values met again, every N rows, the cycles of a scan, where it changes direction, where it jumps — “it”: the column of From (X unless chosen)">
-          <Select value={data.by} options={BLOCK_MODES} onChange={(by) => set({ by })} />
+        <Field label="Split" title="Where a block ends: auto (at lines where X is not a number: a header written again, an empty line; else where X starts again); at text or empty lines; where a column starts again; by the equal values of a column (each value a block); values met again; every N rows; the cycles of a scan; where it changes direction; where it jumps. The column it looks at is chosen beside it (X unless chosen; a scan: the potential, while X may be another column)">
+          <span className="row">
+            <Select value={data.by} options={BLOCK_MODES} onChange={(by) => set({ by })} />
+            {NEEDS_COLUMN.has(data.by) && (
+              <>
+                <span className="muted">in</span>
+                <ColumnSelect value={ruleCol} onChange={setRuleCol} avail={avail} auto={byColumn ? (data.from ? data.from : 'choose') : 'X'} />
+              </>
+            )}
+          </span>
         </Field>
-        {data.by === 'column' && (
-          <Field label="Column" title="Its equal values make one block (e.g. the cavity thickness of a sweep)">
-            <ColumnSelect value={data.column ?? ''} onChange={(column) => set({ column })} avail={avail} auto={data.from ? `as From: ${data.from}` : 'choose'} />
-          </Field>
-        )}
-        {fromShown && (
-          <Field label="From" title="The column the blocks are found from — where it starts again, jumps, turns, repeats (a scan: the potential, while X may be another column)">
-            <ColumnSelect value={data.from ?? ''} onChange={(from) => set({ from: from || undefined })} avail={avail} auto="X" />
-          </Field>
-        )}
         {has('every') && (
           <Field label="Rows" title="Rows in every block">
             <NumInput value={data.every ?? NaN} min={1} step={1} placeholder="N" onChange={(every) => set({ every })} />
@@ -181,30 +193,66 @@ export function UnstackNodeView({ id, data }: NodeProps<UnstackNode>) {
         )}
         {has('cycles') && <Check label="Halves: each cycle cut into its way up and its way down" value={!!data.halves} onChange={(halves) => set({ halves: halves || undefined })} />}
         {data.by !== 'cycles' && data.by !== 'direction' && (
-          <Field label="Then" title="The rule again inside every block: by a column (a run), then the cycles of each run …">
-            <Select<ThenMode> value={then} options={THEN_MODES} onChange={(t) => set({ then: t === 'none' ? undefined : t })} />
+          <Field label="Again" title="Split each block again, by a second rule: e.g. a file of several samples, each with three cycles of a scan: split by the sample's column, then the cycles in each block">
+            <span className="row">
+              <Check label="split each block again" value={then !== 'none'} onChange={(on) => set({ then: on ? 'cycles' : undefined })} />
+              {then !== 'none' && <Select<ThenMode> value={then} options={THEN_MODES} onChange={(t) => set({ then: t })} />}
+            </span>
           </Field>
         )}
-        <Field label="X out" title="Only the X of the first block (the others must have the same values: a warning otherwise), or the X of every block before its columns">
+        {fromAlone && (
+          <Field label="In" title="The column the second rule looks at (X unless chosen)">
+            <ColumnSelect value={data.from ?? ''} onChange={(from) => set({ from: from || undefined })} avail={avail} auto="X" />
+          </Field>
+        )}
+        <Field label="X columns" title="One X shared by all the blocks (they must have the same X: a warning otherwise), or an X before every block's columns">
           <Select
             value={data.xs}
             options={[
-              ['first', 'one X for all blocks'],
-              ['each', 'an X before every block'],
+              ['first', 'one shared X'],
+              ['each', 'an X for each block'],
             ]}
             onChange={(xs) => set({ xs })}
           />
         </Field>
-        <Field label="Names" title="The names of the new columns, in order, separated by commas (empty or a missing one: automatic — the header written over the block, the value of the block, or name_2 …)">
-          <TextInput value={data.names} placeholder="auto · e.g. n, k" onChange={(names) => set({ names })} />
-        </Field>
-        <Field label="Rows used" title="Only these rows are cut into blocks: 100-2900, 1:2:end … (rows count from 1); empty: all. Also dragged on the graph (Rows)">
-          <TextInput value={data.rows ?? ''} placeholder="all · e.g. 100-2900" onChange={(rows) => set({ rows: rows || undefined })} />
-        </Field>
-        <Field label="Keep" title="The blocks kept: 2:end, 1-3, 5, first, last, !1 (all but block 1); empty: all. Also clicked on the graph (Blocks) or ticked in the list">
-          <TextInput value={data.keep ?? ''} placeholder="all · e.g. 2:end, !1" onChange={(keep) => set({ keep: keep || undefined })} />
-        </Field>
       </div>
+      {(data.rows || data.names.trim()) && (
+        <div className="row wrap">
+          {data.rows && (
+            <button className="nodrag" title="Only these rows are cut into blocks (dragged on the graph, Rows): click to use all the rows" onClick={() => set({ rows: undefined })}>
+              Rows {data.rows} <XIcon {...IC} />
+            </button>
+          )}
+          {data.names.trim() && (
+            <button className="nodrag" title={`The names written in an older version, in order, for the new columns: ${data.names}. Click to name the blocks in the list instead`} onClick={() => set({ names: '' })}>
+              Names {data.names} <XIcon {...IC} />
+            </button>
+          )}
+        </div>
+      )}
+      {levels.length > 0 && (
+        <div className="row wrap">
+          <span className="hint" title="The lines across the graph (Cut on Y): the data cut wherever they cross the value">Cuts on Y:</span>
+          {levels.map((L, k) => (
+            <span key={k} className="level-chip">
+              {L.on === 'y' ? (g?.ys[0]?.name ?? 'Y') : (g?.f.name ?? 'X')} = {fmtNum(L.value, 4)}
+              <Select<'both' | 'up' | 'down'>
+                value={L.dir ?? 'both'}
+                title="Where it cuts: where the data cross the value going up, going down, or either way"
+                options={[
+                  ['both', 'either way'],
+                  ['up', 'going up'],
+                  ['down', 'going down'],
+                ]}
+                onChange={(dir) => set({ levels: levels.map((q, i) => (i === k ? { value: q.value, ...(q.on ? { on: q.on } : {}), ...(dir !== 'both' ? { dir } : {}) } : q)) })}
+              />
+              <button className="nodrag ts-btn" title="Remove this line" onClick={() => edits.removeLevel(k)}>
+                <XIcon {...IC} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       {(cuts.length > 0 || uncut.length > 0) && (
         <div className="row wrap">
           <span className="hint">Cuts by hand (row):</span>
@@ -227,9 +275,17 @@ export function UnstackNodeView({ id, data }: NodeProps<UnstackNode>) {
       {g && <SplitGraphView g={g} view={data.graph ?? 'rows'} setView={(graph) => set({ graph: graph === 'rows' ? undefined : graph })} edits={edits} tol={data.tol ?? 0.5} />}
       {blocks && (
         <div className="block-list">
-          <div className="hint ellipsis" title={blocks.how}>
-            {blocks.list.length} blocks{kept.some((k) => !k) ? ` (${kept.filter(Boolean).length} kept)` : ''} — {blocks.how}
+          <div className="row">
+            <span className="hint ellipsis grow" title={blocks.how}>
+              {blocks.list.length} blocks{kept.some((k) => !k) ? ` · ${kept.filter(Boolean).length} kept` : ''} · {blocks.how}
+            </span>
+            {kept.some((k) => !k) && (
+              <button className="nodrag" title="Keep every block" onClick={() => set({ keep: undefined })}>
+                Keep all
+              </button>
+            )}
           </div>
+          <div className="block-scroll nowheel">
           <table>
             <thead>
               <tr>
@@ -241,7 +297,7 @@ export function UnstackNodeView({ id, data }: NodeProps<UnstackNode>) {
               </tr>
             </thead>
             <tbody>
-              {blocks.list.slice(0, SHOWN_BLOCKS).map((b, k) => (
+              {blocks.list.map((b, k) => (
                 <tr key={k} className={b.kept === false ? 'muted' : undefined}>
                   <td>
                     <input type="checkbox" className="nodrag" checked={b.kept !== false} title="Kept (in the output)" onChange={() => edits.toggleBlock(k)} />
@@ -250,8 +306,17 @@ export function UnstackNodeView({ id, data }: NodeProps<UnstackNode>) {
                     {k + 1}
                     {b.part ? '*' : ''}
                   </td>
-                  <td className="ellipsis" title={b.name}>
-                    {b.name}
+                  <td>
+                    <input
+                      key={`${k}:${data.blockNames?.[k] ?? ''}`}
+                      className="nodrag block-name"
+                      defaultValue={data.blockNames?.[k] ?? ''}
+                      placeholder={b.name}
+                      spellCheck={false}
+                      title={`The name of this block's column (empty: ${b.name}); with several Y columns, “Y · name”`}
+                      onBlur={(e) => e.target.value.trim() !== (data.blockNames?.[k] ?? '') && nameBlock(k, e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                    />
                   </td>
                   <td title={`rows ${b.first}–${b.last} of the input`}>{b.rows}</td>
                   <td>
@@ -261,7 +326,7 @@ export function UnstackNodeView({ id, data }: NodeProps<UnstackNode>) {
               ))}
             </tbody>
           </table>
-          {blocks.list.length > SHOWN_BLOCKS && <div className="hint">… {blocks.list.length - SHOWN_BLOCKS} more</div>}
+          </div>
         </div>
       )}
       {out && <DataPreview columns={out.columns.slice(0, 8)} rows={3} />}
@@ -463,7 +528,7 @@ export function CombineNodeView({ id, data }: NodeProps<CombineNode>) {
                 <div className="row wrap">
                   {inp.sheets && (
                     <Field label="Sheet">
-                      <Select<string> value={ps.sheet ?? ''} options={[['', `first (${inp.sheets[0] ?? ''})`], ...inp.sheets.map((nm): [string, string] => [nm, nm])]} onChange={(sheet) => setPort(port, { sheet: sheet || undefined })} />
+                      <Select<string> {...sheetOptions(inp.sheets, ps.sheet ?? '')} onChange={(sheet) => setPort(port, { sheet: sheet || undefined })} />
                     </Field>
                   )}
                   {isTarget && <span className="muted">the table</span>}

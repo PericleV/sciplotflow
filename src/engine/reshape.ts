@@ -18,7 +18,12 @@ export type UnstackSpec = {
   by: BlockMode;
   column?: string; // by: the column whose equal values make one block (absent: `from`)
   every?: number; // every: rows per block
-  names: string; // the names of the new columns, in order ("n, k"; '' or a missing one = automatic)
+  names: string; // the names of the new columns, in order ("n, k"; '' or a missing one = automatic) — older projects
+  // the names given to the blocks (by their place, from 0; '' or absent: automatic): the block's column takes it (several
+  // Y columns: “n · name”, “k · name”)
+  blockNames?: string[];
+  // 'block': the blocks without a name of their own numbered “R · 1”, “R · 2” … (new nodes); absent: “R”, “R_2” … (older)
+  naming?: 'block';
   xs: 'first' | 'each'; // only the X of the first block, or the X of every block before its columns
   // the column the blocks are found from — where it starts again, jumps, turns, repeats ('' or absent = X)
   from?: string;
@@ -37,7 +42,11 @@ export type UnstackSpec = {
   uncut?: number[]; // cuts of the rule taken away: the block starting at these rows joined to the one before
   cutRows?: number; // the rows of the table when the cuts were placed by hand (a warning when it changes)
   graph?: 'rows' | 'curves'; // the node's graph: the column the blocks are found from, along the rows; or the curves
+  // cuts at levels (lines across the graph at a value): a block cut wherever the column crosses it — the column the blocks
+  // are found from (on absent), or the first Y (on 'y'); going up, down, or either (dir absent)
+  levels?: SplitLevel[];
 };
+export type SplitLevel = { value: number; on?: 'y'; dir?: 'up' | 'down' };
 export type BlockInfo = { name: string; rows: number; first: number; last: number; x0: number; x1: number; kept?: boolean; part?: boolean };
 // The node's graph: the column the blocks are found from and the curves, every block's rows, the cuts (from 1: the
 // first row of the block after them; of the rule or placed by hand), the rows used
@@ -47,7 +56,8 @@ export type SplitGraph = {
   x: { name: string; values: Float64Array };
   ys: { name: string; values: Float64Array }[];
   blocks: { rows: number[]; kept: boolean; part: boolean; name: string }[];
-  cuts: { row: number; hand: boolean }[];
+  cuts: { row: number; hand: boolean; level?: boolean }[]; // level: made by a level line (moved and removed with it)
+  levels: { value: number; on: 'from' | 'y'; dir?: 'up' | 'down' }[];
   contiguous: boolean; // every block a run of rows (the cuts can be drawn and moved)
   rows?: [number, number]; // the rows used, when one range (from 1)
 };
@@ -335,6 +345,33 @@ export function unstack(ds: Dataset, s: UnstackSpec): UnstackResult | string {
     if (!vName && !texts) word = hadLabels ? 'block' : word || 'block';
     how += `; ${hand.size ? `${hand.size} cut${hand.size > 1 ? 's' : ''} by hand` : ''}${hand.size && s.uncut?.length ? ', ' : ''}${s.uncut?.length ? `${s.uncut.length} taken away` : ''}`;
   }
+  // the cuts at levels: a block cut wherever the column crosses the value, going the way asked
+  const lev = new Set<number>();
+  for (const L of s.levels ?? []) {
+    const C = L.on === 'y' ? (Ys[0] ?? F) : F;
+    if (!Number.isFinite(L.value)) continue;
+    const out: Block[] = [];
+    for (const b of B) {
+      const r = b.rows;
+      let start = 0;
+      for (let p = 1; p < r.length; p++) {
+        const [v0, v1] = [C.values[r[p - 1]], C.values[r[p]]];
+        const up = v0 < L.value && v1 >= L.value;
+        const down = v0 > L.value && v1 <= L.value;
+        if (!(L.dir === 'up' ? up : L.dir === 'down' ? down : up || down) || p === start) continue;
+        out.push({ ...b, rows: r.slice(start, shared ? p + 1 : p), head: start ? null : b.head });
+        start = p;
+        lev.add(r[p]);
+      }
+      out.push(start ? { ...b, rows: r.slice(start), head: null } : b);
+    }
+    B = out;
+  }
+  if (lev.size) {
+    B = B.map((b, k) => ({ ...b, value: vName || texts ? b.value : k + 1, label: undefined }));
+    if (!vName && !texts) word = 'block';
+    how += `; ${lev.size} cut${lev.size > 1 ? 's' : ''} at ${s.levels!.length === 1 ? 'a level' : `${s.levels!.length} levels`}`;
+  }
   if ((s.cuts?.length || s.uncut?.length) && s.cutRows !== undefined && s.cutRows !== n) warnings.push(`The table has ${n} rows now, ${s.cutRows} when the cuts were placed by hand: check them on the graph.`);
   // a map in long form (X, a swept value, Z: 500 sweeps and more) splits too; very many columns are still refused
   if (B.length > 20000) return `${B.length} blocks found (${how}): too many columns (at most 20 000).`;
@@ -352,14 +389,18 @@ export function unstack(ds: Dataset, s: UnstackSpec): UnstackResult | string {
   let o = 0;
   const out: Column[] = [];
   const roles: ColumnRole[] = [];
-  // “Current (mA) · cycle 2”, “R · cavity d = 150 nm” (no comma: lists of columns are cut at commas)
+  // “Current (mA) · cycle 2”, “R · cavity d = 150 nm” (no comma: lists of columns are cut at commas); a block named in the
+  // node: its name (several Y columns: “n · name”)
+  const counted = s.naming === 'block';
   const autoName = (Y: Column, b: Block, k: number) => {
+    const given = s.blockNames?.[k]?.trim();
+    if (given) return Ys.length > 1 ? `${Y.name} · ${given}` : given;
     const fromHead = b.head !== null ? cellOf(Y, b.head) : '';
     const bt = b.text ?? fmtNum(b.value, 4);
     if (b.label) return `${Y.name} · ${b.label}`;
     if (word) return `${Y.name} · ${word} ${k + 1}`;
-    if (k === 0 && !vName && !texts) return Y.name;
-    return fromHead || (vName || texts ? `${Y.name} · ${vName ? valueText(vName, bt, !!texts) : bt}` : `${Y.name}_${k + 1}`);
+    if (k === 0 && !vName && !texts && !(counted && !fromHead && !byHead)) return Y.name;
+    return fromHead || (vName || texts ? `${Y.name} · ${vName ? valueText(vName, bt, !!texts) : bt}` : counted ? `${Y.name} · ${k + 1}` : `${Y.name}_${k + 1}`);
   };
   // only the first X: the longest block's (a block may have a row more, as the last cycle of a scan)
   const longest = K.reduce((a, k) => (B[k].rows.length > B[a].rows.length ? k : a), K[0]);
@@ -437,7 +478,8 @@ export function unstack(ds: Dataset, s: UnstackSpec): UnstackResult | string {
           x: { name: X.name, values: Float64Array.from(X.values) },
           ys: Ys.slice(0, 8).map((c) => ({ name: c.name, values: Float64Array.from(c.values) })),
           blocks: B.map((b, k) => ({ rows: b.rows, kept: keep.has(k), part: b.part, name: nameOfBlock(b, k) })),
-          cuts: B.slice(1).map((b) => ({ row: b.rows[0] + 1, hand: hand.has(b.rows[0]) })),
+          cuts: B.slice(1).map((b) => ({ row: b.rows[0] + 1, hand: hand.has(b.rows[0]), ...(lev.has(b.rows[0]) ? { level: true } : {}) })),
+          levels: (s.levels ?? []).map((L) => ({ value: L.value, on: L.on === 'y' ? 'y' : 'from', ...(L.dir ? { dir: L.dir } : {}) })),
           contiguous: B.every((b) => b.rows.every((i, p) => p === 0 || i === b.rows[p - 1] + 1)),
           ...(takenRange ? { rows: takenRange } : {}),
         }

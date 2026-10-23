@@ -720,7 +720,7 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .col-refs button { font-size: var(--fs-small); padding: 0 5px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .col-refs button b { font-family: var(--mono); color: var(--accent); }
 .hint.err { color: var(--err); }
-/* Rename several: the row holding the names, clicked; the ways also on; the names before → after */
+/* Rename columns: the row holding the names, clicked; the ways also on; the names before → after */
 .pick-rows tbody tr { cursor: pointer; }
 .pick-rows tbody tr:hover td { background: var(--input); }
 .pick-rows tbody tr.on td { background: color-mix(in srgb, var(--accent) 28%, var(--panel)); color: var(--text); font-weight: 600; }
@@ -731,8 +731,9 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .block-list table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
 .block-list th { text-align: left; }
 .block-list th:first-child, .block-list td:first-child { width: 24px; }
-.block-list th:nth-child(3), .block-list td:nth-child(3) { width: 44px; }
-.block-list th:nth-child(4), .block-list td:nth-child(4) { width: 120px; }
+.block-list th:nth-child(2), .block-list td:nth-child(2) { width: 30px; }
+.block-list th:nth-child(4), .block-list td:nth-child(4) { width: 44px; }
+.block-list th:nth-child(5), .block-list td:nth-child(5) { width: 110px; }
 .block-list td { border-top: 1px solid var(--border); padding: 1px 4px 1px 0; }
 .node-note { padding: 6px; }
 .node .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -1641,3 +1642,37 @@ input[type='checkbox'], input[type='radio'] { box-shadow: none; }
 .image-editor .ie-paint input { width: 48px; }
 .image-editor .ie-class-row, .image-editor .ie-paint { display: flex; flex-wrap: nowrap; }
 .image-editor .ie-class-row .grow, .image-editor .ie-paint .grow { flex: 1; min-width: 0; }
+/* (the × of a sheet tab: on the one shown, on the others when the mouse is over them) */
+.sheet-tabs button:not(.on) .sheet-tab-x { visibility: hidden; }
+.sheet-tabs button:not(.on):hover .sheet-tab-x { visibility: visible; }
+/* Split into columns: every block listed (scrolled when many), its name typed in the list */
+.block-list .block-scroll { max-height: 190px; overflow: auto; }
+.block-list input.block-name { width: 100%; min-width: 0; box-sizing: border-box; padding: 1px 4px; font-size: var(--fs-small); }
+/* the worksheet's borders dragged: a column's width, the rows' height, the corner (the node's width, the table's height) */
+.sheet-scroll .col-grip { position: absolute; top: 0; right: -3px; bottom: 0; width: 6px; cursor: col-resize; z-index: 2; }
+.sheet-scroll .col-grip:hover { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.sheet-scroll .row-grip { position: absolute; left: 0; right: 0; bottom: -3px; height: 6px; cursor: row-resize; z-index: 2; }
+.sheet-scroll .row-grip:hover { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.worksheet .sheet-grip { align-self: flex-end; width: 14px; height: 14px; margin: -18px 2px 4px 0; cursor: nwse-resize; z-index: 4; background: linear-gradient(135deg, transparent 50%, var(--muted) 50%, var(--muted) 58%, transparent 58%, transparent 70%, var(--muted) 70%, var(--muted) 78%, transparent 78%); opacity: 0.7; }
+.worksheet .sheet-grip:hover { opacity: 1; }
+/* the fill handle at the corner of the selection, and the cells a fill will write */
+.sheet-scroll td.fill-at { position: relative; overflow: visible; }
+.sheet-scroll .fill-grip { position: absolute; right: -4px; bottom: -4px; width: 7px; height: 7px; background: var(--accent); border: 1px solid var(--panel); cursor: crosshair; z-index: 2; }
+.sheet-scroll td.fill-preview { outline: 1px dashed var(--accent); outline-offset: -2px; }
+/* Split into columns: a level line under the options (its column and value, the way it cuts, ×) */
+.level-chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid #7b3fb5; border-radius: 6px; padding: 0 2px 0 6px; font-size: var(--fs-small); }
+.level-chip select { font-size: var(--fs-small); padding: 0 2px; }
+/* the classifier: a class clicked is the one drawn (its row marked); the tools that draw, the width of brush and eraser */
+.image-editor .ie-class-row { cursor: pointer; border-radius: 4px; padding: 1px 4px; border: 1px solid transparent; }
+.image-editor .ie-class-row:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.image-editor .ie-class-row.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.image-editor .ie-paint-tools { display: flex; gap: 4px; }
+.image-editor .ie-paint-tools button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+.image-editor .ie-paint-tools button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.image-editor .ie-paint-width { display: flex; align-items: center; gap: 6px; }
+.image-editor .ie-paint-width input[type='range'] { min-width: 0; }
+/* Find like this: what is compared around the selection picked (dashed), the ring's handle; the matches left out */
+.ie-context { pointer-events: none; }
+.ie-context polygon, .ie-context circle { fill: none; stroke: #ffd60a; stroke-width: 1.2; stroke-dasharray: 5 3; }
+.ie-context .ie-context-handle { pointer-events: all; fill: #ffd60a; stroke: #000; stroke-dasharray: none; cursor: ew-resize; }
+.ie-rejected polygon { fill: rgba(255, 69, 58, 0.12); stroke: #ff453a; stroke-width: 1; stroke-dasharray: 2 2; cursor: pointer; pointer-events: all; }

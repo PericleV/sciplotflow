@@ -21,7 +21,7 @@ import { columnLetter, readTable, type CsvResult } from './csv.ts';
 import { curveColumns, digest, figPort, outValue, toPy, type PyJob, type PyResult, type PyValue } from './python.ts';
 import { applySheet, hasEdits, readSheet, type SheetMap } from './sheet.ts';
 import { flattenGroups, GROUP_IN, GROUP_OUT } from './subgraph.ts';
-import { gather, orderFiles, readText, resultOf, withOwn, type FileRun } from './batch.ts';
+import { columnRuns, gather, orderFiles, readText, resultOf, withOwn, type FileRun } from './batch.ts';
 import { takeRows } from './split.ts';
 import { parseRows } from './rows.ts';
 export { parseRows };
@@ -131,7 +131,8 @@ export type NodeView = {
   // Workbook: its own sheets (the first `own`; the others: from the inputs, read-only) and its inputs; kinds: every sheet
   // its own table, an input's (read-only), or its own table with inputs (mixed); keys: the columns of the sheet shown, when
   // it has inputs — o<n>: of its own table (n: its place as read), i:<name>: an input's
-  book?: { own: number; ins: { letter: string; kind: 'column' | 'dataset' | 'workbook'; name: string; sheet: string }[]; kinds?: ('own' | 'input' | 'mixed')[]; keys?: string[] };
+  // hiddenSheets: the inputs' sheets taken out of the workbook (by their names)
+  book?: { own: number; ins: { letter: string; kind: 'column' | 'dataset' | 'workbook'; name: string; sheet: string }[]; kinds?: ('own' | 'input' | 'mixed')[]; keys?: string[]; hiddenSheets?: string[] };
   // Data manipulation: the points of its graph (moved), the state of every input row (ROW_MASKED …), the columns shown
   manip?: { x: Float64Array; y: Float64Array; state: Uint8Array; nIn: number; xName: string; yName: string };
   // Fit: the data (every point, which run it is in, whether it was fitted), the results of every run, the model
@@ -193,7 +194,8 @@ export type NodeView = {
   waiting?: string; // what is missing before the node can give a result
   // Batch: the files it ran on, those that failed and why
   // a Batch: its files (in their order: what their names say, their errors), the one shown inside
-  batch?: { files: number; failed: { name: string; errors: string[] }[]; list?: { name: string; read: string; errors: string[]; own?: string[] }[]; shown?: number };
+  // over 'columns': the runs are the columns of one table (sheets: of the workbook connected; cols: the table's columns)
+  batch?: { files: number; failed: { name: string; errors: string[] }[]; list?: { name: string; read: string; errors: string[]; own?: string[] }[]; shown?: number; over?: 'columns'; sheets?: string[]; cols?: string[] };
 };
 // inner: a Batch's steps as they ran on its first file (shown when the batch is opened), by their ids inside it
 export type NodeResult = { rev: number; outputs: Record<string, Value>; errors: string[]; warnings: string[]; view: NodeView; inner?: Map<string, NodeResult> };
@@ -4349,8 +4351,19 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       // the inputs given a sheet of its own go on it; the others make sheets after them
       const ownNames = new Set(own.map((s) => s.name));
       for (const [name, cols] of onSheet) if (!ownNames.has(name)) fromIns.push({ name, columns: sideBySide(cols) });
-      if (!own.length && !fromIns.length) return { view: { waiting: 'Add a sheet (+), or connect columns / datasets to A, B …', book: { own: 0, ins } } };
-      const total = own.length + fromIns.length;
+      // the inputs' sheets named (a name used twice: “name (2)”), those taken out of the workbook left out
+      const used = new Set(own.map((s) => s.name));
+      const gone = new Set(n.data.hideSheets ?? []);
+      const named = fromIns.map((s) => {
+        let nm = s.name || 'inputs';
+        for (let c = 2; used.has(nm); c++) nm = `${s.name || 'inputs'} (${c})`;
+        used.add(nm);
+        return { ...s, name: nm };
+      });
+      const hiddenSheets = named.filter((s) => gone.has(s.name)).map((s) => s.name);
+      const inSheets = named.filter((s) => !gone.has(s.name));
+      if (!own.length && !inSheets.length) return { view: { waiting: hiddenSheets.length ? 'Every sheet of the inputs is taken out: show them again (Show hidden sheets)' : 'Add a sheet (+), or connect columns / datasets to A, B …', book: { own: 0, ins, ...(hiddenSheets.length ? { hiddenSheets } : {}) } } };
+      const total = own.length + inSheets.length;
       const k = Math.min(total - 1, Math.max(0, Math.floor(n.data.sheet ?? 0)));
       // the designations given in the node to the columns of the inputs, by the sheet's and the column's names
       const withRoles = (sheet: string, cols: Column[]) => {
@@ -4394,18 +4407,14 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
         }
         return { name: s.name, columns: out.columns };
       });
-      // a sheet name used twice: “name (2)”
-      const used = new Set(sheets.map((s) => s.name));
-      for (const s of fromIns) {
-        let nm = s.name || 'inputs';
-        for (let c = 2; used.has(nm); c++) nm = `${s.name || 'inputs'} (${c})`;
-        used.add(nm);
+      for (const s of inSheets) {
+        const nm = s.name;
         const out = arrange(nm, inputKeyed(nm, s.columns));
         if (sheets.length === k) keys = out.keys;
         kinds.push('input');
         sheets.push({ ...s, name: nm, columns: out.columns });
       }
-      return { outputs: { out: { t: 'dataset', v: sheets[k] }, book: { t: 'workbook', v: { name: n.data.name || 'Book', sheets } } }, view: { sheets: sheets.map((s) => s.name), book: { own: own.length, ins, kinds, ...(keys ? { keys } : {}) }, ...(map ? { sheet: map } : {}) } };
+      return { outputs: { out: { t: 'dataset', v: sheets[k] }, book: { t: 'workbook', v: { name: n.data.name || 'Book', sheets } } }, view: { sheets: sheets.map((s) => s.name), book: { own: own.length, ins, kinds, ...(keys ? { keys } : {}), ...(hiddenSheets.length ? { hiddenSheets } : {}) }, ...(map ? { sheet: map } : {}) } };
     }
     case 'extract': {
       const v = one('in');
@@ -4900,14 +4909,32 @@ const revOf = (o: object) => {
   if (!fileRevs.has(o)) fileRevs.set(o, ++fileSeq);
   return fileRevs.get(o)!;
 };
+// the runs over the columns of a table, made once for the same table and settings (so their steps are not computed again)
+const columnRunsMemo = new WeakMap<Dataset, { key: string; runs: Dataset[] | string }>();
 function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cache: EvalCache): Out {
   const g = n.data;
   const first = g.inputs[0]?.id;
   const v = first ? inputs.get(first)?.[0]?.value : undefined;
-  if (!v) return { view: { waiting: 'Connect the files: an Import with several files opened together, or a workbook (a sheet per file).' } };
-  const files: Dataset[] = v.t === 'workbook' ? v.v.sheets : v.t === 'dataset' ? [v.v] : [];
-  if (!files.length) return { errors: ['The files must be a workbook (a sheet per file) or a dataset.'] };
   const spec = g.batch ?? {};
+  const overCols = spec.over === 'columns';
+  if (!v) return { view: { waiting: overCols ? 'Connect the table whose columns the steps run on (a dataset, or a workbook: its sheet chosen).' : 'Connect the files: an Import with several files opened together, or a workbook (a sheet per file).' } };
+  let files: Dataset[];
+  // over columns: the table (a workbook: the sheet chosen), every column chosen a run with its X
+  let colView: { sheets?: string[]; cols: string[] } | undefined;
+  if (overCols) {
+    const src = v.t === 'workbook' ? (v.v.sheets.find((q) => q.name === spec.sheet) ?? v.v.sheets[0]) : v.t === 'dataset' ? v.v : undefined;
+    if (!src) return { errors: ['Over columns: connect a table (a dataset, or a workbook: its sheet chosen).'] };
+    colView = { ...(v.t === 'workbook' ? { sheets: v.v.sheets.map((q) => q.name) } : {}), cols: src.columns.map((c) => c.name) };
+    const key = JSON.stringify([spec.cols ?? '', spec.xFrom ?? '', spec.x ?? '']);
+    let m = columnRunsMemo.get(src);
+    if (!m || m.key !== key) {
+      m = { key, runs: columnRuns(src, spec) };
+      columnRunsMemo.set(src, m);
+    }
+    if (typeof m.runs === 'string') return { errors: [m.runs], view: { batch: { files: 0, failed: [], over: 'columns', ...colView } } };
+    files = m.runs;
+  } else files = v.t === 'workbook' ? v.v.sheets : v.t === 'dataset' ? [v.v] : [];
+  if (!files.length) return { errors: ['The files must be a workbook (a sheet per file) or a dataset.'] };
   const ordered = orderFiles(files, spec);
   const inner = flattenGroups(g.nodes, g.edges);
   const warnings = [...ordered.warnings];
@@ -4949,7 +4976,7 @@ function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cac
   if (!g.outputs.length) warnings.push('Nothing leaves the steps: connect what to keep (a value, a table) to the Group output inside the batch.');
   const failed = runs.filter((r) => r.errors.length).map((r) => ({ name: r.name, errors: r.errors }));
   if (failed.length) warnings.push(`${failed.length} of ${runs.length} file${runs.length > 1 ? 's' : ''} had errors (see the options).`);
-  const out = gather(runs, ordered.read, ordered.parts);
+  const out = gather(runs, ordered.read, ordered.parts, overCols ? 'Column' : 'File');
   // the files with their own settings: which steps (a column of the table, when any file has them)
   const ownOf = (name: string) => Object.keys(spec.own?.[name] ?? {}).flatMap((sid) => {
     const q = g.nodes.find((x) => x.id === sid);
@@ -4959,7 +4986,7 @@ function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cac
   return {
     outputs: { table: { t: 'dataset', v: out.table }, sheets: { t: 'workbook', v: out.sheets }, ...(out.stacked ? { stacked: { t: 'dataset', v: out.stacked } } : {}) },
     warnings,
-    view: { batch: { files: runs.length, failed, list: runs.map((r, k) => ({ name: r.name, read: readText(ordered.read[k], ordered.parts), errors: r.errors, own: ownOf(r.name) })), shown } },
+    view: { batch: { files: runs.length, failed, list: runs.map((r, k) => ({ name: r.name, read: readText(ordered.read[k], ordered.parts), errors: r.errors, own: ownOf(r.name) })), shown, ...(colView ? { over: 'columns' as const, ...colView } : {}) } },
     inner: preview,
   };
 }

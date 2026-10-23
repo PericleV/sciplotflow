@@ -130,12 +130,12 @@ export function PickNodeView({ id, data }: NodeProps<PickNode>) {
             {others !== 'none' && others !== 'all' && <TextInput value={others} placeholder="2, B-D, names, A*" onChange={(v) => set({ others: v })} />}
           </span>
         </Field>
-        <Field label="Table" title="Long: a row per point (the column “pick” = Group: Plot these columns draws a curve per rule); wide: a row per Y column, a column per point">
+        <Field label="Table" title="How the points found are laid out. One row per point: the curve, the rule (the column “pick”, a Group: Plot these columns draws a curve per rule), X, Y. One row per curve: every Y column on a row, its points side by side (e.g. the maximum, the minimum and Y at 500 of every sample, on one row each)">
           <Select
             value={data.layout}
             options={[
-              ['long', 'a row per point'],
-              ['wide', 'a row per run'],
+              ['long', 'one row per point found'],
+              ['wide', 'one row per curve, its points side by side'],
             ]}
             onChange={(layout) => set({ layout })}
           />
