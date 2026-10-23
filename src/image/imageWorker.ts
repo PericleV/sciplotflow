@@ -5,17 +5,21 @@
 // steps. Sent back: the pixels to show (RGBA) and those to compare with (the original, or the image before the step
 // shown), the histogram of what is shown, of what comes into the Curves and Threshold steps (the others: its range),
 // every step's note and error. The values under the mouse: asked for one pixel at a time. The measurements of the
-// selections (on all the steps, once the image shown is done; given up when a newer image is asked for), the wand's
-// outline, the centre of a spot stamped: asked apart.
+// selections and the particles of the mask (on all the steps, once the image shown is done; given up when a newer
+// image is asked for), the wand's outline, the centre of a spot stamped: asked apart. The examples of a trainable
+// classifier come with the steps.
 import { cropRaster, histogram, luminance, shrinkRaster, unpackPixels, type Crop, type ImgPixels, type Raster } from './raster.ts';
 import { measureInputs, measureRois, type MeasureSpec } from './measure.ts';
 import { fillPolygon, wand, type Pt, type Roi } from './roi.ts';
+import { findParticles, PARTICLE_DEFAULTS, type ParticleOpts } from './particles.ts';
+import { findLike, fitBox, MATCH_DEFAULTS, type Match, type MatchOpts } from './match.ts';
+import type { TrainExample } from './classify.ts';
 import type { Workbook } from '../engine/table.ts';
 import { applyStep, STEP_DEFS, type ImgStep } from './steps.ts';
 import { toRGBA, type Lut } from './render.ts';
 
 // before: the image to compare with — the original, the one before the step shown (prev), none
-export type ImgRequest = { type?: 'run'; seq: number; id?: string; pixels?: ImgPixels; crop?: Crop; steps: ImgStep[]; upTo: number; lut: Lut; lo?: number; hi?: number; overlay?: { color: string; alpha: number }; before?: 'original' | 'prev'; keep?: boolean };
+export type ImgRequest = { type?: 'run'; seq: number; id?: string; pixels?: ImgPixels; crop?: Crop; steps: ImgStep[]; upTo: number; lut: Lut; lo?: number; hi?: number; overlay?: { color: string; alpha: number }; before?: 'original' | 'prev'; keep?: boolean; train?: TrainExample[] };
 // keep: every step's result kept at full size (the selections are measured on all of them), else only from the step
 // changed on
 // the values at a pixel (of the image at full size): of the original part analysed, of what it is compared with, of the
@@ -23,7 +27,16 @@ export type ImgRequest = { type?: 'run'; seq: number; id?: string; pixels?: ImgP
 export type ValueRequest = { type: 'value'; x: number; y: number };
 export type ValueReply = { type: 'value'; x: number; y: number; base: number[]; before: number[]; result: number[] };
 // the measurements of the selections (their places in the original; ox, oy: the crop's corner)
-export type MeasureRequest = { type: 'measure'; mseq: number; steps: ImgStep[]; crop?: Crop; rois: Roi[]; spec: MeasureSpec; cal?: { size: number; unit: string }; ox: number; oy: number; name: string };
+export type MeasureRequest = { type: 'measure'; mseq: number; steps: ImgStep[]; crop?: Crop; train?: TrainExample[]; rois: Roi[]; spec: MeasureSpec; cal?: { size: number; unit: string }; ox: number; oy: number; name: string };
+// the particles of the last mask the steps give (their outlines in the part analysed), or why there are none
+export type ParticlesRequest = { type: 'particles'; steps: ImgStep[]; crop?: Crop; train?: TrainExample[]; opts: Partial<ParticleOpts> };
+export type ParticlesReply = { type: 'particles'; outlines: Pt[][]; found: number; error?: string };
+// Find like this: the models (each its centre and the radius of its disc, in the part analysed; box: a rectangle or
+// ellipse whose edges are fitted — its sides and turn), on the last image of the steps that is not a mask; every match
+// the model it is like (its place in the list)
+export type MatchModel = { cx: number; cy: number; R: number; box?: { w: number; h: number; angle: number } };
+export type MatchRequest = { type: 'match'; steps: ImgStep[]; crop?: Crop; train?: TrainExample[]; models: MatchModel[]; opts: Partial<MatchOpts> };
+export type MatchReply = { type: 'match'; matches: (Match & { model: number; w?: number; h?: number })[] };
 export type MeasureReply = { type: 'measure'; mseq: number; book: Workbook; summary: string };
 // the wand at a point of the image shown (the part analysed): the pixels within tol of it, joined; their outline
 export type WandRequest = { type: 'wand'; x: number; y: number; tol: number };
@@ -80,7 +93,9 @@ function basesFor(q: ImgRequest): NonNullable<typeof bases> {
 // the steps up to upTo on one size: from the last result kept that is still the same; null when it is no longer
 // wanted (a newer request came); outs: the image after every step
 type Run = { r: Raster; prev: Raster; outs: Raster[]; notes: Record<string, string>; errors: Record<string, string>; stepHist: Record<string, StepHist> };
-async function run(steps: ImgStep[], upTo: number, size: 'full' | 'small', base: Raster, scale: number, stale: () => boolean, keep = true): Promise<Run | null> {
+async function run(steps: ImgStep[], upTo: number, size: 'full' | 'small', base: Raster, scale: number, stale: () => boolean, keep = true, train: TrainExample[] = []): Promise<Run | null> {
+  // (a trainable classifier's key: its examples too)
+  const trainKey = JSON.stringify(train);
   const kept = stages[size];
   const outs: Raster[] = [];
   const notes: Record<string, string> = {};
@@ -88,6 +103,8 @@ async function run(steps: ImgStep[], upTo: number, size: 'full' | 'small', base:
   const stepHist: Record<string, StepHist> = {};
   let r = base;
   let prev = base;
+  // (the last image that is not a mask: the one a mask was made from)
+  let under = base;
   let key = '';
   let firstComputed = -1;
   for (let k = 0; k < upTo; k++) {
@@ -97,10 +114,11 @@ async function run(steps: ImgStep[], upTo: number, size: 'full' | 'small', base:
       const chans = r.ch.length === 3 ? [luminance(r), ...r.ch] : [r.ch[0]];
       stepHist[s.id] = { lo: r.lo, hi: r.hi, h: chans.map((c) => histogram(c, r.lo, r.hi, 256)) };
     } else if (s.on) stepHist[s.id] = { lo: r.lo, hi: r.hi, h: [] };
-    key += `|${s.on ? JSON.stringify([s.kind, s.p]) : '-'}`;
+    key += `|${s.on ? JSON.stringify([s.kind, s.p]) : '-'}${s.on && s.kind === 'classify' ? trainKey : ''}`;
     const hit = kept[k];
     if (hit?.key === key) {
       r = hit.r;
+      if (r.kind !== 'mask') under = r;
       outs.push(r);
       if (hit.note) notes[s.id] = hit.note;
       if (hit.error) errors[s.id] = hit.error;
@@ -113,12 +131,13 @@ async function run(steps: ImgStep[], upTo: number, size: 'full' | 'small', base:
     kept.length = k;
     let st: Stage = { key, r };
     if (s.on && s.kind in STEP_DEFS) {
-      const out = applyStep(r, s, scale);
+      const out = applyStep(r, s, scale, { train, under });
       if (typeof out === 'string') st = { key, r, error: out };
       else st = { key, r: out.r, ...(out.note ? { note: out.note } : {}) };
     }
     kept[k] = st;
     r = st.r;
+    if (r.kind !== 'mask') under = r;
     outs.push(r);
     if (st.note) notes[s.id] = st.note;
     if (st.error) errors[s.id] = st.error;
@@ -138,7 +157,7 @@ async function answer(q: ImgRequest) {
       await new Promise((res) => setTimeout(res, 250));
       if (q.seq !== latest) return;
     }
-    const out = await run(q.steps, q.upTo, size, base, scale, () => q.seq !== latest, !!q.keep);
+    const out = await run(q.steps, q.upTo, size, base, scale, () => q.seq !== latest, !!q.keep, q.train);
     if (!out || q.seq !== latest) return;
     const { r, prev, notes, errors, stepHist } = out;
     const show = (x: Raster) => (x.kind === 'mask' && q.overlay ? toRGBA(x, { under: base, lut: q.lut, color: q.overlay.color, alpha: q.overlay.alpha }) : toRGBA(x, { lut: q.lut, lo: q.lo, hi: q.hi }));
@@ -162,17 +181,60 @@ async function measure(m: MeasureRequest) {
   await imageRun;
   if (stale() || !kept) return;
   const b = basesFor({ seq: latest, steps: m.steps, upTo: 0, lut: 'gray', ...(m.crop ? { crop: m.crop } : {}) });
-  const out = await run(m.steps, m.steps.length, 'full', b.full, 1, stale);
+  const out = await run(m.steps, m.steps.length, 'full', b.full, 1, stale, true, m.train);
   if (!out || stale()) return;
   const { image, mask } = measureInputs(b.full, out.outs, m.steps, m.spec.on);
   const res = measureRois({ image, mask, ox: m.ox, oy: m.oy, cal: m.cal, rois: m.rois, spec: m.spec, name: m.name });
   post({ type: 'measure', mseq: m.mseq, book: res.book, summary: res.summary } satisfies MeasureReply);
 }
+// the particles: as the measurements, then from the last mask
+async function particles(m: ParticlesRequest) {
+  await imageRun;
+  if (!kept) return;
+  const b = basesFor({ seq: latest, steps: m.steps, upTo: 0, lut: 'gray', ...(m.crop ? { crop: m.crop } : {}) });
+  const out = await run(m.steps, m.steps.length, 'full', b.full, 1, () => false, true, m.train);
+  const mask = out ? measureInputs(b.full, out.outs, m.steps, 'original').mask : null;
+  if (!mask) {
+    post({ type: 'particles', outlines: [], found: 0, error: 'no mask: put a Threshold (or a trainable classifier) in the steps' } satisfies ParticlesReply);
+    return;
+  }
+  const res = findParticles(mask.ch[0], mask.w, mask.h, { ...PARTICLE_DEFAULTS, ...m.opts });
+  post({ type: 'particles', ...res } satisfies ParticlesReply);
+}
+// Find like this: as the measurements, then on the last image that is not a mask
+async function match(m: MatchRequest) {
+  await imageRun;
+  if (!kept) return;
+  const b = basesFor({ seq: latest, steps: m.steps, upTo: 0, lut: 'gray', ...(m.crop ? { crop: m.crop } : {}) });
+  const out = await run(m.steps, m.steps.length, 'full', b.full, 1, () => false, true, m.train);
+  const img = [...(out?.outs ?? [])].reverse().find((x) => x.kind !== 'mask') ?? b.full;
+  const g = img.ch.length === 1 ? img.ch[0] : luminance(img);
+  // (every model's matches; where several models found the same particle, the most alike kept)
+  const all = m.models.flatMap((md, k) => findLike(g, img.w, img.h, md.cx, md.cy, md.R, { ...MATCH_DEFAULTS, ...m.opts }).map((f) => ({ ...f, model: k })));
+  all.sort((a, b) => b.score - a.score);
+  const best: typeof all = [];
+  for (const f of all) if (!best.some((q) => Math.hypot(q.x - f.x, q.y - f.y) < 0.75 * Math.min(m.models[q.model].R, m.models[f.model].R))) best.push(f);
+  const matches = best.map((f) => {
+    const box = m.models[f.model].box;
+    if (!box) return f;
+    const fb = fitBox(g, img.w, img.h, f.x, f.y, box.angle + f.angle, box.w * f.scale, box.h * f.scale);
+    return { ...f, x: fb.x, y: fb.y, w: fb.w, h: fb.h };
+  });
+  post({ type: 'match', matches } satisfies MatchReply);
+}
 // the gray of the image shown at full size (its luminance)
 const shownGray = () => (last.result ? (last.result.ch.length === 1 ? last.result.ch[0] : luminance(last.result)) : null);
 
-self.onmessage = (e: MessageEvent<ImgRequest | ValueRequest | MeasureRequest | WandRequest | CentreRequest>) => {
+self.onmessage = (e: MessageEvent<ImgRequest | ValueRequest | MeasureRequest | WandRequest | CentreRequest | ParticlesRequest | MatchRequest>) => {
   const q = e.data;
+  if (q.type === 'match') {
+    void match(q);
+    return;
+  }
+  if (q.type === 'particles') {
+    void particles(q);
+    return;
+  }
   if (q.type === 'measure') {
     latestMeasure = q.mseq;
     void measure(q);

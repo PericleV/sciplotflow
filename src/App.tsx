@@ -25,7 +25,7 @@ import { ReportNodeView } from './nodes/ReportNode.tsx';
 import './App.css';
 import { EngineContext, useEngine } from './engine/engine.ts';
 import { canConnect, isMultiInput, PORT_COLORS, sourcePort, type PortContext } from './engine/ports.ts';
-import { REPORT_DEFAULTS, MATCOMP_DEFAULTS, MATRIX_DEFAULTS, COLUMNS_DEFAULTS, PEAKWIDTH_DEFAULTS, AUTOEXTRACT_DEFAULTS, CANVAS_DEFAULTS, DRAWING_DEFAULTS, COMBINE_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS, CALCULUS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, AVERAGE_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, IMAGE_DEFAULTS, PHASE_DEFAULTS, HISTOGRAM_DEFAULTS, BARCHART_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, CURVEMATH_DEFAULTS, TRANSLATE_DEFAULTS, PEAK_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, ANOVA_DEFAULTS, NONPAR_DEFAULTS, CORR_DEFAULTS, PICK_DEFAULTS, DATAMANIP_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, PYTHON_DEFAULTS, NOTE_DEFAULTS, NOTE_SIZE,PLOT1D_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
+import { KK_DEFAULTS, REPORT_DEFAULTS, MATCOMP_DEFAULTS, MATRIX_DEFAULTS, COLUMNS_DEFAULTS, PEAKWIDTH_DEFAULTS, AUTOEXTRACT_DEFAULTS, CANVAS_DEFAULTS, DRAWING_DEFAULTS, COMBINE_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS, CALCULUS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, AVERAGE_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, IMAGE_DEFAULTS, PHASE_DEFAULTS, HISTOGRAM_DEFAULTS, BARCHART_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, CURVEMATH_DEFAULTS, TRANSLATE_DEFAULTS, PEAK_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, ANOVA_DEFAULTS, NONPAR_DEFAULTS, CORR_DEFAULTS, PICK_DEFAULTS, DATAMANIP_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, PYTHON_DEFAULTS, NOTE_DEFAULTS, NOTE_SIZE,PLOT1D_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
 import { NODE_HELP, NODE_SHORT } from './help.ts';
 import { DRAG_TYPE, NodePalette, type PaletteGroup } from './NodePalette.tsx';
 // side panels: separate chunks, loaded when first opened
@@ -94,7 +94,7 @@ import { TernaryNodeView } from './nodes/TernaryNode.tsx';
 import { WaterfallNodeView } from './nodes/WaterfallNode.tsx';
 import { Plot3DNodeView } from './nodes/Plot3DNode.tsx';
 import { MatCompNodeView, MatrixNodeView } from './nodes/MatrixNodes.tsx';
-import { AverageNodeView, ConvNodeView, FFTNodeView, InterpNodeView, NormalizeNodeView, SmoothNodeView } from './nodes/SignalNodes.tsx';
+import { AverageNodeView, ConvNodeView, FFTNodeView, InterpNodeView, KramersKronigNodeView, NormalizeNodeView, SmoothNodeView } from './nodes/SignalNodes.tsx';
 import { AnovaNodeView, CorrNodeView, NonparNodeView, NormNodeView, TTestNodeView } from './nodes/TestNodes.tsx';
 import { RerouteNodeView } from './nodes/RerouteNode.tsx';
 import { BatchFileBar, GroupInNodeView, GroupNodeView, GroupOutNodeView } from './nodes/GroupNodes.tsx';
@@ -138,6 +138,7 @@ const baseNodeTypes = {
   normalize: NormalizeNodeView,
   fft: FFTNodeView,
   convolve: ConvNodeView,
+  kk: KramersKronigNodeView,
   average: AverageNodeView,
   report: ReportNodeView,
   translate: TranslateNodeView,
@@ -242,6 +243,7 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
       { type: 'pick', label: 'Pick points', data: PICK_DEFAULTS },
       { type: 'curvemath', label: 'Curve math', data: CURVEMATH_DEFAULTS },
       { type: 'matcomp', label: 'Matrix computation', data: MATCOMP_DEFAULTS },
+      { type: 'kk', label: 'Kramers–Kronig', data: KK_DEFAULTS },
       // hidden (2026-10-20): not offered for now; saved projects with it still open
       { type: 'phasediagram', label: 'Phase diagram', data: PHASE_DEFAULTS, hidden: true },
       { type: 'report', label: 'Report', data: REPORT_DEFAULTS },
@@ -290,6 +292,7 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
 
 // The example projects are a separate chunk, loaded after the first render.
 type ExampleList = { group: string; name: string; desc: string; make: () => Project }[];
+const SHOW_SHARE_LINK = false;
 const loadExamples = () => import('./examples.ts').then((m) => m.EXAMPLES as ExampleList);
 // The page opens on the project left at the last visit (kept automatically; Projects: “Last session”).
 const lastSession = keepLastSession();
@@ -1398,7 +1401,8 @@ function Flow() {
         )}
         </span>
         <span className="tb-group" role="group" aria-label="Share">
-        <button
+        {/* hidden (2026-10-23): the projects are too large for a link; Save makes the file to send */}
+        {SHOW_SHARE_LINK && <button
           title="Copy a link that opens this project (the whole project is in the link: nothing is sent to a server)"
           onClick={async () => {
             const code = await encodeProject(toProject(root.nodes, root.edges, projectName, projectId));
@@ -1415,7 +1419,7 @@ function Flow() {
           }}
         >
           <Link2 {...IC} /> <span className="tb-label">Share link</span>
-        </button>
+        </button>}
         <button className={panel === 'collab' ? 'active' : ''} onClick={() => togglePanel('collab')} title={collab ? `Working together: ${peerCount + 1} in the session` : 'Work on this project together, in real time, browser to browser'}>
           <Users {...IC} /> <span className="tb-label">{collab ? `Together · ${peerCount + 1}` : 'Collaborate'}</span>
         </button>

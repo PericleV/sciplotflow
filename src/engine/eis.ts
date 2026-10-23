@@ -740,6 +740,20 @@ export function fitWarnings(res: EisResult, pts: EisPoints, use: boolean[]): str
 }
 
 // the impedance of the circuit over a frequency range (log spaced: `per` points a decade)
+// The fit drawn smooth (25 frequencies a decade over the range): for a Plot's line through the data, Nyquist or Bode
+export function fitCurve(c: { f: number[]; re: number[]; im: number[] }): Dataset {
+  const num = (name: string, v: number[]) => column(name, Float64Array.from(v));
+  return {
+    name: 'circuit fit',
+    columns: [
+      { ...num('Frequency (Hz)', c.f), role: 'x' },
+      num("Z' fit (Ω)", c.re),
+      { ...num("-Z'' fit (Ω)", c.im.map((v) => -v)), role: 'y' },
+      num('|Z| fit (Ω)', c.re.map((v, i) => Math.hypot(v, c.im[i]))),
+      num('Phase fit (°)', c.re.map((v, i) => (Math.atan2(c.im[i], v) * 180) / Math.PI)),
+    ],
+  };
+}
 export function simulate(tree: EisTree, p: Record<string, number>, fMin: number, fMax: number, per = 20): { f: number[]; re: number[]; im: number[] } {
   const [a, b] = [Math.log10(fMin), Math.log10(fMax)];
   const n = Math.max(2, Math.round((b - a) * per) + 1);

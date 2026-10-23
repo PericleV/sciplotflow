@@ -1,7 +1,8 @@
 // The Signal nodes: Smooth, Interpolate / Extrapolate, Normalize, FFT, Convolution, Average curves — the data (X, Y columns), the
-// method and its options, a graph of the data (dots) and the result (a line) of the Y chosen, the outputs.
+// method and its options, a graph of the data (dots) and the result (a line) of the Y chosen, the outputs. Kramers–Kronig
+// (in Analysis) is drawn the same way: its graphs with the tails assumed dashed, past dashed lines where the data end.
 import { xAutoLabel, Y_AUTO } from './xAuto.ts';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNodeConnections, useReactFlow, type NodeProps } from '@xyflow/react';
 import { columnLetter } from '../engine/csv.ts';
 import { useNodeResult } from '../engine/engine.ts';
@@ -9,7 +10,8 @@ import type { NodeResult } from '../engine/evaluate.ts';
 import type { SignalPlot } from '../engine/signalnodes.ts';
 import { fmtNum, type ColumnRole } from '../engine/table.ts';
 import { niceStep } from '../figure/ticks.ts';
-import type { AppNode, AverageData, AverageNode, ConvData, ConvNode, FFTData, FFTNode, InterpData, InterpNode, NormalizeData, NormalizeNode, SmoothData, SmoothNode } from '../types.ts';
+import type { AppNode, AverageData, AverageNode, ConvData, ConvNode, FFTData, FFTNode, InterpData, InterpNode, KKData, KKNode, NormalizeData, NormalizeNode, SmoothData, SmoothNode } from '../types.ts';
+import { KK_DEFAULTS } from '../engine/kk.ts';
 import { Check, Field, InPort, Messages, NumInput, OutPort, Select } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
 import { ColumnsPicker } from './ColumnsPicker.tsx';
@@ -22,6 +24,23 @@ import { rescaleAxis, usePlotZoom, viewBox, zoomAt, type View, type ZoomMode } f
 import { ZoomTools } from './ZoomTools.tsx';
 import { ReaderButton, ReaderLayer, ReaderOptions, type ReadCurve, type ReaderProp } from './CanvasReader.tsx';
 import { READER_OFF, type ReaderState } from './readerState.ts';
+
+// a plot with a logarithmic X: its X values (all of them) as their log10, the points at X ≤ 0 left out
+function logPlot(p: SignalPlot): SignalPlot {
+  const lg = (c: { x: number[]; y: number[] }) => {
+    const keep = c.x.map((v) => v > 0);
+    return { x: c.x.filter((_, i) => keep[i]).map(Math.log10), y: c.y.filter((_, i) => keep[i]) };
+  };
+  return {
+    ...p,
+    ...(p.data ? { data: lg(p.data) } : {}),
+    result: lg(p.result),
+    ...(p.others ? { others: p.others.map(lg) } : {}),
+    ...(p.series ? { series: p.series.map((sr) => ({ ...sr, ...lg(sr) })) } : {}),
+    ...(p.band ? { band: { x: p.band.x.map((v) => Math.log10(Math.max(v, 1e-300))), lo: p.band.lo, hi: p.band.hi } } : {}),
+    ...(p.marks ? { marks: p.marks.filter((v) => v > 0).map(Math.log10) } : {}),
+  };
+}
 
 const W0 = 520;
 const H0 = 230;
@@ -42,12 +61,14 @@ function rangeOf(sets: { x: number[]; y: number[] }[]): [number, number, number,
 
 // the graph of one Y: the data as dots, the result as a line (on its own axis at the right when asked); zoomed and
 // panned with the tools above it (the result's axis follows), read with the data reader
-function SignalGraph({ plot, W, H, zoom, view, onView, zoomOut, reader }: { plot: SignalPlot; W: number; H: number; zoom: ZoomMode; view: View | null; onView: (v: View | null) => void; zoomOut: number; reader?: Omit<ReaderProp, 'curves'> }) {
+function SignalGraph({ plot: given, W, H, zoom, view, onView, zoomOut, reader }: { plot: SignalPlot; W: number; H: number; zoom: ZoomMode; view: View | null; onView: (v: View | null) => void; zoomOut: number; reader?: Omit<ReaderProp, 'curves'> }) {
   const cv = useRef<HTMLCanvasElement>(null);
+  // (a logarithmic X: everything drawn on log10 of it, the ticks labelled with the values)
+  const plot = useMemo(() => (given.logX ? logPlot(given) : given), [given]);
   const [cursor, setCursor] = useState('default');
   // the limits: of everything, or (the result on its own axis, at the right) of the data and of the result apart
   const own = !!plot.ownAxis && !!plot.data;
-  const all = [plot.result, ...(plot.data ? [plot.data] : []), ...(plot.others ?? []), ...(plot.band ? [{ x: plot.band.x, y: plot.band.lo }, { x: plot.band.x, y: plot.band.hi }] : [])];
+  const all = [plot.result, ...(plot.data ? [plot.data] : []), ...(plot.others ?? []), ...(plot.series ?? []), ...(plot.band ? [{ x: plot.band.x, y: plot.band.lo }, { x: plot.band.x, y: plot.band.hi }] : [])];
   let [x0, x1, y0, y1] = rangeOf(own ? [plot.data!] : all);
   const [rx0, rx1, r0, r1] = own ? rangeOf([plot.result]) : [x0, x1, y0, y1];
   [x0, x1] = [Math.min(x0, rx0), Math.max(x1, rx1)];
@@ -88,12 +109,56 @@ function SignalGraph({ plot, W, H, zoom, view, onView, zoomOut, reader }: { plot
     if (plot.band) {
       // the range (± SD), shaded
       const { x, lo, hi } = plot.band;
-      g.fillStyle = 'rgba(214, 39, 40, 0.15)';
+      g.fillStyle = plot.bandColor ?? 'rgba(214, 39, 40, 0.15)';
       g.beginPath();
       x.forEach((v, i) => g[i ? 'lineTo' : 'moveTo'](fx(v), fy(hi[i])));
       for (let i = x.length - 1; i >= 0; i--) g.lineTo(fx(x[i]), fy(lo[i]));
       g.closePath();
       g.fill();
+    }
+    if (plot.zero && box.y0 < 0 && box.y1 > 0) {
+      g.strokeStyle = '#9aa3ad';
+      g.lineWidth = 1;
+      g.beginPath();
+      g.moveTo(M.l, fy(0));
+      g.lineTo(M.l + pw, fy(0));
+      g.stroke();
+    }
+    // where the data end: dashed lines across
+    for (const m of plot.marks ?? []) {
+      g.strokeStyle = '#7a7a7a';
+      g.lineWidth = 1;
+      g.setLineDash([5, 4]);
+      g.beginPath();
+      g.moveTo(fx(m), M.t);
+      g.lineTo(fx(m), M.t + ph);
+      g.stroke();
+      g.setLineDash([]);
+    }
+    for (const sr of plot.series ?? []) {
+      g.strokeStyle = sr.color;
+      g.fillStyle = sr.color;
+      g.lineWidth = sr.dash ? 1.4 : 1.2;
+      if (sr.line || !sr.dots) {
+        g.setLineDash(sr.dash ? [6, 4] : []);
+        g.beginPath();
+        let on = false;
+        sr.x.forEach((v, i) => {
+          const u = sr.y[i];
+          if (!Number.isFinite(u) || !Number.isFinite(v)) return void (on = false);
+          g[on ? 'lineTo' : 'moveTo'](fx(v), fy(u));
+          on = true;
+        });
+        g.stroke();
+        g.setLineDash([]);
+      }
+      if (sr.dots)
+        sr.x.forEach((v, i) => {
+          if (!Number.isFinite(sr.y[i])) return;
+          g.beginPath();
+          g.arc(fx(v), fy(sr.y[i]), 1.8, 0, 2 * Math.PI);
+          g.fill();
+        });
     }
     for (const o of plot.others ?? []) {
       g.strokeStyle = '#9aa3ad';
@@ -129,10 +194,10 @@ function SignalGraph({ plot, W, H, zoom, view, onView, zoomOut, reader }: { plot
     g.strokeRect(M.l + 0.5, M.t + 0.5, pw, ph);
     g.fillStyle = '#333333';
     g.font = '10px system-ui, sans-serif';
-    const sx = niceStep(box.x1 - box.x0, Math.max(3, Math.round(pw / 80)));
+    const sx = plot.logX ? Math.max(1, Math.round(niceStep(box.x1 - box.x0, Math.max(3, Math.round(pw / 80))))) : niceStep(box.x1 - box.x0, Math.max(3, Math.round(pw / 80)));
     for (let v = Math.ceil(box.x0 / sx) * sx; v <= box.x1 + sx * 1e-9; v += sx) {
       g.textAlign = 'center';
-      g.fillText(fmtNum(Math.abs(v) < sx * 1e-9 ? 0 : v, 4), fx(v), H - M.b + 12);
+      g.fillText(plot.logX ? fmtNum(10 ** Math.round(v), 3) : fmtNum(Math.abs(v) < sx * 1e-9 ? 0 : v, 4), fx(v), H - M.b + 12);
     }
     const sy = niceStep(box.y1 - box.y0, Math.max(3, Math.round(ph / 40)));
     for (let v = Math.ceil(box.y0 / sy) * sy; v <= box.y1 + sy * 1e-9; v += sy) {
@@ -155,6 +220,18 @@ function SignalGraph({ plot, W, H, zoom, view, onView, zoomOut, reader }: { plot
       g.fillText('result (right axis)', M.l + pw - 4, M.t + 11);
       g.fillStyle = '#333333';
     }
+    // (the names of the curves, in their colours, at the top left)
+    const names: [string, string][] = [...(plot.legend?.[0] && plot.data ? [[plot.legend[0], '#1f6fd6'] as [string, string]] : []), ...(plot.legend?.[plot.data ? 1 : 0] && plot.result.x.length ? [[plot.legend[plot.data ? 1 : 0], '#d62728'] as [string, string]] : []), ...(plot.series ?? []).map((sr): [string, string] => [sr.name, sr.color])];
+    if (!own && names.length) {
+      g.textAlign = 'left';
+      let tx = M.l + 6;
+      for (const [nm, col] of names) {
+        g.fillStyle = col;
+        g.fillText(nm, tx, M.t + 11);
+        tx += g.measureText(nm).width + 12;
+      }
+      g.fillStyle = '#333333';
+    }
     g.textAlign = 'center';
     g.fillText(plot.xName, M.l + pw / 2, H - 3);
     if (z.rect) {
@@ -169,7 +246,7 @@ function SignalGraph({ plot, W, H, zoom, view, onView, zoomOut, reader }: { plot
     const b = (e.currentTarget as HTMLElement).getBoundingClientRect();
     return [((e.clientX - b.left) * W) / b.width, ((e.clientY - b.top) * H) / b.height];
   };
-  const curves: ReadCurve[] = [...(plot.data ? [{ name: 'data', color: '#1f6fd6', x: plot.data.x, y: plot.data.y }] : []), { name: own ? 'result (right axis)' : 'result', color: '#d62728', x: plot.result.x, y: plot.result.y, ...(own ? { onAxis: toLeft } : {}) }, ...(plot.others ?? []).map((o, j) => ({ name: `curve ${j + 1}`, color: '#9aa3ad', x: o.x, y: o.y }))];
+  const curves: ReadCurve[] = [...(plot.data ? [{ name: 'data', color: '#1f6fd6', x: plot.data.x, y: plot.data.y }] : []), { name: own ? 'result (right axis)' : 'result', color: '#d62728', x: plot.result.x, y: plot.result.y, ...(own ? { onAxis: toLeft } : {}) }, ...(plot.others ?? []).map((o, j) => ({ name: `curve ${j + 1}`, color: '#9aa3ad', x: o.x, y: o.y })), ...(plot.series ?? []).map((sr) => ({ name: sr.name, color: sr.color, x: sr.x, y: sr.y }))];
   return (
     <div className="reader-host nodrag nowheel">
       <canvas
@@ -883,6 +960,151 @@ export function AverageNodeView({ id, data }: NodeProps<AverageNode>) {
       </NodeOptions>
       <Result r={r} />
       <OutPort label="dataset" port="dataset" id="out" title="X, the mean, SD (designated ±Y), SE, N (and min, max, median)" />
+    </div>
+  );
+}
+
+export function KramersKronigNodeView({ id, data: given }: NodeProps<KKNode>) {
+  const { r, names, set } = useSignal<KKData>(id);
+  const data = { ...KK_DEFAULTS, ...given };
+  const cols = (auto: string): [string, string][] => [['', auto], ...names.map((n): [string, string] => [n, n])];
+  const eis = data.mode === 'eis';
+  return (
+    <div className="node node-signal">
+      <InPort label="dataset" port="dataset" id="in" title="Impedance: the frequency, Z′ and Z″; optical: X and the reflectance R; general: X and the part to transform" />
+      <NodeOptions>
+        <div className="col-form">
+          <span>Use</span>
+          <Select<KKData['mode']>
+            value={data.mode}
+            title="Impedance: whether the spectrum obeys Kramers–Kronig (Lin-KK); optical: n and k from the reflectance; general: Re from Im (or Im from Re)"
+            options={[
+              ['eis', 'impedance: Lin-KK test'],
+              ['optical', 'optical: n, k from R'],
+              ['general', 'general: Re ↔ Im'],
+            ]}
+            onChange={(mode) => set({ mode })}
+          />
+          <span>{eis ? 'Frequency' : 'X'}</span>
+          <Select<string> value={data.x} options={cols(eis ? 'by its name' : 'the X designated')} onChange={(x) => set({ x })} />
+          <span>{eis ? 'Z′' : data.mode === 'optical' ? 'R' : data.direction === 'im2re' ? 'Im part' : 'Re part'}</span>
+          <Select<string> value={data.a} options={cols(eis ? 'by its name' : 'the first Y')} onChange={(a) => set({ a })} />
+          {eis && (
+            <>
+              <span>Z″</span>
+              <span className="row">
+                <Select<string> value={data.b} options={cols('by its name')} onChange={(b) => set({ b })} />
+                <Select<KKData['imNeg']>
+                  value={data.imNeg}
+                  title="Whether the column is Z″ itself or −Z″ (auto: by its name, or its sign: a capacitive spectrum has Z″ < 0)"
+                  options={[
+                    ['auto', 'sign: auto'],
+                    ['no', 'is Z″'],
+                    ['yes', 'is −Z″'],
+                  ]}
+                  onChange={(imNeg) => set({ imNeg })}
+                />
+              </span>
+              <span>Model</span>
+              <span className="row">
+                <Check label="inductance" title="An inductance in series (cables, the high frequencies)" value={data.ind} onChange={(ind) => set({ ind })} />
+                <Check label="capacitance" title="A capacitance in series (a blocking electrode: −Z″ growing at the low frequencies)" value={data.cap} onChange={(cap) => set({ cap })} />
+              </span>
+              <span>μ at least</span>
+              <span className="row">
+                <NumInput className="tiny" min={0} max={1} step={0.05} value={data.mu} title="The least μ = 1 − Σ|R < 0| / Σ|R ≥ 0| allowed (0.85: Schönleber): below it the elements fit the noise" onChange={(mu) => set({ mu: Math.min(1, Math.max(0, Number.isFinite(mu) ? mu : 0.85)) })} />
+                <span>elements up to</span>
+                <NumInput className="tiny" min={1} max={100} step={1} value={data.maxM} onChange={(maxM) => set({ maxM: Math.max(1, Math.min(100, Math.round(maxM) || 50)) })} />
+              </span>
+              <span>Band</span>
+              <span className="row">
+                <span className="muted">±</span>
+                <NumInput className="tiny" min={0.01} step={0.1} value={data.limit} title="The residuals within this (% of |Z|): the data obey Kramers–Kronig" onChange={(limit) => set({ limit: limit > 0 ? limit : 1 })} />
+                <span className="muted">%</span>
+              </span>
+            </>
+          )}
+          {!eis && (
+            <>
+              <span>X is</span>
+              <Select<KKData['xKind']>
+                value={data.xKind}
+                title="Auto: a wavelength when its column’s unit is one (nm, µm, Å), else proportional to the frequency (eV, cm⁻¹, Hz …: any such unit gives the same result)"
+                options={[
+                  ['auto', 'auto (by its unit)'],
+                  ['frequency', '∝ the frequency'],
+                  ['wavelength', 'a wavelength'],
+                ]}
+                onChange={(xKind) => set({ xKind })}
+              />
+              {data.mode === 'general' && (
+                <>
+                  <span>Find</span>
+                  <span className="row">
+                    <Select<KKData['direction']>
+                      value={data.direction}
+                      options={[
+                        ['im2re', 'Re from Im'],
+                        ['re2im', 'Im from Re'],
+                      ]}
+                      onChange={(direction) => set({ direction })}
+                    />
+                    <span>Re at ∞</span>
+                    <NumInput className="tiny" step={0.1} value={data.offset} title="The real part at infinite frequency (ε∞; 1 for ε of a vacuum)" onChange={(offset) => set({ offset: Number.isFinite(offset) ? offset : 0 })} />
+                  </span>
+                </>
+              )}
+              <span>Below the data</span>
+              <Select<KKData['low']>
+                value={data.low}
+                title="How the curve goes on below the range measured (an assumption: drawn dashed)"
+                options={
+                  data.mode === 'optical'
+                    ? [
+                        ['constant', 'R constant'],
+                        ['hagen', 'Hagen–Rubens (a metal)'],
+                      ]
+                    : [
+                        ['zero', 'zero'],
+                        ['constant', 'constant'],
+                        ['linear', 'straight down to 0 at 0'],
+                      ]
+                }
+                onChange={(low) => set({ low })}
+              />
+              <span>Above the data</span>
+              <span className="row">
+                <Select<KKData['high']>
+                  value={data.high}
+                  title="How the curve goes on above the range measured (an assumption: drawn dashed)"
+                  options={[
+                    ['power', 'a power law'],
+                    ['constant', 'constant'],
+                    ['zero', 'zero'],
+                  ]}
+                  onChange={(high) => set({ high })}
+                />
+                {data.high === 'power' && (
+                  <>
+                    <span className="muted">∝ x^−</span>
+                    <NumInput className="tiny" min={0.5} step={0.5} value={data.power} title="The exponent: 4 for R of free electrons, 3 for ε₂ of an oscillator, 2 for ε₁ − ε∞" onChange={(power) => set({ power: power > 0 ? power : 4 })} />
+                  </>
+                )}
+              </span>
+            </>
+          )}
+        </div>
+      </NodeOptions>
+      <Result r={r}>
+        {(r?.view.report ?? []).length > 0 && (
+          <div className="stat-report">
+            {r!.view.report!.map((l, i) => (
+              <div key={i}>{l}</div>
+            ))}
+          </div>
+        )}
+      </Result>
+      <OutPort label="dataset" port="dataset" id="out" title="Impedance: the frequency, Z′, −Z″, their Lin-KK fit, the residuals (%); optical: X, R, the phase, n, k, ε₁, ε₂ (α); general: X, the part given, the one found" />
     </div>
   );
 }

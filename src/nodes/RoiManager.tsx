@@ -1,10 +1,13 @@
 // The selections of the Image analysis editor: drawn over the image (the one picked with its handles — the corners and
 // sides of a rectangle or an ellipse and its turn, the points of the others), the ROI manager (their names, colours,
-// groups, shown or not; the background of a spot; the width of a line), what is measured and the results.
+// groups, shown or not; the background of a spot; the width of a line), the particles found in the mask (and grouped by
+// their shape), what is measured and the results.
 import type { ReactNode } from 'react';
 import { isArea, isLine, roiOutline, ROI_COLOR, ROI_KINDS, RING_DEFAULTS, TOOL_HINTS, type Pt, type Roi, type RoiBgMode, type RoiTool } from '../image/roi.ts';
 import { MEASURE_KEYS, type MeasureKey, type MeasureSpec } from '../image/measure.ts';
 import { STEP_DEFS, type ImgStep } from '../image/steps.ts';
+import type { ParticleOpts } from '../image/particles.ts';
+import type { MatchOpts } from '../image/match.ts';
 import type { Workbook } from '../engine/table.ts';
 import { Check, NumInput, Select, TextInput } from './ui.tsx';
 import { Copy, Eye, EyeOff, X } from 'lucide-react';
@@ -36,8 +39,9 @@ const boxPoint = (r: Roi, u: number, v: number): Pt => {
 // ---- over the image ----
 
 // rois: in pixels of the original; ox, oy: the corner of the part shown; k: screen pixels per image pixel. interactive:
-// the selections take the clicks (to pick, move, edit them), else the tool drawing does
-export function RoiOverlay({ rois, sel, k, ox, oy, W, H, labels, interactive }: { rois: Roi[]; sel: string | null; k: number; ox: number; oy: number; W: number; H: number; labels: boolean; interactive: boolean }) {
+// the selections take the clicks (to pick, move, edit them), else the tool drawing does; rings: the rings of background
+// of every spot drawn (else of the one picked)
+export function RoiOverlay({ rois, sel, k, ox, oy, W, H, labels, interactive, rings }: { rois: Roi[]; sel: string | null; k: number; ox: number; oy: number; W: number; H: number; labels: boolean; interactive: boolean; rings: boolean }) {
   const at = ([x, y]: Pt) => `${((x - ox) * k).toFixed(1)},${((y - oy) * k).toFixed(1)}`;
   const P = (pts: Pt[]) => pts.map(at).join(' ');
   const one = (r: Roi) => {
@@ -67,10 +71,11 @@ export function RoiOverlay({ rois, sel, k, ox, oy, W, H, labels, interactive }: 
           <polyline points={P(pts)} className="ie-roi-hit" />
         </>
       );
-    // the ring of background of a spot picked (a rectangle or an ellipse: drawn; other shapes: measured all the same)
+    // the ring of background of a spot (a rectangle or an ellipse: drawn, its inner and outer edge; other shapes:
+    // measured all the same)
     const ring =
-      picked && r.box && r.bg?.mode === 'ring'
-        ? [r.bg.gap ?? RING_DEFAULTS.gap, (r.bg.gap ?? RING_DEFAULTS.gap) + (r.bg.width ?? RING_DEFAULTS.width)].map((d, j) => <polygon key={j} points={P(roiOutline({ ...r, box: [r.box![0], r.box![1], Math.abs(r.box![2]) + 2 * d, Math.abs(r.box![3]) + 2 * d] }))} className="ie-roi-ring" />)
+      (picked || rings) && r.box && r.bg?.mode === 'ring'
+        ? [r.bg.gap ?? RING_DEFAULTS.gap, (r.bg.gap ?? RING_DEFAULTS.gap) + (r.bg.width ?? RING_DEFAULTS.width)].map((d, j) => <polygon key={j} points={P(roiOutline({ ...r, box: [r.box![0], r.box![1], Math.abs(r.box![2]) + 2 * d, Math.abs(r.box![3]) + 2 * d] }))} className={`ie-roi-ring${picked ? '' : ' faint'}`} />)
         : null;
     const [x0, y0] = pts.length ? [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1]))] : [0, 0];
     return (
@@ -123,6 +128,8 @@ export type RoiPanelProps = {
   setGroup: (g: string) => void;
   labels: boolean;
   setLabels: (v: boolean) => void;
+  rings: boolean;
+  setRings: (v: boolean) => void;
   wandTol: number;
   setWandTol: (v: number) => void;
   centre: 'off' | 'bright' | 'dark';
@@ -164,6 +171,7 @@ export function RoiPanel(p: RoiPanelProps) {
         <span className="muted">New ones in group</span>
         <TextInput className="short" value={p.group} placeholder="none" title="The group of the selections drawn next (a sample, a replicate): the summary is by group" onChange={p.setGroup} />
         <Check label="names" title="The names written by the selections" value={p.labels} onChange={p.setLabels} />
+        <Check label="rings" title="The rings of background of every spot drawn (two dashed outlines: where the ring starts and ends), else only of the spot picked" value={p.rings} onChange={p.setRings} />
       </div>
       {rois.length ? (
         <div className="ie-roi-list">
@@ -171,8 +179,8 @@ export function RoiPanel(p: RoiPanelProps) {
             <div key={r.id} className={`ie-roi-row${r.id === sel ? ' sel' : ''}`} onClick={() => setSel(r.id)}>
               <input className="nodrag color" type="color" value={r.color ?? ROI_COLOR} title="Its colour" onChange={(e) => upd(r.id, { color: e.target.value })} />
               <TextInput className="grow" value={r.name} title="Its name (the rows of the results)" onChange={(name) => upd(r.id, { name })} />
-              <span className="muted ie-roi-kind" title={ROI_KINDS[r.kind]}>
-                {r.role === 'background' ? 'bg' : ROI_KINDS[r.kind]}
+              <span className="muted ie-roi-kind" title={r.train ? `an example of ${r.train} (the trainable classifier)` : ROI_KINDS[r.kind]}>
+                {r.train ? `ex. ${r.train}` : r.role === 'background' ? 'bg' : r.auto ? 'particle' : ROI_KINDS[r.kind]}
               </span>
               <TextInput className="tiny" value={r.group ?? ''} placeholder="group" title="Its group" onChange={(g) => upd(r.id, { group: g || undefined })} />
               <button className="nodrag ts-btn" title={r.hidden ? 'Hidden: show it' : 'Shown: hide it (still measured)'} onClick={() => upd(r.id, { hidden: !r.hidden || undefined })}>
@@ -203,7 +211,7 @@ export function RoiPanel(p: RoiPanelProps) {
           Remove all
         </button>
       </div>
-      {picked && isArea(picked) && (
+      {picked && isArea(picked) && !picked.train && (
         <div className="ie-params">
           <span className="ie-label">Background</span>
           <Select<RoiBgMode | 'role'>
@@ -231,7 +239,7 @@ export function RoiPanel(p: RoiPanelProps) {
           {picked.bg?.mode === 'region' && (
             <>
               <span className="ie-label">Region</span>
-              <Select<string> value={picked.bg.region ?? ''} title="The selection whose pixels are this spot's background" options={[['', '—'], ...regions.map((r): [string, string] => [r.id, r.name])]} onChange={(region) => upd(picked.id, { bg: { ...picked.bg!, region: region || undefined } })} />
+              <Select<string> value={picked.bg.region ?? ''} title="The selection whose pixels are this spot's background" options={[['', 'none'], ...regions.map((r): [string, string] => [r.id, r.name])]} onChange={(region) => upd(picked.id, { bg: { ...picked.bg!, region: region || undefined } })} />
             </>
           )}
           {picked.bg && picked.bg.mode !== 'none' && (
@@ -248,6 +256,115 @@ export function RoiPanel(p: RoiPanelProps) {
           <span className="muted">Width</span>
           <NumInput className="tiny" min={1} step={1} value={picked.width ?? 1} title="The band across the line averaged for its profile (px)" onChange={(width) => upd(picked.id, { width: Math.max(1, Math.round(width)) || 1 })} />
           <span className="muted">px</span>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ---- particles ----
+
+// opts: in pixels (sizes in px²); k: the size of a pixel (the sizes shown in its unit u)
+export function ParticlesPanel(p: {
+  opts: ParticleOpts;
+  set: (p: Partial<ParticleOpts>) => void;
+  group: string;
+  setGroup: (g: string) => void;
+  k: number;
+  u: string;
+  find: () => void;
+  msg: string;
+  count: number;
+  byShape: () => void;
+  likeExamples: () => void;
+  match: MatchOpts & { fit: boolean };
+  setMatch: (p: Partial<MatchOpts> & { fit?: boolean }) => void;
+  canMatch: boolean;
+  models: number;
+  findLike: () => void;
+}) {
+  const { opts, set, group, setGroup, k, u, find, msg, count, byShape, likeExamples, match, setMatch } = p;
+  const a = k * k;
+  return (
+    <>
+      <div className="ie-section">Particles</div>
+      <div className="hint">The objects of the last mask of the steps (a threshold, a trainable classifier), as selections: measured as the others, found again as asked.</div>
+      <div className="ie-params">
+        <span className="ie-label">Clusters</span>
+        <span className="row">
+          <Check label="cut apart" title="Touching or overlapping particles cut apart along their necks (watershed on the distance map), as ImageJ" value={opts.separate} onChange={(separate) => set({ separate })} />
+          {opts.separate && (
+            <>
+              <NumInput className="tiny" min={0} step={0.1} value={opts.tolerance} title="How deep a neck must be to be cut (px): larger, fewer cuts" onChange={(tolerance) => set({ tolerance: Math.max(0, tolerance) })} />
+              <NumInput className="tiny" min={0.1} max={1} step={0.05} value={opts.neck} title="How narrow a neck must be, at most, against the thinner part (0.75: a long or flat particle is not cut along itself; 1: any, as ImageJ)" onChange={(neck) => set({ neck: Math.min(1, Math.max(0.1, neck || 0.75)) })} />
+            </>
+          )}
+        </span>
+        <span className="ie-label">Size ({u}²)</span>
+        <span className="row">
+          <NumInput className="short" min={0} value={+(opts.minSize * a).toPrecision(6)} title="The least area kept" onChange={(v) => set({ minSize: Math.max(0, v / a) || 0 })} />
+          <span className="muted">to</span>
+          <NumInput className="short" min={0} value={opts.maxSize > 0 ? +(opts.maxSize * a).toPrecision(6) : NaN} placeholder="any" title="The largest area kept (empty: any)" onChange={(v) => set({ maxSize: v > 0 ? v / a : 0 })} />
+        </span>
+        <span className="ie-label">Circularity</span>
+        <span className="row">
+          <NumInput className="tiny" min={0} max={1} step={0.05} value={opts.minCirc} title="4π·area / perimeter²: 1 a disc, about 0.8 a square, 0.6 a triangle" onChange={(v) => set({ minCirc: Math.min(1, Math.max(0, v || 0)) })} />
+          <span className="muted">to</span>
+          <NumInput className="tiny" min={0} max={1} step={0.05} value={opts.maxCirc} onChange={(v) => set({ maxCirc: Math.min(1, Math.max(0, Number.isFinite(v) ? v : 1)) })} />
+        </span>
+        <span className="ie-label">Group</span>
+        <TextInput className="short" value={group} title="The group the particles found are put in (the summary is by group)" onChange={setGroup} />
+      </div>
+      <Check label="leave out those on the image's edge" title="Particles cut by the edge of the image left out (their size is not known)" value={opts.excludeEdges} onChange={(excludeEdges) => set({ excludeEdges })} />
+      <div className="row wrap">
+        <button className="nodrag btn-run" title="Find the particles of the mask (those found before replaced)" onClick={find}>
+          Find particles
+        </button>
+        <span className="muted">{msg}</span>
+      </div>
+      <div className="hint">Or like some of them: draw a rectangle (or any shape) around one good particle, pick it, then Find like this. Every place that looks like it is found, turned any way and a little larger or smaller, touching others or not, on the last image of the steps that is not a mask. Several models (particles that look different: lit otherwise, tilted): give them one group in the list and pick one of them; each place is given the model most like it.</div>
+      <div className="ie-params">
+        <span className="ie-label">Turns</span>
+        <Select<string>
+          value={String(match.symmetry)}
+          title="The turns that look the same: a square every 90°, a rectangle every 180°"
+          options={[
+            ['90', 'square (0 to 90°)'],
+            ['180', 'rectangle (0 to 180°)'],
+            ['360', 'any (0 to 360°)'],
+          ]}
+          onChange={(v) => setMatch({ symmetry: Number(v) as MatchOpts['symmetry'] })}
+        />
+        <span className="ie-label">Sizes</span>
+        <Select<string>
+          value={String(match.sizes)}
+          title="How much larger or smaller than the model the particles may be"
+          options={[
+            ['0', 'as the model'],
+            ['0.1', '± 10 %'],
+            ['0.2', '± 20 %'],
+            ['0.3', '± 30 %'],
+          ]}
+          onChange={(v) => setMatch({ sizes: Number(v) })}
+        />
+        <span className="ie-label">Similarity</span>
+        <NumInput className="tiny" min={0} max={1} step={0.05} value={match.min} title="The least similarity kept (the correlation with the model: 1 the same, 0 nothing alike): lower, more found and more mistakes" onChange={(v) => setMatch({ min: Math.min(1, Math.max(0, Number.isFinite(v) ? v : 0.5)) })} />
+      </div>
+      <Check label="fit the edges" title="A rectangle or ellipse found: its sides and centre moved to the edges under it (its size measured, not only its place)" value={match.fit} onChange={(fit) => setMatch({ fit })} />
+      <div className="row wrap">
+        <button className="nodrag btn-run" disabled={!p.canMatch} title={p.canMatch ? 'Find every particle like the selection picked (those found before replaced)' : 'Pick a selection around one particle first'} onClick={p.findLike}>
+          Find like this
+        </button>
+        {p.models > 1 && <span className="muted">{p.models} models (its group)</span>}
+      </div>
+      {count > 0 && (
+        <div className="row wrap">
+          <button className="nodrag" title="Every particle put in the group of its shape: circle, ellipse, triangle, square, rectangle, polygon, irregular (by its corners and roundness)" onClick={byShape}>
+            Group by shape
+          </button>
+          <button className="nodrag" title={`The particles still in “${group}” put in the group of the examples most like them in shape: first give a few particles a group of your own (in the list), then press this`} onClick={likeExamples}>
+            Group like the examples
+          </button>
         </div>
       )}
     </>

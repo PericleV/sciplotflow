@@ -5,6 +5,10 @@ import { cropRaster, dataBarRows, gaussian, gaussianWide, packPixels, quantile, 
 import { semScale } from '../src/image/load.ts';
 import { measureRois, measureSpec, valueStats, feret, lineProfile } from '../src/image/measure.ts';
 import { ringMask, roiMask, traceOutline, wand, polygonArea, type Roi } from '../src/image/roi.ts';
+import { alignment, findParticles, groupLikeExamples, minAreaRect, PARTICLE_DEFAULTS, shapeFeatures, shapeName, tracedPerimeter } from '../src/image/particles.ts';
+import { findLike, fitBox, MATCH_DEFAULTS } from '../src/image/match.ts';
+import { clustersImage, cubesImage, shapesImage, textureImage, type TestImage } from '../src/image/testImages.ts';
+import type { TrainExample } from '../src/image/classify.ts';
 import { bilateral, entropyFilter, gabor, gradient, hessianEigen, laplace, laplacianOfGaussian, lbp, meanFilter, medianFilter, minMaxFilter, nonLocalMeans, rollingBall, varianceFilter } from '../src/image/filters.ts';
 import { closing, distanceMap, fillHoles, label, opening, separate, skeleton } from '../src/image/morph.ts';
 import { canny } from '../src/image/canny.ts';
@@ -446,6 +450,123 @@ export function checkImage(ok: Ok) {
     const cell = (n: string, col: string, row: number) => sheet(n)?.columns.find((q) => q.name === col)?.values[row] ?? NaN;
     const text = (n: string, col: string) => sheet(n)?.columns.find((q) => q.name === col)?.text ?? [];
     const got = [res.book.sheets.map((s) => s.name).join(), cell('Spots', 'Net', 0), cell('Spots', 'B SD', 0), cell('Spots', 'Net', 1), cell('Spots', 'Net', 2), cell('Selections', 'Covered (%)', 0), cell('Selections', 'Covered (%)', 1), cell('Selections', 'Covered (%)', 3), cell('Selections', 'Area (µm²)', 0), cell('Selections', 'Length (µm)', 4), cell('Selections', 'Count', 5), text('Summary', 'Group').join(), cell('Summary', 'Count', 1), cell('Summary', 'Covered (%)', 4), cell('Points', 'Value', 0), res.summary].join(' | ');
-    ok(got === 'Selections,Spots,Profiles,Points,Summary | 100 | 0 | 50 | 6 | 100 | 0 | 50 | 13 | 20 | 2 | A,B,(no group),all,image | 2 | 50 | 110 | 6 selections · coverage 50.0 %', `spots: net signal over a ring (the other spots left out), a region, a global value; the mask's cover of each selection and of the image; the summary by group; lines and points in µm (${got})`);
+    ok(got === 'Selections,Spots,Distances,Profiles,Points,Summary | 100 | 0 | 50 | 6 | 100 | 0 | 50 | 13 | 20 | 2 | A,B,(no group),all,image | 2 | 50 | 110 | 6 selections · coverage 50.0 %', `spots: net signal over a ring (the other spots left out), a region, a global value; the mask's cover of each selection and of the image; the summary by group; lines and points in µm (${got})`);
+  }
+  // particles (as ImageJ's Analyze Particles) on the test images, whose content is known: the clusters cut apart, every
+  // shape told; the nearest neighbours of a grid and Clark–Evans; the trainable classifier finds textured particles a
+  // threshold cannot
+  {
+    const ras = (t: TestImage): Raster => ({ w: t.w, h: t.h, ch: [Float32Array.from(t.px)], kind: 'gray', lo: 0, hi: 255 });
+    const otsu = (light: boolean) => ({ ...newStep('threshold', 'o'), p: { ...newStep('threshold', 'o').p, method: 'otsu', light } });
+    const cl = clustersImage();
+    const cm = applySteps(ras(cl), [otsu(false), newStep('fillholes', 'f')]).r.ch[0];
+    const cut = findParticles(cm, cl.w, cl.h, { ...PARTICLE_DEFAULTS, separate: true }).found;
+    const whole = findParticles(cm, cl.w, cl.h, { ...PARTICLE_DEFAULTS, separate: false }).found;
+    const sh = shapesImage();
+    const sm = applySteps(ras(sh), [otsu(true), newStep('fillholes', 'f')]).r.ch[0];
+    // (cut apart too: a long or flat particle is not cut along itself)
+    const found = findParticles(sm, sh.w, sh.h, { ...PARTICLE_DEFAULTS, separate: true }).outlines;
+    const centre = (o: [number, number][]) => {
+      const [x0, y0, x1, y1] = [Math.min(...o.map((p) => p[0])), Math.min(...o.map((p) => p[1])), Math.max(...o.map((p) => p[0])), Math.max(...o.map((p) => p[1]))];
+      return [(x0 + x1) / 2, (y0 + y1) / 2];
+    };
+    const truthOf = (o: [number, number][]) => {
+      const [cx, cy] = centre(o);
+      return sh.truth.reduce((b, q) => (Math.hypot(q.cx - cx, q.cy - cy) < Math.hypot(b.cx - cx, b.cy - cy) ? q : b)).shape;
+    };
+    const feats = found.map((o) => shapeFeatures({ id: '', name: '', kind: 'traced' }, o, tracedPerimeter(o)));
+    const wrong = found.filter((o, i) => shapeName(feats[i]) !== truthOf(o)).length;
+    // (two examples of each shape given, the others grouped like them)
+    const seen = new Map<string, number>();
+    const items = found.map((o, i) => {
+      const t = truthOf(o);
+      const n = seen.get(t) ?? 0;
+      seen.set(t, n + 1);
+      return { id: String(i), group: n < 2 ? t : 'particles', f: feats[i], t };
+    });
+    const like = groupLikeExamples(items, 'particles');
+    const likeWrong = items.filter((x) => like.has(x.id) && like.get(x.id) !== x.t).length;
+    ok(cut === cl.truth.length && whole === 24 && found.length === sh.truth.length && wrong === 0 && likeWrong <= 1, `particles: ${cut} discs of ${cl.truth.length} found, the clusters cut apart (${whole} without); ${found.length} shapes, none cut though cutting is on, each told right as circle, ellipse, triangle, square, rectangle or irregular (${wrong} wrong); grouped like two examples of each (${likeWrong} wrong of ${like.size})`);
+  }
+  {
+    // a 5 × 5 grid of squares 20 px apart: every nearest neighbour 20 px away (12 px between their edges); R far above 1
+    const rois: Roi[] = [];
+    for (let j = 0; j < 5; j++) for (let i = 0; i < 5; i++) rois.push({ id: `g${i}${j}`, name: `g${i}${j}`, kind: 'rect', box: [10 + 20 * i, 10 + 20 * j, 8, 8] });
+    const res = measureRois({ image: { w: 100, h: 100, ch: [new Float32Array(10000)], kind: 'gray', lo: 0, hi: 1 }, mask: null, ox: 0, oy: 0, rois, spec: measureSpec({ keys: ['nnd', 'shape'] }), name: 't' });
+    const d = res.book.sheets.find((s) => s.name === 'Distances');
+    const cc = d?.columns.find((c) => c.name === 'NND (px)')?.values ?? [];
+    const ee = d?.columns.find((c) => c.name === 'NND edge (px)')?.values ?? [];
+    const sum = res.book.sheets.find((s) => s.name === 'Summary');
+    const R = sum?.columns.find((c) => c.name === 'Clark–Evans R')?.values[0] ?? NaN;
+    const shapeCol = res.book.sheets[0].columns.find((c) => c.name === 'Shape')?.text ?? [];
+    const two = new Float32Array(16);
+    two[5] = 1;
+    two[10] = 1;
+    const diag = traceOutline((x, y) => x >= 0 && y >= 0 && x < 4 && y < 4 && two[y * 4 + x] === 1, 1, 1, true);
+    ok(cc.length === 25 && [...cc].every((v) => Math.abs(v - 20) < 1e-9) && [...ee].every((v) => Math.abs(v - 12) < 1e-9) && R > 1.6 && R < 2.1 && shapeCol.every((x) => x === 'square') && polygonArea(diag) === 2, `nearest neighbours of a grid: 20 px centre to centre, 12 px edge to edge; Clark–Evans R ${R.toFixed(2)} (regular); its squares named; two pixels joined by a corner traced as one (8-connected)`);
+  }
+  {
+    const tx = textureImage();
+    const r: Raster = { w: tx.w, h: tx.h, ch: [Float32Array.from(tx.px)], kind: 'gray', lo: 0, hi: 255 };
+    const otsuMask = applySteps(r, [{ ...newStep('threshold', 'o'), p: { ...newStep('threshold', 'o').p, method: 'otsu' } }]).r.ch[0];
+    const byOtsu = findParticles(otsuMask, tx.w, tx.h, { ...PARTICLE_DEFAULTS, minSize: 60 }).found;
+    const train: TrainExample[] = [
+      ...tx.truth.slice(0, 4).map((q): TrainExample => ({ cls: 'object', pts: [[q.cx - 6, q.cy], [q.cx + 6, q.cy]], line: true, width: 3 })),
+      { cls: 'background', pts: [[5, 5], [60, 5], [60, 15], [5, 15]], line: false, width: 1 },
+      { cls: 'background', pts: [[400, 330], [470, 330], [470, 350], [400, 350]], line: false, width: 1 },
+      { cls: 'background', pts: [[80, 90], [120, 90]], line: true, width: 3 },
+    ];
+    const step = newStep('classify', 'c');
+    const a = applySteps(r, [step], 1, undefined, 1, { train });
+    const b = applySteps(r, [step], 1, undefined, 1, { train });
+    const byForest = findParticles(a.r.ch[0], tx.w, tx.h, { ...PARTICLE_DEFAULTS, minSize: 60 }).found;
+    const none = applySteps(r, [step], 1, undefined, 1, { train: train.slice(0, 4) });
+    ok(a.r.kind === 'mask' && Math.abs(byForest - tx.truth.length) <= 1 && Math.abs(byOtsu - tx.truth.length) > 3 && a.r.ch[0].every((v, i) => v === b.r.ch[0][i]) && /^object: \d+ px, background: \d+ px → object$/.test(a.notes.c ?? '') && /two classes/.test(none.errors.c ?? ''), `trainable classifier: ${byForest} textured particles of ${tx.truth.length} from 4 lines and 3 background examples (Otsu: ${byOtsu} pieces); the same twice; one class only: said (${a.notes.c})`);
+  }
+  // nanocubes touching side to side (their place, side and turn known): found like one of them, at any turn, their
+  // edges fitted; the mask cut along the dark lines between them; their smallest rectangle, its turn and the alignment
+  {
+    const t = cubesImage();
+    const c = Float32Array.from(t.px);
+    const tpl = t.truth.find((q) => q.cluster === undefined)!;
+    const found = findLike(c, t.w, t.h, tpl.cx, tpl.cy, 0.5 * Math.hypot(tpl.side!, tpl.side!), { ...MATCH_DEFAULTS, sizes: 0.2 });
+    let hit = 0;
+    let angleErr = 0;
+    let sideErr = 0;
+    let sideSum = 0;
+    let turnErr = 0;
+    for (const q of t.truth) {
+      const p = found.find((f) => Math.hypot(f.x - q.cx, f.y - q.cy) < 0.4 * q.side!);
+      if (!p) continue;
+      hit++;
+      // (the model turned as the selections turn: the cube's sides at minus its turn as seen)
+      const turn = -tpl.angle! + p.angle;
+      const b = fitBox(c, t.w, t.h, p.x, p.y, turn, p.scale * tpl.side!, p.scale * tpl.side!);
+      const e = Math.max(Math.abs(b.w - q.side!), Math.abs(b.h - q.side!)) / q.side!;
+      sideErr = Math.max(sideErr, e);
+      sideSum += e;
+      const as = (((-turn % 90) + 90) % 90);
+      angleErr = Math.max(angleErr, Math.min(Math.abs(as - q.angle!), 90 - Math.abs(as - q.angle!)));
+      // (its selection measured: the smallest rectangle's turn is the cube's)
+      const res = measureRois({ image: { w: t.w, h: t.h, ch: [c], kind: 'gray', lo: 0, hi: 255 }, mask: null, ox: 0, oy: 0, rois: [{ id: 'm', name: 'm', kind: 'rect', box: [b.x, b.y, b.w, b.h], angle: turn }], spec: measureSpec({ keys: ['box'] }), name: 't' });
+      const o = res.book.sheets[0].columns.find((x) => x.name === 'Orientation (°)')!.values[0];
+      turnErr = Math.max(turnErr, Math.min(Math.abs(o - q.angle!), 90 - Math.abs(o - q.angle!)));
+    }
+    const r: Raster = { w: t.w, h: t.h, ch: [c], kind: 'gray', lo: 0, hi: 255 };
+    const otsu = { ...newStep('threshold', 'o'), p: { ...newStep('threshold', 'o').p, method: 'otsu' } };
+    const whole = findParticles(applySteps(r, [otsu]).r.ch[0], t.w, t.h, PARTICLE_DEFAULTS).found;
+    const split = findParticles(applySteps(r, [otsu, newStep('splitlines', 's')]).r.ch[0], t.w, t.h, { ...PARTICLE_DEFAULTS, minSize: 40 }).found;
+    const box = minAreaRect([
+      [0, 0],
+      [8, 0],
+      [8, 3],
+      [0, 3],
+    ].map(([x, y]): [number, number] => [x * Math.cos(0.5) - y * Math.sin(0.5), x * Math.sin(0.5) + y * Math.cos(0.5)]));
+    const same = alignment([10, 12, 8, 11], 4);
+    const spread = alignment([0, 22.5, 45, 67.5], 4);
+    ok(
+      hit === t.truth.length && found.length === t.truth.length && angleErr < 2 && sideErr < 0.04 && sideSum / hit < 0.02 && turnErr < 2 && whole < 30 && split === t.truth.length && Math.abs(box.length - 8) < 1e-9 && Math.abs(box.width - 3) < 1e-9 && Math.abs(box.angle - (180 - (0.5 * 180) / Math.PI)) < 1e-9 && same.order > 0.98 && Math.abs(same.mean - 10.25) < 0.1 && spread.order < 1e-9,
+      `nanocubes: ${hit} of ${t.truth.length} found like one (turn within ${angleErr.toFixed(1)}°, side within ${(100 * sideErr).toFixed(1)} % once its edges are fitted, the box's orientation within ${turnErr.toFixed(1)}°); the mask cut along the dark lines: ${split} (Otsu alone: ${whole}); the smallest rectangle, the alignment`,
+    );
   }
 }

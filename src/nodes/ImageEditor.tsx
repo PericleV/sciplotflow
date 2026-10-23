@@ -6,7 +6,8 @@
 // measured and the results on the right. Crop and Scale work on the original as it came (the data bar of an electron
 // microscope cut off; a line drawn on its scale bar, with a loupe, its ends found on the bar); the selections are drawn
 // on the image analysed (rectangle, ellipse, polygon, freehand, line, segmented line, points, angle, wand, stamp), picked
-// and edited with their handles. The image and the measurements are computed in a worker of its own.
+// and edited with their handles; the particles of the mask found as selections, grouped by their shape; a trainable
+// classifier taught by selections given a class. The image and the measurements are computed in a worker of its own.
 import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useReactFlow } from '@xyflow/react';
@@ -14,11 +15,15 @@ import type { AppNode, ImageAnalysisData } from '../types.ts';
 import { STEP_DEFS, STEP_GROUPS, newStep, type ImgStep, type StepDef, type StepKind } from '../image/steps.ts';
 import { cropBox, cropRaster, dataBarRows, luminance, unpackPixels, type Crop } from '../image/raster.ts';
 import { unitText } from '../image/node.ts';
-import type { CentreReply, ImgReply, ImgRequest, MeasureReply, MeasureRequest, ValueReply, WandReply } from '../image/imageWorker.ts';
+import type { CentreReply, ImgReply, ImgRequest, MatchReply, MatchRequest, MeasureReply, MeasureRequest, ParticlesReply, ParticlesRequest, ValueReply, WandReply } from '../image/imageWorker.ts';
+import { MATCH_DEFAULTS, placeLike, type MatchOpts } from '../image/match.ts';
+import { trainingExamples } from '../image/classify.ts';
+import { groupLikeExamples, PARTICLE_DEFAULTS, SHAPE_COLORS, shapeFeatures, shapeName, type ParticleOpts } from '../image/particles.ts';
+import { ClassifierEditor } from './ClassifierEditor.tsx';
 import { isArea, moveRoi, roiCentre, roiOutline, TOOL_HINTS, type Pt, type Roi, type RoiKind, type RoiTool } from '../image/roi.ts';
-import { measureSpec, type MeasureSpec } from '../image/measure.ts';
+import { measureSpec, roiPerimeter, type MeasureSpec } from '../image/measure.ts';
 import type { Workbook } from '../engine/table.ts';
-import { MeasurePanel, RoiOverlay, RoiPanel } from './RoiManager.tsx';
+import { MeasurePanel, ParticlesPanel, RoiOverlay, RoiPanel } from './RoiManager.tsx';
 import { ask } from '../ui/dialogStore.ts';
 import { toRGBA, type Lut } from '../image/render.ts';
 import { COLOR_MAPS } from '../figure/colors.ts';
@@ -30,7 +35,7 @@ import { IC } from './iconProps.ts';
 
 const LUTS = Object.entries(COLOR_MAPS).map(([k, v]): [Lut, string] => [k as Lut, v.label]);
 const UNITS = ['nm', 'µm', 'mm', 'cm', 'm', 'Å'].map((u): [string, string] => [u, u]);
-const fmt = (v: number) => (Number.isFinite(v) ? (Math.abs(v) >= 1e5 || (Math.abs(v) < 1e-3 && v !== 0) ? v.toExponential(3) : +v.toPrecision(5)) : '—');
+const fmt = (v: number) => (Number.isFinite(v) ? (Math.abs(v) >= 1e5 || (Math.abs(v) < 1e-3 && v !== 0) ? v.toExponential(3) : +v.toPrecision(5)) : 'n/a');
 
 // ---- the histogram ----
 
@@ -122,6 +127,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const [draft, setDraft] = useState<Roi | null>(null);
   const [group, setGroup] = useState('');
   const [labels, setLabels] = useState(true);
+  const [rings, setRings] = useState(true);
   const [wandTol, setWandTol] = useState(0);
   const [centre, setCentre] = useState<'off' | 'bright' | 'dark'>('bright');
   const [book, setBook] = useState<Workbook | null>(null);
@@ -168,6 +174,20 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   // the steps give a mask (its coverage measured)
   const masks = steps.some((s) => s.on && (s.kind === 'threshold' || s.kind === 'localthreshold'));
   const measuring = rois.length > 0 || masks;
+  // the examples of a trainable classifier (in the part analysed), sent with the steps when one is on
+  const classifying = steps.some((s) => s.on && s.kind === 'classify');
+  const train = useMemo(() => (classifying ? trainingExamples(rois, ox, oy) : []), [classifying, rois, ox, oy]);
+  const trainKey = JSON.stringify(train);
+  // the particles: how they are found, the group they go in, what the last search found
+  const partOpts: ParticleOpts = { ...PARTICLE_DEFAULTS, ...data.particles };
+  const partGroup = data.particles?.group ?? 'particles';
+  const setPart = (p: Partial<ParticleOpts> & { group?: string }) => set({ particles: { ...data.particles, ...p } });
+  const [partMsg, setPartMsg] = useState('');
+  // Find like this: its options
+  const matchOpts: MatchOpts & { fit: boolean } = { ...MATCH_DEFAULTS, fit: true, ...data.match };
+  const setMatch = (p: Partial<MatchOpts> & { fit?: boolean }) => set({ match: { ...data.match, ...p } });
+  // (the models of the last search, their matches turned into selections when they come)
+  const models = useRef<Roi[]>([]);
   const view = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const canvasB = useRef<HTMLCanvasElement>(null);
@@ -185,11 +205,11 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   // the full-size images answered (the measurements asked again after each)
   const [fullSeq, setFullSeq] = useState(0);
   // the answers that need this render's state (a wand's outline, a stamp centred, the measurements)
-  const onAnswer = useRef<(m: MeasureReply | WandReply | CentreReply) => void>(() => {});
+  const onAnswer = useRef<(m: MeasureReply | WandReply | CentreReply | ParticlesReply | MatchReply) => void>(() => {});
   useEffect(() => {
     const w = new Worker(new URL('../image/imageWorker.ts', import.meta.url), { type: 'module' });
     worker.current = w;
-    w.onmessage = (e: MessageEvent<ImgReply | ValueReply | MeasureReply | WandReply | CentreReply>) => {
+    w.onmessage = (e: MessageEvent<ImgReply | ValueReply | MeasureReply | WandReply | CentreReply | ParticlesReply | MatchReply>) => {
       if (e.data.type === 'value') return setVals(e.data);
       if (e.data.type !== 'image') return onAnswer.current(e.data);
       if (e.data.seq !== seq.current) return;
@@ -207,7 +227,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     const w = worker.current;
     if (!w || !data.pixels) return;
     const t = setTimeout(() => {
-      const q: ImgRequest = { seq: ++seq.current, steps, upTo: upToIndex, lut, ...(crop ? { crop } : {}), ...(overlay ? { overlay: { color: data.figure?.overlay ?? '#ff3b30', alpha: data.figure?.alpha ?? 0.45 } } : {}), ...(needBefore ? { before } : {}), ...(measuring ? { keep: true } : {}) };
+      const q: ImgRequest = { seq: ++seq.current, steps, upTo: upToIndex, lut, ...(crop ? { crop } : {}), ...(overlay ? { overlay: { color: data.figure?.overlay ?? '#ff3b30', alpha: data.figure?.alpha ?? 0.45 } } : {}), ...(needBefore ? { before } : {}), ...(measuring ? { keep: true } : {}), ...(train.length ? { train } : {}) };
       if (sentId.current !== data.pixelsId) {
         q.pixels = data.pixels;
         q.id = data.pixelsId ?? 'img';
@@ -218,7 +238,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     }, 40);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [steps, upToIndex, lut, overlay, data.pixels, data.pixelsId, data.figure?.overlay, data.figure?.alpha, crop?.join(), needBefore, before, measuring]);
+  }, [steps, upToIndex, lut, overlay, data.pixels, data.pixelsId, data.figure?.overlay, data.figure?.alpha, crop?.join(), needBefore, before, measuring, trainKey]);
   // the measurements: asked when the selections or what is measured change, and after every full-size image (the
   // steps or the crop changed)
   useEffect(() => {
@@ -229,7 +249,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       return;
     }
     const t = setTimeout(() => {
-      const q: MeasureRequest = { type: 'measure', mseq: ++mseq.current, steps, ...(crop ? { crop } : {}), rois, spec, ...(data.cal ? { cal: data.cal } : {}), ox, oy, name: `${data.name.replace(/\.[a-z0-9]+$/i, '') || 'image'} measurements` };
+      const q: MeasureRequest = { type: 'measure', mseq: ++mseq.current, steps, ...(crop ? { crop } : {}), ...(train.length ? { train } : {}), rois, spec, ...(data.cal ? { cal: data.cal } : {}), ox, oy, name: `${data.name.replace(/\.[a-z0-9]+$/i, '') || 'image'} measurements` };
       w.postMessage(q);
     }, 150);
     return () => clearTimeout(t);
@@ -271,7 +291,8 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   }, []);
   const side = mode === 'side' && !onOriginal;
   const paneW = side ? (box[0] - 6) / 2 : box[0];
-  const fit = shown ? Math.min((paneW - 20) / shown.w, (box[1] - 20) / shown.h) : 1;
+  // (not below a tiny zoom: before the view is measured its size is not known)
+  const fit = shown ? Math.max(0.02, Math.min((paneW - 20) / shown.w, (box[1] - 20) / shown.h)) : 1;
   const k = zoom || fit;
   const zoomAt = (f: number, cx?: number, cy?: number) => {
     const v = view.current;
@@ -314,6 +335,29 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       if (m.mseq === mseq.current) setBook(m.book);
     } else if (m.type === 'wand') {
       if (m.pts && m.pts.length > 2) commit(newRoi('traced', { pts: m.pts.map(toOrig) }));
+    } else if (m.type === 'match') {
+      const ms = models.current;
+      if (!ms.length) return;
+      // (the models' own matches left out: they stay as they are; the others named P1, P2 …, in the group of particles,
+      // each the shape of the model it is like)
+      const found: Roi[] = m.matches
+        .filter((q) => !ms.some((t) => Math.hypot(q.x + ox - roiCentre(t)[0], q.y + oy - roiCentre(t)[1]) < 0.5 * modelRadius(t)))
+        .map((q, i): Roi => {
+          const t = ms[q.model];
+          const [tx, ty] = roiCentre(t);
+          const base = { id: `p${Date.now().toString(36)}${i.toString(36)}`, name: `P${i + 1}`, group: partGroup, auto: true, ...(t.color ? { color: t.color } : {}) };
+          if (t.box) return { ...base, kind: t.kind, box: [q.x + ox, q.y + oy, q.w ?? t.box[2] * q.scale, q.h ?? t.box[3] * q.scale], angle: (t.angle ?? 0) + q.angle };
+          return { ...base, kind: 'polygon', pts: placeLike(roiOutline(t), tx, ty, q.angle, q.scale, q.x + ox, q.y + oy) };
+        });
+      updateNodeData(id, (n) => ({ rois: [...((n.data as ImageAnalysisData).rois ?? []).filter((r) => !r.auto), ...found] }));
+      setPartMsg(`${found.length} like ${ms.length === 1 ? ms[0].name : `the ${ms.length} models`}`);
+    } else if (m.type === 'particles') {
+      if (m.error) return setPartMsg(m.error);
+      // (those found before replaced; named P1, P2 … in the order met, row after row)
+      const found: Roi[] = m.outlines.map((o, i) => ({ id: `p${Date.now().toString(36)}${i.toString(36)}`, name: `P${i + 1}`, kind: 'traced', pts: o.map(toOrig), group: partGroup, auto: true }));
+      updateNodeData(id, (n) => ({ rois: [...((n.data as ImageAnalysisData).rois ?? []).filter((r) => !r.auto), ...found] }));
+      setSel(null);
+      setPartMsg(`${m.found} particle${m.found === 1 ? '' : 's'}${m.found > found.length ? ` (the first ${found.length} kept)` : ''}`);
     } else {
       const st = pendingStamp.current.get(m.id);
       pendingStamp.current.delete(m.id);
@@ -326,6 +370,57 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     const pts = draft.pts.slice(0, -1).filter((q, i, a) => i === 0 || Math.hypot(q[0] - a[i - 1][0], q[1] - a[i - 1][1]) > 0.5 / k);
     if ((draft.kind === 'polygon' && pts.length >= 3) || (draft.kind === 'polyline' && pts.length >= 2)) commit({ ...draft, kind: draft.kind === 'polyline' && pts.length === 2 ? 'line' : draft.kind, pts });
     else setDraft(null);
+  };
+  // the radius of the disc a model is taken in: its corners and a little around them
+  const modelRadius = (t: Roi) => (t.box ? 0.5 * Math.hypot(t.box[2], t.box[3]) : Math.max(...roiOutline(t).map(([x, y]) => Math.hypot(x - roiCentre(t)[0], y - roiCentre(t)[1]))));
+  // the models: the selection picked, and the others drawn in its group (not found ones, not examples, not background)
+  const modelsOf = (t: Roi) => (t.group ? rois.filter((r) => r.group === t.group && isArea(r) && !r.auto && !r.train && r.role !== 'background') : [t]);
+  const findLikePicked = () => {
+    const t = rois.find((r) => r.id === sel && isArea(r) && !r.train);
+    if (!t) return setPartMsg('pick a selection around one particle first');
+    models.current = modelsOf(t);
+    const { fit, ...opts } = matchOpts;
+    const q: MatchRequest = {
+      type: 'match',
+      steps,
+      ...(crop ? { crop } : {}),
+      ...(train.length ? { train } : {}),
+      models: models.current.map((r) => {
+        const [cx, cy] = roiCentre(r);
+        return { cx: cx - ox, cy: cy - oy, R: modelRadius(r), ...(fit && r.box ? { box: { w: r.box[2], h: r.box[3], angle: r.angle ?? 0 } } : {}) };
+      }),
+      opts,
+    };
+    setPartMsg('finding…');
+    worker.current?.postMessage(q);
+  };
+  const findParticles = () => {
+    const q: ParticlesRequest = { type: 'particles', steps, ...(crop ? { crop } : {}), ...(train.length ? { train } : {}), opts: partOpts };
+    setPartMsg('finding…');
+    worker.current?.postMessage(q);
+  };
+  // the particles grouped (and coloured): by their shape, or like the examples (the particles given another group by
+  // hand: their colour too)
+  const shapes = () => new Map(rois.filter((r) => r.auto).map((r) => [r.id, shapeFeatures(r, roiOutline(r), roiPerimeter(r))]));
+  const groupByShape = () => {
+    const f = shapes();
+    setRois(
+      rois.map((r) => {
+        if (!f.has(r.id)) return r;
+        const g = shapeName(f.get(r.id)!);
+        return { ...r, group: g, color: SHAPE_COLORS[g] };
+      }),
+    );
+  };
+  const groupLike = () => {
+    const f = shapes();
+    const g = groupLikeExamples(
+      rois.filter((r) => f.has(r.id)).map((r) => ({ id: r.id, group: r.group ?? '', f: f.get(r.id)! })),
+      partGroup,
+    );
+    if (!g.size) return setPartMsg(`first give a few particles a group other than “${partGroup}” (in the list)`);
+    const colour = new Map(rois.filter((r) => f.has(r.id) && r.group !== partGroup).map((r) => [r.group ?? '', r.color]));
+    setRois(rois.map((r) => (g.has(r.id) ? { ...r, group: g.get(r.id), color: colour.get(g.get(r.id)!) ?? r.color } : r)));
   };
   const removeRoi = (rid: string) => {
     setRois(rois.filter((r) => r.id !== rid));
@@ -678,7 +773,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       <rect x={cropShown[0] * k} y={cropShown[1] * k} width={cropShown[2] * k} height={cropShown[3] * k} className="ie-crop-rect" />
     </svg>
   );
-  const roiLayer = !onOriginal && shownRois.length > 0 && <RoiOverlay rois={shownRois} sel={sel} k={k} ox={ox} oy={oy} W={W} H={H} labels={labels} interactive={tool === 'pan'} />;
+  const roiLayer = !onOriginal && shownRois.length > 0 && <RoiOverlay rois={shownRois} sel={sel} k={k} ox={ox} oy={oy} W={W} H={H} labels={labels} interactive={tool === 'pan'} rings={rings} />;
   const cmpButton = (m: Cmp, label: string, title: string) => (
     <button className={`nodrag${cmp === m ? ' on' : ''}`} disabled={onOriginal} title={title} onClick={() => setCmp(m)}>
       {label}
@@ -731,7 +826,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
             <button
               key={t}
               className={`nodrag${tool === t ? ' on' : ''}`}
-              title={`${label} — ${TOOL_HINTS[t]}${t === 'stamp' && !rois.some((r) => r.id === sel && isArea(r)) ? ' Pick the selection to copy first.' : ''}`}
+              title={`${label}. ${TOOL_HINTS[t]}${t === 'stamp' && !rois.some((r) => r.id === sel && isArea(r)) ? ' Pick the selection to copy first.' : ''}`}
               onClick={() => {
                 setTool(tool === t ? 'pan' : t);
                 setDraft(null);
@@ -760,17 +855,20 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       </div>
       <div className="ie-body">
         <div className="ie-steps">
+          <button className={`nodrag ie-step-head ie-original${upToIndex === 0 ? ' shown' : ''}`} title="Show the original image (the part analysed)" onClick={() => setUpTo(upTo === '__none' ? null : '__none')}>
+            Original image
+          </button>
           <div className="row">
             <select
               className="nodrag grow"
               value=""
-              title="Add a step (after the one shown, else at the end)"
+              title="Add an adjustment or any other step (after the one shown, else at the end)"
               onChange={(e) => {
                 if (e.target.value) add(e.target.value as StepKind);
                 e.target.value = '';
               }}
             >
-              <option value="">+ Add a step…</option>
+              <option value="">+ Adjust…</option>
               {addOptions.map(([g, items]) => (
                 <optgroup key={g} label={g}>
                   {items.map(([kind, d]) => (
@@ -782,9 +880,6 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
               ))}
             </select>
           </div>
-          <button className={`nodrag ie-step-head ie-original${upToIndex === 0 ? ' shown' : ''}`} title="Show the original image (the part analysed)" onClick={() => setUpTo(upTo === '__none' ? null : '__none')}>
-            Original image
-          </button>
           {steps.map((s, k) => {
             const d = STEP_DEFS[s.kind];
             const isShown = upTo && upTo !== '__none' ? s.id === upTo : upTo !== '__none' && k === steps.length - 1;
@@ -794,7 +889,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
               <div key={s.id} className={`ie-step${isShown ? ' shown' : ''}${s.on ? '' : ' off'}${k >= upToIndex && upToIndex < steps.length ? ' after' : ''}`}>
                 <div className="row ie-step-head">
                   <input className="nodrag" type="checkbox" checked={s.on} title="On (off: passed over)" onChange={(e) => setStep(s.id, { on: e.target.checked })} />
-                  <button className="nodrag ie-step-name grow" title={`${d?.title ?? ''} — click: show the image up to this step`} onClick={() => setUpTo(upTo === s.id ? null : s.id)}>
+                  <button className="nodrag ie-step-name grow" title={`${d?.title ?? ''} (click: show the image up to this step)`} onClick={() => setUpTo(upTo === s.id ? null : s.id)}>
                     {k + 1}. {d?.label ?? s.kind}
                   </button>
                   <button className="nodrag ts-btn" title="Up" disabled={k === 0} onClick={() => move(k, -1)}>
@@ -809,6 +904,8 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
                 </div>
                 {s.kind === 'curves' ? (
                   <CurvesEditor p={s.p} rgb={(base?.ch.length ?? 1) === 3} hist={reply?.stepHist[s.id]} set={(key, v) => setStep(s.id, { p: { ...s.p, [key]: v } })} />
+                ) : s.kind === 'classify' ? (
+                  <ClassifierEditor s={s} set={(patch) => setStep(s.id, { p: { ...s.p, ...(patch as ImgStep['p']) } })} rois={rois} sel={sel} setRois={setRois} note={reply?.notes[s.id]} hist={reply?.stepHist[s.id]} />
                 ) : s.kind === 'threshold' ? (
                   <ThresholdEditor p={s.p} hist={reply?.stepHist[s.id]} note={reply?.notes[s.id]} set={(patch) => setStep(s.id, { p: { ...s.p, ...(patch as ImgStep['p']) } })} />
                 ) : (
@@ -821,12 +918,12 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
                     </div>
                   )
                 )}
-                {note && s.kind !== 'threshold' && <div className="hint">{note}</div>}
+                {note && s.kind !== 'threshold' && s.kind !== 'classify' && <div className="hint">{note}</div>}
                 {err && <div className="hint ie-err">{err}</div>}
               </div>
             );
           })}
-          {!steps.length && <div className="hint">Add steps to prepare the image: tone and colour, noise, background, edges, texture, then a threshold (a mask) and its morphology. Each works on what the steps above give.</div>}
+          {!steps.length && <div className="hint">Adjust: add steps to prepare the image (tone and colour, noise, background, edges, texture), then a threshold or a trainable classifier (a mask) and its morphology. Each works on what the steps above give.</div>}
         </div>
         <div
           className={`ie-view${tool !== 'pan' ? ' scale' : ''}${side ? ' side' : ''}`}
@@ -840,7 +937,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
         >
           {onOriginal ? (
             <>
-              {stage(canvasO, tool === 'crop' ? 'original — drag the part to analyse' : 'original — draw along the scale bar', tool === 'crop' ? cropRect : scaleLine)}
+              {stage(canvasO, tool === 'crop' ? 'original: drag the part to analyse' : 'original: draw along the scale bar', tool === 'crop' ? cropRect : scaleLine)}
               <canvas ref={canvas} hidden />
               <canvas ref={canvasB} hidden />
             </>
@@ -930,12 +1027,35 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
             setGroup={setGroup}
             labels={labels}
             setLabels={setLabels}
+            rings={rings}
+            setRings={setRings}
             wandTol={wandTol}
             setWandTol={setWandTol}
             centre={centre}
             setCentre={setCentre}
             duplicate={duplicate}
             clearAll={() => void ask(`Remove all ${rois.length} selections?`, { ok: 'Remove' }).then((y) => y && (setRois([]), setSel(null)))}
+          />
+          <ParticlesPanel
+            opts={partOpts}
+            set={setPart}
+            group={partGroup}
+            setGroup={(g) => setPart({ group: g || 'particles' })}
+            k={data.cal && data.cal.size > 0 ? data.cal.size : 1}
+            u={data.cal && data.cal.size > 0 ? unitText(data.cal.unit) : 'px'}
+            find={findParticles}
+            msg={partMsg}
+            count={rois.filter((r) => r.auto).length}
+            byShape={groupByShape}
+            likeExamples={groupLike}
+            match={matchOpts}
+            setMatch={setMatch}
+            canMatch={rois.some((r) => r.id === sel && isArea(r) && !r.train)}
+            models={(() => {
+              const t = rois.find((r) => r.id === sel && isArea(r) && !r.train);
+              return t ? modelsOf(t).length : 0;
+            })()}
+            findLike={findLikePicked}
           />
           <MeasurePanel spec={spec} set={setSpec} steps={steps} rgb={(base?.ch.length ?? 1) === 3} rois={rois} book={book} sheet={sheet} setSheet={setSheet} pick={(name) => setSel(rois.find((r) => r.name === name)?.id ?? sel)} />
           <div className="ie-section">Keys</div>

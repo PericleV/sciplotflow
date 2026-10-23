@@ -1291,10 +1291,7 @@ export function EisNodeView({ id, data }: NodeProps<EisNode>) {
         )}
       <OutPort id="parameters" label="parameters" port="dataset" title="A row per parameter: its value, ± its standard error, the error in %, its unit, fixed; then χ², reduced χ², R² (Z′ and Z″ together, each alone), the points" />
       <OutPort id="fitted" label="fitted" port="dataset" title="A row per point: the frequency, the data and the fit (Z′, −Z″, |Z|, phase), the residuals, used or left out" />
-      <OutPort id="figure" label="Nyquist" port="figure" title="The Nyquist plot (−Z″ against Z′, equal scales): the data, the fit, the frequencies (where they were moved)" />
-      <OutPort id="mod" label="|Z|" port="figure" title="Bode, the modulus: |Z| against the frequency (both logarithmic)" />
-      <OutPort id="phase" label="phase" port="figure" title="Bode, the phase: −phase against the frequency (logarithmic)" />
-      <OutPort id="bode" label="Bode" port="figure" title="The Bode plot: |Z| (left) and −phase (right) against the frequency" />
+      <OutPort id="curve" label="fit curve" port="dataset" title="The fit drawn smooth: 25 frequencies a decade over the range, with Z′, −Z″, |Z| and the phase of the fit (to a Plot: the line of the fit through the data, Nyquist or Bode)" />
       <OutPort id="circuit" label="circuit" port="figure" title="The equivalent circuit drawn (its symbols; the fitted values optional), on a white or transparent page — to a Figure Drawing, an inset or a Merge" />
       <OutPort id="ranges" label="fits per range" port="dataset" title="A fit per range: a row per parameter of each range's fit — the range, its circuit, the value ± its error, its unit, R² of that fit" />
     </div>

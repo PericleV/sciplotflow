@@ -11,6 +11,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "check": "node scripts/check.ts",
+    "test-images": "node scripts/make-test-images.ts",
     "check:ui": "rolldown scripts/check-ui.tsx --format esm --platform node --no-code-splitting --log-level silent -o node_modules/.tmp/check-ui.mjs && node node_modules/.tmp/check-ui.mjs",
     "bench": "rolldown scripts/bench.ts --format esm --platform node -o node_modules/.tmp/bench.mjs && node node_modules/.tmp/bench.mjs",
     "licenses": "node scripts/licenses.ts"

@@ -1,5 +1,5 @@
 // Image analysis: an image opened in the node (PNG, JPEG, TIFF of 8 or 16 bit or float; pasted or dropped too), edited
-// in its editor by steps (tone, colour, noise, background, edges, texture, morphology, threshold), calibrated; out: the
+// in its editor (Analyze) by steps (tone, colour, noise, background, edges, texture, morphology, threshold), calibrated; out: the
 // result as a matrix, a figure (the image on a page, its selections, a scale bar) and the measurements of the selections
 // drawn in the editor (a workbook).
 import { useRef, useState, type DragEvent } from 'react';
@@ -17,7 +17,7 @@ import { FigureView } from './FigureView.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
 import { ImageEditor } from './ImageEditor.tsx';
 import { Check, Field, Messages, NumInput, OutPort, Select } from './ui.tsx';
-import { FolderOpen, Pencil } from 'lucide-react';
+import { FolderOpen, ScanSearch } from 'lucide-react';
 import { IC } from './iconProps.ts';
 import { ask, notify } from '../ui/dialogStore.ts';
 
@@ -111,8 +111,8 @@ export function ImageNodeView({ id, data }: NodeProps<ImageNode>) {
       />
       <div className="row">
         {px ? (
-          <button className="nodrag btn-run" title="Edit the image: the steps, the calibration (or double-click it)" onClick={() => setEditing(true)}>
-            <Pencil {...IC} /> Edit image
+          <button className="nodrag btn-run" title="Analyze the image: its steps, calibration, selections, particles and measurements (or double-click it)" onClick={() => setEditing(true)}>
+            <ScanSearch {...IC} /> Analyze
           </button>
         ) : (
           openButton
@@ -136,20 +136,20 @@ export function ImageNodeView({ id, data }: NodeProps<ImageNode>) {
       <Messages result={r} />
       <OutPort label="matrix" port="matrix" id="matrix" title="The result as a matrix: its values, X and Y of the columns and rows in the calibrated unit (gray; RGB: its luminance)" />
       <OutPort label="figure" port="figure" id="figure" title="The image on a page of its proportions, with its selections and a scale bar: to a Merge, a Figure Drawing or a Plot's insets" />
-      <OutPort label="workbook" port="workbook" id="workbook" title="The measurements of the selections (Selections, Spots, Profiles, Points, Summary — the sheets used) and the mask's coverage of the image" />
+      <OutPort label="workbook" port="workbook" id="workbook" title="The measurements of the selections (Selections, Spots, Distances, Profiles, Points, Summary: the sheets used) and the mask's coverage of the image" />
       <NodeOptions>
         <div className="row wrap">
           {openButton}
           {px && (
-            <button className="nodrag btn-run" title="Edit the image: the steps, the calibration" onClick={() => setEditing(true)}>
-              <Pencil {...IC} /> Edit image
+            <button className="nodrag btn-run" title="Analyze the image: its steps, calibration, selections, particles and measurements" onClick={() => setEditing(true)}>
+              <ScanSearch {...IC} /> Analyze
             </button>
           )}
         </div>
         {px && (
           <>
             <div className="hint">
-              {(data.steps ?? []).length ? (data.steps ?? []).map((s) => `${s.on ? '' : '(off) '}${STEP_DEFS[s.kind]?.label ?? s.kind}`).join(' → ') : 'No steps yet: Edit image to add them.'}
+              {(data.steps ?? []).length ? (data.steps ?? []).map((s) => `${s.on ? '' : '(off) '}${STEP_DEFS[s.kind]?.label ?? s.kind}`).join(' → ') : 'No steps yet: Analyze to add them.'}
             </div>
             <div className="section-title">Calibration</div>
             <div className="row wrap">

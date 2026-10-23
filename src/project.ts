@@ -4,6 +4,7 @@ import type { Edge } from '@xyflow/react';
 import type { AppNode } from './types.ts';
 import { NODE_TITLES } from './nodeColors.ts';
 import { plotsAsFigures } from './migrate4.ts';
+import { eisFiguresAsPlots } from './eisPlots.ts';
 import { withUnit } from './engine/table.ts';
 import { columnLetter } from './engine/csv.ts';
 import { withRefs } from './textStore.ts';
@@ -16,7 +17,7 @@ export type Project = { app: 'graph-flow'; version: typeof PROJECT_VERSION; node
 // The format of project files. Saved files must keep opening in later versions: a change of the format bumps this number
 // together with its conversion in MIGRATIONS, and a file of the old format joins scripts/fixtures (checked by npm run check).
 // Within a format, node data only gain optional fields (the nodes read missing ones as their defaults).
-export const PROJECT_VERSION = 12;
+export const PROJECT_VERSION = 13;
 type RawNode = { id: string; type: string; data: Record<string, unknown> };
 // MIGRATIONS[v] turns a file of format v into format v + 1.
 const MIGRATIONS: Record<number, (p: Record<string, unknown>) => Record<string, unknown>> = {
@@ -66,6 +67,9 @@ const MIGRATIONS: Record<number, (p: Record<string, unknown>) => Record<string, 
   // 11 → 12: a Workbook puts an input with no sheet named on its first sheet; the inputs of older files keep their own
   // sheet, “inputs”
   11: (p) => ({ ...p, nodes: inputsSheet(p.nodes, p.edges) }),
+  // 12 → 13: the EIS node has no figure outputs (Nyquist, |Z|, phase, Bode): each one connected becomes a Plot of the
+  // node's data (“fitted”, and the smooth fit on its new output “curve”), connected where the figure was
+  12: (p) => ({ ...p, ...eisFiguresAsPlots(p.nodes, p.edges) }),
 };
 
 // (11 → 12) in a graph and in the groups inside it

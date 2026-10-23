@@ -30,6 +30,7 @@ import { compile, compileComplex } from './expr.ts';
 import { errorAt, parseErrors } from './errprop.ts';
 import { applyFit, type UseRow } from './fituse.ts';
 import { reconvolved } from './reconv.ts';
+import { kkNode, KK_DEFAULTS } from './kk.ts';
 import { controlChart } from './multivar.ts';
 import { linearRegression, logisticRegression, type Coef } from './regression.ts';
 import { surfaceModel } from './surface.ts';
@@ -40,7 +41,7 @@ import { CURVE_OP_LABELS, curveFormulas, curveMath, curveOf, curveOpPort, curveO
 import { changesTable, cleanData, filterRows } from './cleaning.ts';
 import { digitized } from './digitize.ts';
 import { runPhaseDigitizer } from './phasedigitize.ts';
-import { colKey, colLabel, drawCircuit, rangeText, type EisRangeFit, type EisRangeSpec, fmtFreq, guessColumns, labelledPoints, looksAngular, runEis, type EisData, type EisLabelView, type EisPoints } from './eis.ts';
+import { colKey, colLabel, drawCircuit, type EisRangeSpec, fitCurve, guessColumns, looksAngular, runEis, type EisData, type EisPoints } from './eis.ts';
 import { histogram, type FitResult } from './histogram.ts';
 import { axisValues, placeColumn, type AxisValues } from './axiskinds.ts';
 import { countGrid, densityGrid, streamlines, vectorArrows } from './fields2d.ts';
@@ -2307,7 +2308,7 @@ function imageNodeOut(id: string, d: ImageAnalysisData): Out {
     const mm = W / p.out.w;
     const at = (x: number, y: number) => [+((x - ox) * mm).toFixed(4), +((y - oy) * mm).toFixed(4)] as const;
     for (const r of d.rois) {
-      if (r.hidden) continue;
+      if (r.hidden || r.train) continue;
       const color = r.color ?? ROI_COLOR;
       const line = { ...SHAPE_DEFAULTS, kind: 'line' as const, coords: 'data' as const, color, width: 0.75, head1: 'none' as const, head2: 'none' as const };
       const pts = roiOutline(r);
@@ -4189,105 +4190,13 @@ export type EisView = {
   fittedYet: boolean;
   outdated: boolean;
 };
-// the frequencies written on a graph: those not crowding a label already kept (5 % of its width and height apart, in
-// the units it is drawn in)
-const uncrowded = (idx: number[], x: (i: number) => number, y: (i: number) => number) => {
-  const xs = idx.map(x);
-  const ys = idx.map(y);
-  const [sx, sy] = [Math.max(...xs) - Math.min(...xs) || 1, Math.max(...ys) - Math.min(...ys) || 1];
-  const keep: number[] = [];
-  for (const i of idx) if (keep.every((j) => Math.hypot((x(i) - x(j)) / sx, (y(i) - y(j)) / sy) > 0.05)) keep.push(i);
-  return keep;
-};
 function eisNode(id: string, d: EisData, v: Value | undefined): Out {
   if (v?.t !== 'dataset') return { view: { waiting: 'Connect the impedance spectrum: a dataset (or a sheet of a workbook) with the frequency, Z′ and Z″ (or |Z| and the phase).' } };
   const available = v.v.columns.map(colInfo);
   const r = runEis(v.v, d);
   if (typeof r === 'string') return { errors: [r], view: { available } };
   const { pts, curve } = r;
-  const ex = new Set(d.excluded);
-  // the points fitted (in a range, not left out); left out by hand; outside the ranges
-  const used = r.use;
-  const num = (name: string, vals: number[]) => column(name, Float64Array.from(vals));
-  const series = (x: number[], y: number[], xName: string, name: string) => ({ name, x: num(xName, x), y: num(name, y) });
-  const pick = (vals: number[], keep: boolean) => vals.filter((_, i) => used[i] === keep);
-  const text = (key: string, spec: object): AnnotationItem => ({ id: key, locked: true, type: 'text', spec: { ...TEXT_SPEC_DEFAULTS, coords: 'data', ...spec } });
   const warnings: string[] = [...r.warnings];
-  const mod = (re: number[], im: number[]) => re.map((q, i) => Math.hypot(q, im[i]));
-  const ph = (re: number[], im: number[]) => re.map((q, i) => (-Math.atan2(im[i], q) * 180) / Math.PI);
-  const [pm, pp, ny] = [mod(pts.re, pts.im), ph(pts.re, pts.im), pts.im.map((q) => -q)];
-  const lab0 = labelledPoints(pts.f, d.labels);
-  // the labels of a graph: the frequency (and the values) at the point, or where it was moved — then, far from its
-  // point, a thin line back to it; X, Y of the points and the scale of each axis (log: the distance in decades)
-  const labels = (view: EisLabelView, px: number[], py: number[], logX: boolean, logY: boolean, value: (i: number) => string): AnnotationItem[] => {
-    const tx = (q: number) => (logX ? Math.log10(q) : q);
-    const ty = (q: number) => (logY ? Math.log10(q) : q);
-    const lab = uncrowded(lab0, (i) => tx(px[i]), (i) => ty(py[i]));
-    const [sx, sy] = [Math.max(...px.map(tx)) - Math.min(...px.map(tx)) || 1, Math.max(...py.map(ty)) - Math.min(...py.map(ty)) || 1];
-    const at = d.labelAt?.[view] ?? {};
-    return lab.flatMap((i): AnnotationItem[] => {
-      const p = at[String(pts.rows[i])];
-      const [x, y] = p ?? [px[i], py[i]];
-      const t = text(`eis-f-${i}`, { text: d.values ? `${fmtFreq(pts.f[i])}\n${value(i)}` : fmtFreq(pts.f[i]), x, y, anchor: 'bl', style: { size: 6.5, color: '#444444' }, z: 3 });
-      const far = !!p && Math.hypot((tx(x) - tx(px[i])) / sx, (ty(y) - ty(py[i])) / sy) > 0.04;
-      if (!far) return [t];
-      return [{ id: `eis-l-${i}`, locked: true, type: 'shape', spec: { ...SHAPE_DEFAULTS, kind: 'line', coords: 'data', x1: px[i], y1: py[i], x2: x, y2: y, color: '#888888', width: 0.5, head1: 'none', head2: 'none', z: 2 } }, t];
-    });
-  };
-  const st = axesStyle(undefined);
-  const side = (title: string) => ({ ...SIDE_DEFAULTS, title });
-  const open = (color: string, symbol: 'circle' | 'square', right?: boolean) => curveStyle({ mode: 'scatter', color, symbol, symbolSize: 4, symbolFill: 'open', ...(right ? { axisY: 'right' as const } : {}) });
-  const gone = pts.rows.map((row) => ex.has(row));
-  const outside = pts.rows.map((row, i) => !ex.has(row) && !r.inRange[i]);
-  const on = (vals: number[], keep: boolean[]) => vals.filter((_, i) => keep[i]);
-  const ax = (right?: boolean) => (right ? { axisY: 'right' as const } : {});
-  const leftOut = (x: number[], y: number[], xName: string, right?: boolean): Curve[] => [
-    ...(gone.some(Boolean) ? [{ key: `eis:out${right ? 'r' : ''}`, label: 'left out', noLegend: right, series: series(on(x, gone), on(y, gone), xName, 'left out'), style: curveStyle({ mode: 'scatter', color: '#9e9e9e', symbol: 'cross', symbolSize: 4, ...ax(right) }) }] : []),
-    ...(outside.some(Boolean) ? [{ key: `eis:outside${right ? 'r' : ''}`, label: 'outside the ranges', noLegend: right, series: series(on(x, outside), on(y, outside), xName, 'outside the ranges'), style: curveStyle({ mode: 'scatter', color: '#bdbdbd', symbol: 'circle', symbolSize: 3, symbolFill: 'open', ...ax(right) }) }] : []),
-  ];
-  // the fits per range: dashed, over their ranges only
-  const RANGE_COLORS = ['#2f9e44', '#9c36b5', '#e8590c', '#1098ad', '#5c940d'];
-  const rangeCurves = (x: (c: NonNullable<EisRangeFit['curve']>) => number[], y: (c: NonNullable<EisRangeFit['curve']>) => number[], xName: string): Curve[] =>
-    r.rangeFits.flatMap((rf, k): Curve[] => (rf.curve ? [{ key: `eis:range${k}`, label: `${rf.circuit} (${rangeText(rf.range)})`, series: series(x(rf.curve), y(rf.curve), xName, `range ${k + 1}`), style: curveStyle({ mode: 'line', color: RANGE_COLORS[k % RANGE_COLORS.length], lineWidth: 1.2, dash: 'dash' }) }] : []));
-  const fitLabel = `fit ${d.circuit.replace(/\s+/g, '')}`;
-  const legend = { show: true, x: 96, y: 4, anchor: 'tr' as const };
-  // Nyquist: −Z″ against Z′, an ohm as long on both axes
-  const nyCurves: Curve[] = [
-    { key: 'eis:data', label: 'data', series: series(pick(pts.re, true), pick(ny, true), "Z' (Ω)", "-Z'' (Ω)"), style: open('#1f77b4', 'circle') },
-    ...leftOut(pts.re, ny, "Z' (Ω)"),
-    { key: 'eis:fit', label: fitLabel, series: series(curve.re, curve.im.map((q) => -q), "Z' (Ω)", 'fit'), style: curveStyle({ mode: 'line', color: '#d62728', lineWidth: 1.2 }) },
-    ...rangeCurves((c) => c.re, (c) => c.im.map((q) => -q), "Z' (Ω)"),
-  ];
-  const nyAnn = labels('nyquist', pts.re, ny, false, false, (i) => `(${fmtNum(pts.re[i], 4)}, ${fmtNum(ny[i], 4)})`);
-  const nyFig = plotFigure({ id, data: { label: '', style: {}, axes: { ...st, aspect: 1, sides: { ...st.sides, bottom: side("Z' (Ω)"), left: side("-Z'' (Ω)") } }, legend, annotations: nyAnn, page: { name: 'nyquist' } } }, nyCurves, warnings).figure;
-  // |Z| and −phase against the frequency (logarithmic): each alone, and both on two axes (Bode)
-  const [cm, cp] = [mod(curve.re, curve.im), ph(curve.re, curve.im)];
-  const F = 'Frequency (Hz)';
-  const modCurves = (both: boolean): Curve[] => [
-    { key: 'eis:mod', label: '|Z|', series: series(pick(pts.f, true), pick(pm, true), F, '|Z| (Ω)'), style: open('#1f77b4', 'circle') },
-    ...leftOut(pts.f, pm, F),
-    { key: 'eis:modfit', label: both ? '|Z| fit' : fitLabel, noLegend: both, series: series(curve.f, cm, F, '|Z| fit'), style: curveStyle({ mode: 'line', color: both ? '#1f77b4' : '#d62728', lineWidth: 1.1 }) },
-  ];
-  const phCurves = (both: boolean): Curve[] => [
-    { key: 'eis:ph', label: '−phase', series: series(pick(pts.f, true), pick(pp, true), F, '-Phase (°)'), style: open(both ? '#ff7f0e' : '#1f77b4', both ? 'square' : 'circle', both) },
-    ...leftOut(pts.f, pp, F, both),
-    { key: 'eis:phfit', label: both ? '−phase fit' : fitLabel, noLegend: both, series: series(curve.f, cp, F, '-phase fit'), style: curveStyle({ mode: 'line', color: both ? '#ff7f0e' : '#d62728', lineWidth: 1.1, ...(both ? { dash: 'dash' as const, axisY: 'right' as const } : {}) }) },
-  ];
-  const modAnn = labels('mod', pts.f, pm, true, true, (i) => `${fmtNum(pm[i], 4)} Ω`);
-  const phAnn = labels('phase', pts.f, pp, true, false, (i) => `${fmtNum(pp[i], 3)}°`);
-  const logX = { ...st.x, scale: 'log' as const };
-  const modOf = (c: { re: number[]; im: number[] }) => mod(c.re, c.im);
-  const phOf = (c: { re: number[]; im: number[] }) => ph(c.re, c.im);
-  const modFig = plotFigure({ id: `${id}:mod`, data: { label: '', style: {}, axes: { ...st, x: logX, y: { ...st.y, scale: 'log' }, sides: { ...st.sides, bottom: side(F), left: side('|Z| (Ω)') } }, legend, annotations: modAnn, page: { name: 'bode_modulus' } } }, [...modCurves(false), ...rangeCurves((c) => c.f, modOf, F)], warnings).figure;
-  const phFig = plotFigure({ id: `${id}:phase`, data: { label: '', style: {}, axes: { ...st, x: logX, sides: { ...st.sides, bottom: side(F), left: side('-Phase (°)') } }, legend, annotations: phAnn, page: { name: 'bode_phase' } } }, [...phCurves(false), ...rangeCurves((c) => c.f, phOf, F)], warnings).figure;
-  const bodeAxes: Partial<AxesStyle> = {
-    ...st,
-    x: logX,
-    y: { ...st.y, scale: 'log' },
-    right: { ...st.right, mode: 'own', scale: { ...AXIS_DEFAULTS } },
-    sides: { ...st.sides, bottom: side(F), left: side('|Z| (Ω)'), right: side('-Phase (°)') },
-  };
-  const bode = plotFigure({ id: `${id}:bode`, data: { label: '', style: {}, axes: bodeAxes, legend, annotations: modAnn, page: { name: 'bode' } } }, [...modCurves(true), ...phCurves(true)], warnings).figure;
   // the circuit drawn, on a white or transparent page of its own size
   const values = Object.fromEntries(r.result.params.map((q) => [q.name, q.value]));
   const dr = drawCircuit(r.result.tree, d.circuitValues ? values : undefined);
@@ -4332,10 +4241,7 @@ function eisNode(id: string, d: EisData, v: Value | undefined): Out {
     outputs: {
       parameters: { t: 'dataset', v: r.parameters },
       fitted: { t: 'dataset', v: r.fitted },
-      figure: { t: 'figure', v: nyFig },
-      mod: { t: 'figure', v: modFig },
-      phase: { t: 'figure', v: phFig },
-      bode: { t: 'figure', v: bode },
+      curve: { t: 'dataset', v: fitCurve(curve) },
       circuit: { t: 'figure', v: circuit },
       ranges: { t: 'dataset', v: r.ranges },
     },
@@ -4556,6 +4462,14 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       const outputs: Record<string, Value> = { out: { t: 'dataset', v: r.dataset } };
       for (const [k, t] of Object.entries(r.extra ?? {})) outputs[k] = { t: 'dataset', v: t };
       return { outputs, warnings: r.warnings, view: { available, signal: { labels: r.labels, plots: r.plots } } };
+    }
+    case 'kk': {
+      const v = one('in');
+      if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset: the frequency, Z′ and Z″ (impedance); X and R (optical); X and the part to transform (general).' } };
+      const available = v.v.columns.map(colInfo);
+      const r = kkNode(v.v, { ...KK_DEFAULTS, ...n.data });
+      if (typeof r === 'string') return { errors: [r], view: { available } };
+      return { outputs: { out: { t: 'dataset', v: r.dataset } }, warnings: r.warnings, view: { available, signal: { labels: r.labels, plots: r.plots }, report: r.report } };
     }
     case 'report': {
       const d: ReportData = { ...REPORT_DEFAULTS, ...n.data };

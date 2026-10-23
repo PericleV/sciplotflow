@@ -7,6 +7,7 @@ import { autoContrast, balance, brightness, clahe, contrast, curves, equalize, h
 import { closing, dilate, distanceMap, erode, fillHoles, opening, separate, skeleton, topHat } from './morph.ts';
 import { canny } from './canny.ts';
 import { GLOBAL_METHODS, LOCAL_METHODS, globalThreshold, localThreshold, type GlobalMethod, type LocalMethod } from './threshold.ts';
+import { classifyPixels, type TrainExample } from './classify.ts';
 
 export type StepGroup = 'Tone' | 'Colour' | 'Noise' | 'Background' | 'Edges' | 'Texture' | 'Morphology' | 'Threshold';
 export const STEP_GROUPS: StepGroup[] = ['Tone', 'Colour', 'Noise', 'Background', 'Edges', 'Texture', 'Morphology', 'Threshold'];
@@ -129,6 +130,16 @@ export const STEP_DEFS = {
   fillholes: { group: 'Morphology', label: 'Fill holes', title: 'A mask: the holes in its objects filled', params: [] },
   skeleton: { group: 'Morphology', label: 'Skeleton', title: 'A mask: thinned to lines one pixel wide', params: [] },
   distance: { group: 'Morphology', label: 'Distance map', title: 'A mask: every object pixel its distance to the background (px)', params: [] },
+  splitlines: {
+    group: 'Morphology',
+    label: 'Split along dark lines',
+    title: 'A mask: cut where a thin dark line runs on the image under it (the gaps between touching particles, as an electron microscope shows them)',
+    params: [
+      num('width', 'Line width', 1, { min: 0.5, step: 0.1, unit: 'px', title: 'About as wide as the dark lines between the particles' }),
+      num('depth', 'Depth', NaN, { unit: 'value', auto: '1.5 % of the range', title: 'How much darker than either side a line must be to cut' }),
+      num('grow', 'Widen the cut', 0, { min: 0, step: 1, unit: 'px', title: 'The cut made wider (particles kept apart)' }),
+    ],
+  },
   watershed: { group: 'Morphology', label: 'Watershed', title: 'A mask: touching round objects cut apart along the narrowings', params: [num('tolerance', 'Tolerance', 0.5, { min: 0, step: 0.1, unit: 'px', title: 'How deep a narrowing must be to cut' })] },
   // threshold
   threshold: {
@@ -140,6 +151,19 @@ export const STEP_DEFS = {
       num('low', 'Low', NaN, { unit: 'value', auto: 'range start', title: 'By hand: the objects are the values from low to high' }),
       num('high', 'High', NaN, { unit: 'value', auto: 'range end' }),
       bool('light', 'Light background', false, 'The objects darker than the background'),
+    ],
+  },
+  classify: {
+    group: 'Threshold',
+    label: 'Trainable classifier',
+    title: 'A mask learnt from examples drawn on the image (as ImageJ’s Trainable Weka Segmentation): selections added to classes (object, background, edge …), a random forest on the pixels’ features at several scales; for what a threshold cannot tell apart (texture, touching particles)',
+    params: [
+      num('trees', 'Trees', 30, { min: 1, max: 200, step: 1, title: 'The trees of the forest: more, steadier, slower' }),
+      num('smooth', 'Smoothing', 2, { min: 0, step: 0.5, unit: 'px', title: 'The classes’ probabilities smoothed before the pixel is given one (fewer stray pixels)' }),
+      choice('output', 'Output', 'mask', [
+        ['mask', 'a mask of the target class'],
+        ['probability', 'its probability (0–1)'],
+      ]),
     ],
   },
   localthreshold: {
@@ -164,7 +188,7 @@ function param<T>(s: ImgStep, key: string): T {
 // a number that may be automatic (NaN): its own, else the fallback
 const or = (v: number, f: number) => (Number.isFinite(v) ? v : f);
 
-const MASK_ONLY = new Set<StepKind>(['fillholes', 'skeleton', 'distance', 'watershed']);
+const MASK_ONLY = new Set<StepKind>(['fillholes', 'skeleton', 'distance', 'watershed', 'splitlines']);
 // the steps that work on a gray image (an RGB one is made gray by its luminance first)
 const GRAY_ONLY = new Set<StepKind>(['gradient', 'laplace', 'logfilter', 'dog', 'canny', 'hessian', 'localsd', 'entropy', 'range', 'gabor', 'lbp', 'threshold', 'localthreshold', 'equalize', 'clahe']);
 const RGB_ONLY = new Set<StepKind>(['channel', 'grayweights', 'huesat', 'balance']);
@@ -195,10 +219,22 @@ export function noiseSigma(c: Float32Array, w: number, h: number): number {
   return (s * Math.sqrt(Math.PI / 2)) / (6 * (w - 2) * (h - 2));
 }
 
+// What some steps need besides the image: the examples of the trainable classifier (in pixels of the image as
+// analysed, at full size); the last image that is not a mask (the one a mask was made from: its dark lines)
+export type StepCtx = { train?: TrainExample[]; under?: Raster };
+// the classes of a trainable classifier: its own (absent: object, background and edge — the rim just outside a particle
+// and the line between touching ones), then those of its examples; only the classes with examples are learnt
+export const classesOf = (s: ImgStep, train: TrainExample[] = []) => [...new Set([...String(s.p.classes ?? 'object,background,edge').split(',').map((c) => c.trim()).filter(Boolean), ...train.map((e) => e.cls)])];
+// the class that makes its mask: the one chosen, else the first that is not background or an edge
+export function targetClass(s: ImgStep, classes: string[]): string {
+  const t = String(s.p.target ?? '');
+  return classes.includes(t) ? t : (classes.find((c) => !/^(background|bg|edge|border|ground)/i.test(c)) ?? classes[0] ?? '');
+}
+
 // One step applied: the new raster and a note (the threshold found …), or why it cannot run. scale: the image is the
 // original shrunk by it (a preview): the lengths in pixels shrunk too (and the frequencies per pixel grown), so the
 // preview looks as the result will
-export function applyStep(r: Raster, s: ImgStep, scale = 1): { r: Raster; note?: string } | string {
+export function applyStep(r: Raster, s: ImgStep, scale = 1, ctx: StepCtx = {}): { r: Raster; note?: string } | string {
   const { w, h } = r;
   const sp = r.hi - r.lo || 1;
   const defs = stepDef(s.kind).params;
@@ -373,6 +409,21 @@ export function applyStep(r: Raster, s: ImgStep, scale = 1): { r: Raster; note?:
       const c = distanceMap(r.ch[0], w, h);
       return { r: gray1(r, c, 0, Math.max(1, rangeOfData(c)[1])) };
     }
+    case 'splitlines': {
+      const u = ctx.under && ctx.under.w === w && ctx.under.h === h ? ctx.under : null;
+      if (!u) return 'needs the image the mask was made from';
+      const ug = u.ch.length === 1 ? u.ch[0] : luminance(u);
+      // (a dark line: across it the image curves up — the Hessian's larger eigenvalue — by more than the depth)
+      const v = hessianEigen(ug, w, h, Math.max(0.5, P<number>('width')), 'larger');
+      const depth = or(P<number>('depth'), 0.015 * (u.hi - u.lo || 1));
+      let cut = map1(v, (x) => (x > depth ? 1 : 0));
+      const grow = Math.round(P<number>('grow'));
+      if (grow > 0) cut = dilate(cut, w, h, grow);
+      let n = 0;
+      const m = map1(r.ch[0], (x, i) => (x > 0.5 && !cut[i] ? 1 : 0));
+      for (let i = 0; i < m.length; i++) if (r.ch[0][i] > 0.5 && cut[i]) n++;
+      return { r: mask1(r, m), note: `${n} px cut (depth ${+depth.toPrecision(3)})` };
+    }
     case 'watershed':
       return { r: mask1(r, separate(r.ch[0], w, h, P<number>('tolerance'))) };
     case 'threshold': {
@@ -389,6 +440,24 @@ export function applyStep(r: Raster, s: ImgStep, scale = 1): { r: Raster; note?:
       const name = GLOBAL_METHODS.find(([k]) => k === method)?.[1] ?? method;
       return { r: mask1(r, map1(c, (v) => ((light ? v <= t : v > t) ? 1 : 0))), note: `${name}: ${+t.toPrecision(5)}` };
     }
+    case 'classify': {
+      const ex = (ctx.train ?? []).map((e) => ({ ...e, pts: e.pts.map(([x, y]): [number, number] => [x * scale, y * scale]), width: Math.max(1, e.width * scale) }));
+      const res = classifyPixels(r, ex, { trees: P<number>('trees'), scale });
+      if (!res) return 'needs examples of two classes: draw selections on the image, then add them to the classes';
+      const k = Math.max(0, res.classes.indexOf(targetClass(s, res.classes)));
+      const sm = P<number>('smooth');
+      const prob = sm > 0 ? res.prob.map((c) => gaussian(c, w, h, sm)) : res.prob;
+      const note = `${res.classes.map((c, j) => `${c}: ${res.samples[j]} px`).join(', ')} → ${res.classes[k]}`;
+      if (P<string>('output') === 'probability') return { r: gray1(r, prob[k], 0, 1), note };
+      // (the pixels where the target class has more votes than any other)
+      const m = new Float32Array(w * h);
+      for (let i = 0; i < m.length; i++) {
+        let best = 0;
+        for (let c = 1; c < prob.length; c++) if (prob[c][i] > prob[best][i]) best = c;
+        m[i] = best === k ? 1 : 0;
+      }
+      return { r: mask1(r, m), note };
+    }
     case 'localthreshold': {
       const light = P<boolean>('light');
       const c = light ? map1(g.ch[0], (v) => g.lo + g.hi - v) : g.ch[0];
@@ -402,19 +471,22 @@ export function applyStep(r: Raster, s: ImgStep, scale = 1): { r: Raster; note?:
 // The steps in their order (those switched off passed over): the raster at the end, and for every step its note or
 // what went wrong
 // seen: the raster that comes into each step (its place in the list), before it runs
-export function applySteps(base: Raster, steps: ImgStep[], upTo = steps.length, seen?: (k: number, r: Raster) => void, scale = 1): { r: Raster; notes: Record<string, string>; errors: Record<string, string> } {
+export function applySteps(base: Raster, steps: ImgStep[], upTo = steps.length, seen?: (k: number, r: Raster) => void, scale = 1, ctx: StepCtx = {}): { r: Raster; notes: Record<string, string>; errors: Record<string, string> } {
   let r = base;
+  // (the last image that is not a mask)
+  let under = base;
   const notes: Record<string, string> = {};
   const errors: Record<string, string> = {};
   for (const [k, s] of steps.slice(0, upTo).entries()) {
     seen?.(k, r);
     if (!s.on || !(s.kind in STEP_DEFS)) continue;
-    const out = applyStep(r, s, scale);
+    const out = applyStep(r, s, scale, { ...ctx, under });
     if (typeof out === 'string') {
       errors[s.id] = out;
       continue;
     }
     r = out.r;
+    if (r.kind !== 'mask') under = r;
     if (out.note) notes[s.id] = out.note;
   }
   return { r, notes, errors };

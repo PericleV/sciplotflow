@@ -99,8 +99,9 @@ import { curveColumns, digest, figPort, outValue, toPy, validName, type MplFigur
 import { figureNodes } from '../src/mplPlot.ts';
 import { bothWithin, dunnett, dunnettProb, factorCols, interCols, mixedDesign, mixedModel } from '../src/engine/rmstats.ts';
 import { makeGroup, ungroupNode } from '../src/engine/subgraph.ts';
-import { CO2, EIS_TRUTH, EXAMPLES, FEC, PBSN } from '../src/examples.ts';
-import { EIS_CIRCUITS, circuitZ, colKey, colLabel, fitSettingsOf, drawCircuit, dropInto, editCircuit, elemsOf, rangeOf, withBranch, fitWarnings, guessColumns, labelledPoints, looksAngular, parseCircuit, runEis, simulate, writeCircuit, type EisData } from '../src/engine/eis.ts';
+import { CO2, EIS_TRUTH, EXAMPLES, FEC, PBSN, oscillatorEps, oscillatorNK } from '../src/examples.ts';
+import { generalKK, kkNode, KK_DEFAULTS, linKK, opticalKK, type LinKK } from '../src/engine/kk.ts';
+import { EIS_CIRCUITS, circuitZ, colKey, colLabel, fitSettingsOf, drawCircuit, dropInto, editCircuit, elemsOf, rangeOf, withBranch, fitWarnings, guessColumns, looksAngular, parseCircuit, runEis, simulate, writeCircuit, type EisData } from '../src/engine/eis.ts';
 import * as Y from 'yjs';
 import { mergeEdges, mergeNodes, ProjectBinding, readProject, writeProject, yProject } from '../src/collab/yproject.ts';
 import { chunked, Joiner, SyncHub, ZIP_MIN, type Link } from '../src/collab/sync.ts';
@@ -536,6 +537,106 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   const pr = evaluateGraph(nodes, [{ id: '1', source: 'i', sourceHandle: 'out', target: 'p', targetHandle: 'dataset' }]).get('p')!;
   const cs = pr.view.curves ?? [];
   ok(cs.length === 2 && cs[1].series.y.values[1] === 5 && cs[1].series.x.values[1] === 2, 'Plot: curves from the columns of a dataset');
+  // Kramers–Kronig. Lin-KK as numpy computes it (scripts/fixtures/kk-ref.py): the same number of elements, the same
+  // residuals; a spectrum that changed during the sweep fails the test, noise alone does not
+  {
+    const K = JSON.parse(readFileSync(new URL('./fixtures/kk-ref.json', import.meta.url), 'utf8'));
+    const r = linKK(K.f, K.re, K.im, { cap: false, ind: true, mu: 0.85, maxM: 50 })!;
+    const dRe = Math.max(...r.resRe.map((v, i) => Math.abs(v - K.resRe[i])));
+    const dIm = Math.max(...r.resIm.map((v, i) => Math.abs(v - K.resIm[i])));
+    const f = Array.from({ length: 61 }, (_, i) => 0.1 * 10 ** (i / 10));
+    const randles = (fr: number, Rct: number) => {
+      const w = 2 * Math.PI * fr;
+      const d = 1 + (w * Rct * 1e-5) ** 2;
+      return [10 + Rct / d, (-w * Rct * Rct * 1e-5) / d];
+    };
+    const drift = f.map((x, i) => randles(x, 100 * (1 + (0.3 * (60 - i)) / 60)));
+    const rd = linKK(
+      f,
+      drift.map((q) => q[0]),
+      drift.map((q) => q[1]),
+      { cap: false, ind: true, mu: 0.85, maxM: 50 },
+    )!;
+    const worst = (x: LinKK) => Math.max(...x.resRe.map(Math.abs), ...x.resIm.map(Math.abs));
+    ok(r.M === K.M && Math.abs(r.mu - K.mu) < 1e-9 && dRe < 1e-6 && dIm < 1e-6 && worst(r) < 1.5 && worst(rd) > 3, `Lin-KK: ${r.M} elements, \u03bc ${r.mu.toFixed(3)}, residuals as numpy (within ${Math.max(dRe, dIm).toExponential(1)} %); noise 0.3 %: within ${worst(r).toFixed(2)} %; R_ct growing 30 % during the sweep: ${worst(rd).toFixed(1)} %`);
+  }
+  // optical: n and k of a Lorentz oscillator back from its reflectance alone (E in eV, or the same as wavelengths in nm);
+  // general: \u03b5\u2081 from \u03b5\u2082 and \u03b5\u2082 from \u03b5\u2081
+  {
+    const E = Array.from({ length: 600 }, (_, i) => 0.05 + (29.95 * i) / 599);
+    const nk = E.map(oscillatorNK);
+    const R = nk.map(([n, k]) => ((n - 1) ** 2 + k * k) / ((n + 1) ** 2 + k * k));
+    const o = opticalKK(E, R, { low: 'constant', high: 'power', power: 4 });
+    let err = 0;
+    E.forEach((e, i) => {
+      if (e > 1 && e < 8) err = Math.max(err, Math.abs(o.n[i] - nk[i][0]), Math.abs(o.k[i] - nk[i][1]));
+    });
+    const ds = (xName: string, xs: number[]) => ({ name: 'R', columns: [column(xName, Float64Array.from(xs)), column('R', Float64Array.from(R))] });
+    const byE = kkNode(ds('Energy (eV)', E), { ...KK_DEFAULTS, mode: 'optical' });
+    const byL = kkNode(
+      ds(
+        'Wavelength (nm)',
+        E.map((e) => 1239.84 / e),
+      ),
+      { ...KK_DEFAULTS, mode: 'optical' },
+    );
+    const col = (r: typeof byE, n: string) => (typeof r === 'string' ? new Float64Array() : (r.dataset.columns.find((c) => c.name === n)?.values ?? new Float64Array()));
+    const same = Math.max(...Array.from(col(byE, 'k')).map((v, i) => (E[i] > 1 && E[i] < 8 ? Math.abs(v - col(byL, 'k')[i]) : 0)));
+    const eps = E.map((e) => {
+      const [n, k] = oscillatorNK(e);
+      return [n * n - k * k, 2 * n * k];
+    });
+    const g1 = generalKK(
+      E,
+      eps.map((q) => q[1]),
+      { low: 'zero', high: 'power', power: 3, direction: 'im2re', offset: 1 },
+    );
+    const g2 = generalKK(
+      E,
+      eps.map((q) => q[0]),
+      { low: 'constant', high: 'power', power: 2, direction: 're2im', offset: 1 },
+    );
+    let e1 = 0;
+    let e2 = 0;
+    E.forEach((e, i) => {
+      if (e > 0.5 && e < 15) {
+        e1 = Math.max(e1, Math.abs(g1.out[i] - eps[i][0]));
+        e2 = Math.max(e2, Math.abs(g2.out[i] - eps[i][1]));
+      }
+    });
+    const tails = typeof byE === 'string' ? 0 : byE.plots[0].series?.filter((x) => x.dash).length;
+    const marks = typeof byE === 'string' ? 0 : byE.plots[0].marks?.length;
+    const wave = typeof byL === 'string' ? '' : byL.warnings.join(' ');
+    ok(err < 0.05 && same < 1e-6 && e1 < 0.25 && e2 < 0.3 && tails === 2 && marks === 2 && /wavelength/.test(wave), `Kramers\u2013Kronig, optical: n and k of an oscillator from R within ${err.toFixed(3)} (1 to 8 eV), the same from wavelengths in nm (${same.toExponential(1)}); its tails drawn dashed, the data's ends marked; general: \u03b5\u2081 from \u03b5\u2082 within ${e1.toFixed(2)}, \u03b5\u2082 from \u03b5\u2081 within ${e2.toFixed(2)} (peak 20)`);
+  }
+  // the three examples: the stable cell within the band, the drifting one out of it; n and k as drawn; \u03b5\u2081 as drawn
+  {
+    const run = (start: string) => {
+      const kx = EXAMPLES.find((e) => e.name.startsWith(start))!.make();
+      return evaluateGraph(kx.nodes, kx.edges);
+    };
+    const imp = run('Kramers\u2013Kronig (impedance)');
+    const worst = (id: string) => {
+      const o = imp.get(id)?.outputs.out;
+      return o?.t === 'dataset' ? Math.max(...o.v.columns.filter((c) => /^Residual/.test(c.name)).flatMap((c) => Array.from(c.values).map(Math.abs))) : NaN;
+    };
+    const [good, bad] = [worst('kk-good'), worst('kk-bad')];
+    const opt = run('Kramers\u2013Kronig (optical)').get('kk-optical')?.outputs.out;
+    const col = (o: typeof opt, n: string) => (o?.t === 'dataset' ? (o.v.columns.find((c) => c.name === n)?.values ?? new Float64Array()) : new Float64Array());
+    const E = col(opt, 'Energy (eV)');
+    let nkErr = 0;
+    E.forEach((e, i) => {
+      const [n, k] = oscillatorNK(e);
+      if (e > 1 && e < 8) nkErr = Math.max(nkErr, Math.abs(col(opt, 'n')[i] - n), Math.abs(col(opt, 'k')[i] - k));
+    });
+    const gen = run('Kramers\u2013Kronig (general)').get('kk-general')?.outputs.out;
+    const Eg = col(gen, 'Energy (eV)');
+    let e1Err = 0;
+    Eg.forEach((e, i) => {
+      if (e > 1 && e < 8) e1Err = Math.max(e1Err, Math.abs(col(gen, 'Re by KK (from \u03b5\u2082)')[i] - oscillatorEps(e)[0]));
+    });
+    ok(good < 1 && bad > 1.5 && nkErr < 0.06 && e1Err < 0.4, `Kramers\u2013Kronig examples: the stable cell within \u00b1${good.toFixed(2)} %, the drifting one out to \u00b1${bad.toFixed(2)} %; n, k from R within ${nkErr.toFixed(3)} of the true ones; \u03b5\u2081 from \u03b5\u2082 within ${e1Err.toFixed(2)}`);
+  }
   // the microarray example: the log2 red / green ratio of every spot as drawn (gene k: k − 2.5), the same in the three
   // replicates; nothing saturated
   {
@@ -544,7 +645,11 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
     const sp = wb?.t === 'workbook' ? wb.v.sheets.find((x) => x.name === 'Spots') : undefined;
     const lr = sp?.columns.find((c) => c.name === 'log2 ratio R/G')?.values ?? new Float64Array();
     const off = Array.from(lr).map((v, i) => Math.abs(v - ((i % 6) - 2.5)));
-    ok(lr.length === 18 && Math.max(...off) < 0.1 && wb?.t === 'workbook' && wb.v.sheets.map((x) => x.name).join() === 'Selections,Spots,Profiles,Summary', `microarray example: log2 R/G of the 18 spots over their rings within ${Math.max(...off).toFixed(3)} of the ratios drawn`);
+    // (against the global background too: the ring follows the background, brighter to the right; the global one not)
+    const net = sp?.columns.find((c) => c.name === 'Net R')?.values ?? new Float64Array();
+    const netG = sp?.columns.find((c) => c.name === 'Net global R')?.values ?? new Float64Array();
+    const drift = (v: ArrayLike<number>) => v[5] - v[0] - (net[5] - net[0]);
+    ok(lr.length === 18 && Math.max(...off) < 0.1 && wb?.t === 'workbook' && wb.v.sheets.map((x) => x.name).join() === 'Selections,Spots,Profiles,Summary' && netG.length === 18 && Math.abs(drift(netG)) > 3, `microarray example: log2 R/G of the 18 spots over their rings within ${Math.max(...off).toFixed(3)} of the ratios drawn; against the global background too (its net drifts by ${drift(netG).toFixed(1)} along a row)`);
   }
   // a group of the generated example's nodes gives the same figure, and ungrouping gives the graph back
   const ex = EXAMPLES.find((e) => e.name.startsWith('Generated'))!.make();
@@ -6028,24 +6133,40 @@ checkPhase(ok);
   const par = res?.outputs.parameters;
   const lastRows = par?.t === 'dataset' ? par.v.columns[0].text?.slice(-6).join() : '';
   ok(!!pv && pv.r2.all > 0.999 && pv.r2.re > 0.99 && pv.r2.im > 0.99 && lastRows === "χ²,reduced χ²,R²,R² Z',R² Z'',points" && pv.by.freq === 'name' && !pv.angular && res?.warnings?.length === 0, `EIS: R² of the fit ${fmtNum(pv?.r2.all ?? NaN, 6)} (Z′ ${fmtNum(pv?.r2.re ?? NaN, 5)}, Z″ ${fmtNum(pv?.r2.im ?? NaN, 5)}); the statistics under the parameters`);
-  // the figures: Nyquist, |Z|, phase, Bode, the circuit (white or transparent; its four elements drawn)
-  const figs = ['figure', 'mod', 'phase', 'bode', 'circuit'].map((k) => res?.outputs[k]);
+  // the outputs: the data and the fit drawn smooth (25 a decade) for Plots, the circuit (white or transparent; its four
+  // elements drawn); no figures of the graphs (Plots draw them from the data: the example's Nyquist and Bode)
   const node = ex.nodes.find((n) => n.id === 'eis-node')!;
   const withData = (patch: Partial<EisData>) => evaluateGraph(ex.nodes.map((n) => (n.id === 'eis-node' ? ({ ...n, data: { ...n.data, ...patch } } as AppNode) : n)), ex.edges).get('eis-node');
   const clear = withData({ circuitBg: 'none', circuitValues: true });
   const circ = clear?.outputs.circuit;
   const texts = circ?.t === 'figure' ? circ.v.axes[0].annotations.flatMap((a) => (a.kind === 'text' ? [a.text.text] : [])) : [];
-  ok(figs.every((f) => f?.t === 'figure') && circ?.t === 'figure' && circ.v.background === 'none' && ['R1', 'R2', 'Q1', 'W1'].every((t) => texts.includes(t)) && texts.some((t) => /Ω$/.test(t)), `EIS: the figures out (Nyquist, |Z|, phase, Bode, circuit); the circuit transparent, its elements and values written (${texts.join(' ')})`);
-  // a frequency's label moved: in the figure where it was put, with a line back to its point
-  const lab = pv ? labelledPoints(pv.pts.f, 'decades').slice(-2)[0] : -1;
-  const row = pv ? pv.pts.rows[lab] : -1;
-  const movedTo: [number, number] = [150, 120];
-  const mv = withData({ labelAt: { nyquist: { [String(row)]: movedTo } } });
-  const nyf = mv?.outputs.figure;
-  const anns = nyf?.t === 'figure' ? nyf.v.axes[0].annotations : [];
-  const t = anns.find((a) => a.kind === 'text' && a.text.x === movedTo[0] && a.text.y === movedTo[1]);
-  const l = anns.find((a) => a.kind === 'shape' && a.shape.kind === 'line' && a.shape.x2 === movedTo[0] && a.shape.y2 === movedTo[1]);
-  ok(lab >= 0 && !!t && !!l && (node.data as EisData).labelAt === undefined, 'EIS: a frequency label moved by hand: in the Nyquist figure where it was put, a line back to its point');
+  const cur = res?.outputs.curve;
+  const all = evaluateGraph(ex.nodes, ex.edges);
+  const nyq = all.get('eis-nyquist')?.view.figure;
+  const bod = all.get('eis-bode')?.view.figure;
+  ok(
+    cur?.t === 'dataset' && cur.v.columns.length === 5 && cur.v.columns[0].values.length > 150 && ['figure', 'mod', 'phase', 'bode'].every((k) => !res?.outputs[k]) && circ?.t === 'figure' && circ.v.background === 'none' && ['R1', 'R2', 'Q1', 'W1'].every((t) => texts.includes(t)) && texts.some((t) => /\u03a9$/.test(t)) && nyq?.axes[0].curves.length === 2 && bod?.axes[0].curves.length === 4 && (node.data as EisData).labelAt === undefined,
+    `EIS: out the data and the smooth fit (${cur?.t === 'dataset' ? cur.v.columns[0].values.length : 0} points), the circuit transparent with its elements and values (${texts.join(' ')}); Nyquist and Bode drawn by Plots from them`,
+  );
+  // format 12 → 13: the figure outputs of an older EIS node become Plots of its data, connected where the figures were
+  const v12 = JSON.stringify({
+    app: 'graph-flow',
+    version: 12,
+    nodes: [
+      ...ex.nodes.filter((n) => n.id === 'eis-data' || n.id === 'eis-node'),
+      { id: 'cv', type: 'canvas', position: { x: 0, y: 0 }, data: { ...(ex.nodes.find((n) => n.id === 'eis-canvas')!.data as object) } },
+    ],
+    edges: [
+      ...ex.edges.filter((e) => e.target === 'eis-node'),
+      { id: 'a', source: 'eis-node', sourceHandle: 'figure', target: 'cv', targetHandle: 'figures' },
+      { id: 'b', source: 'eis-node', sourceHandle: 'bode', target: 'cv', targetHandle: 'figures' },
+    ],
+  });
+  const p12 = parseProject(v12);
+  const plots = typeof p12 === 'string' ? [] : p12.nodes.filter((n) => n.type === 'plot1d');
+  const r12 = typeof p12 === 'string' ? null : evaluateGraph(p12.nodes, p12.edges);
+  const toCanvas = typeof p12 === 'string' ? [] : p12.edges.filter((e) => e.target === 'cv');
+  ok(typeof p12 !== 'string' && p12.version === PROJECT_VERSION && plots.length === 2 && toCanvas.length === 2 && toCanvas.every((e) => plots.some((q) => q.id === e.source) && e.sourceHandle === 'figure') && !p12.edges.some((e) => e.source === 'eis-node' && ['figure', 'bode'].includes(e.sourceHandle ?? '')) && plots.every((q) => (r12?.get(q.id)?.view.figure?.axes[0].curves.length ?? 0) >= 2), `format 12 \u2192 13: the Nyquist and Bode outputs of an EIS node become Plots of its data, connected to the Merge (${plots.map((q) => q.id).join(', ')})`);
   // ω found: the frequencies on an even logarithmic grid only once divided by 2π; columns named A, B, C: by their places
   const f = Array.from({ length: 31 }, (_, k) => 10 ** (5 - k / 5));
   const g = guessColumns([column('A', new Float64Array(1)), column('B', new Float64Array(1)), column('C', new Float64Array(1))], 'reim');

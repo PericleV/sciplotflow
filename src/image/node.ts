@@ -6,6 +6,9 @@ import { cropBox, cropRaster, map1, packPixels, unpackPixels, type Crop, type Im
 import { applySteps, type ImgStep } from './steps.ts';
 import { measureInputs, measureRois, measureSpec, type MeasureResult, type MeasureSpec } from './measure.ts';
 import type { Roi } from './roi.ts';
+import { trainingExamples } from './classify.ts';
+import type { ParticleOpts } from './particles.ts';
+import type { MatchOpts } from './match.ts';
 import { pngDataUrl, toRGBA, type Lut } from './render.ts';
 import type { Matrix } from '../engine/matrix.ts';
 import type { PageData } from '../types.ts';
@@ -30,6 +33,8 @@ export type ImageAnalysisData = {
   page?: Partial<PageData>; // the figure's page: its name, dpi, background … (its size from the figure's width)
   rois?: Roi[]; // the selections (in pixels of the original as it came)
   measure?: Partial<MeasureSpec>; // what is measured of them, on which image
+  particles?: Partial<ParticleOpts> & { group?: string }; // how particles are found (the group they are put in)
+  match?: Partial<MatchOpts> & { fit?: boolean }; // Find like this: its turns, sizes, least similarity; the edges fitted
 };
 export const BAR_DEFAULTS: ScaleBar = { show: true, length: NaN, at: 'br', color: '#ffffff', thickness: 3, label: true, size: 8 };
 export const IMAGE_FIGURE_DEFAULTS: ImageFigure = { width: 80, show: 'result', lut: 'gray', lo: NaN, hi: NaN, overlay: '#ff3b30', alpha: 0.45, bar: BAR_DEFAULTS, rois: 'outlines' };
@@ -57,13 +62,16 @@ export function processImage(d: ImageAnalysisData): Processed | null {
   if (!d.pixels?.data) return null;
   const steps = d.steps ?? [];
   const on = measureSpec(d.measure).on;
-  const key = JSON.stringify([d.crop ?? null, steps, on]);
+  // (the examples of a trainable classifier: in the part analysed)
+  const c = cropBox(d.crop, d.pixels.w, d.pixels.h);
+  const train = steps.some((s) => s.on && s.kind === 'classify') ? trainingExamples(d.rois ?? [], c?.[0] ?? 0, c?.[1] ?? 0) : [];
+  const key = JSON.stringify([d.crop ?? null, steps, on, train]);
   const hit = d.pixelsId ? processed.get(d.pixelsId) : undefined;
   if (hit && hit.key === key) return hit.p;
   const base = cropRaster(unpackPixels(d.pixels, d.pixelsId), d.crop);
   // (what comes into every step: the image after the one before it)
   const ins: Raster[] = [];
-  const { r, notes, errors } = applySteps(base, steps, steps.length, (k, x) => (ins[k] = x));
+  const { r, notes, errors } = applySteps(base, steps, steps.length, (k, x) => (ins[k] = x), 1, { train });
   const outs = steps.map((_, k) => ins[k + 1] ?? r);
   const p: Processed = { base, out: r, notes, errors, ...measureInputs(base, outs, steps, on) };
   if (d.pixelsId) {

@@ -43,7 +43,7 @@ export function ParamField({ q, value, set, hist }: { q: Param; value: unknown; 
             max={b}
             step={step}
             value={auto ? (a + b) / 2 : Math.min(b, Math.max(a, v))}
-            title={auto ? `${q.title ?? q.label} — automatic (${q.auto ?? 'auto'}): move it to set a value` : q.title}
+            title={auto ? `${q.title ?? q.label}. Automatic (${q.auto ?? 'auto'}): move it to set a value` : q.title}
             onChange={(e) => set(Number(e.target.value))}
           />
           <NumInput className="tiny" value={v} min={q.min} max={q.max} step={q.step} placeholder={q.auto ? 'auto' : ''} title={q.auto ? `${q.title ?? ''} (empty: ${q.auto})` : q.title} onChange={(x) => set(x)} />
@@ -155,7 +155,7 @@ export function ThresholdEditor({ p, set, hist, note }: { p: Record<string, unkn
           <>
             <span className="ie-label">Found</span>
             <span className="row">
-              <b>{Number.isFinite(found) ? fmt(found) : '—'}</b>
+              <b>{Number.isFinite(found) ? fmt(found) : 'none'}</b>
               <button className="nodrag" title="Set the range by hand from this threshold" onClick={toManual}>
                 By hand from it
               </button>
@@ -165,7 +165,7 @@ export function ThresholdEditor({ p, set, hist, note }: { p: Record<string, unkn
           </>
         )}
       </div>
-      <div className="hint">{manual ? 'The objects: the values in the band — drag its edges on the histogram, or the sliders.' : 'The objects: the values on the shaded side of the threshold found.'}</div>
+      <div className="hint">{manual ? 'The objects: the values in the band. Drag its edges on the histogram, or the sliders.' : 'The objects: the values on the shaded side of the threshold found.'}</div>
     </div>
   );
 }

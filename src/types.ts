@@ -37,6 +37,8 @@ export type { MatCompData };
 export type { DigitizerData };
 export type { CleanData, FilterData };
 import type { AverageData, ConvData, FFTData, InterpData, NormalizeData, SmoothData } from './engine/signalnodes.ts';
+import type { KKData } from './engine/kk.ts';
+export type { KKData };
 export type { AverageData, ConvData, FFTData, InterpData, NormalizeData, SmoothData };
 export type { CurveMathData, TranslateData };
 export type { AnovaData, CorrData, NonparData, NormData, TTestData };
@@ -518,6 +520,7 @@ export type InterpNode = Node<InterpData, 'interp'>;
 export type NormalizeNode = Node<NormalizeData, 'normalize'>;
 export type FFTNode = Node<FFTData, 'fft'>;
 export type ConvNode = Node<ConvData, 'convolve'>;
+export type KKNode = Node<KKData, 'kk'>;
 export type UnstackNode = Node<UnstackData, 'unstack'>;
 export type CombineNode = Node<CombineData, 'combine'>;
 export type MathColNode = Node<MathColData, 'mathcol'>;
@@ -584,6 +587,7 @@ export type AppNode =
   | NormalizeNode
   | FFTNode
   | ConvNode
+  | KKNode
   | UnstackNode
   | CombineNode
   | MathColNode

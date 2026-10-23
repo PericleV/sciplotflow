@@ -1,7 +1,7 @@
 // The welcome window: at every start (unless “Show at start” is unticked, kept in this browser) and from Help ▸
 // Welcome. What the app is; import a data file, open a project file, start empty or go on with the project open; the
-// guided tours (one left half-way: taken up again); the projects kept in this browser last worked on; every example,
-// by its group; who made it.
+// examples in one menu, by their groups; the guided tours (one left half-way: taken up again); the projects kept in
+// this browser last worked on; who made it.
 import { useEffect, useRef, useState } from 'react';
 import { FileUp, FolderOpen, FilePlus2, ArrowRight, Camera, X } from 'lucide-react';
 import { libList, type LibEntry } from './library.ts';
@@ -114,39 +114,44 @@ export function Welcome(props: {
             })}
           </div>
         </div>}
-        {recent.length > 0 && (
-          <div className="welcome-gallery">
-            <h4>Your projects (kept in this browser)</h4>
-            <div className="welcome-cards">
-              {recent.map((r) => (
-                <button key={r.id} className="welcome-card" title="Open it. The project you have open now stays in Projects." onClick={() => props.onProject(r)}>
-                  <b>{r.name || 'untitled'}</b>
-                  <span>
-                    {when(r.saved)} · {r.nodes} node{r.nodes === 1 ? '' : 's'}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        <div className="welcome-gallery">
-          {groups.map((g) => (
-            <div key={g}>
-              <h4>Examples · {g}</h4>
-              <div className="welcome-cards">
+        {/* the examples: one menu, by their groups */}
+        <div className="welcome-examples">
+          <select
+            value=""
+            title="Open a complete example. The project you have open now stays in Projects."
+            onChange={(e) => {
+              const i = Number(e.target.value);
+              if (e.target.value !== '' && props.examples[i]) props.onExample(i);
+            }}
+          >
+            <option value="">Open an example…</option>
+            {groups.map((g) => (
+              <optgroup key={g} label={g}>
                 {props.examples.map((ex, i) =>
                   ex.group === g ? (
-                    <button key={ex.name} className="welcome-card" title={`${ex.desc}\n\nOpen this example. The project you have open now stays in Projects.`} onClick={() => props.onExample(i)}>
-                      <b>{ex.name}</b>
-                      <span>{ex.desc}</span>
-                    </button>
+                    <option key={ex.name} value={i} title={ex.desc}>
+                      {ex.name}
+                    </option>
                   ) : null,
                 )}
-              </div>
-            </div>
-          ))}
+              </optgroup>
+            ))}
+          </select>
         </div>
-        {/* at the bottom of the window, always in view (the examples scroll under it) */}
+        {recent.length > 0 && (
+          <div className="welcome-recent">
+            <h4>Your projects (kept in this browser)</h4>
+            {recent.map((r) => (
+              <button key={r.id} className="welcome-recent-row" title="Open it. The project you have open now stays in Projects." onClick={() => props.onProject(r)}>
+                <span className="ellipsis">{r.name || 'untitled'}</span>
+                <span className="muted">
+                  {when(r.saved)} · {r.nodes} node{r.nodes === 1 ? '' : 's'}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+        {/* at the bottom of the window */}
         <div className="welcome-foot">
           <MadeBy />
           <label className="radio welcome-check" title="Remembered in this browser. You can always open this window again from Help, Welcome.">

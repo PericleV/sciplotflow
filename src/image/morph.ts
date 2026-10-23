@@ -177,7 +177,8 @@ export function distanceMap(m: Float32Array, w: number, h: number): Float32Array
 
 // The regional maxima of a map inside a mask, as markers: the plateaux higher than every neighbour, kept when they rise
 // at least `tolerance` above the saddle to a higher one (a flooding from the top: the peaks of a dynamics ≥ tolerance)
-export function maximaMarkers(dmap: Float32Array, m: Float32Array, w: number, h: number, tolerance: number): Int32Array {
+// and that saddle is at most `neck` times their height (a distance map: the neck narrower than the part — 1: any)
+export function maximaMarkers(dmap: Float32Array, m: Float32Array, w: number, h: number, tolerance: number, neck = 1): Int32Array {
   const n = w * h;
   const order = Array.from({ length: n }, (_, i) => i)
     .filter((i) => m[i])
@@ -217,7 +218,7 @@ export function maximaMarkers(dmap: Float32Array, m: Float32Array, w: number, h:
     basin[i] = bs[0];
     for (const b of bs.slice(1)) {
       // a lower basin meets the highest at this level: merged when its peak is not `tolerance` above it
-      if (peak[b] - dmap[i] < tolerance) {
+      if (peak[b] - dmap[i] < tolerance || dmap[i] > neck * peak[b]) {
         alive[b] = false;
         parent[b] = bs[0];
       }
@@ -327,10 +328,11 @@ export function watershed(height: Float32Array, markers: Int32Array, m: Float32A
 }
 
 // Touching objects of a mask cut apart (as ImageJ's Watershed): the distance map's peaks (a dynamics of `tolerance`
-// pixels) flooded, a line of background between the basins that meet
-export function separate(m: Float32Array, w: number, h: number, tolerance = 0.5): Float32Array {
+// pixels; a neck at most `neck` times as wide as the thinner part) flooded, a line of background between the basins
+// that meet
+export function separate(m: Float32Array, w: number, h: number, tolerance = 0.5, neck = 1): Float32Array {
   const dm = distanceMap(m, w, h);
-  const markers = maximaMarkers(dm, m, w, h, tolerance);
+  const markers = maximaMarkers(dm, m, w, h, tolerance, neck);
   const neg = map1(dm, (v) => -v);
   const lab = watershed(neg, markers, m, w, h);
   // the line, one pixel wide: a pixel whose right or lower neighbour is of another basin; then a pixel still touching

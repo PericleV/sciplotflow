@@ -23,6 +23,8 @@ export type Roi = {
   color?: string;
   hidden?: boolean;
   role?: 'background'; // a region of background (for spots): measured, left out of the spots and the summary
+  train?: string; // an example of a class for the trainable classifier (its name): not measured
+  auto?: boolean; // found as a particle (found again: replaced)
   bg?: RoiBg;
 };
 export type Pt = [number, number];
@@ -40,7 +42,7 @@ export const TOOL_HINTS: Record<RoiTool, string> = {
   polyline: 'Segmented line: click every point; double-click or Enter ends it.',
   points: 'Points: every click adds a point (to the points picked, else a new set).',
   angle: 'Angle: click one arm’s end, the vertex, the other arm’s end.',
-  wand: 'Wand: click an object — on a mask, the object; on an image, the pixels joined to the one clicked within the tolerance.',
+  wand: 'Wand: click an object. On a mask: the object; on an image: the pixels joined to the one clicked within the tolerance.',
   stamp: 'Stamp: every click puts a copy of the selection picked there (its size, background, group).',
 };
 
@@ -157,10 +159,10 @@ export function ringMask(r: Roi, w: number, h: number, ox: number, oy: number, g
   return { x0, y0, w: ww, h: wh, m };
 }
 
-// The outline (on the pixels' corners) of a set of pixels joined by their sides, from its first pixel (the top row,
-// the leftmost of it — its top edge is on the outer outline): followed with the set on the right; the outer outline
-// only (holes inside are part of it, as ImageJ's wand)
-export function traceOutline(inSet: (x: number, y: number) => boolean, x: number, y: number): Pt[] {
+// The outline (on the pixels' corners) of a set of pixels joined by their sides (eight: or their corners, as ImageJ's
+// particles), from its first pixel (the top row, the leftmost of it — its top edge is on the outer outline): followed
+// with the set on the right; the outer outline only (holes inside are part of it, as ImageJ's wand)
+export function traceOutline(inSet: (x: number, y: number) => boolean, x: number, y: number, eight = false): Pt[] {
   const out: Pt[] = [];
   const start: Pt = [x, y];
   let [vx, vy] = start;
@@ -172,7 +174,11 @@ export function traceOutline(inSet: (x: number, y: number) => boolean, x: number
     const right = pix(rx, ry);
     const left = pix(dy, -dx);
     let [nx, ny] = [dx, dy];
-    if (!right) [nx, ny] = [rx, ry];
+    // (joined by a corner: the pixel ahead on the left first)
+    if (eight) {
+      if (left) [nx, ny] = [dy, -dx];
+      else if (!right) [nx, ny] = [rx, ry];
+    } else if (!right) [nx, ny] = [rx, ry];
     else if (left) [nx, ny] = [dy, -dx];
     if (nx !== dx || ny !== dy || !out.length) out.push([vx, vy]);
     [dx, dy] = [nx, ny];

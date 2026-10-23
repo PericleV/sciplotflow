@@ -2,7 +2,7 @@
 import { peakRunKey } from './engine/peaks.ts';
 import type { Edge } from '@xyflow/react';
 import { REGION_COLORS } from './nodes/regionColors.ts';
-import { DRAWING_DEFAULTS, PYTHON_DEFAULTS, REPORT_DEFAULTS, COLUMNS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, DATAMANIP_DEFAULTS, AVERAGE_DEFAULTS, COMBINE_DEFAULTS, TRANSLATE_DEFAULTS, CURVEMATH_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, IMAGE_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
+import { DRAWING_DEFAULTS, PYTHON_DEFAULTS, REPORT_DEFAULTS, COLUMNS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, DATAMANIP_DEFAULTS, AVERAGE_DEFAULTS, COMBINE_DEFAULTS, TRANSLATE_DEFAULTS, CURVEMATH_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, IMAGE_DEFAULTS, KK_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
 import { INSET_DEFAULTS, AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, COLORBAR_DEFAULTS, CURVE_STYLE_DEFAULTS, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, SIDE_DEFAULTS, TEXT_SPEC_DEFAULTS, type AxesStyle, type CurveStyle, type SideStyle } from './figure/spec.ts';
 import { PROJECT_VERSION, type Project } from './project.ts';
 import type { AnnotationItem, AppNode, ImportSheet, NodeType, Plot1DData, PlotLegend, PlotPage } from './types.ts';
@@ -11,8 +11,14 @@ import { SC_D, SC_LAMBDA, SC_R } from './data/strongCoupling.ts';
 import { JOHNSON_AU } from './data/johnsonGold.ts';
 import { makeGroup } from './engine/subgraph.ts';
 import { FRAME_COLORS } from './nodeColors.ts';
-import { packPixels } from './image/raster.ts';
+import { packPixels, type Raster } from './image/raster.ts';
+import { eisPlotData, eisPlotEdges } from './eisPlots.ts';
 import type { Roi } from './image/roi.ts';
+import { clustersImage, cubesImage, shapesImage, textureImage, type TestImage } from './image/testImages.ts';
+import { findLike, fitBox, MATCH_DEFAULTS } from './image/match.ts';
+import { applySteps, newStep, type ImgStep } from './image/steps.ts';
+import { findParticles, PARTICLE_DEFAULTS, SHAPE_COLORS, shapeFeatures, shapeName, tracedPerimeter } from './image/particles.ts';
+import { CLASS_COLORS, trainingExamples } from './image/classify.ts';
 
 type Builder = { nodes: AppNode[]; edges: Edge[] };
 const builder = (): Builder => ({ nodes: [], edges: [] });
@@ -1594,14 +1600,160 @@ function eisRows(): string[] {
   }
   return rows;
 }
+// A reflectance as measured at normal incidence: a solid of one Lorentz oscillator (E₀ = 3 eV, γ = 0.3 eV, strength 2,
+// ε∞ = 1), from 0.5 to 12 eV; its n and k are known, so those Kramers–Kronig gives back can be checked
+export const KK_OSC = { e0: 3, gamma: 0.3, s: 2 };
+export function oscillatorNK(E: number): [number, number] {
+  const { e0, gamma, s } = KK_OSC;
+  const dr = e0 * e0 - E * E;
+  const di = -gamma * E;
+  const den = dr * dr + di * di;
+  const [e1, e2] = [1 + (s * e0 * e0 * dr) / den, (-s * e0 * e0 * di) / den];
+  const m = Math.hypot(e1, e2);
+  return [Math.sqrt((m + e1) / 2), Math.sqrt((m - e1) / 2)];
+}
+// the oscillator's ε₁, ε₂ at E
+export function oscillatorEps(E: number): [number, number] {
+  const [n, k] = oscillatorNK(E);
+  return [n * n - k * k, 2 * n * k];
+}
+// a file of the oscillator from 0.2 to 20 eV: its reflectance (%) and its true n, k; or its ε₂ and its true ε₁
+function oscillatorRows(what: 'reflectance' | 'epsilon'): string[] {
+  const rows = [what === 'reflectance' ? 'Energy (eV);R (%);n (true);k (true)' : 'Energy (eV);ε₂;ε₁ (true)'];
+  for (let k = 0; k <= 396; k++) {
+    const E = 0.2 + 0.05 * k;
+    const [n, kk] = oscillatorNK(E);
+    const [e1, e2] = oscillatorEps(E);
+    if (what === 'reflectance') rows.push(`${E.toFixed(2)};${((100 * ((n - 1) ** 2 + kk * kk)) / ((n + 1) ** 2 + kk * kk)).toFixed(4)};${n.toFixed(5)};${kk.toFixed(5)}`);
+    else rows.push(`${E.toFixed(2)};${e2.toFixed(5)};${e1.toFixed(5)}`);
+  }
+  return rows;
+}
+// An impedance spectrum (R_s = 15 Ω, R_ct = 220 Ω, C_dl = 20 µF; 0.15 % noise), 10 points a decade from 100 kHz to
+// 0.1 Hz; drifted: R_ct grew by 30 % while it was measured (the low frequencies, measured last, see a larger one)
+export function kkCellRows(drifted: boolean): string[] {
+  const r = rng(drifted ? 64 : 63);
+  const rows = ["Freq (Hz);Z' (ohm);-Z'' (ohm)"];
+  for (let i = 0; i <= 60; i++) {
+    const f = 10 ** (5 - i / 10);
+    const w = 2 * Math.PI * f;
+    const Rct = 220 * (drifted ? 1 + (0.3 * i) / 60 : 1);
+    const d = 1 + (w * Rct * 2e-5) ** 2;
+    const [re, im] = [15 + Rct / d, (-w * Rct * Rct * 2e-5) / d];
+    const m = Math.hypot(re, im);
+    rows.push(`${f.toPrecision(6)};${(re + 0.0015 * m * gauss(r)).toFixed(4)};${(-(im + 0.0015 * m * gauss(r))).toFixed(4)}`);
+  }
+  return rows;
+}
+// Lin-KK on two spectra of one cell: as measured, and with the cell changing during the sweep
+function kkImpedanceExample(): Project {
+  const b = builder();
+  const good = add(b, 'import', 'kk-good-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'stable cell', fileName: 'cell_stable.txt', text: kkCellRows(false).join('\n'), textId: 'kk-good' });
+  const bad = add(b, 'import', 'kk-bad-data', 0, 800, { ...IMPORT_DEFAULTS, name: 'drifting cell', fileName: 'cell_drifting.txt', text: kkCellRows(true).join('\n'), textId: 'kk-bad' });
+  const t1 = add(b, 'kk', 'kk-good', 640, 0, { ...KK_DEFAULTS, mode: 'eis' });
+  const t2 = add(b, 'kk', 'kk-bad', 640, 800, { ...KK_DEFAULTS, mode: 'eis' });
+  link(b, good, t1, 'in');
+  link(b, bad, t2, 'in');
+  const p = add(
+    b,
+    'plot1d',
+    'kk-res',
+    1300,
+    300,
+    plot(
+      { label: 'stable cell', style: curve(0, { mode: 'linesymbol', symbol: 'circle', symbolSize: 3 }), cols: { x: 'Frequency (Hz)', y: 'Residual Z′ (%)' }, rows: [{ label: 'drifting cell', style: curve(3, { mode: 'linesymbol', symbol: 'square', symbolSize: 3 }), cols: { x: 'Frequency (Hz)', y: 'Residual Z′ (%)' } }] },
+      { axes: { x: { ...AXES_STYLE_DEFAULTS.x, scale: 'log' }, sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Frequency (Hz)' }), left: side({ title: 'Residual of Z′ (% of |Z|)' }) } }, legend: { x: 4, y: 4, anchor: 'tl' }, page: { name: 'lin_kk_residuals' } },
+    ),
+  );
+  link(b, t1, p, 'dataset');
+  link(b, t2, p, 'series-1');
+  add(b, 'note', 'kk-note', -560, 0, {
+    ...NOTE_DEFAULTS,
+    text: 'Kramers–Kronig, impedance: is a measured spectrum trustworthy?\n\nThe real and imaginary parts of the impedance of a stable, linear, causal system are tied together (Kramers–Kronig). The Lin-KK test checks that without knowing the circuit: it fits the spectrum with many RC elements spread over the frequencies measured, then looks at what is left (the residuals, in % of |Z|).\n\nAbove: a cell measured as it should be (0.15 % noise). Its residuals stay within the green band (±1 %): the data obey Kramers–Kronig, an equivalent circuit can be fitted to them.\n\nBelow: the same cell, but its charge-transfer resistance grew by 30 % during the sweep (the low frequencies, measured last, see a larger one). Its residuals leave the band with a trend: the spectrum is not consistent, and a circuit fitted to it would mislead.\n\nThe Plot puts the residuals of Z′ of both together.',
+  });
+  return project(b, 'Kramers–Kronig (impedance): a stable cell passes, a drifting one fails');
+}
+// n and k from a reflectance alone, against the true ones
+function kkOpticalExample(): Project {
+  const b = builder();
+  const rf = add(b, 'import', 'kk-refl', 0, 0, { ...IMPORT_DEFAULTS, name: 'Reflectance', fileName: 'reflectance.txt', text: oscillatorRows('reflectance').join('\n'), textId: 'kk-refl' });
+  const opt = add(b, 'kk', 'kk-optical', 640, 0, { ...KK_DEFAULTS, mode: 'optical', a: 'R (%)', low: 'constant', high: 'power', power: 4 });
+  link(b, rf, opt, 'in');
+  const p = add(
+    b,
+    'plot1d',
+    'kk-nk',
+    1300,
+    0,
+    plot(
+      {
+        label: 'n from R (KK)',
+        style: lineK(3, { lineWidth: 1.6 }),
+        cols: { x: 'Energy (eV)', y: 'n' },
+        rows: [
+          { label: 'k from R (KK)', style: lineK(0, { lineWidth: 1.6 }), cols: { x: 'Energy (eV)', y: 'k' } },
+          { label: 'n (true)', style: lineK(3, { dash: 'dash', lineWidth: 0.9 }), cols: { x: 'Energy (eV)', y: 'n (true)' } },
+          { label: 'k (true)', style: lineK(0, { dash: 'dash', lineWidth: 0.9 }), cols: { x: 'Energy (eV)', y: 'k (true)' } },
+        ],
+      },
+      { axes: { sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Energy (eV)' }), left: side({ title: 'n, k' }) } }, legend: { x: 96, y: 4, anchor: 'tr' }, page: { name: 'n_k' } },
+    ),
+  );
+  link(b, opt, p, 'dataset');
+  link(b, rf, p, 'series-2');
+  link(b, rf, p, 'series-3');
+  add(b, 'note', 'kk-note', -560, 0, {
+    ...NOTE_DEFAULTS,
+    text: 'Kramers–Kronig, optical: n and k from the reflectance alone.\n\nA reflectance measured at normal incidence (in %; X in eV, as written in its column) gives only |r|. Kramers–Kronig gives the phase of r from it, and with |r| and its phase, the complex index n + ik (and ε₁, ε₂, α).\n\nThe integral runs over all energies, so R is carried past the range measured: constant below 0.2 eV, falling as E⁻⁴ above 20 eV. These tails are assumptions: on the graph of the node (Graph of: R and its tails) they are dashed, past the dashed lines where the data end.\n\nThe file was made from a known solid (one Lorentz oscillator at 3 eV), so its true n and k are in it too: the Plot shows the n and k found (solid) over the true ones (dashed). They agree within a few hundredths; nearest the ends, where the tails matter most, the least.',
+  });
+  return project(b, 'Kramers–Kronig (optical): n and k from a reflectance');
+}
+// ε₁ from ε₂, against the true one
+function kkGeneralExample(): Project {
+  const b = builder();
+  const ef = add(b, 'import', 'kk-eps', 0, 0, { ...IMPORT_DEFAULTS, name: 'ε₂', fileName: 'epsilon2.txt', text: oscillatorRows('epsilon').join('\n'), textId: 'kk-eps' });
+  const g = add(b, 'kk', 'kk-general', 640, 0, { ...KK_DEFAULTS, mode: 'general', a: 'ε₂', direction: 'im2re', offset: 1, low: 'zero', high: 'power', power: 3 });
+  link(b, ef, g, 'in');
+  const p = add(
+    b,
+    'plot1d',
+    'kk-e1',
+    1300,
+    0,
+    plot(
+      {
+        label: 'ε₁ from ε₂ (KK)',
+        style: lineK(3, { lineWidth: 1.6 }),
+        cols: { x: 'Energy (eV)', y: 'Re by KK (from ε₂)' },
+        rows: [
+          { label: 'ε₁ (true)', style: lineK(3, { dash: 'dash', lineWidth: 0.9 }), cols: { x: 'Energy (eV)', y: 'ε₁ (true)' } },
+          { label: 'ε₂ (given)', style: lineK(0, { lineWidth: 1.2 }), cols: { x: 'Energy (eV)', y: 'ε₂' } },
+        ],
+      },
+      { axes: { sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Energy (eV)' }), left: side({ title: 'ε₁, ε₂' }) } }, legend: { x: 96, y: 4, anchor: 'tr' }, page: { name: 'epsilon' } },
+    ),
+  );
+  link(b, g, p, 'dataset');
+  link(b, ef, p, 'series-1');
+  link(b, ef, p, 'series-2');
+  add(b, 'note', 'kk-note', -560, 0, {
+    ...NOTE_DEFAULTS,
+    text: 'Kramers–Kronig, general: the real part of a response from its imaginary part.\n\nε₂ (the absorption) of a solid is given; Kramers–Kronig gives ε₁ from it: ε₁(E) = ε∞ + (2/π) P∫ E′ ε₂(E′) / (E′² − E²) dE′. Here ε∞ = 1 (Re at ∞ in the node), ε₂ taken as zero below the data and falling as E⁻³ above them (dashed on the node’s graph).\n\nThe same works for χ′ from χ″, or the other way (Use: general, Find: Im from Re).\n\nThe file holds the true ε₁ as well: the Plot shows the ε₁ found (solid) over the true one (dashed).',
+  });
+  return project(b, 'Kramers–Kronig (general): ε₁ from ε₂');
+}
 function eisExample(): Project {
   const b = builder();
   const imp = add(b, 'import', 'eis-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'EIS cell', fileName: 'cell_eis.txt', text: eisRows().join('\n'), textId: 'eis-cell' });
   const fit = add(b, 'eis', 'eis-node', 640, 0, { ...EIS_DEFAULTS, circuit: 'R(RQ)W', excluded: EIS_SPOILED });
   link(b, imp, fit, 'in');
   const cv = add(b, 'canvas', 'eis-canvas', 1300, 0, { ...CANVAS_DEFAULTS, width: 180, height: 75, name: 'eis_nyquist_bode', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 2, hgap: 4 } });
-  link(b, fit, cv, 'figures', 'figure');
-  link(b, fit, cv, 'figures', 'bode');
+  // (Nyquist and Bode: Plots of the node's data and of its smooth fit)
+  for (const [g, pid, y] of [['figure', 'eis-nyquist', 0], ['bode', 'eis-bode', 480]] as const) {
+    add(b, 'plot1d', pid, 1300, 300 + y, eisPlotData(g).data);
+    b.edges.push(...eisPlotEdges(fit, pid, g));
+    link(b, pid, cv, 'figures', 'figure');
+  }
   add(b, 'note', 'eis-note', -560, 0, {
     ...NOTE_DEFAULTS,
     text: 'An impedance spectrum (simulated: R₀ = 15 Ω, R_ct = 220 Ω, a CPE Y0 = 3·10⁻⁵ S·sⁿ, n = 0.87, a Warburg Y0 = 4·10⁻³ S·s^½; 0.4 % noise) with its columns named as a potentiostat writes them — Freq / Hz, Z\' / ohm, -Z\'\' / ohm and a Time column.\n\nEquivalent circuit: the columns chosen by their role (guessed from the names, shown in Columns), the circuit R(RQ)W (Boukamp’s code, its schematic drawn), the starts guessed from the data, the fit on Z′ and Z″ at once; two spoiled points (at 10 kHz and 10 Hz) left out with a click — grey crosses on the graph.',
@@ -2114,13 +2266,15 @@ function microarrayExample(): Project {
     }
   // a line through row A (3 px wide): the red and green profiles across its spots
   rois.push({ id: 'pr-A', name: 'row A', kind: 'line', pts: [[10, ARRAY.y0], [ARRAY.w - 10, ARRAY.y0]], width: 3, color: '#ffffff' });
+  // the global background: a rectangle on the empty band under the spots (every spot also against it)
+  rois.push({ id: 'bg-global', name: 'global bg', kind: 'rect', box: [ARRAY.w / 2, ARRAY.h - 12, ARRAY.w - 20, 10], role: 'background', color: '#64d2ff' });
   const im = add(b, 'image', 'ma-image', 0, 0, {
     ...IMAGE_DEFAULTS,
     name: 'array_scan.tif',
     pixels: arrayImage(),
     pixelsId: 'example-microarray',
     rois,
-    measure: { channels: 'each', ratio: [0, 1], keys: ['area', 'mean', 'median', 'sd', 'intden'] },
+    measure: { channels: 'each', ratio: [0, 1], keys: ['area', 'mean', 'median', 'sd', 'intden'], globalBg: 'bg-global' },
     figure: { width: 100, show: 'original', rois: 'labels' },
   });
   const wb = add(b, 'book', 'ma-book', 640, 0, { ...WORKBOOK_DEFAULTS, name: 'spots', sheets: [], into: ['spots'] });
@@ -2145,9 +2299,185 @@ function microarrayExample(): Project {
   link(b, im, pr, 'dataset', 'workbook');
   add(b, 'note', 'ma-note', -560, 0, {
     ...NOTE_DEFAULTS,
-    text: 'A two-colour microarray scan (red: the sample, green: the reference), 3 replicates (A, B, C) of 6 genes. Every spot is an ellipse stamped on it, its background a ring around it (2 px away, 4 px wide, the other spots left out).\n\nMeasured on each channel: the net signal F − B (the background median taken off), the SNR, and the ratio R / G with its log2 — about −2.5 … +2.5 from gene 1 to gene 6, the same in the three replicates. The Summary sheet gives each replicate and all of them; the Plot, the red and green profiles along row A.',
+    text: 'A two-colour microarray scan (red: the sample, green: the reference), 3 replicates (A, B, C) of 6 genes; the background brighter to the right, as scans often are.\n\nEvery spot is measured between two circles: the inner one is the spot (its signal F, an ellipse stamped on it); the outer one, 2 px further out and 4 px wide, is a ring of its own background B, just next to it (the other spots left out of it). Analyze ▸ Selections: rings shows both circles of every spot; pick a spot to change its ring (gap, width). A global background (the rectangle under the spots, picked in Measure ▸ Global bg) is measured too.\n\nThe Spots sheet, on each channel: F, the local B (mean, median, SD), the net signal F − B (the median of B taken off), the SNR = (F − B) / SD(B), and, against the global background, B global and Net global; the ratio R / G with its log2 (about −2.5 … +2.5 from gene 1 to gene 6, the same in the three replicates). The local ring follows the uneven background, the global one does not: compare Net and Net global along a row. The Summary sheet gives each replicate and all of them; the Plot, the red and green profiles along row A.',
   });
   return project(b, 'Microarray spots: signal over a ring of background, red / green ratio');
+}
+
+// ---- Image analysis: particles (the test images of testImages.ts: what is in them is known) ----
+// the particles of an image through its steps, found as the editor finds them (Find particles); by shape: each put in
+// the group of its shape (Group by shape)
+function foundParticles(t: TestImage, steps: ImgStep[], rois: Roi[], separate: boolean, byShape: boolean, minSize = 10): Roi[] {
+  const r: Raster = { w: t.w, h: t.h, ch: [Float32Array.from(t.px)], kind: 'gray', lo: 0, hi: 255 };
+  const m = applySteps(r, steps, steps.length, undefined, 1, { train: trainingExamples(rois, 0, 0) }).r;
+  return findParticles(m.ch[0], t.w, t.h, { ...PARTICLE_DEFAULTS, separate, minSize }).outlines.map((o, i): Roi => {
+    const g = byShape ? shapeName(shapeFeatures({ id: '', name: '', kind: 'traced' }, o, tracedPerimeter(o))) : 'particles';
+    return { id: `p${i + 1}`, name: `P${i + 1}`, kind: 'traced', pts: o, group: g, ...(byShape ? { color: SHAPE_COLORS[g] } : {}), auto: true };
+  });
+}
+const otsuStep = (light: boolean): ImgStep => ({ ...newStep('threshold', 'st-otsu'), p: { ...newStep('threshold', 'st-otsu').p, method: 'otsu', light } });
+function particlesExample(): Project {
+  const b = builder();
+  const shapes = shapesImage();
+  const steps = [otsuStep(true), newStep('fillholes', 'st-fill')];
+  const im = add(b, 'image', 'pa-shapes', 0, 0, {
+    ...IMAGE_DEFAULTS,
+    name: 'particles_shapes.png',
+    pixels: packPixels(shapes.w, shapes.h, 1, 8, shapes.px),
+    pixelsId: 'example-particles-shapes',
+    steps,
+    cal: { size: 0.2, unit: 'µm' },
+    rois: foundParticles(shapes, steps, [], true, true),
+    particles: { separate: true },
+    measure: { keys: ['area', 'perimeter', 'centroid', 'feret', 'ellipse', 'shape', 'eqdiam', 'nnd'] },
+    figure: { width: 110, rois: 'outlines' },
+  });
+  const wb = add(b, 'book', 'pa-book', 700, 0, { ...WORKBOOK_DEFAULTS, name: 'particles', sheets: [], into: ['particles'] });
+  link(b, im, wb, 'in-0', 'workbook');
+  const pl = add(
+    b,
+    'plot1d',
+    'pa-plot',
+    700,
+    700,
+    plot(
+      { label: 'particles', style: curve(0, { mode: 'scatter', symbol: 'circle', symbolSize: 4 }), cols: { x: 'Area (µm²)', y: 'Circ.' }, sheet: 'Selections' },
+      { axes: { sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Area (µm²)' }), left: side({ title: 'Circularity' }) } }, page: { name: 'circularity_area' } },
+    ),
+  );
+  link(b, im, pl, 'dataset', 'workbook');
+  // round particles in clusters: cut apart
+  const cl = clustersImage();
+  const cs = [otsuStep(false), newStep('fillholes', 'st-fill')];
+  const im2 = add(b, 'image', 'pa-clusters', 0, 900, {
+    ...IMAGE_DEFAULTS,
+    name: 'particles_clusters.png',
+    pixels: packPixels(cl.w, cl.h, 1, 8, cl.px),
+    pixelsId: 'example-particles-clusters',
+    steps: cs,
+    cal: { size: 0.2, unit: 'µm' },
+    rois: foundParticles(cl, cs, [], true, false),
+    particles: { separate: true },
+    measure: { keys: ['area', 'feret', 'eqdiam', 'shape', 'nnd'] },
+    figure: { width: 110, rois: 'outlines' },
+  });
+  const wb2 = add(b, 'book', 'pa-book2', 700, 1300, { ...WORKBOOK_DEFAULTS, name: 'clusters', sheets: [], into: ['clusters'] });
+  link(b, im2, wb2, 'in-0', 'workbook');
+  add(b, 'note', 'pa-note', -560, 0, {
+    text: 'Particles, as ImageJ’s Analyze Particles: a threshold (Otsu) and Fill holes make a mask; Find particles (in the editor, Particles) turns its objects into selections (touching ones cut apart along their necks) and Group by shape names each: circle, ellipse, triangle, square, rectangle, irregular.\n\nMeasured: area, perimeter, Feret (the length, its angle, the least width), the fitted ellipse, circularity, aspect ratio, roundness, solidity, corners, the equivalent diameter, the nearest neighbour (centre to centre, edge to edge) and Clark–Evans R in the Summary. Below: round particles in clusters of 2 to 4, all 42 found.',
+  });
+  return project(b, 'Particles: clusters cut apart, shapes named, their sizes');
+}
+function classifierExample(): Project {
+  const b = builder();
+  const tx = textureImage();
+  // the examples: lines across four particles, the background in two rectangles and a line
+  const line = (id: string, x: number, y: number, cls: string): Roi => ({ id, name: id, kind: 'line', pts: [[x - 6, y], [x + 6, y]], width: 3, train: cls, color: CLASS_COLORS[cls === 'object' ? 0 : 1] });
+  const examples: Roi[] = [
+    ...tx.truth.slice(0, 4).map((q, k) => line(`E${k + 1}`, q.cx, q.cy, 'object')),
+    { id: 'E5', name: 'E5', kind: 'rect', box: [32.5, 10, 55, 10], train: 'background', color: CLASS_COLORS[1] },
+    { id: 'E6', name: 'E6', kind: 'rect', box: [435, 340, 70, 20], train: 'background', color: CLASS_COLORS[1] },
+    { ...line('E7', 100, 90, 'background'), pts: [[80, 90], [120, 90]] },
+  ];
+  const cls = { ...newStep('classify', 'st-forest'), p: { ...newStep('classify', 'st-forest').p, classes: 'object,background', target: 'object' } };
+  const steps = [cls, newStep('fillholes', 'st-fill')];
+  const im = add(b, 'image', 'tc-image', 0, 0, {
+    ...IMAGE_DEFAULTS,
+    name: 'particles_texture.png',
+    pixels: packPixels(tx.w, tx.h, 1, 8, tx.px),
+    pixelsId: 'example-particles-texture',
+    steps,
+    cal: { size: 0.5, unit: 'µm' },
+    rois: [...examples, ...foundParticles(tx, steps, examples, false, false, 60)],
+    measure: { keys: ['area', 'feret', 'eqdiam', 'shape'] },
+    figure: { width: 100, show: 'overlay', rois: 'outlines' },
+    particles: { minSize: 60 },
+  });
+  const wb = add(b, 'book', 'tc-book', 680, 0, { ...WORKBOOK_DEFAULTS, name: 'textured particles', sheets: [], into: ['textured particles'] });
+  link(b, im, wb, 'in-0', 'workbook');
+  const pl = add(
+    b,
+    'plot1d',
+    'tc-plot',
+    680,
+    700,
+    plot(
+      { label: 'particles', style: curve(2, { mode: 'scatter', symbol: 'square', symbolSize: 4 }), cols: { x: 'Feret (µm)', y: 'MinFeret (µm)' }, sheet: 'Selections' },
+      { axes: { sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Feret, the length (µm)' }), left: side({ title: 'MinFeret, the width (µm)' }) } }, page: { name: 'length_width' } },
+    ),
+  );
+  link(b, im, pl, 'dataset', 'workbook');
+  add(b, 'note', 'tc-note', -560, 0, {
+    text: 'Grainy particles as bright on average as the ground: a threshold cannot find them (try Otsu instead of the classifier: about a hundred pieces). The trainable classifier (as ImageJ’s Trainable Weka Segmentation) learns from examples: four short lines on particles (object, red) and three on the ground (background, blue). A random forest on the pixels’ features at several scales (smoothed, gradient, Hessian, difference of Gaussians, local variance) finds all 24.\n\nIn the editor: draw a selection, pick it, + picked on its class in the step; the mask follows. Then Particles ▸ Find particles.',
+  });
+  return project(b, 'Trainable classifier: textured particles a threshold misses');
+}
+
+// Nanocubes touching side to side: found like one of them (its rectangle the model, the edges fitted), and the same
+// image cut along the dark lines between them
+function nanocubesExample(): Project {
+  const b = builder();
+  const t = cubesImage();
+  const c = Float32Array.from(t.px);
+  const one = t.truth.find((q) => q.cluster === undefined)!;
+  // (the model: a rectangle drawn around one cube, turned as it is)
+  const model: Roi = { id: 'model', name: 'model', kind: 'rect', box: [one.cx, one.cy, one.side!, one.side!], angle: -one.angle!, color: '#30d158' };
+  const found = findLike(c, t.w, t.h, one.cx, one.cy, 0.5 * Math.hypot(one.side!, one.side!), { ...MATCH_DEFAULTS, sizes: 0.2 });
+  const cubes: Roi[] = found
+    .filter((m) => Math.hypot(m.x - one.cx, m.y - one.cy) > 0.5 * one.side!)
+    .map((m, i) => {
+      const turn = model.angle! + m.angle;
+      const fb = fitBox(c, t.w, t.h, m.x, m.y, turn, one.side! * m.scale, one.side! * m.scale);
+      return { id: `p${i + 1}`, name: `P${i + 1}`, kind: 'rect', box: [fb.x, fb.y, fb.w, fb.h], angle: turn, group: 'cubes', auto: true };
+    });
+  const pixels = packPixels(t.w, t.h, 1, 8, t.px);
+  const im = add(b, 'image', 'nc-match', 0, 0, {
+    ...IMAGE_DEFAULTS,
+    name: 'nanocubes.png',
+    pixels,
+    pixelsId: 'example-nanocubes',
+    steps: [],
+    cal: { size: 5, unit: 'nm' },
+    rois: [model, ...cubes],
+    measure: { keys: ['area', 'box', 'feret', 'nnd'] },
+    particles: { group: 'cubes' },
+    match: { symmetry: 90, sizes: 0.2, min: 0.5, fit: true },
+    figure: { width: 100, rois: 'outlines' },
+  });
+  const wb = add(b, 'book', 'nc-book', 680, 0, { ...WORKBOOK_DEFAULTS, name: 'nanocubes', sheets: [], into: ['nanocubes'] });
+  link(b, im, wb, 'in-0', 'workbook');
+  const pl = add(
+    b,
+    'plot1d',
+    'nc-plot',
+    680,
+    700,
+    plot(
+      { label: 'cubes', style: curve(1, { mode: 'scatter', symbol: 'square', symbolSize: 4 }), cols: { x: 'Orientation (°)', y: 'Box length (nm)' }, sheet: 'Selections' },
+      { axes: { x: { ...AXES_STYLE_DEFAULTS.x, min: 0, max: 90 }, sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Orientation (°)' }), left: side({ title: 'Side (nm)' }) } }, page: { name: 'side_orientation' } },
+    ),
+  );
+  link(b, im, pl, 'dataset', 'workbook');
+  // the same image: a threshold, the mask cut along the dark lines, its particles
+  const steps = [otsuStep(false), newStep('splitlines', 'st-split')];
+  const im2 = add(b, 'image', 'nc-split', 0, 900, {
+    ...IMAGE_DEFAULTS,
+    name: 'nanocubes.png',
+    pixels,
+    pixelsId: 'example-nanocubes-split',
+    steps,
+    cal: { size: 5, unit: 'nm' },
+    rois: foundParticles(t, steps, [], false, false, 40),
+    measure: { keys: ['area', 'box', 'shape'] },
+    particles: { minSize: 40 },
+    figure: { width: 100, show: 'overlay', rois: 'outlines' },
+  });
+  const wb2 = add(b, 'book', 'nc-book2', 680, 1300, { ...WORKBOOK_DEFAULTS, name: 'cut along the lines', sheets: [], into: ['cut along the lines'] });
+  link(b, im2, wb2, 'in-0', 'workbook');
+  add(b, 'note', 'nc-note', -560, 0, {
+    text: 'Nanocubes that touch side to side: a threshold makes one blob of every cluster. Two ways to tell them apart.\n\n1. Find like this (top): a rectangle drawn around one cube (green, the model), picked; Particles ▸ Find like this finds every cube like it, turned any way (square: 0 to 90°), ± 20 % in size, and fits each one’s edges. Each cube is a turned rectangle: its side (Box length), its orientation; in the Summary, the mean orientation and the alignment.\n\n2. Split along dark lines (below): Otsu, then the mask cut where the thin dark lines between the cubes run; Find particles.',
+  });
+  return project(b, 'Nanocubes: found like one, their side and orientation');
 }
 
 // ---- Phase digitizer: problems as set in a materials course (the images drawn from simplified curves, so the answers
@@ -2610,9 +2940,33 @@ const ABOUT: Record<string, About> = {
       'Add point, then click elsewhere in α + L; the Workbook gets a row per point (Ni and Cu of both phases) and a sheet per boundary.',
     ],
   },
+  'Nanocubes: found like one, their side and orientation': {
+    what: 'Nanocubes touching side to side, as an electron microscope shows them: found like one of them (template matching, any turn, the edges fitted) or by cutting the mask along the dark lines between them; each cube’s side, orientation and the alignment of all of them in a Workbook and a Plot.',
+    try: ['Analyze (top): pick the green model, change Similarity or Sizes in Particles, then Find like this.', 'Draw a rectangle around another cube, turn it with its handle to fit, pick it, Find like this.', 'Analyze (below): change the Line width of Split along dark lines, then Find particles.'],
+  },
+  'Particles: clusters cut apart, shapes named, their sizes': {
+    what: 'Two images in the Image analysis node: shapes of every kind and round particles in clusters; a threshold and Fill holes make the mask, its particles are found as selections (touching ones cut apart) and named by their shape; area, perimeter, Feret, ellipse, circularity, corners, nearest neighbours in a Workbook; circularity against area in a Plot.',
+    try: ['Analyze ▸ Particles: change Clusters (cut apart, its tolerance) or the size range, then Find particles.', 'Pick a particle in the list and give it a group; give a few of each shape one, then Group like the examples.', 'Look at the Summary sheet: every shape’s count, mean size, and Clark–Evans R.'],
+  },
+  'Trainable classifier: textured particles a threshold misses': {
+    what: 'Grainy particles as bright as their ground: the trainable classifier (a random forest, as ImageJ’s Trainable Weka Segmentation) learns them from a few lines drawn on particles and on the ground, then its mask gives the 24 particles, their length and width.',
+    try: ['Analyze: switch the classifier off and put a Threshold instead: the particles are lost.', 'Draw another line on a particle, pick it, + picked on object: the mask follows.', 'Particles ▸ Find particles after a change of the examples.'],
+  },
+  'Kramers–Kronig (impedance): a stable cell passes, a drifting one fails': {
+    what: 'The Lin-KK test of the Kramers–Kronig node on two spectra of one cell: as measured (the residuals within ±1 %) and with the cell changing during the sweep (the residuals leave the band with a trend).',
+    try: ['Kramers–Kronig (each): Graph of residuals, then Nyquist.', 'Change the band (±%) in its options.', 'Connect your own spectrum (frequency, Z′, Z″) to the node.'],
+  },
+  'Kramers–Kronig (optical): n and k from a reflectance': {
+    what: 'n and k found from a reflectance alone by the Kramers–Kronig node, drawn over the true ones of the solid the file was made from; the tails assumed beyond the data drawn dashed on the node.',
+    try: ['Kramers–Kronig: Graph of R and its tails.', 'Change Above the data (the power) and see n and k move near the ends.', 'Try Below the data: Hagen–Rubens (for a metal).'],
+  },
+  'Kramers–Kronig (general): ε₁ from ε₂': {
+    what: 'The real part of a response from its imaginary part: ε₁ found from ε₂ with ε∞ = 1, drawn over the true ε₁.',
+    try: ['Change Re at ∞ and see ε₁ shift.', 'Find: Im from Re, on the true ε₁ (connect it as the part to transform).', 'Change Above the data (the power): 3 for an oscillator.'],
+  },
   'Microarray spots: signal over a ring of background, red / green ratio': {
     what: 'The scan of a two-colour microarray in the Image analysis node: every spot an ellipse with a ring of background around it, measured on the red and the green channel; the net signals, their ratio and log2 ratio in a Workbook (Selections, Spots, Summary by replicate).',
-    try: ['Edit image: pick a spot, change its ring (gap, width) or its background (a region drawn, the global one).', 'Stamp: pick a spot, then click elsewhere — a copy centred on the bright pixels there.', 'Look at the Spots sheet: log2 ratio R/G about −2.5 … +2.5 from gene 1 to gene 6.'],
+    try: ['Analyze: pick a spot, change its ring (gap, width) or its background (a region drawn, the global one).', 'Stamp: pick a spot, then click elsewhere: a copy centred on the bright pixels there.', 'Look at the Spots sheet: log2 ratio R/G about −2.5 … +2.5 from gene 1 to gene 6.'],
   },
   'Digitizer: values read off the image of a graph': {
     what: 'The image of a graph calibrated on its axes and its curve’s points placed (as clicks on whole pixels): the values read lie on the curve the image was drawn from.',
@@ -2822,25 +3176,31 @@ const LIST: { group: string; name: string; desc: string; make: () => Project }[]
   { group: 'Data preparation', name: 'Cleaning a sensor log: order, repeats, gaps, spikes', desc: 'A logger file as it comes: Columns leaves the battery out, Filter & sort rows puts the rows in time order and merges the times written twice, Clean data fills the missing temperatures and replaces the spikes (moving median), Data manipulation masks two humidity readings by hand; the raw and the cleaned data in one Plot, the changes in a Workbook.', make: loggerExample },
   { group: 'Data preparation', name: 'Replicate scans: mean ± SD on a common X', desc: 'Three scans on different wavelength grids: Average curves gives their mean ± SD on a common grid (a band in the Plot); Combine columns puts every point of the three scans in one table, in the order of the wavelength.', make: scansExample },
   { group: 'Data preparation', name: 'Difference spectrum: sample minus reference', desc: 'A sample measured 2 nm off: Translate moves it back, Curve math gives sample − reference and sample / reference on a common grid; the difference on its own axis shows the band the sample has more.', make: differenceExample },
-  { group: 'Data preparation', name: 'Microarray spots: signal over a ring of background, red / green ratio', desc: 'Image analysis of a two-colour microarray scan: spots stamped as ellipses, a ring of background around each, measured on the red and green channels — net signal, SNR, ratio and log2 ratio, a summary by replicate — in a Workbook.', make: microarrayExample },
+  { group: 'Images', name: 'Nanocubes: found like one, their side and orientation', desc: 'Image analysis of nanocubes touching side to side: Find like this (template matching at any turn, the edges fitted) and Split along dark lines; each cube’s side and orientation, the alignment, in a Workbook and a Plot.', make: nanocubesExample },
+  { group: 'Images', name: 'Particles: clusters cut apart, shapes named, their sizes', desc: 'Image analysis: the particles of a mask as selections (touching ones cut apart), named by their shape (circle, triangle, square …), measured (area, perimeter, Feret, ellipse, circularity, corners, nearest neighbours), in a Workbook and a Plot.', make: particlesExample },
+  { group: 'Images', name: 'Trainable classifier: textured particles a threshold misses', desc: 'Image analysis: a random forest taught by a few lines drawn on particles and on the ground (as ImageJ’s Trainable Weka Segmentation) finds grainy particles a threshold cannot; their length and width in a Plot.', make: classifierExample },
+  { group: 'Images', name: 'Microarray spots: signal over a ring of background, red / green ratio', desc: 'Image analysis of a two-colour microarray scan: spots stamped as ellipses, a ring of background around each, measured on the red and green channels (net signal, SNR, ratio and log2 ratio, a summary by replicate) in a Workbook.', make: microarrayExample },
   { group: 'Data preparation', name: 'Digitizer: values read off the image of a graph', desc: 'The image of a published graph, calibrated on its axes, the points of its curve placed; the values read compared with the curve it was drawn from.', make: digitizerExample },
-  { group: 'Data preparation', name: 'Cu-Ni phase diagram: Lever rule & dual components (wt.% Ni and wt.% Cu)', desc: 'The image of a Cu-Ni phase diagram calibrated on its axes, the liquidus and solidus clicked as splines, the regions L, α + L, α they close, and the lever rule at a point: the compositions and amounts of the liquid and the solid.', make: phaseDigitizerExample },
-  { group: 'Data preparation', name: 'Pb-Sn eutectic: phases, amounts and microconstituents of a 40 wt% Sn alloy', desc: 'A Pb–Sn diagram read off its image: the lever rule at 150 °C (the arms coloured), the alloy cooled from 300 °C with the primary α and the eutectic, the compositions in wt% and at%.', make: pbSnExample },
-  { group: 'Data preparation', name: 'Fe-Fe3C: proeutectoid ferrite and pearlite in 0.40 and 1.20 wt% C steels', desc: 'The steel corner of the Fe–Fe₃C diagram: two steels cooled through the eutectoid — the proeutectoid ferrite or cementite and the pearlite, the ferrite and cementite in all.', make: steelExample },
-  { group: 'Data preparation', name: 'CO2 pressure–temperature diagram: the phase at given conditions, compression and sublimation', desc: 'A one-component P–T diagram: the phase at given conditions, a compression at constant temperature, the sublimation of dry ice.', make: co2Example },
-  { group: 'Spectroscopy & peaks', name: 'Overlapping peaks: peak deconvolution', desc: 'A spectrum with a peak hidden in the side of another: Peak analyzer fits a baseline and three peaks (each its shape) together, separating them; the data, every peak and their sum (the envelope) go to a Plot, the table of the peaks (center, height, FWHM, area %) to a Workbook.', make: overlapExample },
-  { group: 'Spectroscopy & peaks', name: 'XPS: Shirley background and a spin–orbit doublet', desc: 'A Ni 2p spectrum: Peak analyzer with the Shirley background and one exact Voigt line made a doublet (2×: 17.3 eV, half the area, the same widths — linked in the fit); the lines filled down to the background.', make: xpsExample },
-  { group: 'Spectroscopy & peaks', name: 'Raman on a fluorescence background: baselines from the data', desc: 'One list of baselines in three nodes, found from the data: airPLS under four fitted lines (Peak analyzer), asymmetric least squares under the integrated ranges (Integrate), SNIP under the measured widths (Peak width).', make: ramanBaselineExample },
-  { group: 'Spectroscopy & peaks', name: 'Strong coupling: fit of every run, then the anticrossing', desc: 'R(λ) of a microcavity with an exciton for 23 cavity thicknesses (computed by transfer matrices, one table): a Fit of every run (two Lorentzian dips), then a Fit of both polariton branches together (coupled-oscillator dispersion) giving the splitting Ω; the fits drawn by Plots like any data.', make: strongCouplingExample },
+  { group: 'Phase diagrams', name: 'Cu-Ni phase diagram: Lever rule & dual components (wt.% Ni and wt.% Cu)', desc: 'The image of a Cu-Ni phase diagram calibrated on its axes, the liquidus and solidus clicked as splines, the regions L, α + L, α they close, and the lever rule at a point: the compositions and amounts of the liquid and the solid.', make: phaseDigitizerExample },
+  { group: 'Phase diagrams', name: 'Pb-Sn eutectic: phases, amounts and microconstituents of a 40 wt% Sn alloy', desc: 'A Pb–Sn diagram read off its image: the lever rule at 150 °C (the arms coloured), the alloy cooled from 300 °C with the primary α and the eutectic, the compositions in wt% and at%.', make: pbSnExample },
+  { group: 'Phase diagrams', name: 'Fe-Fe3C: proeutectoid ferrite and pearlite in 0.40 and 1.20 wt% C steels', desc: 'The steel corner of the Fe–Fe₃C diagram: two steels cooled through the eutectoid — the proeutectoid ferrite or cementite and the pearlite, the ferrite and cementite in all.', make: steelExample },
+  { group: 'Phase diagrams', name: 'CO2 pressure–temperature diagram: the phase at given conditions, compression and sublimation', desc: 'A one-component P–T diagram: the phase at given conditions, a compression at constant temperature, the sublimation of dry ice.', make: co2Example },
+  { group: 'Spectroscopy & optics', name: 'Overlapping peaks: peak deconvolution', desc: 'A spectrum with a peak hidden in the side of another: Peak analyzer fits a baseline and three peaks (each its shape) together, separating them; the data, every peak and their sum (the envelope) go to a Plot, the table of the peaks (center, height, FWHM, area %) to a Workbook.', make: overlapExample },
+  { group: 'Spectroscopy & optics', name: 'XPS: Shirley background and a spin–orbit doublet', desc: 'A Ni 2p spectrum: Peak analyzer with the Shirley background and one exact Voigt line made a doublet (2×: 17.3 eV, half the area, the same widths — linked in the fit); the lines filled down to the background.', make: xpsExample },
+  { group: 'Spectroscopy & optics', name: 'Raman on a fluorescence background: baselines from the data', desc: 'One list of baselines in three nodes, found from the data: airPLS under four fitted lines (Peak analyzer), asymmetric least squares under the integrated ranges (Integrate), SNIP under the measured widths (Peak width).', make: ramanBaselineExample },
+  { group: 'Spectroscopy & optics', name: 'Strong coupling: fit of every run, then the anticrossing', desc: 'R(λ) of a microcavity with an exciton for 23 cavity thicknesses (computed by transfer matrices, one table): a Fit of every run (two Lorentzian dips), then a Fit of both polariton branches together (coupled-oscillator dispersion) giving the splitting Ω; the fits drawn by Plots like any data.', make: strongCouplingExample },
+  { group: 'Spectroscopy & optics', name: 'Kramers–Kronig (optical): n and k from a reflectance', desc: 'n and k from a reflectance alone, over the true ones; the tails assumed beyond the data drawn dashed.', make: kkOpticalExample },
+  { group: 'Spectroscopy & optics', name: 'Kramers–Kronig (general): ε₁ from ε₂', desc: 'The real part of a response from its imaginary part (ε₁ from ε₂ with ε∞), over the true ε₁.', make: kkGeneralExample },
   { group: 'Fitting', name: 'Calibration: unknowns, LOD and LOQ', desc: 'A weighted straight-line calibration; Use the fit: two unknowns read backwards with their 95 % intervals (3 replicates each), the limits of detection and quantification, the sensitivity with its error — to a Workbook; the line with its prediction band.', make: calibrationExample },
   { group: 'Fitting', name: 'Kinetics and lifetimes: rate equations, reconvolution', desc: 'Fit ▸ Equations: A → B → C fitted from the intermediate B (dA/dt, dB/dt solved numerically); a fluorescence decay fitted through the instrument response (reconvolution with the IRF, its shift and background), on a log axis.', make: kineticsExample },
-  { group: 'Fitting', name: 'Equivalent circuit (EIS): R(RQ)W fitted, two points left out', desc: 'An impedance spectrum fitted with R₀ + R_ct ∥ CPE + Warburg (Boukamp’s code), the columns found by their roles, two spoiled points left out with a click; Nyquist and Bode.', make: eisExample },
-  { group: 'Fitting', name: 'Impedance: an equivalent circuit fitted, a Nyquist plot', desc: 'Fit ▸ Complex: R0 + R1 ∥ CPE written with functions of your own, fitted to Re Z and −Im Z at once; the Nyquist plot with equal scales (Aspect = 1).', make: impedanceExample },
+  { group: 'Electrochemistry & impedance', name: 'Equivalent circuit (EIS): R(RQ)W fitted, two points left out', desc: 'An impedance spectrum fitted with R₀ + R_ct ∥ CPE + Warburg (Boukamp’s code), the columns found by their roles, two spoiled points left out with a click; Nyquist and Bode.', make: eisExample },
+  { group: 'Electrochemistry & impedance', name: 'Impedance: an equivalent circuit fitted, a Nyquist plot', desc: 'Fit ▸ Complex: R0 + R1 ∥ CPE written with functions of your own, fitted to Re Z and −Im Z at once; the Nyquist plot with equal scales (Aspect = 1).', make: impedanceExample },
+  { group: 'Electrochemistry & impedance', name: 'Kramers–Kronig (impedance): a stable cell passes, a drifting one fails', desc: 'The Lin-KK test on two spectra of one cell: as measured, the residuals within ±1 %; with the cell changing during the sweep, out of the band with a trend.', make: kkImpedanceExample },
   { group: 'Signals', name: 'Signal processing: smooth, FFT, deconvolution, interpolation', desc: 'A noisy spectrum smoothed (Savitzky–Golay) and normalized; the FFT spectrum of a sampled signal and an FFT low pass; a spectrum blurred by the instrument deconvolved (Richardson–Lucy); two curves on different X read on a common X (spline).', make: signalExample },
   { group: 'Signals', name: 'Signals: PSD, a Butterworth filter, the Allan deviation', desc: 'The FFT node in three modes: the power spectral density (Welch, dB), a zero-phase Butterworth low pass, the Allan deviation of a drifting sensor on log–log axes.', make: spectralExample },
-  { group: 'Signals', name: 'Cyclic voltammogram: area between the branches', desc: 'A potentiostat file with three cycles in one table: Split into columns makes a current column per cycle (a Plot coloured by the cycle) and cuts the pieces going up and coming back; Integrate takes the area between them, absolute, over a region (hatched); Pick points reads the peaks and the current at 0.5 V.', make: cvExample },
+  { group: 'Electrochemistry & impedance', name: 'Cyclic voltammogram: area between the branches', desc: 'A potentiostat file with three cycles in one table: Split into columns makes a current column per cycle (a Plot coloured by the cycle) and cuts the pieces going up and coming back; Integrate takes the area between them, absolute, over a region (hatched); Pick points reads the peaks and the current at 0.5 V.', make: cvExample },
   { group: 'Statistics', name: 'Drug study: ANOVA, t-test, nonparametric, correlation', desc: 'The three layouts of the data for the statistics nodes — each group a column, indexed (value + factors), a row per subject — with Normality & outliers, one-way ANOVA + Tukey (the means ± SE in a Plot), a t-test, Kruskal–Wallis + Dunn, two-way ANOVA (Dose × Sex), repeated-measures ANOVA, Friedman and correlations.', make: drugExample },
-  { group: 'Statistics', name: 'Python script: peaks found and fitted with scipy', desc: 'A spectrum given to a Python script: scipy finds its peaks and fits a Gaussian for each on a straight line; the table of the peaks to a Workbook, the fit drawn over the data. Runs when Run is pressed (the first time Python is downloaded, about 10 MB).', make: pythonExample },
+  { group: 'Fitting', name: 'Python script: peaks found and fitted with scipy', desc: 'A spectrum given to a Python script: scipy finds its peaks and fits a Gaussian for each on a straight line; the table of the peaks to a Workbook, the fit drawn over the data. Runs when Run is pressed (the first time Python is downloaded, about 10 MB).', make: pythonExample },
   { group: 'Statistics', name: 'Regression, PCA, power and a control chart', desc: 'Fit ▸ linear and logistic regression on several predictors, Correlation with a clustered matrix and principal components (scores plotted), a t-test with its power, a control chart from Descriptive statistics.', make: regressionExample },
   { group: 'Figures & layout', name: 'Two panels: colour by value, colour bar, spikes removed', desc: 'Points coloured by their value with a colour bar, two spikes emptied by a Math column rule (rows 12, 37 → NaN), a shaded band; a Merge puts the two Plots side by side with a shared Y axis and panel labels (a), (b).', make: panelsExample },
   { group: 'Figures & layout', name: 'Three Y axes and a broken X axis', desc: 'Signal, temperature and pressure of one run, each on its own Y axis (left, right, a third one moved out); the X axis broken over the hours without data.', make: multiAxisExample },
@@ -2875,5 +3235,10 @@ const LIST: { group: string; name: string; desc: string; make: () => Project }[]
 ];
 
 // the examples as opened: every one with its note
-export const EXAMPLES = LIST.map((e) => ({ ...e, make: () => withAbout(e.make(), e.name) }));
+// the groups, in the order the menus show them (the examples of a group in the order of LIST)
+const GROUPS = ['Getting started', 'Data preparation', 'Figures & layout', 'Charts: bars', 'Charts: box & violin', 'Charts: distributions', 'Charts: more types', 'Statistics', 'Fitting', 'Spectroscopy & optics', 'Signals', 'Electrochemistry & impedance', 'Images', 'Phase diagrams', 'Matrices & 3D'];
+const rank = (g: string) => (GROUPS.includes(g) ? GROUPS.indexOf(g) : GROUPS.length);
+export const EXAMPLES = LIST.map((e, i) => ({ e, i }))
+  .sort((a, b) => rank(a.e.group) - rank(b.e.group) || a.i - b.i)
+  .map(({ e }) => ({ ...e, make: () => withAbout(e.make(), e.name) }));
 

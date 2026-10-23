@@ -582,7 +582,7 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 
 /* The welcome window (first start, or Help → Welcome) */
 .welcome-backdrop { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: rgb(0 0 0 / 0.45); animation: panel-in 0.18s ease-out; }
-.welcome { position: relative; width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; box-sizing: border-box; padding: 24px 28px 18px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 40px rgb(0 0 0 / 0.35); text-align: center; }
+.welcome { position: relative; width: min(600px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; box-sizing: border-box; padding: 24px 28px 18px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 40px rgb(0 0 0 / 0.35); text-align: center; }
 .welcome .logo { display: block; margin: 0 auto 8px; width: auto; }
 .welcome h2 { margin: 4px 0 10px; font-size: var(--fs-xl); }
 .welcome p { margin: 0 0 10px; line-height: 1.45; text-align: left; }
@@ -644,6 +644,13 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .tour-buttons { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
 .tour-gap { flex: 1; }
 .welcome-foot { position: sticky; bottom: -18px; margin: 0 -28px -18px; padding: 0 28px 8px; background: var(--panel); }
+.welcome-examples { display: flex; justify-content: center; margin: 0 0 14px; }
+.welcome-examples select { min-width: 260px; max-width: 100%; padding: 6px 10px; }
+.welcome-recent { text-align: left; margin: 0 0 12px; }
+.welcome-recent h4 { margin: 6px 0 4px; font-size: var(--fs-small); color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.welcome-recent-row { display: flex; width: 100%; justify-content: space-between; gap: 12px; padding: 4px 8px; border: none; background: transparent; text-align: left; }
+.welcome-recent-row:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.welcome-recent-row .muted { flex: none; font-size: var(--fs-small); }
 .welcome-foot .made-by { margin-top: 0; }
 .help-examples { margin: 4px 0 8px; padding-left: 18px; }
 .help-examples li { margin: 2px 0; }
@@ -1217,7 +1224,8 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .image-editor .ie-hist-bars { stroke: var(--muted); stroke-width: 1; }
 .image-editor .ie-hist-mark { stroke: var(--accent); stroke-width: 1.5; }
 .image-editor .ie-hist-label { fill: var(--muted); font-size: 10px; }
-.image-editor .ie-close { margin-left: 6px; }
+.image-editor .ie-close { margin-left: 6px; color: #ff453a; border-color: color-mix(in srgb, #ff453a 55%, transparent); position: sticky; right: 0; z-index: 1; background: var(--panel); }
+.image-editor .ie-close:hover { background: #ff453a; color: #fff; border-color: #ff453a; }
 .image-editor .ie-group { display: inline-flex; align-items: center; gap: 3px; padding: 0 6px; border-left: 1px solid var(--border); }
 /* the comparison: panes (side by side), the split line, the labels; the loupe of Crop and Scale */
 .image-editor .ie-view.side { gap: 6px; }
@@ -1238,7 +1246,8 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .image-editor .ie-roi.sel .ie-roi-line { stroke-width: 2.2; }
 .image-editor .ie-roi.bg .ie-roi-line { stroke-dasharray: 5 3; }
 .image-editor .ie-roi-dot { fill: currentColor; stroke: #000; stroke-width: 0.8; }
-.image-editor .ie-roi-ring { fill: none; stroke: currentColor; stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.8; }
+.image-editor .ie-roi-ring { fill: none; stroke: currentColor; stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.8; pointer-events: none; }
+.image-editor .ie-roi-ring.faint { opacity: 0.4; }
 .image-editor .ie-roi-hit { fill: none; stroke: transparent; stroke-width: 10; pointer-events: none; }
 .image-editor .ie-rois.interactive .ie-roi-hit { pointer-events: stroke; cursor: move; }
 .image-editor .ie-rois.interactive .ie-roi-hit.inside { fill: transparent; pointer-events: all; }
@@ -1253,6 +1262,9 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .image-editor .ie-roi-row input.tiny { width: 52px; }
 .image-editor .ie-roi-row input.color { width: 20px; height: 20px; padding: 0; flex: none; }
 .image-editor .ie-roi-kind { font-size: 10px; width: 44px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.image-editor .ie-classifier { display: flex; flex-direction: column; gap: 4px; }
+.image-editor .ie-class-row { gap: 4px; align-items: center; }
+.image-editor .ie-class-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; }
 .image-editor .ie-measure-keys { display: grid; grid-template-columns: 1fr 1fr; gap: 1px 6px; }
 .image-editor .ie-results { flex: none; max-height: 280px; overflow: auto; border: 1px solid var(--border); border-radius: 4px; }
 .image-editor .ie-results table { border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 11px; }
@@ -1538,6 +1550,8 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .tb-group > button.active { background: var(--panel); border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
 .tb-group .undo-redo { display: inline-flex; gap: 2px; }
 .tb-group > select { cursor: pointer; }
+/* (the list a select opens takes its colours from the select: transparent, the browser draws it white on a dark theme) */
+select option, select optgroup { background: var(--panel); color: var(--text); }
 .tb-spacer { flex: 1; }
 .toolbar > button { display: inline-flex; align-items: center; gap: 5px; }
 .tb-theme > button { padding: 3px 5px; color: var(--muted); }

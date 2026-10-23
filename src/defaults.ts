@@ -92,6 +92,7 @@ export const SMOOTH_DEFAULTS: SmoothData = { x: '', ys: '', method: 'savgol', po
 export const INTERP_DEFAULTS: InterpData = { x: '', ys: '', method: 'spline', extrap: 'none', grid: 'points', from: NaN, to: NaN, points: 500, step: 1 };
 export const NORMALIZE_DEFAULTS: NormalizeData = { x: '', ys: '', method: 'max', at: 0, value: 1, from: NaN, to: NaN };
 export const FFT_DEFAULTS: FFTData = { x: '', ys: '', mode: 'spectrum', output: 'amp', window: 'hann', detrend: 'mean', pad: false, filter: 'low', f1: 0, f2: 0, order: 0, mirror: true };
+export { KK_DEFAULTS } from './engine/kk.ts';
 export const CONV_DEFAULTS: ConvData = { x: '', ys: '', op: 'conv', shape: 'gauss', fwhm: 1, lambda: 0.01, iterations: 30, edge: 'reflect' };
 export const FILTER_DEFAULTS: FilterData = { rows: { mode: 'all' }, dup: 'keep', dupCol: '', sortBy: '', desc: false, every: 1 };
 export const CLEAN_DEFAULTS: CleanData = { cols: '', missing: 'keep', value: 0, window: 5, outliers: 'median', k: 3, alpha: 0.05, action: 'mask' };

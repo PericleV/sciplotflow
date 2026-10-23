@@ -78,6 +78,7 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
     case 'convolve':
     case 'average':
     case 'digitizer':
+    case 'kk':
       return 'dataset';
     case 'unstack':
       return 'dataset';
@@ -185,7 +186,7 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
     case 'phasedigitizer':
       return handle === 'workbook' ? 'workbook' : handle === 'figure' ? 'figure' : 'dataset';
     case 'eis':
-      return handle && ['figure', 'mod', 'phase', 'bode', 'circuit'].includes(handle) ? 'figure' : handle === 'parameters' || handle === 'fitted' || handle === 'ranges' ? 'dataset' : null;
+      return handle === 'circuit' ? 'figure' : handle === 'parameters' || handle === 'fitted' || handle === 'ranges' || handle === 'curve' ? 'dataset' : null;
     case 'phasediagram':
       return handle === 'figure' || handle === 'cooling' ? 'figure' : handle === 'points' || handle === 'fractions' || handle === 'boundaries' ? 'dataset' : null;
     case 'canvas':
@@ -246,6 +247,8 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
       return handle === 'in' ? ['dataset'] : handle === 'by' ? ['column', 'dataset'] : [];
     case 'convolve':
       return handle === 'in' ? ['dataset'] : handle === 'kernel' ? ['column', 'dataset'] : [];
+    case 'kk':
+      return handle === 'in' ? ['dataset'] : [];
     case 'translate':
       return handle === 'data' ? ['dataset'] : /^in-\d+$/.test(handle) ? ['column'] : [];
     case 'calculus':

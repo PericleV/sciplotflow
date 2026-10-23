@@ -44,7 +44,25 @@ export type ConvData = SignalIn & { op: 'conv' | 'wiener' | 'rl' | 'corr'; shape
 // what the node's graph shows for every Y: the data (dots) and the result (a line), each with its X
 // ownAxis: the result on an axis of its own (the right one): another scale than the data (Normalize)
 // others: more curves (thin, grey: the curves averaged), band: a shaded range (± SD)
-export type SignalPlot = { data?: { x: number[]; y: number[] }; result: { x: number[]; y: number[] }; xName: string; yName: string; ownAxis?: boolean; others?: { x: number[]; y: number[] }[]; band?: { x: number[]; lo: number[]; hi: number[] } };
+// series: more curves of their own colour and name (dots, a line, dashed: assumed, as the tails of an extrapolation);
+// marks: vertical dashed lines (where the data end); logX: X on a logarithmic scale; bandColor: the band's colour;
+// zero: a line at y = 0; legend: the names of the data and of the result
+export type SignalSeries = { name: string; x: number[]; y: number[]; color: string; dots?: boolean; line?: boolean; dash?: boolean };
+export type SignalPlot = {
+  data?: { x: number[]; y: number[] };
+  result: { x: number[]; y: number[] };
+  xName: string;
+  yName: string;
+  ownAxis?: boolean;
+  others?: { x: number[]; y: number[] }[];
+  band?: { x: number[]; lo: number[]; hi: number[] };
+  series?: SignalSeries[];
+  marks?: number[];
+  logX?: boolean;
+  bandColor?: string;
+  zero?: boolean;
+  legend?: string[];
+};
 export type SignalOut = { dataset: Dataset; extra?: Record<string, Dataset>; plots: SignalPlot[]; labels: string[]; warnings: string[] } | string;
 
 type Curve = { X: Column | undefined; Y: Column; x: number[]; y: number[] };
