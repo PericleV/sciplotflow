@@ -65,6 +65,48 @@ fig.tight_layout()
 fig.savefig("figure.svg", transparent=True)
 fig.savefig("figure.png", dpi=300, transparent=True)
 `],
+  ['A fit with lmfit (a peak and a baseline, its report)', `from lmfit.models import GaussianModel, LinearModel
+
+# A: x, B: y (connect two columns)
+model = GaussianModel(prefix="g_") + LinearModel(prefix="b_")
+params = model.make_params(g_amplitude=B.max(), g_center=A[B.argmax()], g_sigma=(A.max() - A.min()) / 20, b_slope=0, b_intercept=B.min())
+result = model.fit(B, params, x=A)
+print(result.fit_report())
+fit = result.best_fit
+center = result.params["g_center"].value
+`],
+  ['Machine learning (scikit-learn: a random forest, cross-validated)', `from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import cross_val_score
+
+# A: a dataset, its last column the target, the others the features
+df = A.df
+X, y = df.iloc[:, :-1].values, df.iloc[:, -1].values
+model = RandomForestRegressor(n_estimators=200, random_state=0)
+scores = cross_val_score(model, X, y, cv=5, scoring="r2")
+print(f"R² (5-fold): {scores.mean():.3f} ± {scores.std():.3f}")
+model.fit(X, y)
+importance = model.feature_importances_
+`],
+  ['An image with OpenCV (blobs found, their areas)', `import cv2
+
+# A: a matrix (an image from Image analysis, or any 2D array)
+img = np.asarray(A, dtype=float)
+img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+_, mask = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+n, labels, stats, centroids = cv2.connectedComponentsWithStats(mask)
+areas = stats[1:, cv2.CC_STAT_AREA]
+print(f"{n - 1} blobs, mean area {areas.mean():.1f} px")
+`],
+  ['Statistics with pingouin (ANOVA, post-hoc, effect sizes)', `import pingouin as pg
+
+# A: a dataset with a value column and a group column (indexed)
+df = A.df
+value, group = df.columns[1], df.columns[0]
+aov = pg.anova(data=df, dv=value, between=group, detailed=True)
+posthoc = pg.pairwise_tukey(data=df, dv=value, between=group)
+print(aov)
+posthoc
+`],
 ];
 
 export function PythonNodeView({ id, data }: NodeProps<PythonNode>) {
@@ -245,7 +287,7 @@ export function PythonNodeView({ id, data }: NodeProps<PythonNode>) {
           </select>
         </div>
         <div className="hint">
-          Python {PYODIDE_VERSION.startsWith('314') ? '3.14' : ''} in the browser (Pyodide {PYODIDE_VERSION}, MPL-2.0): nothing is installed and the data never leave this computer; the first run downloads Python (about 10 MB) and each library the code imports (numpy, scipy, pandas, matplotlib, statsmodels, scikit-learn …), then the browser keeps them.
+          Python {PYODIDE_VERSION.startsWith('314') ? '3.14' : ''} in the browser (Pyodide {PYODIDE_VERSION}, MPL-2.0): nothing is installed and the data never leave this computer; the first run downloads Python (about 10 MB) and each library the code imports (numpy, scipy, pandas, matplotlib, statsmodels, scikit-learn, scikit-image, OpenCV as cv2, sympy …; lmfit, seaborn, pingouin, pybaselines, emcee, pint, tifffile and openpyxl come from PyPI the first time), then the browser keeps them.
         </div>
       </NodeOptions>
     </div>

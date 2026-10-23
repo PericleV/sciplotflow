@@ -1,7 +1,8 @@
 // Python for the Python scripts: Pyodide (CPython built for the browser, MPL-2.0; https://pyodide.org) loaded in this worker
 // from the jsDelivr CDN the first time a script runs, then kept by the browser's cache; the packages the code imports
-// (numpy, scipy, pandas, matplotlib, statsmodels, scikit-learn …) loaded when first imported. One run at a time; Stop
-// ends the worker (a new one is made for the next run).
+// (numpy, scipy, pandas, matplotlib, statsmodels, scikit-learn, OpenCV …) loaded when first imported; a few pure-Python
+// packages Pyodide does not carry (lmfit, seaborn, pingouin …) installed from PyPI by micropip when first imported. One
+// run at a time; Stop ends the worker (a new one is made for the next run).
 import { RUNTIME } from './runtime.ts';
 import type { MplCurve, MplFigure, PyJob, PyOut, PyResult, PyValue } from '../engine/python.ts';
 
@@ -15,6 +16,7 @@ export type PyReply = { type: 'status'; text: string } | { type: 'done'; id: str
 type PyProxy = { toJs(o: { dict_converter: (e: Iterable<[string, unknown]>) => unknown; create_pyproxies: boolean }): unknown; destroy(): void };
 type Pyodide = {
   runPython(code: string): unknown;
+  runPythonAsync(code: string): Promise<unknown>;
   loadPackage(names: string[], o?: { messageCallback?: (m: string) => void; errorCallback?: (m: string) => void }): Promise<unknown>;
   loadPackagesFromImports(code: string, o?: { messageCallback?: (m: string) => void; errorCallback?: (m: string) => void }): Promise<unknown>;
   globals: { get(name: string): (...a: unknown[]) => PyProxy };
@@ -22,6 +24,19 @@ type Pyodide = {
 };
 
 const status = (text: string) => self.postMessage({ type: 'status', text } satisfies PyReply);
+
+// Pure-Python packages from PyPI (Pyodide's own set lacks them): the name imported, the name to install
+const PYPI_PACKAGES: Record<string, string> = {
+  lmfit: 'lmfit',
+  seaborn: 'seaborn',
+  pingouin: 'pingouin',
+  tifffile: 'tifffile',
+  pybaselines: 'pybaselines',
+  emcee: 'emcee',
+  pint: 'pint',
+  openpyxl: 'openpyxl',
+};
+const installed = new Set<string>();
 
 let ready: Promise<Pyodide> | null = null;
 function python(): Promise<Pyodide> {
@@ -70,6 +85,14 @@ self.onmessage = async (e: MessageEvent<PyRequest>) => {
     const note = (m: string) => /^Loading|^Loaded/.test(m) && status(m.replace(/^Loading /, 'Loading ').slice(0, 120));
     await py.loadPackagesFromImports(job.code, { messageCallback: note, errorCallback: () => undefined });
     if (/\.df\b|pandas/.test(job.code)) await py.loadPackage(['pandas'], { messageCallback: note });
+    // (from PyPI: those imported and not yet installed in this worker)
+    const wanted = Object.keys(PYPI_PACKAGES).filter((m) => !installed.has(m) && new RegExp(`^\\s*(?:import|from)\\s+${m}\\b`, 'm').test(job.code));
+    if (wanted.length) {
+      await py.loadPackage(['micropip'], { messageCallback: note });
+      status(`Installing ${wanted.join(', ')} from PyPI (the first time)…`);
+      await py.runPythonAsync(`import micropip\nawait micropip.install(${JSON.stringify(wanted.map((m) => PYPI_PACKAGES[m]))})`);
+      for (const m of wanted) installed.add(m);
+    }
     status('Running…');
     const run = py.globals.get('_run');
     const inputs = py.toPy(job.vars.map((v) => ({ name: v.name, value: plainValue(v.value) })));

@@ -264,6 +264,9 @@ export function CollabPanel(props: {
           <p className="hint">
             Work on this project together, in real time: every change shows up for everyone. It goes from browser to browser, encrypted, with no server of ours in between. A public STUN server ({STUN.replace('stun:', '')}) only tells each browser what its address looks like from outside.
           </p>
+          <p className="hint collab-limits">
+            For now: it works between computers on the same network (an institute, a home), and between most home networks. Between a phone’s mobile network (or its hotspot) and a network behind a firewall, the browsers often cannot reach each other: there is no relay server yet. Joining the institute’s network through its VPN gets round it.
+          </p>
           <label>
             Your name
             <input value={name} placeholder="shown to the others" onChange={(e) => setName(e.target.value)} onBlur={() => setMyName(named)} />
