@@ -20,7 +20,13 @@ import { CURVEMATH_DEFAULTS, PEAKWIDTH_DEFAULTS, TRANSLATE_DEFAULTS } from '../s
 import type { CurveMathData, TranslateData } from '../src/types.ts';
 import { anovaNode } from '../src/engine/statnodes.ts';
 import { ANOVA_DEFAULTS } from '../src/defaults.ts';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { nodesCatalog, privateHits, writeApi, type ApiPort } from './api.ts';
+import { checkProject } from './api-check.ts';
+import { NODE_TITLES } from '../src/nodeColors.ts';
 import * as Hy from '../src/engine/hypo.ts';
 import * as Di from '../src/engine/dist.ts';
 import { parseCsv, CSV_DEFAULTS, plainNumber } from '../src/engine/csv.ts';
@@ -6270,6 +6276,70 @@ checkPhase(ok);
       'EIS: the fit on demand — not fitted before Start fit; after it, a change of the circuit only marked outdated (the last fit kept)',
     );
   }
+}
+
+// ---- The catalog for language models (llms.txt, api/): every node with its ports; the checker on every example ----
+{
+  const cat = nodesCatalog();
+  const types = new Set(cat.map((n) => n.type));
+  ok(Object.keys(NODE_TITLES).every((t) => t === 'frame' || types.has(t)), 'catalog: every node type in nodes.json');
+  const fit = cat.find((n) => n.type === 'fit')!;
+  ok(fit.inputs.some((p) => p.id === 'in' && p.types.includes('dataset') && !!p.about) && fit.outputs.some((p) => p.id === 'params') && fit.options.reconv?.type === 'boolean' && !!fit.options.reconv.about && (fit.defaults as { points: number }).points === 400, 'catalog: a node’s ports (types, what they are), options (type, meaning) and defaults');
+  const plot = cat.find((n) => n.type === 'plot1d')!;
+  ok(['dataset', 'x', 'y', 'y-<k>', 'series-<k>', 'insets'].every((id) => plot.inputs.some((p) => p.id === id)) && plot.outputs.some((p) => p.id === 'figure' && p.types[0] === 'figure'), 'catalog: the numbered ports of a Plot’s curves (y, y-<k> …)');
+  ok(cat.every((n) => [...n.inputs, ...n.outputs].every((p) => p.types.length > 0)), 'catalog: every port has its types');
+  // every connection of every example names ports the catalog lists (numbered ones by their pattern)
+  const has = (ports: ApiPort[], id: string) => ports.some((p) => (p.pattern ? new RegExp(`^${p.id.replace(/<\w+>/g, '[\\w.-]+')}$`).test(id) : p.id === id));
+  const missing = new Set<string>();
+  for (const ex of EXAMPLES) {
+    const p = ex.make();
+    const byId = new Map(p.nodes.map((n) => [n.id, n]));
+    for (const e of p.edges) {
+      const s = cat.find((n) => n.type === byId.get(e.source)?.type);
+      const t = cat.find((n) => n.type === byId.get(e.target)?.type);
+      if (s && s.type !== 'subgraph' && s.type !== 'groupin' && !has(s.outputs, e.sourceHandle ?? 'out')) missing.add(`${s.type}.${e.sourceHandle} (out)`);
+      if (t && t.type !== 'subgraph' && t.type !== 'groupout' && !has(t.inputs, e.targetHandle ?? '')) missing.add(`${t.type}.${e.targetHandle} (in)`);
+    }
+  }
+  ok(missing.size === 0, `catalog: every port the examples connect is listed${missing.size ? ` (missing: ${[...missing].join(', ')})` : ''}`);
+
+  // the checker: every example passes; broken projects are told what is wrong
+  const bad = EXAMPLES.map((ex) => [ex.name, checkProject(stringifyProject(ex.make()))] as const).filter(([, r]) => !r.ok);
+  ok(bad.length === 0, `checker: every example passes${bad.length ? ` (${bad.map(([n, r]) => `${n}: ${r.errors[0]}`).join('; ')})` : ''}`);
+  const ex0 = EXAMPLES.find((e) => e.name.startsWith('UV-Vis'))?.make() ?? EXAMPLES[0].make();
+  const broken = (f: (p: Project) => void) => {
+    const p = structuredClone(ex0);
+    f(p);
+    return checkProject(stringifyProject(p));
+  };
+  const imp = ex0.nodes.find((n) => n.type === 'import')!;
+  const e0 = ex0.edges.find((e) => e.source === imp.id)!;
+  const r1 = broken((p) => (p.edges.find((e) => e.id === e0.id)!.sourceHandle = 'nope'));
+  const r2 = broken((p) => p.nodes.push({ ...structuredClone(imp), type: 'histogramm' } as unknown as AppNode));
+  const r3 = broken((p) => (p.edges.find((e) => e.id === e0.id)!.target = 'missing-node'));
+  const r4 = broken((p) => (p.nodes.find((n) => n.id === imp.id)!.data = { ...imp.data, text: 'a,b\n1,2' } as never));
+  ok(!r1.ok && r1.errors.some((e) => e.includes('has no output “nope”')), 'checker: an output that does not exist');
+  ok(!r2.ok && r2.errors.some((e) => e.includes('unknown type "histogramm"')) && r2.errors.some((e) => e.includes('used twice')), 'checker: an unknown type, an id used twice');
+  ok(!r3.ok && r3.errors.some((e) => e.includes('is not the id of a node')), 'checker: a connection to a node that does not exist');
+  ok(!r4.ok || r4.nodes.some((n) => n.warnings.length > 0), `checker: data without the columns the nodes name: told (${r4.errors[0] ?? r4.nodes.find((n) => n.warnings.length)?.warnings[0]})`);
+  const good = checkProject(stringifyProject(ex0));
+  ok(good.ok && good.nodes.some((n) => /dataset: \d+ rows; columns: /.test(Object.values(n.outputs).join(' '))), 'checker: what every output holds (rows, the columns’ names)');
+
+  // the published files: written, the checker bundled and run as a model would, nothing private in them
+  const dir = join(dirname(fileURLToPath(import.meta.url)), '..', 'node_modules', '.tmp', 'api-check');
+  const written = await writeApi(dir);
+  ok(written.length === 5, 'catalog: llms.txt, nodes.json, project.schema.json, recipes.json, check.mjs written');
+  const llms = readFileSync(join(dir, 'llms.txt'), 'utf8');
+  ok(llms.includes(`"version": ${PROJECT_VERSION}`) && llms.includes('node check.mjs project.json') && llms.includes('- fit (Fit)') && !llms.includes('{{'), 'catalog: llms.txt with the rules, the format version and the nodes');
+  const exFile = join(dir, 'example.json');
+  writeFileSync(exFile, stringifyProject(ex0));
+  const run = spawnSync(process.execPath, [join(dir, 'api', 'check.mjs'), exFile], { encoding: 'utf8' });
+  const brokenFile = join(dir, 'broken.json');
+  writeFileSync(brokenFile, stringifyProject({ ...ex0, edges: ex0.edges.map((e) => (e.id === e0.id ? { ...e, sourceHandle: 'nope' } : e)) }));
+  const run2 = spawnSync(process.execPath, [join(dir, 'api', 'check.mjs'), brokenFile], { encoding: 'utf8' });
+  ok(run.status === 0 && run.stdout.includes('OK: the project opens') && run2.status === 1 && run2.stdout.includes('has no output “nope”'), `catalog: check.mjs runs alone (${run.stderr.trim().split('\n')[0] || 'ok'})`);
+  const leaks = ['llms.txt', 'api/nodes.json', 'api/project.schema.json', 'api/recipes.json', 'api/check.mjs'].filter((f) => privateHits(readFileSync(join(dir, f), 'utf8')).length);
+  ok(leaks.length === 0 && privateHits('C:\\Users\\someone\\x').length > 0 && privateHits('mail me: someone@gmail.com').length > 0, `catalog: nothing private in the published files${leaks.length ? ` (${leaks.join(', ')})` : ''}`);
 }
 
 console.log(`${passed} passed, ${failed} failed`);
