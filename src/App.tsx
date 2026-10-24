@@ -21,11 +21,10 @@ import {
   type NodeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { ReportNodeView } from './nodes/ReportNode.tsx';
 import './App.css';
 import { EngineContext, useEngine } from './engine/engine.ts';
 import { canConnect, isMultiInput, PORT_COLORS, sourcePort, type PortContext } from './engine/ports.ts';
-import { KK_DEFAULTS, REPORT_DEFAULTS, MATCOMP_DEFAULTS, MATRIX_DEFAULTS, COLUMNS_DEFAULTS, PEAKWIDTH_DEFAULTS, AUTOEXTRACT_DEFAULTS, CANVAS_DEFAULTS, DRAWING_DEFAULTS, COMBINE_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS, CALCULUS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, AVERAGE_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, IMAGE_DEFAULTS, PHASE_DEFAULTS, HISTOGRAM_DEFAULTS, BARCHART_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, CURVEMATH_DEFAULTS, TRANSLATE_DEFAULTS, PEAK_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, ANOVA_DEFAULTS, NONPAR_DEFAULTS, CORR_DEFAULTS, PICK_DEFAULTS, DATAMANIP_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, PYTHON_DEFAULTS, NOTE_DEFAULTS, NOTE_SIZE,PLOT1D_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
+import { KK_DEFAULTS, CONVERT_DEFAULTS, TRANSPOSE_DEFAULTS, STACK_DEFAULTS, MATCOMP_DEFAULTS, MATRIX_DEFAULTS, COLUMNS_DEFAULTS, PEAKWIDTH_DEFAULTS, AUTOEXTRACT_DEFAULTS, CANVAS_DEFAULTS, DRAWING_DEFAULTS, COMBINE_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS, CALCULUS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, AVERAGE_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, IMAGE_DEFAULTS, PHASE_DEFAULTS, HISTOGRAM_DEFAULTS, BARCHART_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, CURVEMATH_DEFAULTS, TRANSLATE_DEFAULTS, PEAK_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, ANOVA_DEFAULTS, NONPAR_DEFAULTS, CORR_DEFAULTS, PICK_DEFAULTS, DATAMANIP_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, PYTHON_DEFAULTS, NOTE_DEFAULTS, NOTE_SIZE,PLOT1D_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
 import { NODE_HELP, NODE_SHORT } from './help.ts';
 import { DRAG_TYPE, NodePalette, type PaletteGroup } from './NodePalette.tsx';
 // side panels: separate chunks, loaded when first opened
@@ -69,6 +68,7 @@ import { DrawingNodeView } from './nodes/DrawingNode.tsx';
 import { NoteNodeView } from './nodes/NoteNode.tsx';
 import { PeakWidthNodeView } from './nodes/PeakWidthNode.tsx';
 import { CombineNodeView, UnstackNodeView } from './nodes/ReshapeNodes.tsx';
+import { ConvertNodeView, StackNodeView, TransposeNodeView } from './nodes/TableShapeNodes.tsx';
 import { WorkbookNodeView } from './nodes/WorkbookNode.tsx';
 import { CalculusNodeView } from './nodes/CalculusNode.tsx';
 import { PickNodeView } from './nodes/PickNode.tsx';
@@ -140,7 +140,6 @@ const baseNodeTypes = {
   convolve: ConvNodeView,
   kk: KramersKronigNodeView,
   average: AverageNodeView,
-  report: ReportNodeView,
   translate: TranslateNodeView,
   normality: NormNodeView,
   ttest: TTestNodeView,
@@ -148,6 +147,9 @@ const baseNodeTypes = {
   nonparam: NonparNodeView,
   correl: CorrNodeView,
   unstack: UnstackNodeView,
+  convert: ConvertNodeView,
+  transpose: TransposeNodeView,
+  stack: StackNodeView,
   combine: CombineNodeView,
   mathcol: MathColNodeView,
   python: PythonNodeView,
@@ -193,7 +195,8 @@ const MULTI_KEYS = ['Shift', 'Control', 'Meta'];
 const DELETE_KEYS = ['Delete', 'Backspace'];
 
 // hidden: not offered in the nodes panel nor the canvas menu (the node still opens in saved projects)
-type Template = { type: AppNode['type']; label: string; data: AppNode['data']; hidden?: boolean };
+// key: its id in the menus when two share a type (Rows to columns and Columns to rows)
+type Template = { type: AppNode['type']; label: string; data: AppNode['data']; hidden?: boolean; key?: string };
 // the Nodes panel's Batch: a group of no steps yet that runs on every file
 const BATCH_NEW = 'batch:new';
 
@@ -214,6 +217,10 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
       { type: 'matrix', label: 'Matrix', data: MATRIX_DEFAULTS },
       { type: 'columns', label: 'Columns', data: COLUMNS_DEFAULTS },
       { type: 'unstack', label: 'Split into columns', data: UNSTACK_DEFAULTS },
+      { type: 'stack', label: 'Stack columns', data: STACK_DEFAULTS },
+      { type: 'transpose', label: 'Rows to columns', data: TRANSPOSE_DEFAULTS },
+      { type: 'transpose', key: 'transpose:cols', label: 'Columns to rows', data: { ...TRANSPOSE_DEFAULTS, as: 'cols' } },
+      { type: 'convert', label: 'Convert columns', data: CONVERT_DEFAULTS },
       { type: 'combine', label: 'Combine columns', data: COMBINE_DEFAULTS },
       { type: 'translate', label: 'Translate & resize', data: TRANSLATE_DEFAULTS },
       { type: 'filterrows', label: 'Filter & sort rows', data: FILTER_DEFAULTS },
@@ -246,7 +253,6 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
       { type: 'kk', label: 'Kramers–Kronig', data: KK_DEFAULTS },
       // hidden (2026-10-20): not offered for now; saved projects with it still open
       { type: 'phasediagram', label: 'Phase diagram', data: PHASE_DEFAULTS, hidden: true },
-      { type: 'report', label: 'Report', data: REPORT_DEFAULTS },
     ],
   },
   {
@@ -1106,7 +1112,7 @@ function Flow() {
   };
   const miniStroke = (n: Node) => (engine.results.get(n.id)?.errors.length ? ERROR_RED : nodeColor(n as AppNode));
 
-  const menuItems: MenuItem[] = useMemo(() => GROUPS.flatMap((g) => g.items.filter((i) => !i.hidden).map((i) => ({ type: i.type, label: i.label, group: g.name }))), []);
+  const menuItems: MenuItem[] = useMemo(() => GROUPS.flatMap((g) => g.items.filter((i) => !i.hidden).map((i) => ({ type: (i.key ?? i.type) as AppNode['type'], label: i.label, group: g.name }))), []);
   const closeMenu = useCallback(() => setMenu(null), []);
 
   // the nodes panel (left): the sections of GROUPS with the colours of their nodes
@@ -1117,7 +1123,7 @@ function Flow() {
         name: g.name,
         color: GROUP_COLORS[g.name],
         items: [
-          ...g.items.filter((t) => !t.hidden).map((t) => ({ type: t.type, label: t.label, help: NODE_SHORT[t.type] ?? NODE_HELP[t.type], color: NODE_COLORS[t.type] })),
+          ...g.items.filter((t) => !t.hidden).map((t) => ({ type: (t.key ?? t.type) as AppNode['type'], label: t.label, help: NODE_SHORT[t.type] ?? NODE_HELP[t.type], color: NODE_COLORS[t.type] })),
           // a Batch with no steps yet: its steps built inside, on one file
           ...(g.name === 'Data' ? [{ type: BATCH_NEW as AppNode['type'], label: 'Batch (every file)', help: 'The same analysis on every file: connect an Import with several files (or a folder) to “files”, open it, build the steps on one file, connect to “+ keep” what to keep — a table with a row per file comes out.', color: GROUP_COLORS.Groups }] : []),
         ],
@@ -1138,7 +1144,7 @@ function Flow() {
   const template = (type: AppNode['type']): Template | undefined => {
     if ((type as string) === BATCH_NEW) return { type: 'subgraph', label: 'Batch', data: emptyBatch() };
     const m = /^template:(.+)$/.exec(type);
-    if (!m) return GROUPS.flatMap((g) => g.items).find((i) => i.type === type);
+    if (!m) return GROUPS.flatMap((g) => g.items).find((i) => (i.key ?? i.type) === type);
     const t = templateById(m[1]);
     return t ? { type: 'subgraph', label: t.name, data: { ...structuredClone(t.data), name: t.name } } : undefined;
   };
@@ -1684,7 +1690,7 @@ function Flow() {
                 items={menuItems}
                 onClose={closeMenu}
                 onAdd={(type) => {
-                  const t = GROUPS.flatMap((g) => g.items).find((i) => i.type === type);
+                  const t = GROUPS.flatMap((g) => g.items).find((i) => (i.key ?? i.type) === type);
                   if (t) addNode(t, { x: menu.x, y: menu.y });
                 }}
                 title={nm?.title}

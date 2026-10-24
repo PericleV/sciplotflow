@@ -50,8 +50,6 @@ import type { AnnotationItem } from '../src/types.ts';
 import { breakAt, cornersOf, cornersText, joinPaths, longestSegment, roundedRectD, splitSegment } from '../src/figure/paths.ts';
 import { gradAttrs, linearEnds } from '../src/figure/gradient.ts';
 import { exportOptions, extensionOf, TABLE_EXPORT_DEFAULTS, tableCells, tableText } from '../src/engine/exportTable.ts';
-import { reportBlock, reportMarkdown, reportText } from '../src/engine/reportDoc.ts';
-import { REPORT_DEFAULTS } from '../src/defaults.ts';
 import { deleteNode, insertNode, parsePath, pathBox, pathText, reversePath, roundCorners, setClosed, shapeToPath, toggleNode, turnedPath } from '../src/figure/paths.ts';
 import { placeComponent, rotateItem } from '../src/engine/drawingItems.ts';
 import { barReach, barTicks } from '../src/figure/colorbar.ts';
@@ -59,7 +57,7 @@ import { aboveOf, boxHandleAt, elbowCorners, lineLength, offsetLine, outlinePoin
 import { alignMoves, distributeMoves, geomBox, moveItem, snapAxis } from '../src/nodes/drawingOps.ts';
 import { CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, COMBINE_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, IMPORT_DEFAULTS, PLOT1D_DEFAULTS } from '../src/defaults.ts';
 import type { AppNode, CalculusData, CombineData, FitNodeData, PeakData, PickData, Plot1DData, WorkbookData } from '../src/types.ts';
-import { applySheet, hasEdits, readSheet, sheetText } from '../src/engine/sheet.ts';
+import { applySheet, convertInSheet, hasEdits, readSheet, sheetText } from '../src/engine/sheet.ts';
 import { scaledSize, SHAPE_DEFAULTS } from '../src/figure/spec.ts';
 import { formatTime, parseTime, timeTicks } from '../src/figure/timeaxis.ts';
 import { readTable } from '../src/engine/csv.ts';
@@ -129,6 +127,8 @@ import { CALCULUS_DEFAULTS, newSheet, PEAK_DEFAULTS as PEAK_NEW, PICK_DEFAULTS, 
 // the Peak analyzer as before Run analysis: fitted at every change (the tests of the fit)
 const PEAK_DEFAULTS = { ...PEAK_NEW, needRun: undefined };
 import { fmtPm } from '../src/engine/report.ts';
+import { looksNumeric, readCell, TO_NUMBER_DEFAULTS } from '../src/engine/convert.ts';
+import { convertTable, stackColumns, transposeTable } from '../src/engine/tableShape.ts';
 import { areaBetween, derivative, integrate, pointsCurve, regionRows } from '../src/engine/calculus.ts';
 import { groupText, splitRows } from '../src/engine/split.ts';
 import { autoRanges, hitAt, withRanges, zoomOutRanges } from '../src/nodes/figureRanges.ts';
@@ -4073,6 +4073,22 @@ for (const ex of EXAMPLES) {
     { id: 'e1', source: 'm', sourceHandle: 'out', target: 'c', targetHandle: 'in-0' },
     { id: 'e2', source: 'c', sourceHandle: 's-s1', target: 'p', targetHandle: 'matrix' },
   ];
+  // a matrix on a Workbook's input: a table, its rows' and columns' names as asked (not asked yet: both, and asked)
+  {
+    const named = { ...Mx.newMatrix(2, 2, 'T', Float64Array.of(1, 2, 3, 4)), rowNames: ['400 nm', '410 nm'], colNames: ['-0.5', '0'] };
+    const both = Mx.matrixSheet(named, true, true).columns;
+    const bare = Mx.matrixSheet(named, false, false).columns;
+    const wb = { id: 'w', type: 'book', position: { x: 0, y: 0 }, data: { ...WORKBOOK_DEFAULTS } } as AppNode;
+    const tr = { id: 'c', type: 'matcomp', position: { x: 0, y: 0 }, data: { steps: [{ id: 's1', op: 'transpose', a: 'A' }] } } as AppNode;
+    const e2 = [
+      { id: 'e1', source: 'm', sourceHandle: 'out', target: 'c', targetHandle: 'in-0' },
+      { id: 'e2', source: 'c', sourceHandle: 's-s1', target: 'w', targetHandle: 'in-0' },
+    ];
+    const asked = evaluateGraph([mn, tr, wb], e2).get('w')!;
+    const told = evaluateGraph([mn, tr, { ...wb, data: { ...WORKBOOK_DEFAULTS, matrix: { 0: { rows: false, cols: true } } } } as AppNode], e2).get('w')!;
+    const cs = (r: typeof asked) => (r.outputs.out?.t === 'dataset' ? r.outputs.out.v.columns : []);
+    ok(both.map((c) => c.name).join() === 'Name,-0.5,0' && both[0].text?.join() === '400 nm,410 nm' && bare.map((c) => c.name).join() === 'C1,C2' && bare[1].values[1] === 4 && targetAccepts(wb, 'in-0').includes('matrix') && asked.view.book?.ins[0]?.ask === true && cs(asked).length === 4 && Array.from(cs(asked)[1].values).join() === '1,2,3' && told.view.book?.ins[0]?.ask === false && cs(told).length === 3, `Workbook: a matrix on an input, its names as asked (${cs(asked).map((c) => c.name).join(', ')} · ${cs(told).map((c) => c.name).join(', ')})`);
+  }
   const res = evaluateGraph([mn, mc, pm], edges);
   const rc = res.get('c')!;
   const rp = res.get('p')!;
@@ -5202,32 +5218,51 @@ for (const ex of EXAMPLES) {
   ok(JSON.stringify(r.view.sheets) === '["S1","S2"]' && cols === 'E,c,d' && r.view.curves?.some((c) => c.series.y.name.startsWith('d')), `plot: a workbook — its sheets, their columns, a curve from the second sheet (${JSON.stringify(r.view.sheets)}; ${cols}; ${r.errors.join('; ')})`);
 }
 
-// ---- Report ----
+// ---- Convert columns, Transpose, Stack columns ----
 {
-  const d = { ...REPORT_DEFAULTS, title: 'Run 1', date: false };
-  // the parameters of a fit: one row, value and error side by side → on its side, “v ± e”
-  const params = {
-    name: 'fit',
-    columns: [
-      { ...column('fit', Float64Array.from([1])), role: 'x' as const },
-      { ...column('A', Float64Array.from([12.3456])), role: 'y' as const },
-      { ...column('A error', Float64Array.from([0.0123])), role: 'yerr' as const },
-      { ...column('xc', Float64Array.from([660.237])), role: 'y' as const },
-      { ...column('xc error', Float64Array.from([0.28])), role: 'yerr' as const },
-      column('N', Float64Array.from([200])),
-      column('R²', Float64Array.from([0.99876])),
-      column('χ²', Float64Array.from([1.5])),
-    ],
+  const R = TO_NUMBER_DEFAULTS;
+  const read = (s: string, dec: '.' | ',' = '.', r = R) => {
+    const c = readCell(s, r, dec);
+    return c === 'empty' ? 'empty' : c ? `${c.v}${c.err !== undefined ? `±${c.err}` : ''}${c.unit ? ` ${c.unit}` : ''}` : 'null';
   };
-  const b = reportBlock(0, 'Fit “peak” · params', { t: 'dataset', v: params }, { text: 'The **dip** moved.' }, d);
-  const t = b.tables[0];
-  ok(t.head.join('|') === '|fit 1' && t.rows.map((r) => r.join('=')).join('; ') === 'A=12.346 ± 0.012; xc=660.24 ± 0.28; N=200; R²=0.9988; χ²=1.5', `Report: a fit's parameters on their side, value ± error (${JSON.stringify(t)})`);
-  const v = reportBlock(1, 'Mean', { t: 'scalar', v: { name: 'mean', value: 2 / 3 } }, {}, d);
-  const md = reportMarkdown(d, [b, v], '2026-10-18');
-  ok(md === '# Run 1\n\n## Fit “peak” · params\n\n|  | fit 1 |\n| --- | --- |\n| A | 12.346 ± 0.012 |\n| xc | 660.24 ± 0.28 |\n| N | 200 |\n| R² | 0.9988 |\n| χ² | 1.5 |\n\nThe **dip** moved.\n\n## Mean\n\nmean = 0.6667\n', `Report: Markdown (${JSON.stringify(md)})`);
-  const long = reportBlock(2, 'Data', { t: 'dataset', v: { name: 'd', columns: [column('x (nm)', Float64Array.from([1, 2, 3])), column('y', Float64Array.from([10, 20, 30]))] } }, { cols: 'B' }, { ...d, maxRows: 2 });
-  const txt = reportText(d, [long], '2026-10-18');
-  ok(txt === 'Run 1\n=====\n\nData\n----\n\n y\n--\n10\n20\n… 1 more row\n', `Report: text, the columns chosen and aligned, a long table cut (${JSON.stringify(txt)})`);
+  const got = [read('300 K'), read('1,5', ','), read('1 200,5', ','), read('1,200.5'), read('1.200,5', ','), read('25 %'), read('1.23 ± 0.05'), read('(1.23 ± 0.05) eV'), read('1.234(12)'), read('<0.01'), read('<0.01', '.', { ...R, below: 'half' }), read('3×10^-4'), read('3·10⁻⁴'), read('n.d.'), read('Sample_300K_2h'), read('Sample_300K_2h', '.', { ...R, first: true }), read('10 20'), read('−2.5e3'), read('25 %', '.', { ...R, percent: 'fraction' })];
+  const want = ['300 K', '1.5', '1200.5', '1200.5', '1200.5', '25 %', '1.23±0.05', '1.23±0.05 eV', '1.234±0.012', 'empty', '0.005', '0.0003', '0.0003', 'empty', 'null', '300', 'null', '-2500', '0.25'];
+  ok(got.join('|') === want.join('|'), `convert: cells read as numbers (${got.join(' | ')})`);
+  const txt = (xs: string[]) => column('', new Float64Array(xs.length).fill(NaN), xs);
+  const ds: Dataset = { name: 'd', columns: [{ ...txt(['300 K', '310 K', 'n.d.', 'x']), name: 'T' }, { ...txt(['1.2 ± 0.1 eV', '1.5 ± 0.2 eV', '', '1.7 ± 0.1 eV']), name: 'E' }, column('n', Float64Array.from([1, 2, 3, 4]))] };
+  const none = convertTable(ds, { to: 'numbers', cols: '' });
+  const c = convertTable(ds, { to: 'numbers', cols: 'A-B' });
+  const cols = typeof c === 'string' ? [] : c.dataset.columns;
+  ok(typeof none !== 'string' && none.dataset === ds && typeof c !== 'string' && cols.map((q) => `${q.name}:${q.role ?? ''}`).join(', ') === 'T (K):, E (eV):, E error (eV):yerr, n:' && Array.from(cols[0].values).join() === '300,310,NaN,NaN' && Array.from(cols[2].values).join() === '0.1,0.2,NaN,0.1' && !cols[0].text && c.warnings.length === 1 && c.warnings[0].includes('row 4 “x”'), `convert: nothing until columns are chosen; then units into the names, ± as an error column, a cell not read listed (${typeof c === 'string' ? c : c.warnings.join(' ')})`);
+  const t = convertTable({ name: 'd', columns: [column('V', Float64Array.from([-0.5, 0.25, 1]))] }, { to: 'text', cols: 'A', txt: { template: '{v} V', format: 'fixed', digits: 2, comma: true } });
+  ok(typeof t !== 'string' && t.dataset.columns[0].text?.join('|') === '-0,50 V|0,25 V|1,00 V' && t.dataset.columns[0].values.every((v) => Number.isNaN(v)), `convert: numbers written as text (${typeof t === 'string' ? t : t.dataset.columns[0].text?.join('|')})`);
+  const lk = looksNumeric(ds.columns[0]);
+  ok(lk.text === 4 && lk.numeric === 2 && lk.examples.join() === '300 K,310 K', 'convert: the text cells that look like numbers counted for the proposal');
+  // in a worksheet: the cells typed as numbers in the changes, the unit into the name, the errors in a column after it
+  const base: Dataset = { name: 'b', columns: [column('x', Float64Array.from([1, 2, 3])), { ...txt(['1.2 ± 0.1 eV', 'n.d.', 'abc']), name: 'E' }, column('z', Float64Array.from([7, 8, 9]))] };
+  const sh = applySheet(base, undefined, '.');
+  const ed = convertInSheet({}, sh.map, sh.dataset, [{ shown: 1, read: 1 }], TO_NUMBER_DEFAULTS);
+  const after = applySheet(base, ed, '.').dataset.columns;
+  ok(after.map((q) => `${q.name}:${q.role ?? ''}`).join() === 'x:,E (eV):,E error (eV):yerr,z:' && after[1].values[0] === 1.2 && Number.isNaN(after[1].values[1]) && after[1].text?.[2] === 'abc' && after[2].values[0] === 0.1, `convert in a worksheet: typed as changes, the error column after it (${after.map((q) => q.name).join(', ')})`);
+  // the table of the user's example: 7 voltages (rows) × 14 wavelengths (columns); turned, then turned back
+  const V = [-0.5, -0.25, 0, 0.25, 0.5, 0.75, 1];
+  const wl = Array.from({ length: 14 }, (_, k) => 400 + 10 * k);
+  const cell = (i: number, k: number) => Math.sin(i + 0.3 * k) * 1e-4;
+  const sweep: Dataset = { name: 's', columns: [column('Voltage (V)', Float64Array.from(V)), ...wl.map((w, k) => column(`${w} nm`, Float64Array.from(V, (_, i) => cell(i, k))))] };
+  const tr = transposeTable(sweep, { names: '', head: 'number' });
+  const tc = typeof tr === 'string' ? [] : tr.dataset.columns;
+  ok(tc.length === 8 && tc[0].name === 'Value (nm)' && tc[0].role === 'x' && Array.from(tc[0].values).join() === wl.join() && tc.slice(1).map((q) => q.name).join() === '-0.5,-0.25,0,0.25,0.5,0.75,1' && tc[3].key?.name === 'Voltage (V)' && tc[3].key.value === 0 && tc[3].values[5] === cell(2, 5), `transpose: 7 × 15 becomes 14 × 8, the wavelengths read from the names, every column its voltage (${tc.map((q) => q.name).join(', ')})`);
+  const back = typeof tr === 'string' ? tr : transposeTable(tr.dataset, { names: '', head: 'number', headName: 'Voltage (V)', fmt: { template: '{v} nm' } });
+  const bc = typeof back === 'string' ? [] : back.dataset.columns;
+  ok(bc.length === 15 && bc[0].name === 'Voltage (V)' && Array.from(bc[0].values).join() === V.join() && bc.slice(1).every((q, k) => q.name === `${wl[k]} nm` && Array.from(q.values).every((v, i) => v === cell(i, k))), `transpose twice: the table back (${bc.slice(0, 3).map((q) => q.name).join(', ')} …)`);
+  const tt = transposeTable(sweep, { names: '#', head: 'text', fmt: { template: 'Row {v}' } });
+  ok(typeof tt !== 'string' && tt.dataset.columns.length === 8 && tt.dataset.columns[0].text?.[0] === 'Voltage (V)' && tt.dataset.columns[1].name === 'Row 1' && tt.dataset.columns[1].values[0] === -0.5, 'transpose: names from the row numbers, the old names as text');
+  const st = stackColumns({ name: 'k', columns: [{ ...column('t (s)', Float64Array.from([0, 1, 2])), role: 'x' }, column('300 K', Float64Array.from([1, 2, 3])), column('310 K', Float64Array.from([4, 5, 6]))] }, { cols: '', key: 'number' });
+  const sc = typeof st === 'string' ? [] : st.dataset.columns;
+  ok(sc.map((q) => q.name).join() === 'Name (K),t (s),Value' && Array.from(sc[0].values).join() === '300,300,300,310,310,310' && Array.from(sc[1].values).join() === '0,1,2,0,1,2' && Array.from(sc[2].values).join() === '1,2,3,4,5,6', `stack columns: two columns one under the other, their names as numbers (${sc.map((q) => q.name).join(', ')})`);
+  const s2 = stackColumns({ name: 'k', columns: [column('x', Float64Array.from([0, 1])), column('A', Float64Array.from([1, 2])), { ...column('A err', Float64Array.from([0.1, 0.2])), role: 'yerr' }, column('B', Float64Array.from([3, 4])), { ...column('B err', Float64Array.from([0.3, 0.4])), role: 'yerr' }] }, { cols: 'A, B', key: 'text', valueName: 'Signal (mV)' });
+  const s2c = typeof s2 === 'string' ? [] : s2.dataset.columns;
+  ok(s2c.map((q) => `${q.name}:${q.role}`).join() === 'Name:label,x:x,Signal (mV):y,Signal error (mV):yerr' && s2c[0].text?.join() === 'A,A,B,B' && Array.from(s2c[3].values).join() === '0.1,0.2,0.3,0.4', 'stack columns: the names as text, the errors stacked with the values');
 }
 
 // ---- a table written out ----
@@ -5277,9 +5312,6 @@ for (const ex of EXAMPLES) {
   const curveAt = (t: number) => 0.2 + 1.5 * Math.exp(-((t - 3) ** 2) / 2) + 0.4 * Math.exp(-((t - 7) ** 2) / 0.8);
   const dErr = dp ? Math.max(...Array.from(dp.columns[0].values, (x, i) => Math.abs(dp.columns[1].values[i] - curveAt(x)))) : NaN;
   ok(dp?.columns[0].values.length === 21 && dErr < 0.01, `example “Digitizer”: the 21 points read lie on the curve drawn (largest gap ${dErr.toFixed(4)} mV)`);
-  const dr = ex('Drug study');
-  const doc = view(dr.r, 'dr-report')?.doc as { blocks: { title: string }[] } | undefined;
-  ok(doc?.blocks.map((q) => q.title).join(' | ') === 'Normality of every group | One-way ANOVA | Tukey HSD: every pair of doses | t-test: Control against 40 mg', 'example “Drug study”: the Report with its four blocks');
   const py = ex('Python script');
   const pyNode = py.p.nodes.find((n) => n.id === 'py-script')!.data as { run?: number; outs?: { name: string }[] };
   ok(!pyNode.run && pyNode.outs?.map((o) => o.name).join() === 'peaks,fitted' && /Run/.test(String(view(py.r, 'py-script')?.waiting)) && !(py.r.get('py-plot')?.warnings ?? []).length, 'example “Python script”: not run before Run (no download), its outputs connected, no warning');
@@ -5781,6 +5813,15 @@ for (const ex of EXAMPLES) {
     const sh = r.outputs.sheets?.t === 'workbook' ? r.outputs.sheets.v : undefined;
     const st = r.outputs.stacked?.t === 'dataset' ? r.outputs.stacked.v : undefined;
     ok(sh?.sheets.length === 3 && sh.sheets[0].name === 'sample_20C' && st?.columns[0].name === 'File' && st.columns[0].values.length === 3 && res.get('b1/pk')?.outputs.out?.t === 'dataset', 'Batch: a sheet per file, every row with its file, the steps shown on the first file');
+    // every result kept on its own port: the peak (a row) a row per file; the smoothed curve (101 rows) every file's rows
+    {
+      const sm2 = { id: 'sm', type: 'smooth', position: { x: 0, y: 0 }, data: structuredClone(SMOOTH_DEFAULTS) } as AppNode;
+      const two = { ...batch, data: { ...batch.data, nodes: [...inner, sm2], edges: [...innerE, { id: 'c', source: GROUP_IN, sourceHandle: 'in-0', target: 'sm', targetHandle: 'in' }, { id: 'd', source: 'sm', sourceHandle: 'out', target: GROUP_OUT, targetHandle: 'out-1' }], outputs: [...(batch.data as { outputs: object[] }).outputs, { id: 'out-1', label: 'smoothed', type: 'dataset' }] } } as AppNode;
+      const r2 = evaluateGraph([imp, two], g.edges).get('b1')!;
+      const k0 = r2.outputs['k-out-0']?.t === 'dataset' ? r2.outputs['k-out-0'].v : undefined;
+      const k1 = r2.outputs['k-out-1']?.t === 'dataset' ? r2.outputs['k-out-1'].v : undefined;
+      ok(k0?.name === 'peak' && k0.columns[0].values.length === 3 && Array.from(k0.columns.find((c) => c.name === 'x')?.values ?? []).join(' ') === '30 50 70' && !k0.columns.some((c) => c.name === 'y' && c.values.length > 3) && k1?.name === 'smoothed' && k1.columns[0].name === 'File' && k1.columns[0].values.length === 303 && sourcePort(two, 'k-out-1') === 'dataset', `Batch: each result kept on a port of its own (${k0?.columns.map((c) => c.name).join(', ')} · ${k1?.columns.length} columns, ${k1?.columns[0].values.length} rows)`);
+    }
     // the same files again: nothing computed again (the cache of every file kept)
     const again = evaluateGraph(g.nodes, g.edges, cache);
     ok(again.get('b1')!.rev === r.rev, 'Batch: the same files, the same result (not computed again)');
@@ -6205,6 +6246,19 @@ checkPhase(ok);
   const r12 = typeof p12 === 'string' ? null : evaluateGraph(p12.nodes, p12.edges);
   const toCanvas = typeof p12 === 'string' ? [] : p12.edges.filter((e) => e.target === 'cv');
   ok(typeof p12 !== 'string' && p12.version === PROJECT_VERSION && plots.length === 2 && toCanvas.length === 2 && toCanvas.every((e) => plots.some((q) => q.id === e.source) && e.sourceHandle === 'figure') && !p12.edges.some((e) => e.source === 'eis-node' && ['figure', 'bode'].includes(e.sourceHandle ?? '')) && plots.every((q) => (r12?.get(q.id)?.view.figure?.axes[0].curves.length ?? 0) >= 2), `format 12 \u2192 13: the Nyquist and Bode outputs of an EIS node become Plots of its data, connected to the Merge (${plots.map((q) => q.id).join(', ')})`);
+  // format 13 → 14: a Report becomes a note with the texts written in it, its connections gone
+  const v13 = JSON.stringify({
+    app: 'graph-flow',
+    version: 13,
+    nodes: [
+      { id: 'b', type: 'book', position: { x: 0, y: 0 }, data: { ...WORKBOOK_DEFAULTS } },
+      { id: 'r', type: 'report', position: { x: 300, y: 0 }, data: { title: 'Run 1', intro: 'Before.', outro: '', date: true, digits: 4, pm: true, maxRows: 50, items: { 1: { title: 'Fit', text: 'The dip moved.' }, 0: { hidden: true } } } },
+    ],
+    edges: [{ id: 'e', source: 'b', sourceHandle: 'out', target: 'r', targetHandle: 'in-0' }],
+  });
+  const p13 = parseProject(v13);
+  const rn = typeof p13 === 'string' ? undefined : p13.nodes.find((n) => n.id === 'r');
+  ok(typeof p13 !== 'string' && p13.version === PROJECT_VERSION && rn?.type === 'note' && (rn.data as { text: string }).text === 'Run 1\n\nBefore.\n\nFit\nThe dip moved.' && !p13.edges.length, `format 13 → 14: a Report becomes a note with its texts (${JSON.stringify(rn?.data)})`);
   // ω found: the frequencies on an even logarithmic grid only once divided by 2π; columns named A, B, C: by their places
   const f = Array.from({ length: 31 }, (_, k) => 10 ** (5 - k / 5));
   const g = guessColumns([column('A', new Float64Array(1)), column('B', new Float64Array(1)), column('C', new Float64Array(1))], 'reim');

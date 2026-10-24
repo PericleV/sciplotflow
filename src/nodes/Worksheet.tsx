@@ -8,12 +8,14 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { columnLetter } from '../engine/csv.ts';
-import { editCount, fillSeries, pasteSplitter, type SheetEdits, type SheetLook, type SheetMap } from '../engine/sheet.ts';
+import { convertInSheet, editCount, fillSeries, pasteSplitter, type SheetEdits, type SheetLook, type SheetMap } from '../engine/sheet.ts';
 import { cellText, ROLE_LABELS, roleOf, type ColumnRole, type Dataset } from '../engine/table.ts';
 import { maxOf } from '../engine/minmax.ts';
 import { X } from 'lucide-react';
 import { IC } from './iconProps.ts';
 import { ask } from '../ui/dialogStore.ts';
+import { looksNumeric } from '../engine/convert.ts';
+import { ConvertPanel, ConvertProposal } from './SheetConvert.tsx';
 
 const ROW_H = 21;
 const VIEW_H = 300;
@@ -79,6 +81,14 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   // the rows of its own table (with inputs: those past it are the inputs' only)
   const nOwn = layout ? (given ? Math.min(n, given.rows.length) : 0) : n;
   const lockedCol = (c: number) => reads[c] < 0;
+  // its own columns whose text looks like numbers: proposed under the table (converted when asked: conv, the columns)
+  const proposed = cols.flatMap((c, j) => {
+    if (reads[j] < 0 || !c.text) return [];
+    const l = looksNumeric(c);
+    return l.numeric > 0 && 2 * l.numeric >= l.text ? [{ c: j, examples: l.examples }] : [];
+  });
+  const [conv, setConv] = useState<number[] | null>(null);
+  const [later, setLater] = useState(false);
   const locked = (r: number, c: number) => lockedCol(c) || r >= nOwn;
   // a column moved or left out: of its own table, or (with inputs) any
   const canArrange = (c: number) => (layout ? c < layout.keys.length : !lockedCol(c));
@@ -522,6 +532,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
         if (lo.c > 0) items.push({ label: 'Move column left', run: () => moveCol(lo.c, lo.c - 1) });
         if (lo.c < cols.length - 1) items.push({ label: 'Move column right', run: () => moveCol(lo.c, lo.c + 1) });
       }
+      if (nc === 1 && !lockedCol(lo.c) && cols[lo.c]?.text) items.push({ label: 'Convert to numbers…', run: () => setConv([lo.c]) });
       const gone = span(lo.c, hi.c).filter(canArrange);
       if (gone.length) {
         const hides = gone.every(lockedCol);
@@ -714,6 +725,19 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
           </button>
         )}
       </div>
+      {conv ? (
+        <ConvertPanel
+          ds={dataset}
+          cols={conv}
+          onConvert={(r) => {
+            onEdits(convertInSheet(e, map, dataset, conv.map((c) => ({ shown: c, read: reads[c] })), r));
+            setConv(null);
+          }}
+          onCancel={() => setConv(null)}
+        />
+      ) : (
+        !later && proposed.length > 0 && <ConvertProposal ds={dataset} cols={proposed} onOpen={() => setConv(proposed.map((q) => q.c))} onLater={() => setLater(true)} />
+      )}
       {menu &&
         items.length > 0 &&
         createPortal(

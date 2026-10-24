@@ -1,7 +1,7 @@
 // Templates: group nodes saved under a name in this browser, offered in the Nodes panel (My templates) for any project.
 import { useSyncExternalStore } from 'react';
 import type { GroupData } from '../types.ts';
-import { mergedNodes } from '../project.ts';
+import { mergedNodes, reportsAsNotes } from '../project.ts';
 
 export type GroupTemplate = { id: string; name: string; data: GroupData };
 const KEY = 'graph-flow:templates';
@@ -12,8 +12,13 @@ function load(): GroupTemplate[] {
   if (cache) return cache;
   try {
     const v = JSON.parse(localStorage.getItem(KEY) ?? '[]') as GroupTemplate[];
-    // templates saved before nodes were merged into others: their insides converted as a project's are
-    cache = Array.isArray(v) ? v.map((t) => (t?.data ? { ...t, data: { ...t.data, ...(mergedNodes(t.data.nodes, t.data.edges) as Pick<GroupData, 'nodes' | 'edges'>) } } : t)) : [];
+    // templates saved before nodes were merged into others (or before Report went): their insides converted as a
+    // project's are
+    const inside = (d: GroupData) => {
+      const m = mergedNodes(d.nodes, d.edges);
+      return reportsAsNotes(m.nodes, m.edges) as Pick<GroupData, 'nodes' | 'edges'>;
+    };
+    cache = Array.isArray(v) ? v.map((t) => (t?.data ? { ...t, data: { ...t.data, ...inside(t.data) } } : t)) : [];
   } catch {
     cache = [];
   }

@@ -60,8 +60,6 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
       return 'dataset';
     case 'calculus':
       return handle === 'area' ? 'scalar' : 'dataset';
-    case 'report':
-      return null;
     case 'peaks':
     case 'normality':
     case 'ttest':
@@ -82,6 +80,10 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
       return 'dataset';
     case 'unstack':
       return 'dataset';
+    case 'convert':
+    case 'transpose':
+    case 'stack':
+      return handle === 'book' ? 'workbook' : 'dataset';
     case 'filterrows':
       // every sheet of a workbook: a workbook
       return node.data.sheet === '*' ? 'workbook' : 'dataset';
@@ -167,7 +169,8 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
     }
     case 'subgraph': {
       // a Batch: a row per file, a sheet per file, every file's rows
-      if (node.data.batch) return handle === 'sheets' ? 'workbook' : handle === 'table' || handle === 'stacked' ? 'dataset' : null;
+      // (and every result kept on its own port, k-…: a table)
+      if (node.data.batch) return handle === 'sheets' ? 'workbook' : handle === 'table' || handle === 'stacked' || handle?.startsWith('k-') ? 'dataset' : null;
       // what the inside source of this output gives
       const e = node.data.edges.find((x) => x.target === 'group-out' && x.targetHandle === handle);
       const src = e && node.data.nodes.find((x) => x.id === e.source);
@@ -204,7 +207,11 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
     case 'autoextract':
       return handle === 'in' ? ['dataset', 'workbook'] : [];
     case 'book':
-      return /^in-\d+$/.test(handle) ? ['column', 'dataset', 'workbook'] : [];
+      return /^in-\d+$/.test(handle) ? ['column', 'dataset', 'workbook', 'matrix'] : [];
+    case 'convert':
+    case 'transpose':
+    case 'stack':
+      return handle === 'in' ? ['dataset', 'workbook'] : [];
     case 'datamanip':
     case 'unstack':
     case 'columns':
@@ -216,8 +223,6 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
       return /^in-\d+$/.test(handle) ? ['column', 'dataset', 'workbook'] : [];
     case 'average':
       return /^in-\d+$/.test(handle) ? ['dataset'] : [];
-    case 'report':
-      return /^in-\d+$/.test(handle) ? ['dataset', 'column', 'scalar', 'workbook', 'matrix'] : [];
     case 'fit':
       return handle === 'in' ? ['dataset'] : handle === 'irf' ? ['dataset', 'column'] : [];
     case 'pick':

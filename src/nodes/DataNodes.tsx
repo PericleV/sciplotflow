@@ -2,7 +2,7 @@
 import { ExportTable } from './ExportTable.tsx';
 import { MATH_PRESETS } from '../engine/mathPresets.ts';
 import { Fragment, useLayoutEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
-import { useNodeConnections, useReactFlow, type NodeProps } from '@xyflow/react';
+import { useNodeConnections, useNodeId, useNodesData, useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import type { MathInput, NodeResult } from '../engine/evaluate.ts';
 import { isCommentLine, columnLetter, textLines, type CsvOptions, type Delimiter, type Decimal } from '../engine/csv.ts';
@@ -24,11 +24,20 @@ import { ask, notify } from '../ui/dialogStore.ts';
 
 const PREVIEW_ROWS = 6;
 
-// The first rows of some columns, under their names.
+// the rows a preview can show (its own number, 20, 100, all: at most ALL_ROWS)
+const MORE_ROWS = [20, 100];
+const ALL_ROWS = 1000;
+// The first rows of some columns, under their names; how many: chosen under it (kept in its node's data, previewRows),
+// the table scrolling past its height
 export function DataPreview({ columns, rows = PREVIEW_ROWS }: { columns: Column[]; rows?: number }) {
+  const id = useNodeId();
+  const self = useNodesData<AppNode>(id ?? '');
+  const { updateNodeData } = useReactFlow<AppNode>();
   if (!columns.length) return null;
   const n = maxOf(columns.map((c) => c.values.length));
-  const shown = Math.min(n, rows);
+  const want = (self?.data as { previewRows?: number } | undefined)?.previewRows ?? rows;
+  const shown = Math.min(n, want, ALL_ROWS);
+  const choices = [rows, ...MORE_ROWS.filter((k) => k > rows && k < n), ...(n > rows ? [ALL_ROWS] : [])];
   return (
     <div className="data-scroll nowheel nodrag">
       <table>
@@ -51,9 +60,20 @@ export function DataPreview({ columns, rows = PREVIEW_ROWS }: { columns: Column[
           ))}
         </tbody>
       </table>
-      <div className="hint">
-        {n} row{n === 1 ? '' : 's'} × {columns.length} column{columns.length === 1 ? '' : 's'}
-        {n > shown ? ` (first ${shown} shown)` : ''}
+      <div className="hint row">
+        <span>
+          {n} row{n === 1 ? '' : 's'} × {columns.length} column{columns.length === 1 ? '' : 's'}
+          {n > shown ? ` (first ${shown} shown)` : ''}
+        </span>
+        {id && choices.length > 1 && (
+          <select className="nodrag preview-rows" title="How many rows the preview shows (it scrolls past its height)" value={choices.includes(want) ? want : rows} onChange={(e) => updateNodeData(id, { previewRows: Number(e.target.value) === rows ? undefined : Number(e.target.value) } as Partial<AppNode['data']>)}>
+            {choices.map((k) => (
+              <option key={k} value={k}>
+                {k === ALL_ROWS ? (n > ALL_ROWS ? `show ${ALL_ROWS}` : 'show all') : `show ${k}`}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
     </div>
   );

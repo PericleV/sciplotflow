@@ -15,7 +15,8 @@ import type { ColumnRole, Dataset } from '../engine/table.ts';
 import { newSheet } from '../defaults.ts';
 import type { AppNode, BookLayout, BookSheet, WorkbookData, WorkbookNode } from '../types.ts';
 import { Worksheet, type SheetLayout } from './Worksheet.tsx';
-import { Field, InPort, Messages, OutPort, TextInput } from './ui.tsx';
+import { Check, Field, InPort, Messages, OutPort, TextInput } from './ui.tsx';
+import type { NodeView } from '../engine/evaluate.ts';
 import { maxOf } from '../engine/minmax.ts';
 import { X } from 'lucide-react';
 import { IC } from './iconProps.ts';
@@ -32,6 +33,30 @@ const asSheet = (ds: Dataset, name: string): BookSheet => {
   const roles = Object.fromEntries(ds.columns.flatMap((c, j) => (c.role ? [[j, { role: c.role }]] : [])));
   return { name, text: sheetText(ds), ...(Object.keys(roles).length ? { edits: { cols: roles } } : {}) };
 };
+
+// a matrix on an input: how its rows' and columns' names go on the sheet (what it has: names, Y / X, or nothing)
+const matrixRows = (are?: string) => (are === 'names' ? 'the rows’ names as the first column' : are === 'Y' ? 'the rows’ Y as the first column' : 'the row numbers as the first column');
+const matrixCols = (are?: string) => (are === 'names' ? 'the columns’ names as the names' : are === 'X' ? 'the columns’ X as the names' : 'the columns named C1, C2 …');
+type BookIn = NonNullable<NodeView['book']>['ins'][number];
+// the question asked when a matrix is connected (both ticked to begin with; OK keeps the answer, changed in the options)
+function MatrixAsk({ letter, inp, onAnswer }: { letter: string; inp: BookIn; onAnswer: (rows: boolean, cols: boolean) => void }) {
+  const [rows, setRows] = useState(true);
+  const [cols, setCols] = useState(inp.colsAre !== '');
+  return (
+    <div className="sheet-convert">
+      <span className="hint">
+        {letter} · the matrix “{inp.name}” as a table:
+      </span>
+      <Check label={matrixRows(inp.rowsAre)} value={rows} onChange={setRows} />
+      <Check label={matrixCols(inp.colsAre)} value={cols} onChange={setCols} />
+      <div className="row">
+        <button className="nodrag" onClick={() => onAnswer(rows, cols)}>
+          OK
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
   const { updateNodeData, setEdges } = useReactFlow<AppNode>();
@@ -145,10 +170,15 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
       {Array.from({ length: count }, (_, j) => {
         const inp = ins.get(columnLetter(j));
         return (
-          <InPort key={j} label={columnLetter(j)} port="dataset" id={`in-${j}`} title="Optional: a column or a dataset — on the first sheet, or the sheet named in the options (read-only, it follows the input), side by side with the other inputs there; a workbook — its sheets as they are">
-            <span className="muted ellipsis grow">{inp ? `${inp.name} · ${inp.kind}${inp.kind !== 'workbook' ? ` → ${into(j) || firstSheet}` : ''}` : 'connect a column, dataset or workbook'}</span>
+          <InPort key={j} label={columnLetter(j)} port="dataset" id={`in-${j}`} title="Optional: a column, a dataset or a matrix, on the first sheet, or the sheet named in the options (read-only, it follows the input), side by side with the other inputs there; a workbook — its sheets as they are">
+            <span className="muted ellipsis grow">{inp ? `${inp.name} · ${inp.kind}${inp.kind !== 'workbook' ? ` → ${into(j) || firstSheet}` : ''}` : 'connect a column, dataset, workbook or matrix'}</span>
           </InPort>
         );
+      })}
+      {[...ins.entries()].map(([letter, inp]) => {
+        if (inp.kind !== 'matrix' || !inp.ask) return null;
+        const port = /^[A-Z]+$/.test(letter) ? [...letter].reduce((a, ch) => a * 26 + ch.charCodeAt(0) - 64, 0) - 1 : -1;
+        return <MatrixAsk key={letter} letter={letter} inp={inp} onAnswer={(rows, cols) => set({ matrix: { ...data.matrix, [port]: { rows, cols } } })} />;
       })}
       {r?.outputs.out?.t === 'dataset' && (
         <div className="row">
@@ -184,6 +214,12 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
                 <Fragment key={j}>
                   <span className="ellipsis" title={inp.name}>
                     {columnLetter(j)} · {inp.name} on sheet
+                    {inp.kind === 'matrix' && (
+                      <>
+                        <Check label={matrixRows(inp.rowsAre)} value={data.matrix?.[j]?.rows ?? true} onChange={(rows) => set({ matrix: { ...data.matrix, [j]: { cols: data.matrix?.[j]?.cols ?? true, rows } } })} />
+                        <Check label={matrixCols(inp.colsAre)} value={data.matrix?.[j]?.cols ?? true} onChange={(cols) => set({ matrix: { ...data.matrix, [j]: { rows: data.matrix?.[j]?.rows ?? true, cols } } })} />
+                      </>
+                    )}
                   </span>
                   <TextInput value={into(j)} placeholder={firstSheet} title={`The sheet this input goes to (empty: the first sheet, “${firstSheet}”), at the right of its table; inputs given the same sheet go side by side, a name not used yet makes a new sheet`} onChange={(v) => setInto(j, v)} />
                 </Fragment>

@@ -230,8 +230,6 @@ export const SCENES: Scene[] = [
       for (let k = 0; k < 300 && busy(); k++) await rec.wait(500);
       await rec.wait(1500);`,
   },
-  node('report', 'Drug study', `
-    await rec.play([look('table', 1200), look(null, 600)]);`),
 
   // ---- Graphs ----
   node('histogram', 'Histogram with two-mode fits', `

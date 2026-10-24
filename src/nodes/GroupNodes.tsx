@@ -211,6 +211,9 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
       <OutPort label="table" port="dataset" id="table" title={`A row per ${unit}: its name, what the name says, the values kept (and the one row of a table kept)`} />
       <OutPort label="sheets" port="workbook" id="sheets" title={`A sheet per ${unit}: the tables kept (Auto-extract or a Plot of a workbook draws them all)`} />
       <OutPort label="all rows" port="dataset" id="stacked" title={`The rows of every ${unit} one under the other, the ${unit} and what its name says before them`} />
+      {data.outputs.map((p) => (
+        <OutPort key={p.id} label={p.label} port="dataset" id={`k-${p.id}`} title={`“${p.label}” alone: a value (or a table of one row) gives a row per ${unit}; a longer table, the rows of every ${unit} one under the other`} />
+      ))}
     </div>
   );
 }

@@ -1366,5 +1366,24 @@ export function matrixDataset(M: Matrix): Dataset {
   return { name: M.name, columns: [rowCol, ...names, ...cols] };
 }
 
+// A matrix on a sheet of a Workbook: the rows' names (else their Y, else their numbers) as the first column when rows;
+// its columns named by their names (else their X) when cols, else C1, C2 …
+export function matrixSheet(M: Matrix, rows: boolean, cols: boolean): Dataset {
+  const first: Column[] = !rows
+    ? []
+    : M.rowNames
+      ? [{ ...column(M.yName || 'Name', new Float64Array(M.rows).fill(NaN), M.rowNames), role: 'label' }]
+      : [{ ...column(M.yName || (M.ys ? 'Y' : 'Row'), M.ys ? Float64Array.from(M.ys) : Float64Array.from({ length: M.rows }, (_, i) => i + 1)), role: 'x' }];
+  const used = new Map<string, number>();
+  const data = Array.from({ length: M.cols }, (_, j): Column => {
+    let n = cols ? (M.colNames?.[j] ?? (M.xs ? fmtNum(M.xs[j], 6) : `C${j + 1}`)) : `C${j + 1}`;
+    const k = (used.get(n) ?? 0) + 1;
+    used.set(n, k);
+    if (k > 1) n = `${n} (${k})`;
+    return { ...column(n, Float64Array.from({ length: M.rows }, (_, i) => M.v[i * M.cols + j])), role: 'y' };
+  });
+  return { name: M.name, columns: [...first, ...data] };
+}
+
 // a short text of a value (the previews of the nodes)
 export const fmtCell = (v: number) => (Number.isFinite(v) ? fmtNum(v, 4) : v === Infinity ? '∞' : v === -Infinity ? '−∞' : '');

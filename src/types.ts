@@ -4,12 +4,12 @@ import type { AggSpec } from './engine/aggregate.ts';
 import type { QuickFitSpec } from './engine/quickfit.ts';
 import type { Edge, Node as FlowNode } from '@xyflow/react';
 import type { CsvOptions } from './engine/csv.ts';
-import type { ReportData } from './engine/reportDoc.ts';
 import type { TableExport } from './engine/exportTable.ts';
 import type { SheetEdits, SheetLook } from './engine/sheet.ts';
 import type { ExtractNames, ExtractRule } from './engine/extract.ts';
 import type { ManipOp } from './engine/manip.ts';
 import type { CombineMode, CombinePort, CombineSpec, UnstackSpec } from './engine/reshape.ts';
+import type { ConvertData, StackData, TransposeData } from './engine/tableShape.ts';
 import type { Baseline, DiffMethod, Pt, Region } from './engine/calculus.ts';
 import type { PickOptions, PickRule } from './engine/pick.ts';
 import type { BaseKind, FindOptions, PeakItem } from './engine/peaks.ts';
@@ -83,7 +83,9 @@ export type BookSheet = { name: string; text: string; edits?: SheetEdits; textRe
 // input's): the order moved by hand, the inputs' columns left out
 export type BookLayout = { order?: string[]; hide?: string[] };
 // hideSheets: sheets of the inputs taken out of the workbook (by their names; shown again from the node)
-export type WorkbookData = { name: string; sheets: BookSheet[]; sheet: number; into?: string[]; roles?: Record<string, Record<string, ColumnRole>>; layout?: Record<string, BookLayout>; hideSheets?: string[]; export?: Partial<TableExport>; look?: SheetLook };
+// matrix: a matrix on an input (by its port): its rows' names (or Y) as the first column, its columns' names (or X) as the
+// names (absent: not asked yet — both, and the node asks)
+export type WorkbookData = { name: string; sheets: BookSheet[]; sheet: number; into?: string[]; matrix?: Record<string, { rows: boolean; cols: boolean }>; roles?: Record<string, Record<string, ColumnRole>>; layout?: Record<string, BookLayout>; hideSheets?: string[]; export?: Partial<TableExport>; look?: SheetLook };
 // The column is chosen by its name (a file with the columns in another order still works), the index when names repeat.
 // sheet: from a workbook, by name; value: one value (the row `row`, 1 … n) instead of the column
 export type ExtractData = { column: string; index: number; sheet?: string; value?: boolean; row?: number };
@@ -466,8 +468,6 @@ export type TranslateNode = Node<TranslateData, 'translate'>;
 export type FilterNode = Node<FilterData, 'filterrows'>;
 export type CleanNode = Node<CleanData, 'clean'>;
 export type AverageNode = Node<AverageData, 'average'>;
-export type ReportNode = Node<ReportData, 'report'>;
-export type { ReportData };
 export type DigitizerNode = Node<DigitizerData, 'digitizer'>;
 // Image analysis: an image (8 / 16 bit, float; gray or RGB) edited by steps, calibrated; its matrix and figure
 export type ImageNode = Node<ImageAnalysisData, 'image'>;
@@ -524,6 +524,10 @@ export type FFTNode = Node<FFTData, 'fft'>;
 export type ConvNode = Node<ConvData, 'convolve'>;
 export type KKNode = Node<KKData, 'kk'>;
 export type UnstackNode = Node<UnstackData, 'unstack'>;
+export type ConvertNode = Node<ConvertData, 'convert'>;
+export type TransposeNode = Node<TransposeData, 'transpose'>;
+export type StackNode = Node<StackData, 'stack'>;
+export type { ConvertData, StackData, TransposeData };
 export type CombineNode = Node<CombineData, 'combine'>;
 export type MathColNode = Node<MathColData, 'mathcol'>;
 export type PythonNode = Node<PythonData, 'python'>;
@@ -564,7 +568,6 @@ export type AppNode =
   | FilterNode
   | CleanNode
   | AverageNode
-  | ReportNode
   | DigitizerNode
   | PhaseDigitizerNode
   | EisNode
@@ -591,6 +594,9 @@ export type AppNode =
   | ConvNode
   | KKNode
   | UnstackNode
+  | ConvertNode
+  | TransposeNode
+  | StackNode
   | CombineNode
   | MathColNode
   | PythonNode

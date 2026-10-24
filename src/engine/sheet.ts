@@ -4,6 +4,7 @@
 import { columnLetter, parseCsv, parseNumber, type CsvOptions } from './csv.ts';
 import { column, withUnit, type Column, type ColumnRole, type Dataset } from './table.ts';
 import { maxOf } from './minmax.ts';
+import { toNumbers, type ToNumberRules } from './convert.ts';
 
 export type SheetEdits = {
   cells?: Record<string, string>; // "row:col" → the cell as typed
@@ -84,6 +85,38 @@ export function applySheet(base: Dataset, e: SheetEdits | undefined, decimal: '.
     return withHead(column(src?.name ?? columnLetter(c), values, text), { ...(src?.role ? { role: src.role } : {}), ...head });
   });
   return { dataset: { name: base.name, columns }, map: { rows, cols, baseRows, baseCols } };
+}
+
+// Columns of the worksheet read as numbers (by the rules of Convert columns), written into its changes: every cell read
+// gets its number typed in its place (a mark of no value, n.d., is emptied; a cell not read stays as it is), the unit
+// goes into the name, and the errors (1.23 ± 0.05) into a column of their own after it (±Y). which: each column's place
+// in the table shown (ds) and in the table as read.
+export function convertInSheet(e: SheetEdits, map: SheetMap, ds: Dataset, which: { shown: number; read: number }[], r: ToNumberRules): SheetEdits {
+  const cells = { ...e.cells };
+  const heads: Record<string, ColumnHead> = { ...e.cols };
+  const order = [...map.cols];
+  let added = e.addCols ?? 0;
+  for (const { shown, read } of [...which].sort((a, b) => b.shown - a.shown)) {
+    const col = ds.columns[shown];
+    if (!col) continue;
+    const res = toNumbers(col, r);
+    const failed = new Set(res.failed.map((f) => f.row));
+    const [main, err] = res.columns;
+    map.rows.forEach((row, i) => {
+      if (i >= col.values.length || failed.has(i) || !col.text?.[i]?.trim()) return;
+      cells[`${row}:${read}`] = Number.isFinite(main.values[i]) ? String(main.values[i]) : '';
+    });
+    if (main.name !== col.name) heads[read] = { ...heads[read], name: main.name, unit: undefined };
+    if (err) {
+      const at = map.baseCols + added++;
+      order.splice(order.indexOf(read) + 1, 0, at);
+      heads[at] = { name: err.name, role: 'yerr' };
+      map.rows.forEach((row, i) => {
+        if (Number.isFinite(err.values[i])) cells[`${row}:${at}`] = String(err.values[i]);
+      });
+    }
+  }
+  return { ...e, cells, cols: heads, ...(added !== (e.addCols ?? 0) ? { addCols: added, order } : {}) };
 }
 
 // The table of a Workbook sheet as text: a line of names, then the rows, tab-separated (numbers in full, text cells as

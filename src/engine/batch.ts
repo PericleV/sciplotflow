@@ -185,6 +185,17 @@ export function gather(runs: FileRun[], read: ((number | string)[] | null)[], pa
   return { table: { name: 'batch', columns: cols }, sheets: { name: 'batch', sheets }, stacked };
 }
 
+// One result kept, on a port of its own (its label): a value, or a table of one row (a Fit's parameters), gives a table
+// with a row per run; a longer table, every run's rows one under the other (the run and what its name says before them);
+// null: no run gave it
+export function gatherOne(runs: FileRun[], read: ((number | string)[] | null)[], parts: Part[], label: string, unit = 'File'): Dataset | null {
+  const only = runs.map((r) => ({ ...r, values: r.values.filter((v) => v.label === label), tables: r.tables.filter((t) => t.label === label) }));
+  if (!only.some((r) => r.values.length || r.tables.length)) return null;
+  const long = only.some((r) => r.tables.some((t) => Math.max(0, ...t.ds.columns.map((c) => c.values.length)) > 1));
+  const g = gather(only, read, parts, unit);
+  return { ...(long && g.stacked ? g.stacked : g.table), name: label };
+}
+
 // a value of an output: kept as the file's value (a scalar), or its table (a dataset; a column: a table of it)
 export function resultOf(label: string, v: { t: string; v: unknown } | undefined, run: FileRun) {
   if (!v) return;

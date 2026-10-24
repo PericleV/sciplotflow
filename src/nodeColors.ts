@@ -23,6 +23,9 @@ export const NODE_SECTION: Record<NodeType, Section> = {
   autoextract: 'Data',
   datamanip: 'Data',
   unstack: 'Data',
+  convert: 'Data',
+  transpose: 'Data',
+  stack: 'Data',
   combine: 'Data',
   fit: 'Analysis',
   calculus: 'Analysis',
@@ -42,7 +45,6 @@ export const NODE_SECTION: Record<NodeType, Section> = {
   image: 'Data',
   phasediagram: 'Analysis',
   average: 'Signal',
-  report: 'Analysis',
   peaks: 'Analysis',
   peakwidth: 'Analysis',
   mathcol: 'Data',
@@ -105,6 +107,9 @@ export const NODE_TITLES: Record<NodeType, string> = {
   autoextract: 'Auto-extract',
   datamanip: 'Data manipulation',
   unstack: 'Split into columns',
+  convert: 'Convert columns',
+  transpose: 'Rows to columns',
+  stack: 'Stack columns',
   combine: 'Combine columns',
   fit: 'Fit',
   calculus: 'Differentiate / Integrate',
@@ -124,7 +129,6 @@ export const NODE_TITLES: Record<NodeType, string> = {
   image: 'Image analysis',
   phasediagram: 'Phase diagram',
   average: 'Average curves',
-  report: 'Report',
   peaks: 'Peak analyzer',
   peakwidth: 'Peak width',
   mathcol: 'Math column',
@@ -163,7 +167,7 @@ export const NODE_TITLES: Record<NodeType, string> = {
   groupout: 'Group output',
 };
 
-export const nodeTitle = (n: AppNode): string => (n.type === 'subgraph' && n.data.batch ? 'Batch' : NODE_TITLES[n.type]);
+export const nodeTitle = (n: AppNode): string => (n.type === 'subgraph' && n.data.batch ? 'Batch' : n.type === 'transpose' && n.data.as === 'cols' ? 'Columns to rows' : NODE_TITLES[n.type]);
 
 // A short name of a node for tooltips: its type and its own name / label / caption when it has one.
 export function nodeDisplayName(n: AppNode): string {

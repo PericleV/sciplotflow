@@ -126,9 +126,9 @@ tbody th, th.rowhead { font-weight: 400; }
 /* The width of every node, by what its body shows on the canvas (its settings are in Options):
    S, its ports and a line or two of summary; M, a few lines of text (a formula, a list of values, a test written out,
    a small table); L, a graph, a large table or an editor; XL, a whole figure. A new node takes its place here. */
-.node-extract, .node-gencol, .node-unstack, .node-columns, .node-combine, .node-clean, .node-pick, .node-groupio { width: var(--node-s); }
+.node-extract, .node-gencol, .node-unstack, .node-convert, .node-transpose, .node-stack, .node-columns, .node-combine, .node-clean, .node-pick, .node-groupio { width: var(--node-s); }
 .node-mathcol, .node-autoextract, .node-stats, .node-matrix, .node-stattest, .node-group, .node-note { width: var(--node-m); }
-.node-import, .node-book, .node-signal, .node-translate, .node-curvemath, .node-datamanip, .node-digitizer, .node-phasedigitizer, .node-eis, .node-peaks, .node-calculus, .node-fit, .node-matcomp, .node-python, .node-report { width: var(--node-l); }
+.node-import, .node-book, .node-signal, .node-translate, .node-curvemath, .node-datamanip, .node-digitizer, .node-phasedigitizer, .node-eis, .node-peaks, .node-calculus, .node-fit, .node-matcomp, .node-python { width: var(--node-l); }
 .node-plot1d, .node-canvas, .node-drawing { width: var(--node-xl); }
 
 .node-shell {
@@ -678,6 +678,9 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .data-scroll table { border-collapse: collapse; font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
 .data-scroll th { position: sticky; top: 0; background: var(--panel); text-align: right; padding: 2px 6px; white-space: nowrap; }
 .data-scroll td { text-align: right; padding: 1px 6px; border-top: 1px solid var(--border); white-space: nowrap; }
+/* the preview's foot (rows × columns, how many shown): kept in view while the rows scroll */
+.data-scroll > .hint.row { position: sticky; left: 0; bottom: 0; background: var(--panel); gap: 6px; align-items: center; }
+.preview-rows { margin-left: auto; font-size: var(--fs-small); }
 .merge-source { flex-wrap: wrap; }
 .merge-source input { width: 150px; }
 .custom-source { margin-top: 4px; font-size: var(--fs-small); }
@@ -1386,18 +1389,7 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .de-menu hr { border: none; border-top: 1px solid var(--border); margin: 3px 0; }
 
 /* Report: the document as it reads (title, blocks with their tables, your texts) */
-.report-preview { max-height: 460px; overflow: auto; margin-top: 4px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--input); font-size: var(--fs-small); user-select: text; cursor: auto; }
-.report-preview p { margin: 4px 0; }
-.report-preview ul { margin: 4px 0; padding-left: 18px; }
-.report-preview code { font-family: var(--mono, monospace); }
-.report-preview table { border-collapse: collapse; margin: 4px 0 6px; font-variant-numeric: tabular-nums; }
-.report-preview th { text-align: left; padding: 2px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
-.report-preview td { text-align: right; padding: 1px 6px; border-top: 1px solid var(--border); white-space: nowrap; }
-.report-preview td:first-child { text-align: left; }
-.report-h1 { font-size: 1.25em; font-weight: 700; }
-.report-h2 { font-weight: 700; margin-top: 8px; }
 .report-h3, .report-h4 { font-weight: 600; margin-top: 6px; }
-.report-sub { font-weight: 600; margin-top: 4px; }
 .warn-text { color: var(--warn); }
 /* Curve math: the curves' settings, the operations (each in its colour) */
 .cm-curve { font-weight: 700; }
@@ -1684,3 +1676,5 @@ input[type='checkbox'], input[type='radio'] { box-shadow: none; }
 .image-editor .ie-model select { max-width: 100%; }
 .image-editor .ie-shapes { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1px 6px; }
 /* a particle seen in 3D: its visible faces, each its colour */
+.sheet-convert { margin-top: 4px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; display: flex; flex-direction: column; gap: 3px; }
+.sheet-convert.row { flex-direction: row; align-items: center; }

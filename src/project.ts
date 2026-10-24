@@ -17,7 +17,7 @@ export type Project = { app: 'graph-flow'; version: typeof PROJECT_VERSION; node
 // The format of project files. Saved files must keep opening in later versions: a change of the format bumps this number
 // together with its conversion in MIGRATIONS, and a file of the old format joins scripts/fixtures (checked by npm run check).
 // Within a format, node data only gain optional fields (the nodes read missing ones as their defaults).
-export const PROJECT_VERSION = 13;
+export const PROJECT_VERSION = 14;
 type RawNode = { id: string; type: string; data: Record<string, unknown> };
 // MIGRATIONS[v] turns a file of format v into format v + 1.
 const MIGRATIONS: Record<number, (p: Record<string, unknown>) => Record<string, unknown>> = {
@@ -70,7 +70,34 @@ const MIGRATIONS: Record<number, (p: Record<string, unknown>) => Record<string, 
   // 12 → 13: the EIS node has no figure outputs (Nyquist, |Z|, phase, Bode): each one connected becomes a Plot of the
   // node's data (“fitted”, and the smooth fit on its new output “curve”), connected where the figure was
   12: (p) => ({ ...p, ...eisFiguresAsPlots(p.nodes, p.edges) }),
+  // 13 → 14: no Report node: each one becomes a note with the texts written in it (its title, the text before, the
+  // titles and texts of its blocks, the text after); its connections go
+  13: (p) => ({ ...p, ...reportsAsNotes(p.nodes, p.edges) }),
 };
+
+// (13 → 14) in a graph and in the groups inside it; also used on the templates kept in the browser (no version). Only
+// Report nodes change, so it can run again on a converted graph.
+export function reportsAsNotes(rawNodes: unknown, rawEdges: unknown): { nodes: RawNode[]; edges: Edge[] } {
+  const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  const nodes = ((Array.isArray(rawNodes) ? rawNodes : []) as RawNode[]).map((n): RawNode => {
+    if (!n || !n.data || typeof n.data !== 'object') return n;
+    if (n.type === 'subgraph') return { ...n, data: { ...n.data, ...reportsAsNotes(n.data.nodes, n.data.edges) } };
+    if (n.type !== 'report') return n;
+    const d = n.data;
+    const items = d.items && typeof d.items === 'object' ? (d.items as Record<string, { title?: unknown; text?: unknown }>) : {};
+    const blocks = Object.keys(items)
+      .sort((a, b) => Number(a) - Number(b))
+      .flatMap((k) => {
+        const [t, x] = [str(items[k]?.title), str(items[k]?.text)];
+        return t || x ? [[t, x].filter(Boolean).join('\n')] : [];
+      });
+    const text = [str(d.title), str(d.intro), ...blocks, str(d.outro)].filter(Boolean).join('\n\n');
+    return { ...n, type: 'note', data: { text: text || 'Report' } };
+  });
+  const reports = new Set(((Array.isArray(rawNodes) ? rawNodes : []) as RawNode[]).filter((n) => n?.type === 'report').map((n) => n.id));
+  const edges = ((Array.isArray(rawEdges) ? rawEdges : []) as Edge[]).filter((e) => !reports.has(e.source) && !reports.has(e.target));
+  return { nodes, edges };
+}
 
 // (11 → 12) in a graph and in the groups inside it
 function inputsSheet(rawNodes: unknown, rawEdges: unknown): RawNode[] {

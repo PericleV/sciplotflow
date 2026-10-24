@@ -21,7 +21,7 @@ import { columnLetter, readTable, type CsvResult } from './csv.ts';
 import { curveColumns, digest, figPort, outValue, toPy, type PyJob, type PyResult, type PyValue } from './python.ts';
 import { applySheet, hasEdits, readSheet, type SheetMap } from './sheet.ts';
 import { flattenGroups, GROUP_IN, GROUP_OUT } from './subgraph.ts';
-import { columnRuns, gather, orderFiles, readText, resultOf, withOwn, type FileRun } from './batch.ts';
+import { columnRuns, gather, gatherOne, orderFiles, readText, resultOf, withOwn, type FileRun } from './batch.ts';
 import { takeRows } from './split.ts';
 import { parseRows } from './rows.ts';
 export { parseRows };
@@ -56,7 +56,7 @@ import { ternaryChart } from './ternary.ts';
 import { waterfallChart, waterfallZ } from './waterfall.ts';
 import { plot3d, type LayerInput, type LayerSpec, type Plot3DInput } from './plot3d.ts';
 import { asGrid, contourPlot, gridFromMatrix, gridFromScatter, matrixNames, type Grid } from './contour.ts';
-import { fromColumn, makeMatrix, matrixDataset, partHandle, runSteps, type MatCompData, type Matrix } from './matrix.ts';
+import { fromColumn, makeMatrix, matrixDataset, matrixSheet, partHandle, runSteps, type MatCompData, type Matrix } from './matrix.ts';
 import { cellCurves, matrixAxes, matrixGrid, type MatrixPlotSpec } from './matrixplot.ts';
 import { bracketCurves, bracketTable, SIG_DEFAULTS, significance, type SigElement, type SigSpec } from './signif.ts';
 import { averageNode, convNode, fftNode, interpNode, normalizeNode, smoothNode, valuesOf, type SignalOut, type SignalPlot } from './signalnodes.ts';
@@ -75,15 +75,16 @@ import { findSpec, runFits, totalStats, type FitParamSpec, type FitRunData, type
 import { compare, compareTable, modelName, yorkRuns, type Scored } from './fitcompare.ts';
 import { parseRowHandle, rowHandle } from './ports.ts';
 import { hasGrad, type GradFill, AXIS_DEFAULTS, COLORBAR_DEFAULTS, SIDE_DEFAULTS, curveStyle, axesStyle, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, toPt, type Annotation, type AxesFig, type AxesStyle, type AxisSpec, type Curve, type CurveStyle, type Figure, type FigureBox, type LegendEntry, type LegendSpec, type LengthUnit, type Placement, type ShapeSpec, type TextDefaults, resolveText, type Side, INSET_DEFAULTS, insetBackground, scaledSize } from '../figure/spec.ts';
-import { CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, DRAWING_DEFAULTS, MATRIX_PLOT_DEFAULTS, PLOT_PAGE_DEFAULTS, REPORT_DEFAULTS } from '../defaults.ts';
+import { CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, DRAWING_DEFAULTS, MATRIX_PLOT_DEFAULTS, PLOT_PAGE_DEFAULTS } from '../defaults.ts';
 import { figurePng, imageFigure, imageMatrix, imageMeasurements, processImage, scaleBarPlace, type ImageAnalysisData } from '../image/node.ts';
 import { isArea, roiCentre, roiOutline, ROI_COLOR } from '../image/roi.ts';
 import { cropBox } from '../image/raster.ts';
 import { STEP_DEFS } from '../image/steps.ts';
 import { phaseFigures, type PhaseDiagramData } from './phasenode.ts';
 import { maxOf, minOf } from './minmax.ts';
-import { reportBlock, type ReportBlock, type ReportData } from './reportDoc.ts';
 import { nodeDisplayName } from '../nodeColors.ts';
+import { convertTable, stackColumns, transposeTable } from './tableShape.ts';
+import { looksNumeric, TO_NUMBER_DEFAULTS } from './convert.ts';
 
 export type Value =
   | { t: 'workbook'; v: Workbook }
@@ -123,16 +124,18 @@ export type NodeView = {
   sheetsA?: string[]; // Curve math: the sheets of the workbooks on A and B
   sheetsB?: string[];
   cmath?: { a: CurvePlotLine; b?: CurvePlotLine; ops: CurveOpView[] }; // Curve math: the curves and what every operation computes
-  doc?: { blocks: ReportBlock[]; inputs: { port: number; letter: string; title: string; kind: string }[] }; // Report: its blocks, its inputs
   py?: PyView;
   csv?: CsvResult;
   sheet?: SheetMap; // Import: which row / column of the table as read each row / column shown is
   sheets?: string[]; // Import, Extract column, Workbook: the names of the sheets of the workbook
+  // Convert columns: the columns converted, and every column whose text looks like numbers (how many of its text cells)
+  convert?: { changed: string[]; looks: { name: string; numeric: number; text: number; examples: string[] }[] };
   // Workbook: its own sheets (the first `own`; the others: from the inputs, read-only) and its inputs; kinds: every sheet
   // its own table, an input's (read-only), or its own table with inputs (mixed); keys: the columns of the sheet shown, when
   // it has inputs — o<n>: of its own table (n: its place as read), i:<name>: an input's
   // hiddenSheets: the inputs' sheets taken out of the workbook (by their names)
-  book?: { own: number; ins: { letter: string; kind: 'column' | 'dataset' | 'workbook'; name: string; sheet: string }[]; kinds?: ('own' | 'input' | 'mixed')[]; keys?: string[]; hiddenSheets?: string[] };
+  // (a matrix: ask, the node asks how it goes on the sheet; rowsAre, colsAre: what its rows and columns have — names, Y / X, or nothing)
+  book?: { own: number; ins: { letter: string; kind: 'column' | 'dataset' | 'workbook' | 'matrix'; name: string; sheet: string; ask?: boolean; rowsAre?: string; colsAre?: string }[]; kinds?: ('own' | 'input' | 'mixed')[]; keys?: string[]; hiddenSheets?: string[] };
   // Data manipulation: the points of its graph (moved), the state of every input row (ROW_MASKED …), the columns shown
   manip?: { x: Float64Array; y: Float64Array; state: Uint8Array; nIn: number; xName: string; yName: string };
   // Fit: the data (every point, which run it is in, whether it was fitted), the results of every run, the model
@@ -200,8 +203,7 @@ export type NodeView = {
 // inner: a Batch's steps as they ran on its first file (shown when the batch is opened), by their ids inside it
 export type NodeResult = { rev: number; outputs: Record<string, Value>; errors: string[]; warnings: string[]; view: NodeView; inner?: Map<string, NodeResult> };
 
-// name: of the node it comes from (as the nodes show it), for the titles of a Report
-type Inputs = Map<string, { from: string; handle: string; value: Value | undefined; name?: string }[]>;
+type Inputs = Map<string, { from: string; handle: string; value: Value | undefined }[]>;
 // py: the results of the Python scripts (run on the main thread's side, given here by node id; seq: they changed)
 // sub: the caches of the runs of a Batch (by the batch's id and the file), kept between evaluations
 // math: the sizes of the formulas (math/sizes.ts) the result was measured with (absent: it measured none)
@@ -218,7 +220,8 @@ export function logicalData(n: AppNode): unknown {
   if (n.type === 'note' || n.type === 'frame') return null;
   // a group: what is inside, not where the nodes inside are drawn
   if (n.type === 'subgraph') return [n.data.inputs, n.data.outputs, n.data.nodes.map((x) => [x.id, x.type, logicalData(x)]), n.data.edges.map((e) => [e.source, e.sourceHandle, e.target, e.targetHandle]), n.data.batch ?? null];
-  const { caption: _c, collapsed: _k, ...rest } = n.data as Record<string, unknown>;
+  // (how it is shown: its caption, folded, how many rows its preview shows)
+  const { caption: _c, collapsed: _k, previewRows: _p, ...rest } = n.data as Record<string, unknown>;
   if (n.type === 'import') {
     delete rest.text;
     delete rest.sheets;
@@ -4346,6 +4349,13 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
           if (!onSheet.has(sheet)) onSheet.set(sheet, []);
           onSheet.get(sheet)!.push(...(v.t === 'dataset' ? v.v.columns : [v.v]));
           ins.push({ letter, kind: v.t, name: v.v.name, sheet });
+        } else if (v?.t === 'matrix') {
+          // (a matrix: a table, its rows' and columns' names as asked)
+          const how = n.data.matrix?.[p];
+          if (!onSheet.has(sheet)) onSheet.set(sheet, []);
+          onSheet.get(sheet)!.push(...matrixSheet(v.v, how?.rows ?? true, how?.cols ?? true).columns);
+          const M = v.v;
+          ins.push({ letter, kind: 'matrix', name: M.name || 'matrix', sheet, ask: !how, rowsAre: M.rowNames ? 'names' : M.ys ? 'Y' : '', colsAre: M.colNames ? 'names' : M.xs ? 'X' : '' });
         }
       }
       // the inputs given a sheet of its own go on it; the others make sheets after them
@@ -4480,27 +4490,6 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       if (typeof r === 'string') return { errors: [r], view: { available } };
       return { outputs: { out: { t: 'dataset', v: r.dataset } }, warnings: r.warnings, view: { available, signal: { labels: r.labels, plots: r.plots }, report: r.report } };
     }
-    case 'report': {
-      const d: ReportData = { ...REPORT_DEFAULTS, ...n.data };
-      const ports = [...inputs.keys()].flatMap((h) => {
-        const m = /^in-(\d+)$/.exec(h);
-        return m ? [Number(m[1])] : [];
-      });
-      const blocks: ReportBlock[] = [];
-      const ins: { port: number; letter: string; title: string; kind: string }[] = [];
-      for (const p of ports.sort((a, b) => a - b)) {
-        const e = inputs.get(`in-${p}`)?.[0];
-        const v = e?.value;
-        if (!e || !v || v.t === 'figure') continue;
-        const title = `${e.name ?? e.from}${e.handle !== 'out' ? ` · ${e.handle}` : ''}`;
-        ins.push({ port: p, letter: columnLetter(p), title, kind: v.t });
-        const item = d.items?.[p] ?? {};
-        if (!item.hidden) blocks.push(reportBlock(p, title, v, item, d));
-      }
-      const view: NodeView = { doc: { blocks, inputs: ins } };
-      if (!ins.length && !d.intro.trim() && !d.outro.trim()) return { view: { ...view, waiting: 'Connect results to A, B, C … (the parameters of a Fit, a test, statistics, values, columns): each a block of the report.' } };
-      return { warnings: blocks.flatMap((b) => b.warnings), view };
-    }
     case 'average': {
       const sets: { port: number; v: Dataset }[] = [];
       for (const [h, list] of inputs) {
@@ -4606,6 +4595,34 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       const r = applyManip(v.v, xName, yName, n.data.ops, n.data.added ?? [], n.data.addAt ?? 'sorted');
       if (typeof r === 'string') return { errors: [r], view: { available } };
       return { outputs: { out: { t: 'dataset', v: r.dataset } }, warnings: r.warnings, view: { available, manip: { x: r.x, y: r.y, state: r.state, nIn: r.nIn, xName, yName } } };
+    }
+    case 'convert':
+    case 'transpose':
+    case 'stack': {
+      // (a workbook: every sheet; out: the first, book: all of them)
+      const v = one('in');
+      if (v?.t !== 'dataset' && v?.t !== 'workbook')
+        return { view: { waiting: n.type === 'stack' ? 'Connect a table (or a workbook): its columns go one under the other.' : n.type === 'transpose' ? 'Connect a table (or a workbook): its rows become columns.' : 'Connect a table (or a workbook): its columns are read as numbers or written as text.' } };
+      const sheets = v.t === 'workbook' ? v.v.sheets : [v.v];
+      if (!sheets.length) return { view: { waiting: 'The workbook has no sheets.' } };
+      const available = sheets[0].columns.map(colInfo);
+      const done: Dataset[] = [];
+      const warnings: string[] = [];
+      let changed: string[] = [];
+      for (const s of sheets) {
+        const r: { dataset: Dataset; warnings: string[]; changed?: string[] } | string = n.type === 'convert' ? convertTable(s, n.data) : n.type === 'transpose' ? transposeTable(s, n.data) : stackColumns(s, n.data);
+        const tag = sheets.length > 1 ? `${s.name}: ` : '';
+        if (typeof r === 'string') return { errors: [tag + r], view: { available } };
+        done.push({ ...r.dataset, name: s.name });
+        warnings.push(...r.warnings.map((w) => tag + w));
+        if (r.changed && done.length === 1) changed = r.changed;
+      }
+      const looks = n.type === 'convert' ? sheets[0].columns.flatMap((c) => (c.text ? [{ name: c.name, ...looksNumeric(c, { ...TO_NUMBER_DEFAULTS, ...n.data.num }) }] : [])).filter((q) => q.numeric > 0) : [];
+      return {
+        outputs: { out: { t: 'dataset', v: done[0] }, book: { t: 'workbook', v: { name: v.t === 'workbook' ? v.v.name : v.v.name, sheets: done } } },
+        warnings: [...new Set(warnings)],
+        view: { available, ...(n.type === 'convert' ? { convert: { changed, looks } } : {}) },
+      };
     }
     case 'unstack': {
       const v = one('in');
@@ -4983,8 +5000,14 @@ function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cac
     return q ? [nodeDisplayName(q)] : [];
   });
   if (runs.some((r) => ownOf(r.name).length)) out.table.columns.push(column('Own settings', new Float64Array(runs.length).fill(NaN), runs.map((r) => ownOf(r.name).join(', '))));
+  // every result kept on a port of its own (k-…, by its id inside)
+  const each: Record<string, Value> = {};
+  for (const p of g.outputs) {
+    const one = gatherOne(runs, ordered.read, ordered.parts, p.label, overCols ? 'Column' : 'File');
+    if (one) each[`k-${p.id}`] = { t: 'dataset', v: one };
+  }
   return {
-    outputs: { table: { t: 'dataset', v: out.table }, sheets: { t: 'workbook', v: out.sheets }, ...(out.stacked ? { stacked: { t: 'dataset', v: out.stacked } } : {}) },
+    outputs: { table: { t: 'dataset', v: out.table }, sheets: { t: 'workbook', v: out.sheets }, ...(out.stacked ? { stacked: { t: 'dataset', v: out.stacked } } : {}), ...each },
     warnings,
     view: { batch: { files: runs.length, failed, list: runs.map((r, k) => ({ name: r.name, read: readText(ordered.read[k], ordered.parts), errors: r.errors, own: ownOf(r.name) })), shown, ...(colView ? { over: 'columns' as const, ...colView } : {}) } },
     inner: preview,
@@ -5032,11 +5055,9 @@ function evaluateFlat(nodes: AppNode[], edges: Edge[], cache: EvalCache = newCac
         if (!(want === '*' && everySheet(n.type))) value = sheet ? { t: 'dataset', v: sheet } : undefined;
       }
       const l = inputs.get(th) ?? [];
-      const srcNode = n.type === 'report' ? byId.get(e.source) : undefined;
-      const name = srcNode ? nodeDisplayName(srcNode) : undefined;
-      l.push({ from: e.source, handle, value, ...(name ? { name } : {}) });
+      l.push({ from: e.source, handle, value });
       inputs.set(th, l);
-      tokens.push(`${th}<${e.source}:${handle}:${src.rev}${name ? `:${name}` : ''}`);
+      tokens.push(`${th}<${e.source}:${handle}:${src.rev}`);
     }
     if (results.has(id)) return results.get(id)!; // a loop resolved while visiting the inputs
     const key = JSON.stringify([n.type, logicalData(n), tokens, n.type === 'python' ? (cache.py.get(id)?.seq ?? 0) : 0]);
