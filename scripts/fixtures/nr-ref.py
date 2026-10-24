@@ -1,3 +1,6 @@
+# Reference values for the incomplete beta and gamma functions (scipy.special betainc, gammainc and their complements)
+# and the eigenvalues of non-symmetric matrices (numpy.linalg.eigvals), for src/engine/dist.ts and src/engine/matrix.ts.
+# python scripts/fixtures/nr-ref.py (from the project folder)
 import json, numpy as np
 from scipy import special
 cases_b = [(0.5, 0.5, 0.3), (2, 3, 0.4), (10, 0.5, 0.99), (0.1, 50, 1e-4), (300, 200, 0.6), (5, 5, 0.5), (1.5, 1e3, 1e-3)]

@@ -13,6 +13,9 @@ import { column } from '../src/engine/table.ts';
 import { lgamma } from '../src/engine/dist.ts';
 import { designSos, notchSos, sosResponse } from '../src/engine/spectral.ts';
 import { hampel } from '../src/engine/signal2.ts';
+import { averageNode, convNode, fftNode, interpNode, smoothNode } from '../src/engine/signalnodes.ts';
+import { AVERAGE_DEFAULTS, CONV_DEFAULTS, FFT_DEFAULTS, INTERP_DEFAULTS, SMOOTH_DEFAULTS } from '../src/defaults.ts';
+import { savgol, spectrum } from '../src/engine/signal.ts';
 
 type Ok = (cond: boolean, what: string) => void;
 
@@ -255,5 +258,52 @@ export function checkSigpack(ok: Ok) {
     const sp = y.map((v, i) => (i % 50 === 25 ? v + 5 : v));
     const h = hampel(sp, 5, 3);
     ok(h.out.join(',') === '25,75,125,175,225,275' && relMax(h.y.filter((_, i) => i % 50 !== 25), y.filter((_, i) => i % 50 !== 25)) === 0 && hampel(y, 5, 3).out.length === 0, `Hampel: the six spikes replaced (${h.out.join(', ')}), the other points kept; none in the clean signal`);
+  }
+  // ---- the ranges of Smooth, Interpolate, FFT, Convolution, Average curves ----
+  {
+    const n = 400;
+    const t = Array.from({ length: n }, (_, i) => i * 0.01);
+    const a = t.map((v, i) => Math.sin(2 * Math.PI * 3 * v) + 0.3 * Math.sin(i * 1.7));
+    const b = t.map((v, i) => Math.cos(2 * Math.PI * 5 * v) + 0.2 * Math.cos(i * 2.3));
+    const ds = { name: 'r', columns: [{ ...column('t (s)', Float64Array.from(t)), role: 'x' as const }, { ...column('A', Float64Array.from(a)), role: 'y' as const }, { ...column('B', Float64Array.from(b)), role: 'y' as const }] };
+    const col = (o: unknown, name: string) => Array.from((o as { dataset: { columns: { name: string; values: Float64Array }[] } }).dataset.columns.find((c) => c.name === name)!.values);
+    const rg = [{ lo: 1, hi: 1.995 }];
+    const inR = (i: number) => t[i] >= 1 && t[i] <= 1.995;
+    const rows = t.map((_, i) => i).filter(inR);
+    const bad: string[] = [];
+    // Smooth: inside, the smoothing of the part alone; outside, the data (or nothing)
+    const sm = smoothNode(ds, { ...SMOOTH_DEFAULTS, ys: 'A', method: 'savgol', points: 11, order: 2, edge: 'nearest', regions: rg });
+    const ref = savgol(rows.map((i) => a[i]), 11, 2, 'nearest');
+    const sv = col(sm, 'A (smoothed)');
+    if (!(relMax(rows.map((i) => sv[i]), ref) < 1e-12 && sv.every((v, i) => inR(i) || v === a[i]))) bad.push('Smooth');
+    const se = col(smoothNode(ds, { ...SMOOTH_DEFAULTS, ys: 'A', regions: rg, outside: 'empty' }), 'A (smoothed)');
+    if (!se.every((v, i) => inR(i) === Number.isFinite(v))) bad.push('Smooth outside empty');
+    // Interpolate: only the points inside, the new X over them
+    const ip = interpNode(ds, { ...INTERP_DEFAULTS, ys: 'A', grid: 'points', points: 50, regions: rg }, undefined);
+    const ix = col(ip, 't (s)');
+    if (!(Math.abs(ix[0] - 1) < 1e-12 && Math.abs(ix[ix.length - 1] - 1.99) < 1e-12)) bad.push('Interpolate');
+    // FFT: the spectrum of each range on its own, a column each; the data's graphs after, where the ranges are drawn
+    const two = [{ lo: 0, hi: 1.995 }, { lo: 2, hi: 3.995 }];
+    const fr = fftNode(ds, { ...FFT_DEFAULTS, ys: 'A', mode: 'spectrum', output: 'amp', regions: two }, () => 's');
+    const sp1 = spectrum(a.slice(200, 400), 0.01, FFT_DEFAULTS.window, FFT_DEFAULTS.detrend, false).amp;
+    if (typeof fr === 'string' || relMax(col(fr, 'A (range 2) amplitude'), sp1) > 1e-12 || !fr.plots.some((q) => q.ranges && q.run === 'A' && q.data) || fr.labels[fr.labels.length - 1] !== 'the data: A (its ranges)') bad.push('FFT spectrum by ranges');
+    // the FFT filter in a range: outside, the data
+    const fl = col(fftNode(ds, { ...FFT_DEFAULTS, ys: 'A', mode: 'filter', filter: 'low', f1: 5, regions: rg }, () => 's'), 'A (filtered)');
+    if (!fl.every((v, i) => inR(i) || v === a[i]) || rows.every((i) => fl[i] === a[i])) bad.push('FFT filter');
+    // Convolution in a range
+    const cv = col(convNode(ds, { ...CONV_DEFAULTS, ys: 'A', op: 'conv', shape: 'gauss', fwhm: 0.05, regions: rg }, undefined), 'A (convolved)');
+    if (!cv.every((v, i) => inR(i) || v === a[i])) bad.push('Convolution');
+    // ranges per Y: A its own, B the common ones
+    const per = col(smoothNode(ds, { ...SMOOTH_DEFAULTS, ys: 'A, B', regions: [{ lo: 0, hi: 0.5 }], regionsBy: 'run', runRegions: { A: rg } }), 'B (smoothed)');
+    const perA = col(smoothNode(ds, { ...SMOOTH_DEFAULTS, ys: 'A, B', regions: [{ lo: 0, hi: 0.5 }], regionsBy: 'run', runRegions: { A: rg } }), 'A (smoothed)');
+    if (!per.every((v, i) => t[i] <= 0.5 || v === b[i]) || !perA.every((v, i) => inR(i) || v === a[i])) bad.push('ranges per Y');
+    // Average curves: the mean only over the ranges
+    const av = averageNode([ds], { ...AVERAGE_DEFAULTS, ys: 'A, B', grid: 'first', regions: rg });
+    const ax = col(av, 't (s)');
+    if (!(ax.length === rows.length && ax.every((v) => v >= 1 && v <= 1.995))) bad.push('Average curves');
+    // no ranges: as before
+    const all = col(smoothNode(ds, { ...SMOOTH_DEFAULTS, ys: 'A', method: 'savgol', points: 11, order: 2, edge: 'nearest' }), 'A (smoothed)');
+    if (relMax(all, savgol(a, 11, 2, 'nearest')) > 1e-12) bad.push('no ranges');
+    ok(!bad.length, `ranges: Smooth (the part alone; outside the data or empty), Interpolate, the FFT spectrum of each range, the FFT filter, Convolution, ranges per Y, Average curves; none: as before${bad.length ? ` (not: ${bad.join(', ')})` : ''}`);
   }
 }

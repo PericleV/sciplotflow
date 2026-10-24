@@ -38,19 +38,38 @@ To build the static site: `npm run build` (the result goes to `dist/` and works 
 - Workbooks with several sheets, extract and split columns, combine tables, reshape and transpose.
 - Compute new columns with formulas, generate columns, filter and sort rows, clean data (missing values, duplicates,
   outliers).
-- Digitize the data of a graph from a picture.
+- Digitize the data of a graph from a picture, or the phases of a phase diagram.
 
 **Statistics**
-- Descriptive statistics, normality tests and outliers.
-- t-tests, ANOVA (with post-hoc tests), nonparametric tests, correlation.
+- Descriptive statistics, normality tests and outliers; p-values adjusted for multiple tests.
+- t-tests, ANOVA (post-hoc tests, Dunnett, repeated measures, mixed models), nonparametric tests, correlation.
+- Linear and logistic regression, contingency tables (χ², Fisher, odds ratio, McNemar), ROC curves, survival
+  (Kaplan–Meier, log-rank).
+- Power and sample size, bootstrap and permutation tests, distributions fitted by maximum likelihood.
+- Agreement and reliability (Cohen's and Fleiss' κ, ICC, Cronbach's α), method comparison (Passing–Bablok, Deming,
+  Bland–Altman), life data (Weibull with suspensions).
 
-**Signals and analysis**
-- Smooth, interpolate, normalize, FFT, convolution, average curves.
+**Signals**
+- Smooth (Savitzky–Golay, LOWESS, wavelet, Hampel and more), interpolate, normalize, average curves.
+- FFT: spectrum, power spectral density, spectrogram, coherence, envelope and phase, Allan deviation, Lomb–Scargle
+  for unevenly sampled data, harmonics (THD, SNR, SINAD, ENOB); filters (Butterworth, Chebyshev, Bessel, a mains notch).
+- Baseline correction (asymmetric least squares, arPLS, SNIP, Shirley, points drawn by hand and more), waveform
+  measurements (rise and fall times, period, duty cycle, overshoot), step detection, event averaging.
+- Wavelets: the continuous transform with its significance, coherence, multiresolution analysis, denoising, peaks.
+- Fractional calculus (semi-integrals for convolution voltammetry) and the fractional Fourier transform.
+- Convolution and deconvolution; every one of these on the whole curve or on ranges drawn on its graph.
+
+**Analysis**
 - Fit with built-in models, your own formula or several peaks; peak analysis and peak widths.
-- Differentiate and integrate, curve math, matrix computations.
+- Differentiate and integrate, curve math, matrix computations, Kramers–Kronig.
+- Electrochemistry: equivalent circuits fitted to impedance spectra, the Kramers–Kronig test.
+- Image analysis: adjust and filter images, calibrate with the scale bar, measure selections, find and classify
+  particles, distances between them, FFT and lattice spacings (TEM), surface roughness (AFM).
 - Python scripts (numpy, scipy, pandas and more), run in the browser.
-- A report that gathers the results of the analysis.
 - **Batch:** the same analysis run on every file of a folder, with the results gathered in one table.
+
+**Checked against established libraries:** every computation is tested against SciPy, statsmodels, scikit-learn,
+scikit-image, PyWavelets and others; see [VALIDATION.md](VALIDATION.md).
 
 **Graphs and figures**
 - Line and scatter plots, histograms, bar charts, box and violin plots, probability plots, Bland–Altman, pie charts,
@@ -72,6 +91,13 @@ To build the static site: `npm run build` (the result goes to `dist/` and works 
 
 Everything runs in your browser. Your files and projects are not sent anywhere. The only download after the app itself
 is Python (Pyodide), fetched from a public CDN the first time you run a Python script.
+
+## Are the results right?
+
+Every computation is checked by `npm run check` (more than 1400 checks). Where an established library does the same thing
+(SciPy, statsmodels, pingouin, lifelines, scikit-learn, scikit-image, PyWavelets, pycwt, astropy and others), the result
+is compared with its values. [VALIDATION.md](VALIDATION.md) lists every check, what it compares and how close the result
+is, with the Python scripts that compute the reference values.
 
 ## Browsers
 

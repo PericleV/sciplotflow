@@ -92,6 +92,7 @@ import { curveFormulas } from '../src/engine/curvemath.ts';
 import { condsFormula, selectRows, type RowOp } from '../src/engine/rowsel.ts';
 import { rowHandle, sourcePort, targetAccepts } from '../src/engine/ports.ts';
 import { checkImage } from './check-image.ts';
+import { callSite, writeValidation, type CheckRecord } from './validation.ts';
 import { checkStat2 } from './check-stat2.ts';
 import { checkStat3 } from './check-stat3.ts';
 import { checkSigpack } from './check-sigpack.ts';
@@ -177,7 +178,11 @@ import { MATRIX_CONTOUR_DEFAULTS, MATRIX_DEFAULTS } from '../src/defaults.ts';
 let failed = 0;
 const canConnectBook = (t: 'column' | 'workbook') => targetAccepts({ id: 'w', type: 'book', position: { x: 0, y: 0 }, data: WORKBOOK_DEFAULTS } as AppNode, 'in-2').includes(t);
 let passed = 0;
+// (npm run validation: every check kept for VALIDATION.md)
+const report = process.argv.includes('--validation');
+const records: CheckRecord[] = [];
 function ok(cond: boolean, what: string) {
+  if (report) records.push({ pass: cond, what, ...callSite(new Error().stack ?? '') });
   if (cond) passed++;
   else {
     failed++;
@@ -6464,6 +6469,10 @@ checkPhase(ok);
 }
 
 console.log(`${passed} passed, ${failed} failed`);
+if (report) {
+  const v = writeValidation(records, (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version);
+  console.log(`VALIDATION.md: ${v.fixtures} against reference values, ${v.named} against named conventions, ${v.other} exact${v.unread.length ? `; scripts no check reads: ${v.unread.join(', ')}` : ''}`);
+}
 if (failed) process.exit(1);
 function sdOfCut(v: number[]) {
   const m = v.reduce((a, b) => a + b, 0) / v.length;

@@ -2,6 +2,7 @@
   "name": "sciplotflow",
   "private": true,
   "version": "0.1.0-alpha",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,6 +12,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "check": "node scripts/check.ts",
+    "validation": "node scripts/check.ts --validation",
     "test-images": "node scripts/make-test-images.ts",
     "check:ui": "rolldown scripts/check-ui.tsx --format esm --platform node --no-code-splitting --log-level silent -o node_modules/.tmp/check-ui.mjs && node node_modules/.tmp/check-ui.mjs",
     "bench": "rolldown scripts/bench.ts --format esm --platform node -o node_modules/.tmp/bench.mjs && node node_modules/.tmp/bench.mjs",

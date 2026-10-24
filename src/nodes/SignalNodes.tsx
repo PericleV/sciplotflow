@@ -1,5 +1,6 @@
 // The Signal nodes: Smooth, Interpolate / Extrapolate, Normalize, FFT, Convolution, Average curves — the data (X, Y columns), the
-// method and its options, a graph of the data (dots) and the result (a line) of the Y chosen, the outputs. Kramers–Kronig
+// method and its options, a graph of the data (dots) and the result (a line) of the Y chosen, with the ranges of X the
+// node works in (Add a range: dragged on the graph), the outputs. Kramers–Kronig
 // (in Analysis) is drawn the same way: its graphs with the tails assumed dashed, past dashed lines where the data end.
 import { xAutoLabel, Y_AUTO } from './xAuto.ts';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -7,7 +8,10 @@ import { useNodeConnections, useReactFlow, type NodeProps } from '@xyflow/react'
 import { columnLetter } from '../engine/csv.ts';
 import { useNodeResult } from '../engine/engine.ts';
 import type { NodeResult } from '../engine/evaluate.ts';
-import type { SignalPlot } from '../engine/signalnodes.ts';
+import type { SignalIn, SignalPlot } from '../engine/signalnodes.ts';
+import type { Region } from '../engine/calculus.ts';
+import { regionColor } from './regionColors.ts';
+import { RunRangesTable } from './FitNode.tsx';
 import { fmtNum, type ColumnRole } from '../engine/table.ts';
 import { niceStep } from '../figure/ticks.ts';
 import type { AppNode, AverageData, AverageNode, ConvData, ConvNode, FFTData, FFTNode, InterpData, InterpNode, KKData, KKNode, NormalizeData, NormalizeNode, SmoothData, SmoothNode } from '../types.ts';
@@ -18,7 +22,7 @@ import { ColumnsPicker } from './ColumnsPicker.tsx';
 import { maxOf } from '../engine/minmax.ts';
 import { WAVELETS } from '../engine/wavelet.ts';
 import { createPortal } from 'react-dom';
-import { Maximize2, X as XIcon } from 'lucide-react';
+import { Maximize2, MoveHorizontal, X as XIcon } from 'lucide-react';
 import { IC } from './iconProps.ts';
 import { rescaleAxis, usePlotZoom, viewBox, zoomAt, type View, type ZoomMode } from './plotZoom.ts';
 import { ZoomTools } from './ZoomTools.tsx';
@@ -42,6 +46,7 @@ function logPlot(p: SignalPlot): SignalPlot {
   };
 }
 
+const alpha = (hex: string, a: number) => `${hex}${Math.round(a * 255).toString(16).padStart(2, '0')}`;
 const W0 = 520;
 const H0 = 230;
 const M = { l: 52, r: 10, t: 8, b: 30 };
@@ -60,9 +65,20 @@ function rangeOf(sets: { x: number[]; y: number[] }[]): [number, number, number,
 }
 
 // the graph of one Y: the data as dots, the result as a line (on its own axis at the right when asked); zoomed and
-// panned with the tools above it (the result's axis follows), read with the data reader
-function SignalGraph({ plot: given, W, H, zoom, view, onView, zoomOut, reader }: { plot: SignalPlot; W: number; H: number; zoom: ZoomMode; view: View | null; onView: (v: View | null) => void; zoomOut: number; reader?: Omit<ReaderProp, 'curves'> }) {
+// panned with the tools above it (the result's axis follows), read with the data reader; the ranges shaded (each its
+// colour), one added by dragging while “Add a range” is on, their edges dragged
+type RangeDrag = { kind: 'new' | 'lo' | 'hi'; k: number; a: number; b: number } | null;
+function SignalGraph({ plot: given, W, H, zoom, view, onView, zoomOut, reader, regions, onRegions, adding, onAdded }: { plot: SignalPlot; W: number; H: number; zoom: ZoomMode; view: View | null; onView: (v: View | null) => void; zoomOut: number; reader?: Omit<ReaderProp, 'curves'>; regions?: Region[]; onRegions?: (r: Region[]) => void; adding?: boolean; onAdded?: () => void }) {
   const cv = useRef<HTMLCanvasElement>(null);
+  const [drag, setDragState] = useState<RangeDrag>(null);
+  const dragRef = useRef<RangeDrag>(null);
+  const setDrag = (d: RangeDrag) => {
+    dragRef.current = d;
+    setDragState(d);
+  };
+  const rgs = regions ?? [];
+  // (the ranges as they are while dragged)
+  const shownRegions = drag ? (drag.kind === 'new' ? [...rgs, { lo: Math.min(drag.a, drag.b), hi: Math.max(drag.a, drag.b) }] : rgs.map((r, k) => (k === drag.k ? (drag.kind === 'lo' ? { ...r, lo: drag.b } : { ...r, hi: drag.b }) : r))) : rgs;
   // (a logarithmic X: everything drawn on log10 of it, the ticks labelled with the values)
   const plot = useMemo(() => (given.logX ? logPlot(given) : given), [given]);
   const [cursor, setCursor] = useState('default');
@@ -106,6 +122,14 @@ function SignalGraph({ plot: given, W, H, zoom, view, onView, zoomOut, reader }:
     g.beginPath();
     g.rect(M.l, M.t, pw, ph);
     g.clip();
+    // the ranges: shaded, their edges in their colour
+    shownRegions.forEach((rg, k) => {
+      const [a, b] = [Number.isFinite(rg.lo) ? fx(rg.lo) : M.l, Number.isFinite(rg.hi) ? fx(rg.hi) : M.l + pw];
+      g.fillStyle = alpha(regionColor(k), 0.12);
+      g.fillRect(Math.min(a, b), M.t, Math.abs(b - a), ph);
+      g.fillStyle = regionColor(k);
+      for (const e of [a, b]) g.fillRect(e - 0.75, M.t, 1.5, ph);
+    });
     if (plot.band) {
       // the range (± SD), shaded
       const { x, lo, hi } = plot.band;
@@ -241,11 +265,21 @@ function SignalGraph({ plot: given, W, H, zoom, view, onView, zoomOut, reader }:
       g.setLineDash([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plot, W, H, box.x0, box.x1, box.y0, box.y1, z.rect]);
+  }, [plot, W, H, box.x0, box.x1, box.y0, box.y1, z.rect, shownRegions]);
   const at = (e: { currentTarget: EventTarget; clientX: number; clientY: number }): [number, number] => {
     const b = (e.currentTarget as HTMLElement).getBoundingClientRect();
     return [((e.clientX - b.left) * W) / b.width, ((e.clientY - b.top) * H) / b.height];
   };
+  const nearEdge = (px: number): { kind: 'lo' | 'hi'; k: number; a: number } | null => {
+    if (!onRegions) return null;
+    for (let k = 0; k < rgs.length; k++) {
+      const [a, b] = [rgs[k].lo, rgs[k].hi];
+      if (Number.isFinite(a) && Math.abs(fx(a) - px) < 5) return { kind: 'lo', k, a };
+      if (Number.isFinite(b) && Math.abs(fx(b) - px) < 5) return { kind: 'hi', k, a: b };
+    }
+    return null;
+  };
+  const r6 = (v: number) => +v.toPrecision(6);
   const curves: ReadCurve[] = [...(plot.data ? [{ name: 'data', color: '#1f6fd6', x: plot.data.x, y: plot.data.y }] : []), { name: own ? 'result (right axis)' : 'result', color: '#d62728', x: plot.result.x, y: plot.result.y, ...(own ? { onAxis: toLeft } : {}) }, ...(plot.others ?? []).map((o, j) => ({ name: `curve ${j + 1}`, color: '#9aa3ad', x: o.x, y: o.y })), ...(plot.series ?? []).map((sr) => ({ name: sr.name, color: sr.color, x: sr.x, y: sr.y }))];
   return (
     <div className="reader-host nodrag nowheel">
@@ -257,14 +291,37 @@ function SignalGraph({ plot: given, W, H, zoom, view, onView, zoomOut, reader }:
         onPointerDown={(e) => {
           if (e.button !== 0) return;
           e.stopPropagation();
-          (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-          z.down(...at(e), e);
+          try {
+            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+          } catch {
+            // a pointer the browser does not track
+          }
+          const [px, py] = at(e);
+          if (z.down(px, py, e)) return;
+          const ed = nearEdge(px);
+          if (ed) return setDrag({ kind: ed.kind, k: ed.k, a: ed.a, b: ed.a });
+          if (adding && onRegions) setDrag({ kind: 'new', k: -1, a: ix(px), b: ix(px) });
         }}
         onPointerMove={(e) => {
-          if (z.move(...at(e))) setCursor(zoom === 'pan' ? 'grab' : 'crosshair');
-          else setCursor(zoom === 'none' ? 'default' : 'crosshair');
+          const [px, py] = at(e);
+          if (z.move(px, py)) return setCursor(zoom === 'pan' ? 'grab' : 'crosshair');
+          const d = dragRef.current;
+          if (d) return setDrag({ ...d, b: ix(px) });
+          setCursor(zoom !== 'none' ? 'crosshair' : nearEdge(px) ? 'ew-resize' : adding ? 'col-resize' : 'default');
         }}
-        onPointerUp={(e) => z.up(...at(e))}
+        onPointerUp={(e) => {
+          const [px, py] = at(e);
+          if (z.up(px, py)) return;
+          const d = dragRef.current;
+          setDrag(null);
+          if (!d || !onRegions) return;
+          if (d.kind === 'new') {
+            if (Math.abs(fx(d.b) - fx(d.a)) > 3) {
+              onRegions([...rgs, { lo: r6(Math.min(d.a, d.b)), hi: r6(Math.max(d.a, d.b)) }]);
+              onAdded?.();
+            }
+          } else onRegions(rgs.map((r, k) => (k === d.k ? (d.kind === 'lo' ? { ...r, lo: r6(d.b) } : { ...r, hi: r6(d.b) }) : r)));
+        }}
         onWheel={(e) => z.wheel(...at(e), e.deltaY, e)}
         onKeyDown={(e) => {
           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
@@ -284,6 +341,24 @@ function useSignal<T>(id: string) {
   const r = useNodeResult(id);
   return { r, avail: r?.view.available, names: (r?.view.available ?? []).map((c) => c.name), set: (p: Partial<T>) => updateNodeData(id, p as Record<string, unknown>) };
 }
+// outside the ranges (Smooth, Convolution, the FFT filter): the data kept, or nothing; shown when there are ranges
+function OutsideRow<T extends SignalIn>({ data, set }: { data: T; set: (p: Partial<T>) => void }) {
+  if (!data.regions?.length && !Object.keys(data.runRegions ?? {}).length) return null;
+  return (
+    <>
+      <span>Outside</span>
+      <Select<'keep' | 'empty'>
+        value={data.outside ?? 'keep'}
+        title="Outside the ranges: the data as they are, or nothing (empty cells)"
+        options={[
+          ['keep', 'the data, as they are'],
+          ['empty', 'nothing (empty)'],
+        ]}
+        onChange={(outside) => set({ outside: outside === 'keep' ? undefined : outside } as Partial<T>)}
+      />
+    </>
+  );
+}
 // the data: X and the Y columns
 function DataRows<T extends { x: string; ys: string }>({ data, set, names, avail }: { data: T; set: (p: Partial<T>) => void; names: string[]; avail?: { name: string; role?: ColumnRole }[] }) {
   return (
@@ -295,10 +370,15 @@ function DataRows<T extends { x: string; ys: string }>({ data, set, names, avail
     </>
   );
 }
+// the ranges of a node, as Result edits them: the same for every Y, or of each Y (by its name); one: a single range
+// (Normalize: its From – to)
+export type ResultRanges = { data: Pick<SignalIn, 'regions' | 'regionsBy' | 'runRegions'>; set: (p: Pick<SignalIn, 'regions' | 'regionsBy' | 'runRegions'>) => void; one?: boolean; hint?: string };
 // the graph of the Y chosen, the messages
-// (with its tools — zoom, pan, out, rescale, the data reader, the graph large — as the other graphs of the nodes)
-export function Result({ r, children }: { r?: NodeResult; children?: ReactNode }) {
+// (with its tools — zoom, pan, out, rescale, the data reader, the graph large — as the other graphs of the nodes; Add a
+// range, the ranges as chips and, per Y, their table, when the node works in ranges)
+export function Result({ r, children, ranges }: { r?: NodeResult; children?: ReactNode; ranges?: ResultRanges }) {
   const [k, setK] = useState(0);
+  const [adding, setAdding] = useState(false);
   const [zoom, setZoom] = useState<ZoomMode>('none');
   const [view, setView] = useState<View | null>(null);
   const [out, setOut] = useState(0);
@@ -308,23 +388,76 @@ export function Result({ r, children }: { r?: NodeResult; children?: ReactNode }
   const j = Math.min(k, Math.max(0, (s?.plots.length ?? 1) - 1));
   const plot = s?.plots[j];
   const names = plot ? [...(plot.data ? ['data'] : []), plot.ownAxis && plot.data ? 'result (right axis)' : 'result', ...(plot.others ?? []).map((_, q) => `curve ${q + 1}`)] : [];
-  const graph = (w: number, h: number) => plot && <SignalGraph plot={plot} W={w} H={h} zoom={zoom} view={view} onView={setView} zoomOut={out} reader={{ r: rd, onRead: (reading) => setRd((q) => ({ ...q, reading })) }} />;
+  // the ranges: on the graphs whose X is the data's; of the Y shown when they are per Y
+  const rg = ranges && plot?.ranges ? ranges : undefined;
+  const runs = [...new Set((s?.plots ?? []).flatMap((q) => (q.ranges && q.run ? [q.run] : [])))];
+  const perRun = !!ranges && !ranges.one && runs.length > 1 && ranges.data.regionsBy === 'run';
+  const run = plot?.run ?? '';
+  const own = perRun && run ? ranges!.data.runRegions?.[run] : undefined;
+  const regions = own?.length ? own : (ranges?.data.regions ?? []);
+  const setRunRegions = (lab: string, rgs: Region[] | undefined) => {
+    const next = { ...ranges!.data.runRegions };
+    if (rgs?.length) next[lab] = rgs;
+    else delete next[lab];
+    ranges!.set({ runRegions: next });
+  };
+  const setRegions = (rgs: Region[]) => (ranges!.one ? ranges!.set({ regions: rgs.slice(-1) }) : perRun && run ? setRunRegions(run, rgs) : ranges!.set({ regions: rgs }));
+  const graph = (w: number, h: number) => plot && <SignalGraph plot={plot} W={w} H={h} zoom={zoom} view={view} onView={setView} zoomOut={out} reader={{ r: rd, onRead: (reading) => setRd((q) => ({ ...q, reading })) }} regions={rg ? regions : undefined} onRegions={rg ? setRegions : undefined} adding={adding} onAdded={() => setAdding(false)} />;
   const tools = (
     <>
       <div className="row wrap">
+        {rg && (
+          <button
+            className={`nodrag${adding ? ' on' : ''}`}
+            title={rg.hint ?? (rg.one ? 'Then drag on the graph: the range the factor is taken from (its edges can be dragged at any time)' : 'Then drag on the graph: one range (the node works only in the ranges); the button turns off after it. The edges of a range can be dragged at any time')}
+            onClick={() => {
+              setAdding((v) => !v);
+              setZoom('none');
+              setRd((q) => ({ ...q, on: false }));
+            }}
+          >
+            <MoveHorizontal {...IC} /> {rg.one && regions.length ? 'Draw it again' : 'Add a range'}
+          </button>
+        )}
+        {rg && (perRun ? !!own?.length : regions.length > 0) && (
+          <button className="nodrag" title={perRun ? 'This Y takes the common ranges again' : 'No ranges: all X'} onClick={() => (perRun ? setRunRegions(run, undefined) : ranges!.set({ regions: [] }))}>
+            {perRun ? 'Common ranges' : 'All X'}
+          </button>
+        )}
+        {rg && !rg.one && runs.length > 1 && (
+          <Select
+            value={ranges!.data.regionsBy ?? 'all'}
+            title="The same ranges for every Y, or ranges of its own for each Y (dragged on its graph, or typed in the table below; a Y without its own takes the common ones)"
+            options={[
+              ['all', 'same ranges, all Y'],
+              ['run', 'ranges per Y'],
+            ]}
+            onChange={(regionsBy) => ranges!.set({ regionsBy })}
+          />
+        )}
         <span className="grow" />
         <ZoomTools
           mode={zoom}
           setMode={(m) => {
             setZoom(m);
-            if (m !== 'none') setRd((q) => ({ ...q, on: false }));
+            if (m !== 'none') {
+              setAdding(false);
+              setRd((q) => ({ ...q, on: false }));
+            }
           }}
           onRescale={() => setView(null)}
           onRescaleAxis={(w) => setView((v) => rescaleAxis(v, w))}
           onZoomOut={() => setOut((n) => n + 1)}
           zoomed={!!view}
         />
-        <ReaderButton r={rd} set={setRd} onOn={() => setZoom('none')} />
+        <ReaderButton
+          r={rd}
+          set={setRd}
+          onOn={() => {
+            setZoom('none');
+            setAdding(false);
+          }}
+        />
         <button className="nodrag" title="The graph large" onClick={() => setBig(true)}>
           <Maximize2 {...IC} /> Large
         </button>
@@ -332,6 +465,26 @@ export function Result({ r, children }: { r?: NodeResult; children?: ReactNode }
       <ReaderOptions r={rd} set={setRd} names={names} />
     </>
   );
+  // (the ranges as chips, removed one by one; per Y, their table)
+  const chips = ranges && (ranges.data.regions?.length || (perRun && Object.keys(ranges.data.runRegions ?? {}).length)) ? (
+    <NodeOptions>
+      {regions.length > 0 && (
+        <div className="row wrap fit-ranges">
+          <span className="muted">{ranges.one ? 'From – to:' : perRun ? (own?.length ? `Ranges of “${run}”:` : 'Common ranges:') : 'Ranges:'}</span>
+          {regions.map((q, i) => (
+            <span key={i} className="chip region-chip" style={{ borderColor: regionColor(i) }}>
+              {!ranges.one && <b style={{ color: regionColor(i) }}>{i + 1})</b>} {Number.isFinite(q.lo) ? fmtNum(q.lo, 5) : '…'} – {Number.isFinite(q.hi) ? fmtNum(q.hi, 5) : '…'}
+              <button className="nodrag ts-btn" onClick={() => (perRun && !own?.length ? ranges.set({ regions: (ranges.data.regions ?? []).filter((_, h) => h !== i) }) : setRegions(regions.filter((_, h) => h !== i)))}>
+                <XIcon {...IC} />
+              </button>
+            </span>
+          ))}
+          {!rg && <span className="muted">(drawn on the graph of the data: Graph of)</span>}
+        </div>
+      )}
+      {perRun && <RunRangesTable labels={runs} common={ranges.data.regions ?? []} own={ranges.data.runRegions ?? {}} onChange={setRunRegions} onShow={(q) => setK(Math.max(0, (s?.plots ?? []).findIndex((p) => p.ranges && p.run === runs[q])))} shown={Math.max(0, runs.indexOf(run))} />}
+    </NodeOptions>
+  ) : null;
   return (
     <>
       {s && s.plots.length > 1 && (
@@ -343,6 +496,7 @@ export function Result({ r, children }: { r?: NodeResult; children?: ReactNode }
       )}
       {plot && tools}
       {graph(W0, H0)}
+      {chips}
       {big &&
         plot &&
         createPortal(
@@ -378,6 +532,7 @@ export function SmoothNodeView({ id, data }: NodeProps<SmoothNode>) {
       <NodeOptions>
       <div className="col-form">
         <DataRows data={data} set={set} names={names} avail={avail} />
+        <OutsideRow data={data} set={set} />
         <span>Method</span>
         <Select<SmoothData['method']>
           value={m}
@@ -488,7 +643,7 @@ export function SmoothNodeView({ id, data }: NodeProps<SmoothNode>) {
         <Check label="With the residual" value={data.withResid} onChange={(withResid) => set({ withResid })} />
       </div>
       </NodeOptions>
-      <Result r={r} />
+      <Result r={r} ranges={{ data, set }} />
       <OutPort label="dataset" port="dataset" id="out" title="X, the data (optional), the smoothed curves, the residuals (optional)" />
     </div>
   );
@@ -552,7 +707,7 @@ export function InterpNodeView({ id, data }: NodeProps<InterpNode>) {
         />
       </div>
       </NodeOptions>
-      <Result r={r} />
+      <Result r={r} ranges={{ data, set, hint: 'Then drag on the graph: one range (only the points inside the ranges are used)' }} />
       <OutPort label="dataset" port="dataset" id="out" title="The new X and every curve read on it" />
     </div>
   );
@@ -608,7 +763,7 @@ export function NormalizeNodeView({ id, data }: NodeProps<NormalizeNode>) {
         )}
       </div>
       </NodeOptions>
-      <Result r={r} />
+      <Result r={r} ranges={m !== 'column' && m !== 'value' && m !== 'atx' ? { data: { regions: Number.isFinite(data.from) || Number.isFinite(data.to) ? [{ lo: data.from, hi: data.to }] : [] }, set: (q) => q.regions && set({ from: q.regions[0]?.lo ?? NaN, to: q.regions[0]?.hi ?? NaN }), one: true } : undefined} />
       <OutPort label="dataset" port="dataset" id="out" title="The normalized curves" />
       <OutPort label="factors" port="dataset" id="factors" title="Every Y column: what was subtracted and what it was divided by" />
     </div>
@@ -654,6 +809,7 @@ export function FFTNodeView({ id, data }: NodeProps<FFTNode>) {
       <NodeOptions>
       <div className="col-form">
         <DataRows data={data} set={set} names={names} avail={avail} />
+        {mode === 'filter' && <OutsideRow data={data} set={set} />}
         <span>Mode</span>
         <Select<FFTData['mode']>
           value={mode}
@@ -857,7 +1013,7 @@ export function FFTNodeView({ id, data }: NodeProps<FFTNode>) {
           ))}
         </div>
       )}
-      <Result r={r} />
+      <Result r={r} ranges={{ data, set, hint: mode === 'filter' ? undefined : 'Then drag on the graph of the data: one range (its part analysed on its own; several ranges, a curve each)' }} />
       <OutPort label="dataset" port="dataset" id="out" title="The spectrum, the PSD, the spectrogram or scalogram (time, frequency, power: for Contour), the coherence, the envelope and phase, the Allan deviation, the Lomb–Scargle periodogram (power, amplitude, false-alarm probability), the harmonics (frequency, amplitude, dBc) or the filtered curves" />
       {mode === 'harmonics' && <OutPort label="measures" port="dataset" id="measures" title="THD (dB and %), SNR, SINAD, ENOB, SFDR, the fundamental and the noise of every Y" />}
       {mode === 'filter' && <OutPort label="response" port="dataset" id="response" title="The filter’s response: the frequency, the gain (dB) and the phase (°); forward and backward: the gain twice, no phase" />}
@@ -875,6 +1031,7 @@ export function ConvNodeView({ id, data }: NodeProps<ConvNode>) {
       <NodeOptions>
       <div className="col-form">
         <DataRows data={data} set={set} names={names} avail={avail} />
+        {data.op !== 'corr' && <OutsideRow data={data} set={set} />}
         <span>Operation</span>
         <Select<ConvData['op']>
           value={data.op}
@@ -951,7 +1108,7 @@ export function ConvNodeView({ id, data }: NodeProps<ConvNode>) {
         )}
       </div>
       </NodeOptions>
-      <Result r={r} />
+      <Result r={r} ranges={{ data, set }} />
       <OutPort label="dataset" port="dataset" id="out" title="The curves convolved / deconvolved, or the correlation against the lag" />
       {data.op === 'corr' && <OutPort label="lags" port="dataset" id="lags" title="Every Y: the lag of the largest correlation (the delay between the two signals) and its value" />}
     </div>
@@ -1023,7 +1180,7 @@ export function AverageNodeView({ id, data }: NodeProps<AverageNode>) {
         <Check label="Min, max, median too" value={data.extra} onChange={(extra) => set({ extra })} />
       </div>
       </NodeOptions>
-      <Result r={r} />
+      <Result r={r} ranges={{ data, set, hint: 'Then drag on the graph: one range of X (the mean only there); the edges can be dragged at any time' }} />
       <OutPort label="dataset" port="dataset" id="out" title="X, the mean, SD (designated ±Y), SE, N (and min, max, median)" />
     </div>
   );

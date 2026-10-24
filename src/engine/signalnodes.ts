@@ -8,8 +8,11 @@ import { column, curvesByRole, findColumn, fmtNum, roleOf, type Column, type Dat
 import * as S from './signal.ts';
 import { maxOf, minOf } from './minmax.ts';
 import { hampel, harmonics, lombScargle, lsFap, lsFrequencies, lsLevel } from './signal2.ts';
+import type { Region } from './calculus.ts';
 
-export type SignalIn = { x: string; ys: string };
+// regions: the ranges of X drawn on the graph (none: all X), the same for every Y or of each Y (runRegions, by its name);
+// outside (Smooth, Convolution, the FFT filter): what is left outside them, the data or nothing
+export type SignalIn = { x: string; ys: string; regions?: Region[]; regionsBy?: 'all' | 'run'; runRegions?: Record<string, Region[]>; outside?: 'keep' | 'empty' };
 // wavelet: denoised by the discrete wavelet transform (src/engine/wavelet.ts) — its wavelet, levels, threshold
 // hampel: a point further than nsigma (3) robust SDs (1.4826 · MAD) from the median of its window replaced by it
 export type SmoothData = SignalIn & { method: 'average' | 'savgol' | 'median' | 'gauss' | 'lowess' | 'fft' | 'wavelet' | 'hampel'; points: number; order: number; sigma: number; frac: number; iter: number; cutoff: number; edge: S.Edge | 'interp'; withData: boolean; withResid: boolean; wavelet?: string; wlevel?: number; wmode?: 'soft' | 'hard'; wscale?: number; nsigma?: number };
@@ -59,7 +62,8 @@ export type ConvData = SignalIn & { op: 'conv' | 'wiener' | 'rl' | 'corr'; shape
 // others: more curves (thin, grey: the curves averaged), band: a shaded range (± SD)
 // series: more curves of their own colour and name (dots, a line, dashed: assumed, as the tails of an extrapolation);
 // marks: vertical dashed lines (where the data end); logX: X on a logarithmic scale; bandColor: the band's colour;
-// zero: a line at y = 0; legend: the names of the data and of the result
+// zero: a line at y = 0; legend: the names of the data and of the result; ranges: its X is the data's, the ranges are
+// drawn on it (of the Y named run, when they are per Y)
 export type SignalSeries = { name: string; x: number[]; y: number[]; color: string; dots?: boolean; line?: boolean; dash?: boolean };
 export type SignalPlot = {
   data?: { x: number[]; y: number[] };
@@ -75,6 +79,8 @@ export type SignalPlot = {
   bandColor?: string;
   zero?: boolean;
   legend?: string[];
+  ranges?: boolean;
+  run?: string;
 };
 export type SignalOut = { dataset: Dataset; extra?: Record<string, Dataset>; plots: SignalPlot[]; labels: string[]; warnings: string[]; report?: string[] } | string;
 
@@ -101,6 +107,56 @@ export function signalCurves(ds: Dataset, d: SignalIn): Curve[] | string {
     return { X, Y, x: idx.map((i) => (X ? X.values[i] : i + 1)), y: idx.map((i) => Y.values[i]) };
   });
 }
+// ---- the ranges ----
+// the ranges of a Y (its own, when they are per Y and it has some), none: all X
+export function rangesOf(d: SignalIn, name: string): Region[] {
+  const own = d.regionsBy === 'run' ? d.runRegions?.[name] : undefined;
+  return own?.length ? own : (d.regions ?? []);
+}
+const bounds = (r: Region): [number, number] => {
+  const [a, b] = [Number.isFinite(r.lo) ? r.lo : -Infinity, Number.isFinite(r.hi) ? r.hi : Infinity];
+  return [Math.min(a, b), Math.max(a, b)];
+};
+const within = (v: number, rs: Region[]) =>
+  rs.some((r) => {
+    const [a, b] = bounds(r);
+    return v >= a && v <= b;
+  });
+// the curve with only its points inside the ranges (Interpolate, Average curves)
+function restricted(c: Curve, rs: Region[]): Curve {
+  if (!rs.length) return c;
+  const keep = c.x.map((v) => within(v, rs));
+  return { ...c, x: c.x.filter((_, i) => keep[i]), y: c.y.filter((_, i) => keep[i]) };
+}
+// the curve cut into its ranges, each a curve of its own (the analyses of FFT), in the order of X; named after its range
+// when there are several
+function pieces(c: Curve, rs: Region[]): Curve[] {
+  if (!rs.length) return [c];
+  return rs
+    .map((r, k) => ({ r: bounds(r), k }))
+    .sort((p, q) => p.r[0] - q.r[0])
+    .map(({ r: [a, b], k }) => {
+      const keep = c.x.map((v) => v >= a && v <= b);
+      return { ...c, Y: rs.length > 1 ? { ...c.Y, name: `${c.Y.name} (range ${k + 1})` } : c.Y, x: c.x.filter((_, i) => keep[i]), y: c.y.filter((_, i) => keep[i]) };
+    })
+    .filter((p) => p.x.length > 0);
+}
+// The curve processed in every range on its own (the window, the kernel, the filter see only the points inside), put
+// back in its place (Smooth, Convolution, the FFT filter); outside the ranges the data, or nothing. f: of a part of the
+// curve, its result on its X (k: the part's number)
+function byRanges(c: Curve, rs: Region[], outside: SignalIn['outside'], warnings: string[], f: (part: Curve, k: number) => number[]): number[] {
+  if (!rs.length) return f(c, 0);
+  const out = outside === 'empty' ? c.y.map(() => NaN) : c.y.slice();
+  rs.forEach((r, k) => {
+    const [a, b] = bounds(r);
+    const rows = c.x.map((v, i) => (v >= a && v <= b ? i : -1)).filter((i) => i >= 0);
+    if (rows.length < 3) return void warnings.push(`${c.Y.name}: range ${k + 1} has fewer than 3 points — left as it is.`);
+    const v = f({ ...c, x: rows.map((i) => c.x[i]), y: rows.map((i) => c.y[i]) }, k);
+    rows.forEach((i, j) => (out[i] = v[j]));
+  });
+  return out;
+}
+
 // the step of X, and whether it is even (within 0.1 %)
 function stepOf(x: number[]): { dx: number; even: boolean } {
   if (x.length < 2) return { dx: 1, even: true };
@@ -130,40 +186,45 @@ export function smoothNode(ds: Dataset, d: SmoothData): SignalOut {
   if (typeof cs === 'string') return cs;
   const warnings: string[] = [];
   const plots: SignalPlot[] = [];
-  const items = cs.map((c) => {
-    const n = c.y.length;
-    const edge = d.edge === 'interp' && d.method !== 'savgol' ? 'reflect' : d.edge;
-    let s: number[];
-    let replaced: number[] = [];
-    if (d.method === 'hampel') {
-      if (!stepOf(c.x).even) warnings.push(`${c.Y.name}: X not evenly spaced — the window counts points, not X.`);
-      const r = hampel(c.y, Math.max(1, Math.floor(Math.max(3, Math.floor(d.points)) / 2)), Math.max(0, d.nsigma ?? 3));
-      s = r.y;
-      replaced = r.out;
-    } else if (d.method === 'lowess') s = S.lowess(c.x, c.y, Math.min(1, Math.max(0.01, d.frac)), Math.max(0, Math.floor(d.iter)));
-    else if (d.method === 'wavelet') {
-      if (!stepOf(c.x).even) warnings.push(`${c.Y.name}: X not evenly spaced — the wavelets count points, not X.`);
-      const r = waveletDenoise(c.y, d.wavelet ?? 'db4', d.wlevel ?? 4, d.wmode ?? 'soft', d.wscale ?? 1);
-      if (r.level < (d.wlevel ?? 4)) warnings.push(`${c.Y.name}: ${r.level} levels at most for ${n} points.`);
-      s = r.y;
-    } else if (d.method === 'fft') {
-      const e = evenly(c);
-      if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced — read on an even grid for the FFT.`);
-      const fs = S.fftFilter(e.y, e.dx, 'low', (Math.min(1, Math.max(0.001, d.cutoff)) * 0.5) / e.dx, 0, 0, true);
-      s = e.resampled ? c.x.map(S.interpolator(e.x, fs, 'linear', 'constant')) : fs;
-    } else {
-      if (d.method !== 'gauss' && !stepOf(c.x).even) warnings.push(`${c.Y.name}: X not evenly spaced — the window counts points, not X.`);
-      const pts = Math.max(1, Math.min(Math.floor(d.points), n));
-      s =
-        d.method === 'average'
-          ? S.movingAverage(c.y, pts, edge as S.Edge)
-          : d.method === 'median'
-            ? S.medianFilter(c.y, pts, edge as S.Edge)
-            : d.method === 'gauss'
-              ? S.gaussianSmooth(c.y, Math.max(0.1, d.sigma), edge as S.Edge)
-              : S.savgol(c.y, pts, Math.max(0, Math.floor(d.order)), d.edge === 'shrink' ? 'nearest' : d.edge);
-    }
-    plots.push({ data: { x: c.x, y: c.y }, result: { x: c.x, y: s }, xName: c.X?.name ?? 'row', yName: c.Y.name, ...(d.method === 'hampel' ? { series: [{ name: `replaced (${replaced.length})`, x: replaced.map((i) => c.x[i]), y: replaced.map((i) => c.y[i]), color: '#d62728', dots: true }] } : {}) });
+  const items = cs.map((c0) => {
+    const replaced: number[] = [];
+    const s = byRanges(c0, rangesOf(d, c0.Y.name), d.outside, warnings, (c) => {
+      const n = c.y.length;
+      const edge = d.edge === 'interp' && d.method !== 'savgol' ? 'reflect' : d.edge;
+      let s: number[];
+      if (d.method === 'hampel') {
+        if (!stepOf(c.x).even) warnings.push(`${c.Y.name}: X not evenly spaced — the window counts points, not X.`);
+        const r = hampel(c.y, Math.max(1, Math.floor(Math.max(3, Math.floor(d.points)) / 2)), Math.max(0, d.nsigma ?? 3));
+        s = r.y;
+        // (the points replaced, by their place in the whole curve)
+        for (const i of r.out) replaced.push(c0.x.indexOf(c.x[i]));
+      } else if (d.method === 'lowess') s = S.lowess(c.x, c.y, Math.min(1, Math.max(0.01, d.frac)), Math.max(0, Math.floor(d.iter)));
+      else if (d.method === 'wavelet') {
+        if (!stepOf(c.x).even) warnings.push(`${c.Y.name}: X not evenly spaced — the wavelets count points, not X.`);
+        const r = waveletDenoise(c.y, d.wavelet ?? 'db4', d.wlevel ?? 4, d.wmode ?? 'soft', d.wscale ?? 1);
+        if (r.level < (d.wlevel ?? 4)) warnings.push(`${c.Y.name}: ${r.level} levels at most for ${n} points.`);
+        s = r.y;
+      } else if (d.method === 'fft') {
+        const e = evenly(c);
+        if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced — read on an even grid for the FFT.`);
+        const fs = S.fftFilter(e.y, e.dx, 'low', (Math.min(1, Math.max(0.001, d.cutoff)) * 0.5) / e.dx, 0, 0, true);
+        s = e.resampled ? c.x.map(S.interpolator(e.x, fs, 'linear', 'constant')) : fs;
+      } else {
+        if (d.method !== 'gauss' && !stepOf(c.x).even) warnings.push(`${c.Y.name}: X not evenly spaced — the window counts points, not X.`);
+        const pts = Math.max(1, Math.min(Math.floor(d.points), n));
+        s =
+          d.method === 'average'
+            ? S.movingAverage(c.y, pts, edge as S.Edge)
+            : d.method === 'median'
+              ? S.medianFilter(c.y, pts, edge as S.Edge)
+              : d.method === 'gauss'
+                ? S.gaussianSmooth(c.y, Math.max(0.1, d.sigma), edge as S.Edge)
+                : S.savgol(c.y, pts, Math.max(0, Math.floor(d.order)), d.edge === 'shrink' ? 'nearest' : d.edge);
+      }
+      return s;
+    });
+    const c = c0;
+    plots.push({ data: { x: c.x, y: c.y }, result: { x: c.x, y: s }, xName: c.X?.name ?? 'row', yName: c.Y.name, ranges: true, run: c.Y.name, ...(d.method === 'hampel' ? { series: [{ name: `replaced (${replaced.length})`, x: replaced.map((i) => c.x[i]), y: replaced.map((i) => c.y[i]), color: '#d62728', dots: true }] } : {}) });
     const cols: Column[] = [];
     if (d.withData) cols.push(yCol(c.Y.name, c.y, 'none'));
     cols.push({ ...yCol(`${c.Y.name} (smoothed)`, s), ...(c.Y.key ? { key: c.Y.key } : {}) });
@@ -175,8 +236,11 @@ export function smoothNode(ds: Dataset, d: SmoothData): SignalOut {
 
 // ---- Interpolate / Extrapolate ----
 export function interpNode(ds: Dataset, d: InterpData, at: number[] | undefined): SignalOut {
-  const cs = signalCurves(ds, d);
-  if (typeof cs === 'string') return cs;
+  const all = signalCurves(ds, d);
+  if (typeof all === 'string') return all;
+  // (only the points inside the ranges; the new X from the first of them to the last)
+  const cs = all.map((c) => restricted(c, rangesOf(d, c.Y.name))).filter((c) => c.x.length > 0);
+  if (!cs.length) return 'No points inside the ranges.';
   const warnings: string[] = [];
   const lo = minOf(cs.map((c) => c.x[0]));
   const hi = maxOf(cs.map((c) => c.x[c.x.length - 1]));
@@ -201,7 +265,8 @@ export function interpNode(ds: Dataset, d: InterpData, at: number[] | undefined)
     if (c.x.length < (d.method === 'spline' || d.method === 'akima' || d.method === 'pchip' ? 3 : 2)) warnings.push(`${c.Y.name}: too few points for this method.`);
     const f = S.interpolator(c.x, c.y, d.method, d.extrap);
     const v = X.map(f);
-    plots.push({ data: { x: c.x, y: c.y }, result: { x: X, y: v }, xName: c.X?.name ?? 'row', yName: c.Y.name });
+    const c0 = all.find((q) => q.Y === c.Y) ?? c;
+    plots.push({ data: { x: c0.x, y: c0.y }, result: { x: X, y: v }, xName: c.X?.name ?? 'row', yName: c.Y.name, ranges: true, run: c.Y.name });
     return { xName: c.X?.name ?? 'X', x: X, cols: [{ ...yCol(c.Y.name, v), ...(c.Y.key ? { key: c.Y.key } : {}) }] };
   });
   if (d.extrap === 'none' && (a < lo || b > hi)) warnings.push('Part of the new X is outside the data: left empty (Extrapolate to fill it).');
@@ -248,7 +313,7 @@ export function normalizeNode(ds: Dataset, d: NormalizeData, by: number[] | unde
     } else v = c.y.map((u) => (u - offset) / scale);
     if (!Number.isFinite(scale) || scale === 0) warnings.push(`${c.Y.name}: the factor is ${scale} — the result is not defined.`);
     factors.push({ name: c.Y.name, offset, scale });
-    plots.push({ data: { x: c.x, y: c.y }, result: { x: c.x, y: v }, xName: c.X?.name ?? 'row', yName: c.Y.name, ownAxis: true });
+    plots.push({ data: { x: c.x, y: c.y }, result: { x: c.x, y: v }, xName: c.X?.name ?? 'row', yName: c.Y.name, ownAxis: true, ranges: true, run: c.Y.name });
     return { xName: c.X?.name ?? 'row', x: c.x, cols: [{ ...yCol(`${c.Y.name} (normalized)`, v), ...(c.Y.key ? { key: c.Y.key } : {}) }] };
   });
   const table: Dataset = { name: 'factors', columns: [{ ...column('Y column', Float64Array.from(factors, (_, i) => i + 1), factors.map((f) => f.name)), role: 'x' }, yCol('subtracted', factors.map((f) => f.offset), 'none'), yCol('divided by', factors.map((f) => f.scale))] };
@@ -256,9 +321,27 @@ export function normalizeNode(ds: Dataset, d: NormalizeData, by: number[] | unde
 }
 
 // ---- FFT ----
+// The FFT node: the filter in every range (outside: the data, or nothing); the analyses of the part of every range (a
+// curve each, named after its range when there are several; the coherence: of the first range), with the graphs of the
+// data after them, where the ranges are drawn
 export function fftNode(ds: Dataset, d: FFTData, xUnit: (name: string) => string): SignalOut {
-  const cs = signalCurves(ds, d);
-  if (typeof cs === 'string') return cs;
+  const all = signalCurves(ds, d);
+  if (typeof all === 'string') return all;
+  if (d.mode === 'filter') return fftModes(ds, d, all, xUnit);
+  const cs = all.flatMap((c) => {
+    const p = pieces(c, rangesOf(d, c.Y.name));
+    return d.mode === 'coherence' ? p.slice(0, 1) : p;
+  });
+  if (!cs.length) return 'No points inside the ranges.';
+  const r = fftModes(ds, d, cs, xUnit);
+  if (typeof r === 'string') return r;
+  for (const c of all) {
+    r.plots.push({ data: { x: c.x, y: c.y }, result: { x: [], y: [] }, xName: c.X?.name ?? 'row', yName: c.Y.name, ranges: true, run: c.Y.name });
+    r.labels.push(`the data: ${c.Y.name} (its ranges)`);
+  }
+  return r;
+}
+function fftModes(ds: Dataset, d: FFTData, cs: Curve[], xUnit: (name: string) => string): SignalOut {
   const warnings: string[] = [];
   const plots: SignalPlot[] = [];
   if (d.mode === 'filter') {
@@ -266,44 +349,46 @@ export function fftNode(ds: Dataset, d: FFTData, xUnit: (name: string) => string
     const u = xUnit(cs[0]?.X?.name ?? '');
     const fName = u ? `Frequency (1/${u})` : 'Frequency';
     const items = cs.map((c, ci) => {
-      const e = evenly(c);
-      if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced — read on an even grid.`);
-      const nyq = 0.5 / e.dx;
-      // (the response: of the first Y's step; both ways, the gain squared and no phase)
-      const wr = Array.from({ length: 512 }, (_, k) => (0.5 * k) / 511);
-      const fromSos = (sos: number[][], twice: boolean) => {
-        const H = Sp.sosResponse(sos, wr);
-        const g = H.map(([a, b]) => 10 * Math.log10(a * a + b * b));
-        return { f: wr.map((w) => w / e.dx), db: twice ? g.map((v) => 2 * v) : g, ph: twice ? wr.map(() => 0) : H.map(([a, b]) => (180 / Math.PI) * Math.atan2(b, a)) };
-      };
-      let f: number[];
-      if (d.filter === 'notch') {
-        const sos = Sp.notchSos(d.f1, Math.max(0.1, d.notchQ ?? 30), 1 / e.dx, Math.max(1, Math.round(d.notchN ?? 1)));
-        if (!sos.length || !(d.f1 > 0)) {
-          if (d.f1 > 0) warnings.push(`The notch must be below the Nyquist frequency (${fmtNum(nyq, 5)}).`);
-          f = e.y.slice();
+      const out = byRanges(c, rangesOf(d, c.Y.name), d.outside, warnings, (p, part) => {
+        const e = evenly(p);
+        if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced — read on an even grid.`);
+        const nyq = 0.5 / e.dx;
+        // (the response: of the first Y's step; both ways, the gain squared and no phase)
+        const wr = Array.from({ length: 512 }, (_, k) => (0.5 * k) / 511);
+        const fromSos = (sos: number[][], twice: boolean) => {
+          const H = Sp.sosResponse(sos, wr);
+          const g = H.map(([a, b]) => 10 * Math.log10(a * a + b * b));
+          return { f: wr.map((w) => w / e.dx), db: twice ? g.map((v) => 2 * v) : g, ph: twice ? wr.map(() => 0) : H.map(([a, b]) => (180 / Math.PI) * Math.atan2(b, a)) };
+        };
+        let f: number[];
+        if (d.filter === 'notch') {
+          const sos = Sp.notchSos(d.f1, Math.max(0.1, d.notchQ ?? 30), 1 / e.dx, Math.max(1, Math.round(d.notchN ?? 1)));
+          if (!sos.length || !(d.f1 > 0)) {
+            if (d.f1 > 0) warnings.push(`The notch must be below the Nyquist frequency (${fmtNum(nyq, 5)}).`);
+            f = e.y.slice();
+          } else {
+            f = d.causal ? Sp.sosfilt(sos, e.y).y : Sp.sosfiltfilt(sos, e.y);
+            if (ci === 0 && part === 0) resp = fromSos(sos, !d.causal);
+          }
+        } else if (d.design && d.design !== 'fft') {
+          const [w1, w2] = [d.f1 / nyq, d.f2 / nyq];
+          const bad = !(w1 > 0 && w1 < 1) || ((d.filter === 'band' || d.filter === 'stop') && !(w2 > 0 && w2 < 1 && w2 !== w1));
+          if (bad) {
+            warnings.push(`The cut-off must be between 0 and the Nyquist frequency (${fmtNum(nyq, 5)}).`);
+            f = e.y.map(() => NaN);
+          } else {
+            const sos = Sp.designSos(d.design, Math.max(1, Math.min(12, Math.round(d.order) || 4)), d.filter, w1, w2, d.ripple ?? 1);
+            f = d.causal ? Sp.sosfilt(sos, e.y).y : Sp.sosfiltfilt(sos, e.y);
+            if (ci === 0 && part === 0) resp = fromSos(sos, !d.causal);
+          }
         } else {
-          f = d.causal ? Sp.sosfilt(sos, e.y).y : Sp.sosfiltfilt(sos, e.y);
-          if (ci === 0) resp = fromSos(sos, !d.causal);
+          f = S.fftFilter(e.y, e.dx, d.filter, d.f1, d.f2, Math.max(0, Math.floor(d.order)), d.mirror);
+          const g = S.fftGain(d.filter, d.f1, d.f2, Math.max(0, Math.floor(d.order)));
+          if (ci === 0 && part === 0) resp = { f: wr.map((w) => w / e.dx), db: wr.map((w) => 20 * Math.log10(g(w / e.dx))), ph: wr.map(() => 0) };
         }
-      } else if (d.design && d.design !== 'fft') {
-        const [w1, w2] = [d.f1 / nyq, d.f2 / nyq];
-        const bad = !(w1 > 0 && w1 < 1) || ((d.filter === 'band' || d.filter === 'stop') && !(w2 > 0 && w2 < 1 && w2 !== w1));
-        if (bad) {
-          warnings.push(`The cut-off must be between 0 and the Nyquist frequency (${fmtNum(nyq, 5)}).`);
-          f = e.y.map(() => NaN);
-        } else {
-          const sos = Sp.designSos(d.design, Math.max(1, Math.min(12, Math.round(d.order) || 4)), d.filter, w1, w2, d.ripple ?? 1);
-          f = d.causal ? Sp.sosfilt(sos, e.y).y : Sp.sosfiltfilt(sos, e.y);
-          if (ci === 0) resp = fromSos(sos, !d.causal);
-        }
-      } else {
-        f = S.fftFilter(e.y, e.dx, d.filter, d.f1, d.f2, Math.max(0, Math.floor(d.order)), d.mirror);
-        const g = S.fftGain(d.filter, d.f1, d.f2, Math.max(0, Math.floor(d.order)));
-        if (ci === 0) resp = { f: wr.map((w) => w / e.dx), db: wr.map((w) => 20 * Math.log10(g(w / e.dx))), ph: wr.map(() => 0) };
-      }
-      const out = e.resampled ? c.x.map(S.interpolator(e.x, f, 'linear', 'constant')) : f;
-      plots.push({ data: { x: c.x, y: c.y }, result: { x: c.x, y: out }, xName: c.X?.name ?? 'row', yName: c.Y.name });
+        return e.resampled ? p.x.map(S.interpolator(e.x, f, 'linear', 'constant')) : f;
+      });
+      plots.push({ data: { x: c.x, y: c.y }, result: { x: c.x, y: out }, xName: c.X?.name ?? 'row', yName: c.Y.name, ranges: true, run: c.Y.name });
       return { xName: c.X?.name ?? 'row', x: c.x, cols: [{ ...yCol(`${c.Y.name} (filtered)`, out), ...(c.Y.key ? { key: c.Y.key } : {}) }] };
     });
     if (!(d.f1 > 0)) return d.filter === 'notch' ? 'Write the frequency of the notch (50 or 60 Hz: the mains; in 1 / the unit of X).' : 'Write the cut-off frequency (in 1 / the unit of X).';
@@ -414,19 +499,21 @@ export function convNode(ds: Dataset, d: ConvData, kernelValues: number[] | unde
   const plots: SignalPlot[] = [];
   if (d.op === 'corr') return corrNode(ds, d, cs, kernelValues);
   const items = cs.map((c) => {
-    const e = evenly(c);
-    if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced — read on an even grid.`);
-    const k = d.shape === 'port' ? S.kernelFrom(kernelValues!) : S.kernelOf(d.shape, d.fwhm, e.dx, e.y.length);
-    if (k.length < 2) warnings.push(`${c.Y.name}: the kernel is narrower than one step of X — nothing changes.`);
-    let r: number[];
-    if (d.op === 'conv') r = S.convolve(e.y, k, d.edge);
-    else if (d.op === 'wiener') r = S.wiener(e.y, k, Math.max(1e-12, d.lambda));
-    else {
-      if (e.y.some((v) => v < 0)) warnings.push(`${c.Y.name}: Richardson–Lucy takes values ≥ 0 — the negative ones are set to 0.`);
-      r = S.richardsonLucy(e.y, k, Math.max(1, Math.min(10000, Math.floor(d.iterations))), d.edge);
-    }
-    const out = e.resampled ? c.x.map(S.interpolator(e.x, r, 'linear', 'constant')) : r;
-    plots.push({ data: { x: c.x, y: c.y }, result: { x: c.x, y: out }, xName: c.X?.name ?? 'row', yName: c.Y.name });
+    const out = byRanges(c, rangesOf(d, c.Y.name), d.outside, warnings, (p) => {
+      const e = evenly(p);
+      if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced — read on an even grid.`);
+      const k = d.shape === 'port' ? S.kernelFrom(kernelValues!) : S.kernelOf(d.shape, d.fwhm, e.dx, e.y.length);
+      if (k.length < 2) warnings.push(`${c.Y.name}: the kernel is narrower than one step of X — nothing changes.`);
+      let r: number[];
+      if (d.op === 'conv') r = S.convolve(e.y, k, d.edge);
+      else if (d.op === 'wiener') r = S.wiener(e.y, k, Math.max(1e-12, d.lambda));
+      else {
+        if (e.y.some((v) => v < 0)) warnings.push(`${c.Y.name}: Richardson–Lucy takes values ≥ 0 — the negative ones are set to 0.`);
+        r = S.richardsonLucy(e.y, k, Math.max(1, Math.min(10000, Math.floor(d.iterations))), d.edge);
+      }
+      return e.resampled ? p.x.map(S.interpolator(e.x, r, 'linear', 'constant')) : r;
+    });
+    plots.push({ data: { x: c.x, y: c.y }, result: { x: c.x, y: out }, xName: c.X?.name ?? 'row', yName: c.Y.name, ranges: true, run: c.Y.name });
     const tag = d.op === 'conv' ? 'convolved' : 'deconvolved';
     return { xName: c.X?.name ?? 'row', x: c.x, cols: [{ ...yCol(`${c.Y.name} (${tag})`, out), ...(c.Y.key ? { key: c.Y.key } : {}) }] };
   });
@@ -656,6 +743,8 @@ export function averageNode(sets: Dataset[], d: AverageData): SignalOut {
     X = Array.from({ length: p }, (_, k) => a + ((b - a) * k) / (p - 1));
   }
   const fs = usable.map((c) => S.interpolator(c.x, c.y, d.method, 'none'));
+  const rs = d.regions ?? [];
+  if (rs.length) X = X.filter((v) => within(v, rs));
   const rows: { x: number; v: number[] }[] = [];
   for (const x of X) {
     const v = fs.map((f) => f(x)).filter(Number.isFinite);
@@ -685,6 +774,7 @@ export function averageNode(sets: Dataset[], d: AverageData): SignalOut {
     band: { x, lo: mean.map((v, i) => v - (sd[i] || 0)), hi: mean.map((v, i) => v + (sd[i] || 0)) },
     xName: usable[0].X?.name ?? 'row',
     yName: 'mean',
+    ranges: true,
   };
   return { dataset: { name: `mean of ${m} curves`, columns }, plots: [plot], labels: [`mean of ${m}: ${usable.map((c) => c.label).join(', ')}`], warnings };
 }

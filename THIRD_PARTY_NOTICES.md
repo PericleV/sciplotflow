@@ -76,8 +76,20 @@ Calibration), then kept in the browser's cache. The image is read in the browser
 
 The numerical methods are written from their publications, cited in the code next to each (for example Dunnett 1955,
 Greenhouse & Geisser 1959, Huynh & Feldt 1976, Fai & Cornelius 1996, Weideman 1994, Torrence & Compo 1998). Where the
-code follows the conventions of SciPy (BSD-3-Clause) or PyWavelets (MIT) so that its results match theirs, it is noted in
-the code. The results are checked against these libraries by `npm run check` (reference scripts in `scripts/fixtures`).
+code follows a library closely so that its results match theirs, it is noted in the code, and the library's notice is
+shipped with the app (at the end of `public/THIRD_PARTY_LICENSES.txt`, from `scripts/licenses`):
+
+| Library | Licence | Followed in |
+|---|---|---|
+| SciPy | BSD-3-Clause | find_peaks_cwt; sosfilt_zi and sosfiltfilt; the Bessel normalisation; iirnotch; lombscargle |
+| PyWavelets | MIT | the wavelet filters (`src/engine/waveletFilters.ts`, generated from it); the stationary transform and mra |
+| pycwt | BSD-3-Clause | the continuous wavelet transform: padding, cone of influence, significance, the smoothing of the coherence |
+| ruptures | BSD-2-Clause | PELT and binary segmentation: the costs and the pruning |
+| pybaselines | BSD-3-Clause | arPLS: its weights and stopping rule |
+| astropy | BSD-3-Clause | Lomb–Scargle: the frequency grid and the false-alarm probability (Baluev) |
+
+The results are checked against these libraries by `npm run check` (reference scripts in `scripts/fixtures`); the
+report of every check is [`VALIDATION.md`](VALIDATION.md) (`npm run validation`).
 
 Routines once written after *Numerical Recipes* were rewritten (2026-10-18) from public sources, with the results
 checked against SciPy / NumPy: the eigenvalues of non-symmetric matrices after EISPACK's orthes / hqr2 as written in the

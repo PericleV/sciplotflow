@@ -26,6 +26,20 @@ for (const k of names) {
   const repo = typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url;
   items.push(`${'='.repeat(78)}\n${pkg.name} ${pkg.version} — ${lic}\n${pkg.homepage ?? repo ?? p.resolved ?? ''}\n${'-'.repeat(78)}\n${text}\n`);
 }
-const head = `Third-party software in ${own.name}\n\nThe app is built with the open-source packages below; each is under its own licence, whose full text follows.\nWhat is loaded only when a Python script runs (Pyodide, numpy, scipy, pandas, matplotlib …), the colour palettes\nand the example data are listed in THIRD_PARTY_NOTICES.md (in the project's sources).\n\n`;
+// the libraries whose code ours follows closely in places (written in TypeScript to give the same results): their
+// notices, as their BSD and MIT licences ask (scripts/licenses/*.txt, copied from the installed packages)
+const FOLLOWED: [string, string, string][] = [
+  ['scipy.txt', 'SciPy', 'find_peaks_cwt; sosfilt_zi and sosfiltfilt; the Bessel normalisation; iirnotch; lombscargle'],
+  ['pywavelets.txt', 'PyWavelets', 'the wavelet filters (src/engine/waveletFilters.ts, generated from it); the stationary transform and mra; the thresholds'],
+  ['pycwt.txt', 'pycwt', 'the continuous wavelet transform: its padding, cone of influence, significance and the smoothing of the coherence'],
+  ['ruptures.txt', 'ruptures', 'PELT and binary segmentation: the costs and the pruning'],
+  ['pybaselines.txt', 'pybaselines', 'arPLS: its weights and stopping rule'],
+  ['astropy.txt', 'astropy', 'Lomb–Scargle: the frequency grid and the false-alarm probability (Baluev)'],
+];
+for (const [file, name, what] of FOLLOWED) {
+  const text = readFileSync(join(root, 'scripts', 'licenses', file), 'utf8').trim();
+  items.push(`${'='.repeat(78)}\n${name} — code followed closely in places: ${what}\n${'-'.repeat(78)}\n${text}\n`);
+}
+const head = `Third-party software in ${own.name}\n\nThe app is built with the open-source packages below; each is under its own licence, whose full text follows. At\nthe end: the Python libraries whose code parts of the app follow closely, with their notices.\nWhat is loaded only when a Python script runs (Pyodide, numpy, scipy, pandas, matplotlib …), the colour palettes\nand the example data are listed in THIRD_PARTY_NOTICES.md (in the project's sources).\n\n`;
 writeFileSync(join(root, 'public', 'THIRD_PARTY_LICENSES.txt'), head + items.join('\n'));
-console.log(`${items.length} packages written to public/THIRD_PARTY_LICENSES.txt`);
+console.log(`${items.length - FOLLOWED.length} packages and ${FOLLOWED.length} followed libraries written to public/THIRD_PARTY_LICENSES.txt`);
