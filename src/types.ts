@@ -17,6 +17,10 @@ import type { BaseOptions } from './engine/baselines.ts';
 import type { AnovaData, CorrData, NonparData, NormData, TTestData } from './engine/statnodes.ts';
 import type { ContingencyData, PAdjustData, RegressData, RocData, SurvivalData } from './engine/statnodes2.ts';
 import type { AgreeData, DistFitData, LogisticData, MethCompData, PowerData, ResampleData } from './engine/statnodes3.ts';
+import type { BaselineData } from './engine/baselinenode.ts';
+import type { FracData, FrftData } from './engine/fracnodes.ts';
+import type { WaveletData } from './engine/waveletnode.ts';
+import type { WaveformData, StepsData, EventsData } from './engine/signal2nodes.ts';
 import type { CurveMathData, TranslateData } from './engine/curvemath.ts';
 import type { CleanData, FilterData } from './engine/cleaning.ts';
 import type { BatchSpec } from './engine/batch.ts';
@@ -46,6 +50,10 @@ export type { CurveMathData, TranslateData };
 export type { AnovaData, CorrData, NonparData, NormData, TTestData };
 export type { ContingencyData, PAdjustData, RegressData, RocData, SurvivalData };
 export type { AgreeData, DistFitData, LogisticData, MethCompData, PowerData, ResampleData };
+export type { BaselineData };
+export type { FracData, FrftData };
+export type { WaveletData };
+export type { WaveformData, StepsData, EventsData };
 import type { PeakShape } from './engine/fitModels.ts';
 import type { RowSelect } from './engine/rowsel.ts';
 import type { ColumnRole } from './engine/table.ts';
@@ -480,6 +488,13 @@ export type DistFitNode = Node<DistFitData, 'distfit'>;
 export type AgreeNode = Node<AgreeData, 'agree'>;
 export type MethCompNode = Node<MethCompData, 'methcomp'>;
 export type LogisticNode = Node<LogisticData, 'logistic'>;
+export type BaselineNode = Node<BaselineData, 'baseline'>;
+export type FracNode = Node<FracData, 'fraccalc'>;
+export type FrftNode = Node<FrftData, 'frft'>;
+export type WaveletNode = Node<WaveletData, 'wavelet'>;
+export type WaveformNode = Node<WaveformData, 'waveform'>;
+export type StepsNode = Node<StepsData, 'steps'>;
+export type EventsNode = Node<EventsData, 'events'>;
 export type CurveMathNode = Node<CurveMathData, 'curvemath'>;
 export type TranslateNode = Node<TranslateData, 'translate'>;
 export type FilterNode = Node<FilterData, 'filterrows'>;
@@ -591,6 +606,13 @@ export type AppNode =
   | AgreeNode
   | MethCompNode
   | LogisticNode
+  | BaselineNode
+  | FracNode
+  | FrftNode
+  | WaveletNode
+  | WaveformNode
+  | StepsNode
+  | EventsNode
   | CurveMathNode
   | TranslateNode
   | FilterNode

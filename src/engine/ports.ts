@@ -55,6 +55,13 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
       // every sheet of a workbook: a workbook
       return handle === 'names' ? 'column' : node.data.sheet === '*' ? 'workbook' : 'dataset';
     case 'peakwidth':
+    case 'baseline':
+    case 'waveform':
+    case 'steps':
+    case 'events':
+    case 'wavelet':
+    case 'fraccalc':
+    case 'frft':
       return 'dataset';
     case 'fit':
       return 'dataset';
@@ -278,7 +285,15 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
     case 'translate':
       return handle === 'data' ? ['dataset'] : /^in-\d+$/.test(handle) ? ['column'] : [];
     case 'calculus':
+    case 'baseline':
       return handle === 'in' ? ['dataset'] : handle === 'base' ? ['dataset', 'column'] : [];
+    case 'waveform':
+    case 'steps':
+    case 'events':
+    case 'wavelet':
+    case 'fraccalc':
+    case 'frft':
+      return handle === 'in' ? ['dataset'] : [];
     case 'mathcol':
       return /^in-\d+$/.test(handle) ? ['column', 'scalar'] : [];
     case 'python':

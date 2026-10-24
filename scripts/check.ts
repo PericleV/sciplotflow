@@ -94,6 +94,7 @@ import { rowHandle, sourcePort, targetAccepts } from '../src/engine/ports.ts';
 import { checkImage } from './check-image.ts';
 import { checkStat2 } from './check-stat2.ts';
 import { checkStat3 } from './check-stat3.ts';
+import { checkSigpack } from './check-sigpack.ts';
 import { checkPhase } from './check-phase.ts';
 import { armsOf, closestOnSeg, cornersOf as boundaryCorners, createCalMapper, detectRegions, followFrame, evalLeverPoint, frameOf, phaseFaces, regionFills, regionPhases, runPhaseDigitizer, sampleSpline, snapPoint, totalOfUnit, type PhaseDigitizerData } from '../src/engine/phasedigitize.ts';
 import { PHASE_DIGITIZER_DEFAULTS } from '../src/defaults.ts';
@@ -5957,6 +5958,7 @@ for (const ex of EXAMPLES) {
 checkImage(ok);
 checkStat2(ok);
 checkStat3(ok);
+checkSigpack(ok);
 
 // ---- Phase diagram: against closed forms ----
 checkPhase(ok);

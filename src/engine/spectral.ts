@@ -150,10 +150,57 @@ const csqrt = (a: C): C => {
 const cprod = (v: C[]): C => v.reduce((a, b) => cmul(a, b), [1, 0] as C);
 type Zpk = { z: C[]; p: C[]; k: number };
 
-export type IirKind = 'butter' | 'cheby1';
+export type IirKind = 'butter' | 'cheby1' | 'bessel';
 export type Band = 'low' | 'high' | 'band' | 'stop';
-// the analog prototype (cut-off 1 rad/s)
+// the poles of the Bessel filter of order N, normalised as SciPy's besselap "phase" (the default of its bessel): the
+// roots of the reverse Bessel polynomial θ_N(s) = Σ (2N − k)! / (2^(N−k) k! (N − k)!) s^k, scaled by a_0^(−1/N) (the
+// polynomial then monic with a constant term 1), by Durand–Kerner and a Newton polish
+function besselPoles(N: number): C[] {
+  const fact = (n: number) => {
+    let f = 1;
+    for (let i = 2; i <= n; i++) f *= i;
+    return f;
+  };
+  const a = Array.from({ length: N + 1 }, (_, k) => fact(2 * N - k) / (2 ** (N - k) * fact(k) * fact(N - k)));
+  const c = a[0] ** (1 / N);
+  // (the coefficients from s^N down, monic)
+  const q = Array.from({ length: N + 1 }, (_, i) => (a[N - i] * c ** (N - i)) / a[0]);
+  const val = (z: C): [C, C] => {
+    let [p, d]: [C, C] = [[q[0], 0], [0, 0]];
+    for (let i = 1; i <= N; i++) {
+      d = cadd(cmul(d, z), p);
+      p = cadd(cmul(p, z), [q[i], 0]);
+    }
+    return [p, d];
+  };
+  let r: C[] = Array.from({ length: N }, (_, k) => {
+    const t = (2 * Math.PI * (k + 0.25)) / N + 0.4;
+    return [0.9 * Math.cos(t), 0.9 * Math.sin(t)];
+  });
+  for (let it = 0; it < 500; it++) {
+    let moved = 0;
+    r = r.map((z, i) => {
+      let den: C = [1, 0];
+      r.forEach((w, j) => {
+        if (j !== i) den = cmul(den, csub(z, w));
+      });
+      const step = cdiv(val(z)[0], den);
+      moved = Math.max(moved, Math.hypot(step[0], step[1]));
+      return csub(z, step);
+    });
+    if (moved < 1e-15) break;
+  }
+  return r.map((z) => {
+    for (let it = 0; it < 3; it++) {
+      const [p, d] = val(z);
+      if (Math.hypot(d[0], d[1]) > 0) z = csub(z, cdiv(p, d));
+    }
+    return [z[0], Math.abs(z[1]) < 1e-13 ? 0 : z[1]] as C;
+  });
+}
+// the analog prototype (cut-off 1 rad/s; Bessel: its phase half way there)
 function prototype(kind: IirKind, N: number, rp: number): Zpk {
+  if (kind === 'bessel') return { z: [], p: besselPoles(N), k: 1 };
   const p: C[] = [];
   for (let m = -N + 1; m < N; m += 2) {
     if (kind === 'butter') {
@@ -251,6 +298,26 @@ export function designSos(kind: IirKind, N: number, band: Band, w1: number, w2: 
   }
   sos[0] = [sos[0][0] * d.k, sos[0][1] * d.k, sos[0][2] * d.k, 1, sos[0][4], sos[0][5]];
   return sos;
+}
+// A notch (SciPy's iirnotch: the gain −3 dB at f0 ± f0/(2Q)) at f0 and at its harmonics below the Nyquist frequency,
+// as sections; f0 and fs in the same unit
+export function notchSos(f0: number, Q: number, fs: number, harmonics: number): number[][] {
+  const sos: number[][] = [];
+  for (let h = 1; h <= harmonics && h * f0 < fs / 2; h++) {
+    const w0 = (2 * Math.PI * h * f0) / fs;
+    const beta = Math.tan(w0 / Q / 2);
+    const g = 1 / (1 + beta);
+    sos.push([g, -2 * g * Math.cos(w0), g, 1, -2 * g * Math.cos(w0), 2 * g - 1]);
+  }
+  return sos;
+}
+// the response of the sections at the frequencies w (in cycles per sample, 0 … 0.5): [re, im] of H(e^(i 2π w))
+export function sosResponse(sos: number[][], w: number[]): C[] {
+  return w.map((f) => {
+    const z1: C = [Math.cos(-2 * Math.PI * f), Math.sin(-2 * Math.PI * f)];
+    const z2 = cmul(z1, z1);
+    return sos.reduce((h: C, [b0, b1, b2, a0, a1, a2]) => cmul(h, cdiv(cadd(cadd([b0, 0], cmul([b1, 0], z1)), cmul([b2, 0], z2)), cadd(cadd([a0, 0], cmul([a1, 0], z1)), cmul([a2, 0], z2)))), [1, 0]);
+  });
 }
 // filtering by the sections (direct form II transposed), from the states zi
 export function sosfilt(sos: number[][], x: number[], zi?: number[][]): { y: number[]; zf: number[][] } {

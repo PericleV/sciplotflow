@@ -3,13 +3,14 @@
 // points), the lowest point, the rubber band (the lower hull), points placed by hand, another curve. Found from the data
 // (the peaks left above, or the dips below with `under: 'dips'`): an iterative polynomial (the points above the
 // polynomial brought down to it, again and again), asymmetric least squares (a smooth curve, the points above it weighed
-// p, those below 1 − p), airPLS (the weights of the points above set to 0, those below growing at every pass), SNIP (each
+// p, those below 1 − p), airPLS (the weights of the points above set to 0, those below growing at every pass), arPLS
+// (Baek, Kim and Lee 2015: the weights a logistic of the residual against the spread of the points below), SNIP (each
 // point lowered to the mean of its neighbours at 1, 2 … w points, on the log-log-square-root scale or not). For
 // photoelectron spectra: Shirley (the background at every X proportional to the area of the peak on one side of it, found
 // again until it stays) and Tougaard (the electrons that lost energy: the spectrum convolved with the universal
 // cross-section B·T / (C + T²)², B set so that it meets the data at the far end). Pure.
 
-export type BaseMethod = 'zero' | 'value' | 'line' | 'lowest' | 'rubber' | 'points' | 'curve' | 'poly' | 'asls' | 'airpls' | 'snip' | 'shirley' | 'tougaard';
+export type BaseMethod = 'zero' | 'value' | 'line' | 'lowest' | 'rubber' | 'points' | 'curve' | 'poly' | 'asls' | 'airpls' | 'arpls' | 'snip' | 'shirley' | 'tougaard';
 export type BaseOptions = {
   ends?: number; // line, Shirley, Tougaard: the points averaged at each end (absent or 0: by the number of points)
   under?: 'peaks' | 'dips'; // lowest, rubber, polynomial, ALS, airPLS, SNIP: the baseline under the peaks or over the dips
@@ -23,9 +24,9 @@ export type BaseOptions = {
 };
 export const BASE_OPTION_DEFAULTS = { order: 3, lambda: 5, p: 0.01, c: 1643 };
 // the methods with their options found from the data (no value, points or curve given)
-export const FOUND_METHODS: BaseMethod[] = ['poly', 'asls', 'airpls', 'snip', 'shirley', 'tougaard'];
+export const FOUND_METHODS: BaseMethod[] = ['poly', 'asls', 'airpls', 'arpls', 'snip', 'shirley', 'tougaard'];
 // the methods that may go under the peaks or over the dips
-export const SIDED_METHODS: BaseMethod[] = ['lowest', 'rubber', 'poly', 'asls', 'airpls', 'snip'];
+export const SIDED_METHODS: BaseMethod[] = ['lowest', 'rubber', 'poly', 'asls', 'airpls', 'arpls', 'snip'];
 
 // The baseline at every point (X ascending). value: of 'value'; curve: of 'points' and 'curve' (flat beyond its ends).
 export function baselineOf(method: BaseMethod, X: ArrayLike<number>, Y: ArrayLike<number>, o: BaseOptions = {}, at: { value?: number; curve?: ((x: number) => number) | null } = {}): number[] {
@@ -51,6 +52,7 @@ export function baselineOf(method: BaseMethod, X: ArrayLike<number>, Y: ArrayLik
   else if (method === 'poly') b = iterPoly(x, v, o.order ?? BASE_OPTION_DEFAULTS.order);
   else if (method === 'asls') b = asls(v, 10 ** (o.lambda ?? BASE_OPTION_DEFAULTS.lambda), o.p ?? BASE_OPTION_DEFAULTS.p);
   else if (method === 'airpls') b = airpls(v, 10 ** (o.lambda ?? BASE_OPTION_DEFAULTS.lambda));
+  else if (method === 'arpls') b = arpls(v, 10 ** (o.lambda ?? BASE_OPTION_DEFAULTS.lambda));
   else if (method === 'snip') b = snip(v, o.width ?? Math.max(2, Math.round(n / 20)), o.lls !== false);
   else b = v.map(() => 0);
   return flip ? b.map((q) => -q) : b;
@@ -245,6 +247,31 @@ function airpls(y: number[], lambda: number): number[] {
       w[i] = d >= 0 ? 0 : Math.exp((t * -d) / dssn);
     }
     w[0] = w[n - 1] = Math.exp((t * top) / dssn);
+  }
+  return z;
+}
+
+// arPLS: the weights 1 / (1 + exp(2 (d − (2σ − μ)) / σ)) of the residuals d, μ and σ those of the negative ones, until
+// they change by less than 0.1 % (as pybaselines)
+function arpls(y: number[], lambda: number): number[] {
+  const n = y.length;
+  let w = new Float64Array(n).fill(1);
+  let z = y.slice();
+  for (let it = 0; it <= 50; it++) {
+    z = whittaker(y, w, lambda);
+    const neg: number[] = [];
+    for (let i = 0; i < n; i++) if (y[i] - z[i] < 0) neg.push(y[i] - z[i]);
+    if (neg.length < 2) break;
+    const m = neg.reduce((a, b) => a + b, 0) / neg.length;
+    const s = Math.sqrt(neg.reduce((a, b) => a + (b - m) ** 2, 0) / (neg.length - 1));
+    const next = Float64Array.from(y, (v, i) => {
+      const t = (2 * (v - z[i] - (2 * s - m))) / s;
+      return t > 700 ? 0 : 1 / (1 + Math.exp(t));
+    });
+    let [num, den] = [0, 0];
+    for (let i = 0; i < n; i++) [num, den] = [num + (next[i] - w[i]) ** 2, den + w[i] ** 2];
+    if (Math.sqrt(num) / Math.sqrt(den) < 1e-3) break;
+    w = next;
   }
   return z;
 }

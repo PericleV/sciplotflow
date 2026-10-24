@@ -100,6 +100,12 @@ export function RegionPlot(props: {
   segments?: { x0: number; y0: number; x1: number; y1: number; color: string }[];
   // the data reader on the top panel (its curves: the data of the run shown and the baseline)
   reader?: Omit<ReaderProp, 'curves'>;
+  // the line over the data: its name (absent: baseline), drawn solid in a colour of its own (absent: grey, dashed)
+  baseName?: string;
+  baseColor?: string;
+  // below: more lines (each its colour), a band (the mean ± SD of an average)
+  lowerMore?: { x: number[]; y: number[]; color: string }[];
+  lowerBand?: { x: number[]; lo: number[]; hi: number[] };
 }) {
   const { x, y, run, used, shown, regions, width: W, topH, lowerH } = props;
   const one = lowerH <= 0;
@@ -128,7 +134,7 @@ export function RegionPlot(props: {
     if (props.zoomOut) props.onView?.(zoomAt(box, (box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2, 1.6, 'both'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.zoomOut]);
-  const lbox = { ...extent([[box.x0, box.x1]], [props.lower?.y ?? []]), x0: box.x0, x1: box.x1 };
+  const lbox = { ...extent([[box.x0, box.x1]], [props.lower?.y ?? [], ...(props.lowerMore ?? []).map((q) => q.y), props.lowerBand?.lo ?? [], props.lowerBand?.hi ?? []]), x0: box.x0, x1: box.x1 };
   const fx = (v: number) => M.l + ((v - box.x0) / (box.x1 - box.x0)) * pw;
   const fy = (v: number) => M.t + (1 - (v - box.y0) / (box.y1 - box.y0)) * ph;
   const ly = (v: number) => M.t + (1 - (v - lbox.y0) / (lbox.y1 - lbox.y0)) * lh;
@@ -209,9 +215,9 @@ export function RegionPlot(props: {
       // the baseline under the regions
       const bs = props.base;
       if (bs && bs.x.length) {
-        g.strokeStyle = C.base;
-        g.lineWidth = 1.2;
-        g.setLineDash([5, 3]);
+        g.strokeStyle = props.baseColor ?? C.base;
+        g.lineWidth = props.baseColor ? 1.6 : 1.2;
+        g.setLineDash(props.baseColor ? [] : [5, 3]);
         g.beginPath();
         let on = false;
         for (let k = 0; k < bs.x.length; k++) {
@@ -283,6 +289,36 @@ export function RegionPlot(props: {
         h.fillStyle = '#cccccc';
         h.fillRect(M.l, ly(0), pw, 1);
       }
+      // (a band: the area between its two edges, a gap where they are not numbers)
+      const bd = props.lowerBand;
+      if (bd) {
+        h.fillStyle = alpha(C.result, 0.18);
+        for (let k = 0; k + 1 < bd.x.length; k++) {
+          if (![bd.lo[k], bd.hi[k], bd.lo[k + 1], bd.hi[k + 1]].every(Number.isFinite)) continue;
+          h.beginPath();
+          h.moveTo(fx(bd.x[k]), ly(bd.hi[k]));
+          h.lineTo(fx(bd.x[k + 1]), ly(bd.hi[k + 1]));
+          h.lineTo(fx(bd.x[k + 1]), ly(bd.lo[k + 1]));
+          h.lineTo(fx(bd.x[k]), ly(bd.lo[k]));
+          h.closePath();
+          h.fill();
+        }
+      }
+      for (const q of props.lowerMore ?? []) {
+        h.strokeStyle = q.color;
+        h.lineWidth = 1.2;
+        h.beginPath();
+        let on = false;
+        for (let k = 0; k < q.x.length; k++) {
+          if (!Number.isFinite(q.y[k])) {
+            on = false;
+            continue;
+          }
+          h[on ? 'lineTo' : 'moveTo'](fx(q.x[k]), ly(q.y[k]));
+          on = true;
+        }
+        h.stroke();
+      }
       if (lw && lw.x.length) {
         h.strokeStyle = C.result;
         h.lineWidth = 1.5;
@@ -302,7 +338,7 @@ export function RegionPlot(props: {
       axes(h, lbox, W, M.t, lh, fx, ly, props.lowerTitle, props.xTitle);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [x, y, run, used, shown, shownRegions, shownPts, props.base, props.fills, props.lower, props.view, props.marks, props.segments, z.rect, W, topH, lowerH, props.xTitle, props.yTitle, props.lowerTitle]);
+  }, [x, y, run, used, shown, shownRegions, shownPts, props.base, props.fills, props.lower, props.lowerMore, props.lowerBand, props.baseColor, props.view, props.marks, props.segments, z.rect, W, topH, lowerH, props.xTitle, props.yTitle, props.lowerTitle]);
 
   // ---- the mouse on the top panel ----
   const at = (e: RPointerEvent) => {
@@ -401,7 +437,7 @@ export function RegionPlot(props: {
       />
       {props.reader && (
         <ReaderLayer
-          reader={{ ...props.reader, curves: [{ name: props.yTitle || 'data', color: '#1f6fd6', x: idx.map((i) => x[i]), y: idx.map((i) => y[i]) }, ...(props.base ? [{ name: 'baseline', color: '#555555', x: props.base.x, y: props.base.y }] : [])] }}
+          reader={{ ...props.reader, curves: [{ name: props.yTitle || 'data', color: '#1f6fd6', x: idx.map((i) => x[i]), y: idx.map((i) => y[i]) }, ...(props.base ? [{ name: props.baseName ?? 'baseline', color: props.baseColor ?? '#555555', x: props.base.x, y: props.base.y }] : [])] }}
           W={W}
           H={topH}
           map={{ fx, fy, ix, iy, frame: { l: M.l, t: M.t, w: pw, h: ph } }}

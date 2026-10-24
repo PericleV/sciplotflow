@@ -63,6 +63,11 @@ import { averageNode, convNode, fftNode, interpNode, normalizeNode, smoothNode, 
 import { anovaNode, corrNode, nonparNode, normalityNode, tTestNode, type StatOut } from './statnodes.ts';
 import { contingencyNode, pAdjustNode, regressNode, rocNode, STAT_WAIT, statLevels, survivalNode } from './statnodes2.ts';
 import { agreeNode, distFitNode, logisticNode, methCompNode, powerNode, resampleNode, STAT3_WAIT, stat3Levels } from './statnodes3.ts';
+import { baselineNode } from './baselinenode.ts';
+import { fracNode, frftNode } from './fracnodes.ts';
+import { waveletNode } from './waveletnode.ts';
+import { eventsNode, stepsNode, waveformNode } from './signal2nodes.ts';
+import type { RegionView } from './regionruns.ts';
 import { findPeaksIn, fittedPeak, fixedBaseline, fwhmAt, isFitted, measurePeaks, peakRunKey, regionPeak, type Found, type PeakItem } from './peaks.ts';
 import { curveThrough } from './baselines.ts';
 import { areaBetween, derivative, integrate, interp, pointsCurve, regionName, regionRows, type IntegralOptions } from './calculus.ts';
@@ -147,6 +152,7 @@ export type NodeView = {
   peaks?: PeakView;
   report?: string[]; // the statistics nodes: the results in words
   levels?: Record<string, string[]>; // the statistics nodes: the values of some columns, for their choices
+  region?: RegionView; // the signal nodes with ranges (Baseline correction …): their graph
   signal?: { labels: string[]; plots: SignalPlot[] }; // the Signal nodes: the data and the result of every Y
   availB?: { name: string; role?: ColumnRole }[]; // Curve math: the columns of B
   // Translate & resize: the columns and their designations, the curves; every curve before and after (the graph in the
@@ -4513,6 +4519,51 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       return fitNode(n.data, one('in'), n.id, one('irf'));
     case 'calculus':
       return calculusNode(n.data, one('in'), one('base'));
+    case 'waveform':
+    case 'steps':
+    case 'events': {
+      const v = one('in');
+      if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset: X (the time) and the Y columns (designated, or chosen).' } };
+      const available = v.v.columns.map(colInfo);
+      const r = n.type === 'waveform' ? waveformNode(v.v, n.data) : n.type === 'steps' ? stepsNode(v.v, n.data) : eventsNode(v.v, n.data);
+      if ('error' in r) return { errors: [r.error], view: { available } };
+      if ('waiting' in r) return { view: { available, waiting: r.waiting } };
+      const outputs: Record<string, Value> = Object.fromEntries(Object.entries(r.tables).map(([k, t]) => [k, { t: 'dataset', v: t } as Value]));
+      return { outputs, warnings: r.warnings, view: { available, region: r.view, report: r.report, ...(r.plots ? { signal: { labels: r.labels ?? [], plots: r.plots } } : {}) } };
+    }
+    case 'wavelet': {
+      const v = one('in');
+      if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset: X (evenly spaced) and the Y columns.' } };
+      const available = v.v.columns.map(colInfo);
+      const r = waveletNode(v.v, n.data);
+      if ('error' in r) return { errors: [r.error], view: { available } };
+      if ('waiting' in r) return { view: { available, waiting: r.waiting } };
+      const outputs: Record<string, Value> = Object.fromEntries(Object.entries(r.tables).map(([k, t]) => [k, { t: 'dataset', v: t } as Value]));
+      return { outputs, warnings: r.warnings, view: { available, region: r.view, report: r.report, signal: { labels: r.labels, plots: r.plots } } };
+    }
+    case 'fraccalc':
+    case 'frft': {
+      const v = one('in');
+      if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset: X and the Y columns.' } };
+      const available = v.v.columns.map(colInfo);
+      const r = n.type === 'fraccalc' ? fracNode(v.v, n.data) : frftNode(v.v, n.data);
+      if ('error' in r) return { errors: [r.error], view: { available } };
+      if ('waiting' in r) return { view: { available, waiting: r.waiting } };
+      const outputs: Record<string, Value> = Object.fromEntries(Object.entries(r.tables).map(([k, t]) => [k, { t: 'dataset', v: t } as Value]));
+      return { outputs, warnings: r.warnings, view: { available, region: r.view, report: r.report, ...(r.plots.length ? { signal: { labels: r.labels, plots: r.plots } } : {}) } };
+    }
+    case 'baseline': {
+      const v = one('in');
+      if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset: X and the Y columns (designated, or chosen).' } };
+      const available = v.v.columns.map(colInfo);
+      const b = one('base');
+      const rc = b?.t === 'dataset' ? curvesByRole(b.v.columns).curves[0] : undefined;
+      const port = b?.t === 'dataset' && rc ? { x: findColumn(b.v.columns, rc.x)?.values ?? [], y: findColumn(b.v.columns, rc.y)?.values ?? [] } : b?.t === 'column' ? { x: Float64Array.from(b.v.values, (_, i) => i + 1), y: b.v.values } : undefined;
+      const r = baselineNode(v.v, n.data, port);
+      if ('error' in r) return { errors: [r.error], view: { available } };
+      if ('waiting' in r) return { view: { available, waiting: r.waiting } };
+      return { outputs: { out: { t: 'dataset', v: r.out }, base: { t: 'dataset', v: r.base } }, warnings: r.warnings, view: { available, region: r.view } };
+    }
     case 'peaks':
       return peakNode(n.data, one('in'));
     case 'smooth':
@@ -4536,7 +4587,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       if (typeof r === 'string') return { errors: [r], view: { available } };
       const outputs: Record<string, Value> = { out: { t: 'dataset', v: r.dataset } };
       for (const [k, t] of Object.entries(r.extra ?? {})) outputs[k] = { t: 'dataset', v: t };
-      return { outputs, warnings: r.warnings, view: { available, signal: { labels: r.labels, plots: r.plots } } };
+      return { outputs, warnings: r.warnings, view: { available, signal: { labels: r.labels, plots: r.plots }, ...(r.report ? { report: r.report } : {}) } };
     }
     case 'kk': {
       const v = one('in');

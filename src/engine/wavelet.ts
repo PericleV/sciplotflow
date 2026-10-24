@@ -2,6 +2,8 @@
 // symmetrically to a multiple of 2^level and cut back) and denoising by it: the detail coefficients thresholded —
 // the universal threshold σ·√(2 ln n), σ from the median of the finest details (MAD / 0.6745), soft or hard. Pure.
 
+import { WAVELET_FILTERS } from './waveletFilters.ts';
+
 // the low-pass decomposition filters (orthonormal: Σh = √2, Σh² = 1)
 export const WAVELETS: Record<string, { label: string; h: number[] }> = {
   haar: { label: 'Haar', h: [Math.SQRT1_2, Math.SQRT1_2] },
@@ -40,7 +42,7 @@ function unstep(a: number[], d: number[], h: number[], g: number[]): number[] {
 }
 // the coefficients: [the approximation at the last level, the details from the coarsest to the finest]
 export function dwt(x: number[], wavelet: string, level: number): number[][] {
-  const h = (WAVELETS[wavelet] ?? WAVELETS.db4).h;
+  const h = (WAVELETS[wavelet] ?? WAVELET_FILTERS[wavelet] ?? WAVELETS.db4).h;
   const g = highPass(h);
   let a = x.slice();
   const ds: number[][] = [];
@@ -52,7 +54,7 @@ export function dwt(x: number[], wavelet: string, level: number): number[][] {
   return [a, ...ds];
 }
 export function idwt(c: number[][], wavelet: string): number[] {
-  const h = (WAVELETS[wavelet] ?? WAVELETS.db4).h;
+  const h = (WAVELETS[wavelet] ?? WAVELET_FILTERS[wavelet] ?? WAVELETS.db4).h;
   const g = highPass(h);
   let a = c[0];
   for (let l = 1; l < c.length; l++) a = unstep(a, c[l], h, g);

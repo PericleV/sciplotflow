@@ -16,12 +16,13 @@ const BASE_LABELS: [BaseMethod, string][] = [
   ['poly', 'iterative polynomial'],
   ['asls', 'asymmetric least squares'],
   ['airpls', 'airPLS'],
+  ['arpls', 'arPLS'],
   ['snip', 'SNIP'],
   ['shirley', 'Shirley (XPS)'],
   ['tougaard', 'Tougaard (XPS)'],
 ];
 const BASE_TITLE =
-  'Under the data: y = 0; a value; the straight line between the ends (each end the mean of a few points); the lowest point; the rubber band (the lower hull of the data); points placed on the graph; another curve. Found from the data, the peaks left above it: the iterative polynomial (the points above it brought down, again and again), asymmetric least squares (a smooth curve, the points above it weighed little), airPLS (the same, its weights found by themselves), SNIP (every point lowered to the mean of its neighbours, the window widened step by step). Photoelectron spectra: Shirley (the background follows the area of the peak), Tougaard (the electrons that lost energy)';
+  'Under the data: y = 0; a value; the straight line between the ends (each end the mean of a few points); the lowest point; the rubber band (the lower hull of the data); points placed on the graph; another curve. Found from the data, the peaks left above it: the iterative polynomial (the points above it brought down, again and again), asymmetric least squares (a smooth curve, the points above it weighed little), airPLS (the same, its weights found by themselves), arPLS (the weights from the spread of the points below the curve: fewer parameters, sound on noisy data), SNIP (every point lowered to the mean of its neighbours, the window widened step by step). Photoelectron spectra: Shirley (the background follows the area of the peak), Tougaard (the electrons that lost energy)';
 
 type Props = {
   method: string;
@@ -99,7 +100,7 @@ export function BaselineFields(p: Props) {
     );
   if (m === 'poly')
     rows.push(row('Degree', 'The degree of the polynomial (higher: it follows a more curved background, and the wider peaks too)', <NumInput className="tiny" min={0} max={12} step={1} value={o.order ?? BASE_OPTION_DEFAULTS.order} onChange={(order) => Number.isFinite(order) && set({ order: Math.max(0, Math.min(12, Math.round(order))) })} />, 'order'));
-  if (m === 'asls' || m === 'airpls')
+  if (m === 'asls' || m === 'airpls' || m === 'arpls')
     rows.push(
       row(
         'Smoothness',

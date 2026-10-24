@@ -219,6 +219,23 @@ export function fft(re: number[], im: number[], inverse = false): [number[], num
   }
   return inverse ? [or.map((v) => v / n), oi.map((v) => v / n)] : [or, oi];
 }
+// (the twiddles of a size kept: cos and sin of 2πk/n, k < n/2)
+const TWIDDLES = new Map<number, [Float64Array, Float64Array]>();
+function twiddles(n: number): [Float64Array, Float64Array] {
+  let t = TWIDDLES.get(n);
+  if (!t) {
+    const c = new Float64Array(n / 2);
+    const s = new Float64Array(n / 2);
+    for (let k = 0; k < n / 2; k++) {
+      c[k] = Math.cos((2 * Math.PI * k) / n);
+      s[k] = Math.sin((2 * Math.PI * k) / n);
+    }
+    t = [c, s];
+    if (TWIDDLES.size > 24) TWIDDLES.clear();
+    TWIDDLES.set(n, t);
+  }
+  return t;
+}
 function radix2(re0: number[], im0: number[], inverse: boolean): [number[], number[]] {
   const n = re0.length;
   const re = re0.slice();
@@ -228,22 +245,31 @@ function radix2(re0: number[], im0: number[], inverse: boolean): [number[], numb
     for (; j & bit; bit >>= 1) j ^= bit;
     j ^= bit;
     if (i < j) {
-      [re[i], re[j]] = [re[j], re[i]];
-      [im[i], im[j]] = [im[j], im[i]];
+      const tr = re[i];
+      re[i] = re[j];
+      re[j] = tr;
+      const ti = im[i];
+      im[i] = im[j];
+      im[j] = ti;
     }
   }
+  const [C, S] = twiddles(n);
+  const sg = inverse ? 1 : -1;
   for (let len = 2; len <= n; len <<= 1) {
-    const ang = ((inverse ? 2 : -2) * Math.PI) / len;
+    const half = len >> 1;
+    const step = n / len;
     for (let i = 0; i < n; i += len)
-      for (let k = 0; k < len / 2; k++) {
-        const [c, s] = [Math.cos(ang * k), Math.sin(ang * k)];
-        const [ur, ui] = [re[i + k], im[i + k]];
-        const vr = re[i + k + len / 2] * c - im[i + k + len / 2] * s;
-        const vi = re[i + k + len / 2] * s + im[i + k + len / 2] * c;
-        re[i + k] = ur + vr;
-        im[i + k] = ui + vi;
-        re[i + k + len / 2] = ur - vr;
-        im[i + k + len / 2] = ui - vi;
+      for (let k = 0; k < half; k++) {
+        const c = C[k * step];
+        const s = sg * S[k * step];
+        const a = i + k;
+        const b = a + half;
+        const vr = re[b] * c - im[b] * s;
+        const vi = re[b] * s + im[b] * c;
+        re[b] = re[a] - vr;
+        im[b] = im[a] - vi;
+        re[a] += vr;
+        im[a] += vi;
       }
   }
   return inverse ? [re.map((v) => v / n), im.map((v) => v / n)] : [re, im];
@@ -285,19 +311,23 @@ export function spectrum(y: number[], dx: number, win: Window, detrend: 'none' |
 // an FFT filter: the frequencies passed (ideal, or a Butterworth-shaped response of order `order`) — low / high pass
 // at f1, band pass / stop between f1 and f2; the ends mirrored first (less wrap-around), then cut back
 export type FilterKind = 'low' | 'high' | 'band' | 'stop';
-export function fftFilter(y: number[], dx: number, kind: FilterKind, f1: number, f2: number, order: number, mirror: boolean): number[] {
-  const n0 = y.length;
-  const v = mirror ? [...y.slice(1).reverse(), ...y, ...y.slice(0, -1).reverse()] : y.slice();
-  const n = v.length;
-  const [R, I] = fft(v, new Array<number>(n).fill(0));
+// the gain of the filter by the FFT at a frequency (its response: real, no shift of phase)
+export function fftGain(kind: FilterKind, f1: number, f2: number, order: number): (f: number) => number {
   const lowpass = (f: number, fc: number) => (order > 0 ? 1 / Math.sqrt(1 + (f / fc) ** (2 * order)) : f <= fc ? 1 : 0);
-  const H = (f: number) => {
+  return (f: number) => {
     if (kind === 'low') return lowpass(f, f1);
     if (kind === 'high') return 1 - lowpass(f, f1);
     const [a, b] = [Math.min(f1, f2), Math.max(f1, f2)];
     const band = lowpass(f, b) * (1 - lowpass(f, a));
     return kind === 'band' ? band : 1 - band;
   };
+}
+export function fftFilter(y: number[], dx: number, kind: FilterKind, f1: number, f2: number, order: number, mirror: boolean): number[] {
+  const n0 = y.length;
+  const v = mirror ? [...y.slice(1).reverse(), ...y, ...y.slice(0, -1).reverse()] : y.slice();
+  const n = v.length;
+  const [R, I] = fft(v, new Array<number>(n).fill(0));
+  const H = fftGain(kind, f1, f2, order);
   for (let k = 0; k < n; k++) {
     const f = Math.min(k, n - k) / (n * dx);
     const g = H(f);

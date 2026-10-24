@@ -2,7 +2,7 @@
 import { peakRunKey } from './engine/peaks.ts';
 import type { Edge } from '@xyflow/react';
 import { REGION_COLORS } from './nodes/regionColors.ts';
-import { DRAWING_DEFAULTS, PYTHON_DEFAULTS, CONVERT_DEFAULTS, STACK_DEFAULTS, TRANSPOSE_DEFAULTS, COLUMNS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, DATAMANIP_DEFAULTS, AVERAGE_DEFAULTS, COMBINE_DEFAULTS, TRANSLATE_DEFAULTS, CURVEMATH_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, PADJUST_DEFAULTS, CONTINGENCY_DEFAULTS, ROC_DEFAULTS, SURVIVAL_DEFAULTS, REGRESS_DEFAULTS, POWER_DEFAULTS, RESAMPLE_DEFAULTS, DISTFIT_DEFAULTS, AGREE_DEFAULTS, METHCOMP_DEFAULTS, LOGISTIC_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, IMAGE_DEFAULTS, KK_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
+import { DRAWING_DEFAULTS, PYTHON_DEFAULTS, CONVERT_DEFAULTS, STACK_DEFAULTS, TRANSPOSE_DEFAULTS, COLUMNS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, DATAMANIP_DEFAULTS, AVERAGE_DEFAULTS, COMBINE_DEFAULTS, TRANSLATE_DEFAULTS, CURVEMATH_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, PADJUST_DEFAULTS, CONTINGENCY_DEFAULTS, ROC_DEFAULTS, SURVIVAL_DEFAULTS, REGRESS_DEFAULTS, POWER_DEFAULTS, RESAMPLE_DEFAULTS, DISTFIT_DEFAULTS, AGREE_DEFAULTS, METHCOMP_DEFAULTS, LOGISTIC_DEFAULTS, BASELINE_DEFAULTS, WAVEFORM_DEFAULTS, STEPS_DEFAULTS, EVENTS_DEFAULTS, WAVELET_DEFAULTS, FRAC_DEFAULTS, FRFT_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, IMAGE_DEFAULTS, KK_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
 import { INSET_DEFAULTS, AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, COLORBAR_DEFAULTS, CURVE_STYLE_DEFAULTS, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, SIDE_DEFAULTS, TEXT_SPEC_DEFAULTS, type AxesStyle, type CurveStyle, type SideStyle } from './figure/spec.ts';
 import { PROJECT_VERSION, type Project } from './project.ts';
 import type { AnnotationItem, AppNode, ImportSheet, NodeType, Plot1DData, PlotLegend, PlotPage } from './types.ts';
@@ -14,6 +14,7 @@ import { FRAME_COLORS } from './nodeColors.ts';
 import { packPixels, type Raster } from './image/raster.ts';
 import { eisPlotData, eisPlotEdges } from './eisPlots.ts';
 import type { Roi } from './image/roi.ts';
+import { fracGL } from './engine/frac.ts';
 import { afmImage, clustersImage, cubesImage, hrtemImage, monolayerImage, porousImage, saedImage, shapesImage, textureImage, type TestImage } from './image/testImages.ts';
 import { findLike, fitBox, MATCH_DEFAULTS } from './image/match.ts';
 import { applySteps, newStep, type ImgStep } from './image/steps.ts';
@@ -320,6 +321,195 @@ function drugFiles(): { columns: string; indexed: string; subjects: string } {
 // pathologists grading 60 biopsies and scoring them (Cohen's and Fleiss's κ, the ICC); the lifetimes of 40 sensors
 // (distributions fitted, the bootstrap interval of the median life); a dose and the response of 160 animals (logistic
 // regression, its ROC curve); the size of the next study (Power & sample size)
+// Signals made here: a Raman spectrum on a fluorescence background with two cosmic-ray spikes (Baseline correction,
+// arPLS); a train of pulses with ringing (Waveform measurements); a photobleaching trace in steps (Step detection); a
+// noisy record with a response after every stimulus (Event averaging, triggered by the stimulus channel)
+// A cyclic voltammogram of a reversible one-electron couple (as ferricyanide: E°′ 0.22 V, D 7.6·10⁻⁶ cm²/s, 1 mM, a
+// 3 mm disc, 0.1 V/s), made here from its semi-integral (m = −m_L / (1 + exp(F(E − E°′)/RT)), Oldham 1972) by a
+// Grünwald–Letnikov semi-derivative: Fractional calculus takes the semi-integral back from the current, both sweeps on
+// one sigmoid, and D from its plateau; the semi-derivative sharpens the peaks
+function semiIntegralExample(): Project {
+  const b = builder();
+  const r = rng(1301);
+  const [F, R, T] = [96485.33212, 8.314462618, 298.15];
+  const [E0, D, A, c, v] = [0.22, 7.6e-6, 0.0707, 1e-6, 0.1];
+  const mL = F * A * c * Math.sqrt(D);
+  const E: number[] = [];
+  for (let k = 0; k <= 600; k++) E.push(0.5 - k * 0.001);
+  for (let k = 1; k <= 600; k++) E.push(-0.1 + k * 0.001);
+  const m = E.map((e) => -mL / (1 + Math.exp((F / (R * T)) * (e - E0))));
+  // (the current: the semi-derivative of m in time, the time step 1 mV / v)
+  const i = fracGL(m, 0.001 / v, 0.5);
+  const lines = ['Potential (V);Current (µA)', ...E.map((e, k) => `${e.toFixed(3)};${(i[k] * 1e6 + 0.04 * gauss(r)).toFixed(4)}`)];
+  const cv = add(b, 'import', 'cv-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'cyclic voltammogram', fileName: 'ferricyanide_cv.txt', text: lines.join('\n'), textId: 'cv-1' });
+  const cvp = add(b, 'plot1d', 'cv-plot', 680, -760, plot({ label: 'CV', style: curve(0, { mode: 'line', lineWidth: 1.2 }), cols: { x: 'Potential (V)', y: 'Current (µA)' } }, { page: { name: 'voltammogram' } }));
+  link(b, cv, cvp, 'dataset');
+  const fr = add(b, 'fraccalc', 'cv-semi', 680, 0, { ...FRAC_DEFAULTS, orders: '-0.5, 0.5', along: 'rows', rate: 0.1, semi: true, electrons: 1, area: 0.0707, conc: 1, unit: 'µA' });
+  link(b, cv, fr, 'in');
+  const mp = add(b, 'plot1d', 'cv-mplot', 1400, 0, plot({ label: 'semi-integral', style: curve(1, { mode: 'line', lineWidth: 1.4 }), cols: { x: 'Potential (V)', y: 'D^-0.5 Current (µA)' } }, { axes: titled('Potential (V)', 'm (µA s^½)'), page: { name: 'semi_integral' } }));
+  link(b, fr, mp, 'dataset');
+  return project(b, 'Electrochemistry: semi-integral (convolution) voltammetry');
+}
+
+// A pulse with a strong chirp over it (a sweep from 20 to 200 Hz, as an interference): the FFT cannot take the chirp
+// out (it covers every frequency of the pulse), the fractional Fourier transform gathers it into a spike at one order
+// (the scan finds it: the chirp rate), a notch there and back
+function chirpExample(): Project {
+  const b = builder();
+  const r = rng(1401);
+  const N = 512;
+  const lines = ['Time (s);Signal;Pulse alone'];
+  for (let k = 0; k < N; k++) {
+    const t = k * 0.001;
+    const pulse = Math.exp(-((t - 0.25) ** 2) / (2 * 0.06 ** 2)) * Math.sin(2 * Math.PI * 60 * t);
+    const ch = 1.5 * Math.sin((Math.PI * k) / (N - 1)) ** 2 * Math.cos(2 * Math.PI * (20 * t + 175 * t * t));
+    lines.push(`${t.toFixed(3)};${(pulse + ch + 0.02 * gauss(r)).toFixed(5)};${pulse.toFixed(5)}`);
+  }
+  const ci = add(b, 'import', 'ch-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'pulse under a chirp', fileName: 'chirp.txt', text: lines.join('\n'), textId: 'ch-1' });
+  const sc = add(b, 'frft', 'ch-scan', 680, -900, { ...FRFT_DEFAULTS, ys: 'Signal', mode: 'scan' });
+  link(b, ci, sc, 'in');
+  const fl = add(b, 'frft', 'ch-filter', 680, 0, { ...FRFT_DEFAULTS, ys: 'Signal', mode: 'filter', auto: true, width: 3 });
+  link(b, ci, fl, 'in');
+  const pl = add(b, 'plot1d', 'ch-plot', 1400, 0, plot({ label: 'filtered', style: curve(1, { mode: 'line', lineWidth: 1.3 }), cols: { x: 'Time (s)', y: 'Signal (filtered)' }, rows: [{ label: 'the pulse alone', style: curve(0, { mode: 'line', lineWidth: 0.8, dash: 'dash' }), cols: { x: 'Time (s)', y: 'Pulse alone' } }] }, { legend: { x: 96, y: 4, anchor: 'tr' }, page: { name: 'chirp_removed' } }));
+  link(b, fl, pl, 'dataset');
+  link(b, ci, pl, 'dataset');
+  return project(b, 'Signals: a chirp taken out by the fractional Fourier transform');
+}
+
+// Wavelets: an oscillation whose period changes (8 s, then a burst of 3 s), its continuous transform with the
+// significance; a second signal at the same period for the coherence; the multiresolution analysis of a drifting noisy
+// record (the drift in the smooth, the noise in D1, D2) and its denoising; the peaks of a spectrum on a sloping background
+function waveletExample(): Project {
+  const b = builder();
+  const r = rng(1501);
+  const w = ['Time (s);Signal A;Signal B'];
+  for (let k = 0; k < 512; k++) {
+    const t = k * 0.25;
+    const a = Math.sin((2 * Math.PI * t) / 8) * (t < 70 ? 1 : 0.2) + (t > 60 && t < 100 ? 1.2 * Math.sin((2 * Math.PI * t) / 3) : 0);
+    const bb = Math.sin((2 * Math.PI * t) / 8 + 0.9) * (t < 70 ? 1 : 0.2);
+    w.push(`${t.toFixed(2)};${(a + 0.3 * gauss(r)).toFixed(4)};${(bb + 0.3 * gauss(r)).toFixed(4)}`);
+  }
+  const d = ['Time (s);Record'];
+  let walk = 0;
+  for (let k = 0; k < 1024; k++) {
+    walk += 0.05 * gauss(r);
+    d.push(`${(k * 0.01).toFixed(2)};${(walk + Math.sin(k / 9) + 0.6 * gauss(r)).toFixed(4)}`);
+  }
+  const p = ['2θ (°);Counts'];
+  for (let k = 0; k < 800; k++) {
+    const x = 20 + 0.075 * k;
+    const pk = (cen: number, wid: number, h: number) => h * Math.exp(-((x - cen) ** 2) / (2 * wid * wid));
+    p.push(`${x.toFixed(3)};${(20 + 0.5 * (80 - x) + pk(28.4, 0.15, 300) + pk(38.2, 0.2, 180) + pk(44.4, 0.2, 260) + pk(64.6, 0.25, 140) + pk(77.6, 0.3, 120) + 6 * gauss(r)).toFixed(1)}`);
+  }
+  const wi = add(b, 'import', 'wv-osc', 0, 0, { ...IMPORT_DEFAULTS, name: 'two oscillations', fileName: 'oscillations.txt', text: w.join('\n'), textId: 'wv-1' });
+  const cw = add(b, 'wavelet', 'wv-cwt', 680, 0, { ...WAVELET_DEFAULTS, ys: 'Signal A', mode: 'cwt', band1: 6, band2: 10 });
+  link(b, wi, cw, 'in');
+  const map = add(b, 'contour', 'wv-map', 1400, 0, { ...CONTOUR_DEFAULTS, x: 'Time', y: 'Period', z: 'Wavelet power', zTitle: 'Wavelet power', axes: titled('Time (s)', 'Period (s)'), page: { ...PLOT_PAGE_DEFAULTS, name: 'scalogram' } });
+  link(b, cw, map, 'dataset', 'map');
+  const co = add(b, 'wavelet', 'wv-coh', 680, 1200, { ...WAVELET_DEFAULTS, ys: 'Signal A', mode: 'coherence', y2: 'Signal B', band1: 6, band2: 10 });
+  link(b, wi, co, 'in');
+  const di = add(b, 'import', 'wv-rec', 0, 2400, { ...IMPORT_DEFAULTS, name: 'drifting record', fileName: 'record.txt', text: d.join('\n'), textId: 'wv-2' });
+  const mr = add(b, 'wavelet', 'wv-mra', 680, 2400, { ...WAVELET_DEFAULTS, mode: 'mra', wavelet: 'sym8', levels: 6, keep: 'D4-D6' });
+  link(b, di, mr, 'in');
+  const dn = add(b, 'wavelet', 'wv-den', 680, 3600, { ...WAVELET_DEFAULTS, mode: 'denoise', wavelet: 'sym8', levels: 5, rule: 'bayes' });
+  link(b, di, dn, 'in');
+  const pi = add(b, 'import', 'wv-xrd', 0, 4800, { ...IMPORT_DEFAULTS, name: 'diffraction pattern', fileName: 'xrd.txt', text: p.join('\n'), textId: 'wv-3' });
+  const pk = add(b, 'wavelet', 'wv-peaks', 680, 4800, { ...WAVELET_DEFAULTS, mode: 'peaks', wMin: 0.3, wMax: 1.5, minSnr: 2 });
+  link(b, pi, pk, 'in');
+  return project(b, 'Signals: wavelets (transform, coherence, multiresolution, denoising, peaks)');
+}
+
+// FFT's newer modes: the period of a star seen on uneven nights (Lomb–Scargle, its false-alarm probability), an
+// amplifier near clipping (its harmonics, THD, SINAD, ENOB), a slow signal under the mains hum and its harmonics (a notch)
+function spectraExample(): Project {
+  const b = builder();
+  const r = rng(1601);
+  const ls = ['Time (d);Magnitude'];
+  let t = 0;
+  for (let k = 0; k < 180; k++) {
+    t += 0.05 + 0.6 * r() * r() + (k % 30 === 29 ? 3 : 0);
+    ls.push(`${t.toFixed(4)};${(12.3 + 0.18 * Math.sin((2 * Math.PI * t) / 2.73 + 0.5) + 0.06 * Math.sin((4 * Math.PI * t) / 2.73) + 0.08 * gauss(r)).toFixed(4)}`);
+  }
+  const amp = ['Time (s);Output (V)'];
+  for (let k = 0; k < 8192; k++) {
+    const v = k / 50000;
+    amp.push(`${v.toFixed(5)};${(1.6 * Math.tanh(1.2 * Math.sin(2 * Math.PI * 997 * v)) + 0.001 * gauss(r)).toFixed(6)}`);
+  }
+  const hum = ['Time (s);Signal (mV)'];
+  for (let k = 0; k < 2000; k++) {
+    const v = k / 1000;
+    const slow = Math.exp(-((v - 0.7) ** 2) / 0.01) - 0.6 * Math.exp(-((v - 1.3) ** 2) / 0.004);
+    hum.push(`${v.toFixed(3)};${(slow + 0.5 * Math.sin(2 * Math.PI * 50 * v) + 0.2 * Math.sin(2 * Math.PI * 150 * v + 1) + 0.1 * Math.sin(2 * Math.PI * 250 * v) + 0.02 * gauss(r)).toFixed(5)};${slow.toFixed(5)}`);
+  }
+  hum[0] = 'Time (s);Signal (mV);Without the hum (mV)';
+  const si = add(b, 'import', 'sp-star', 0, 0, { ...IMPORT_DEFAULTS, name: 'star brightness', fileName: 'star.txt', text: ls.join('\n'), textId: 'sp-1' });
+  const lsn = add(b, 'fft', 'sp-ls', 680, 0, { ...FFT_DEFAULTS, mode: 'lombscargle', lsMax: 2 });
+  link(b, si, lsn, 'in');
+  const ai = add(b, 'import', 'sp-amp', 0, 1200, { ...IMPORT_DEFAULTS, name: 'amplifier output', fileName: 'amplifier.txt', text: amp.join('\n'), textId: 'sp-2' });
+  const hn = add(b, 'fft', 'sp-harm', 680, 1200, { ...FFT_DEFAULTS, mode: 'harmonics', nHarm: 8 });
+  link(b, ai, hn, 'in');
+  const hi = add(b, 'import', 'sp-hum', 0, 2400, { ...IMPORT_DEFAULTS, name: 'signal with hum', fileName: 'hum.txt', text: hum.join('\n'), textId: 'sp-3' });
+  const nt = add(b, 'fft', 'sp-notch', 680, 2400, { ...FFT_DEFAULTS, ys: 'Signal (mV)', mode: 'filter', filter: 'notch', f1: 50, notchN: 5, notchQ: 30 });
+  link(b, hi, nt, 'in');
+  const pl = add(b, 'plot1d', 'sp-plot', 1400, 2400, plot({ label: 'notch at 50, 100 … 250 Hz', style: curve(1, { mode: 'line', lineWidth: 1.3 }), cols: { x: 'Time (s)', y: 'Signal (mV) (filtered)' }, rows: [{ label: 'without the hum', style: curve(0, { mode: 'line', lineWidth: 0.8, dash: 'dash' }), cols: { x: 'Time (s)', y: 'Without the hum (mV)' } }] }, { legend: { x: 96, y: 4, anchor: 'tr' }, page: { name: 'hum_removed' } }));
+  link(b, nt, pl, 'dataset');
+  link(b, hi, pl, 'dataset');
+  return project(b, 'Signals: uneven periods, harmonics, mains hum (FFT)');
+}
+
+function signalToolsExample(): Project {
+  const b = builder();
+  const r = rng(1201);
+  const ra = ['Raman shift (cm⁻¹);Counts'];
+  for (let i = 0; i < 800; i++) {
+    const x = 300 + (1500 * i) / 799;
+    const bg = 900 + 1.1 * (x - 300) - 0.00055 * (x - 300) ** 2 + 300 * Math.exp(-((x - 1700) ** 2) / 2e5);
+    const lor = (c: number, w: number, a: number) => a / (1 + ((x - c) / (w / 2)) ** 2);
+    const spike = i === 233 || i === 612 ? 900 : 0;
+    ra.push(`${x.toFixed(2)};${(bg + lor(520, 9, 1400) + lor(1000, 14, 600) + lor(1350, 40, 450) + lor(1580, 30, 700) + spike + 18 * gauss(r)).toFixed(1)}`);
+  }
+  const pu = ['Time (µs);Voltage (V)'];
+  for (let i = 0; i < 1500; i++) {
+    const t = i * 0.02;
+    const ph = t % 10;
+    // (a trapezoid of period 10 µs, high for 3 µs, edges of 0.4 µs; a damped ringing after the rise)
+    let v = ph < 0.4 ? ph / 0.4 : ph < 3 ? 1 : ph < 3.4 ? 1 - (ph - 3) / 0.4 : 0;
+    if (ph >= 0.4 && ph < 3) v += 0.12 * Math.exp(-(ph - 0.4) / 0.25) * Math.cos((2 * Math.PI * (ph - 0.4)) / 0.3);
+    pu.push(`${t.toFixed(2)};${(3.3 * v + 0.03 * gauss(r)).toFixed(4)}`);
+  }
+  const st = ['Time (s);Intensity'];
+  const bleach = [6.3, 11.8, 19.5, 23.1, 31.4];
+  for (let i = 0; i < 1000; i++) {
+    const t = i * 0.04;
+    const level = 5 - bleach.filter((q) => t >= q).length;
+    st.push(`${t.toFixed(2)};${(120 * level + 40 + 28 * gauss(r)).toFixed(1)}`);
+  }
+  const ev = ['Time (ms);Stimulus;Response (µV)'];
+  for (let i = 0; i < 8000; i++) {
+    const t = i * 0.5;
+    const ph = (t - 37) % 75;
+    const stim = ph >= 0 && ph < 2 ? 5 : 0;
+    // (a response 8 ms after every stimulus, buried in noise five times its size)
+    const resp = ph >= 0 ? 4 * Math.exp(-((ph - 12) ** 2) / 18) - 2.5 * Math.exp(-((ph - 24) ** 2) / 40) : 0;
+    ev.push(`${t.toFixed(1)};${stim};${(resp + Math.sin(t / 90) + 5 * gauss(r)).toFixed(2)}`);
+  }
+  const ri = add(b, 'import', 'sg-raman', 0, 0, { ...IMPORT_DEFAULTS, name: 'Raman spectrum', fileName: 'raman_spectrum.txt', text: ra.join('\n'), textId: 'sg-1' });
+  const bl = add(b, 'baseline', 'sg-base', 680, 0, { ...BASELINE_DEFAULTS, method: 'arpls', baseOpt: { lambda: 6 } });
+  link(b, ri, bl, 'in');
+  const bp = add(b, 'plot1d', 'sg-baseplot', 1400, 0, plot({ label: 'corrected', style: curve(0, { mode: 'line', lineWidth: 1 }), cols: { x: 'Raman shift (cm⁻¹)', y: 'Counts − baseline' } }, { page: { name: 'raman_corrected' } }));
+  link(b, bl, bp, 'dataset');
+  const pi = add(b, 'import', 'sg-pulses', 0, 1300, { ...IMPORT_DEFAULTS, name: 'pulse train', fileName: 'pulses.txt', text: pu.join('\n'), textId: 'sg-2' });
+  const wf = add(b, 'waveform', 'sg-wave', 680, 1300, { ...WAVEFORM_DEFAULTS });
+  link(b, pi, wf, 'in');
+  const si = add(b, 'import', 'sg-steps', 0, 2500, { ...IMPORT_DEFAULTS, name: 'photobleaching', fileName: 'photobleaching.txt', text: st.join('\n'), textId: 'sg-3' });
+  const sd = add(b, 'steps', 'sg-stepsnode', 680, 2500, { ...STEPS_DEFAULTS });
+  link(b, si, sd, 'in');
+  const ei = add(b, 'import', 'sg-events', 0, 3700, { ...IMPORT_DEFAULTS, name: 'evoked responses', fileName: 'evoked.txt', text: ev.join('\n'), textId: 'sg-4' });
+  const ea = add(b, 'events', 'sg-avg', 680, 3700, { ...EVENTS_DEFAULTS, ys: 'Response (µV)', trigger: 'column', markCol: 'Stimulus', before: 10, after: 50 });
+  link(b, ei, ea, 'in');
+  return project(b, 'Signals: baseline, waveform, steps, event averaging');
+}
+
 function labExample(): Project {
   const b = builder();
   const r = rng(1009);
@@ -3312,6 +3502,26 @@ const ABOUT: Record<string, About> = {
     what: 'A potentiostat file with three cycles in one table: cut into cycles and into the pieces going up and coming back, the area between the branches, the peaks read off.',
     try: ['Drag the edges of the hatched region in Integrate.', 'Add a value to read in Pick points (e.g. 0.3 V).'],
   },
+  'Electrochemistry: semi-integral (convolution) voltammetry': {
+    what: 'Convolution voltammetry: the semi-integral of the current of a diffusion-controlled voltammogram is a step, the same for both sweeps when the couple is reversible, and its height gives the diffusion coefficient (Oldham, Anal. Chem. 44 (1972) 196; Imbeaux and Savéant, J. Electroanal. Chem. 44 (1973) 169; Bard and Faulkner, Electrochemical Methods, 2nd ed., §6.7).',
+    try: ['In Fractional calculus, read D from the plateau (7.6·10⁻⁶ cm²/s here) and change the concentration: D follows.', 'Look at the order 0.5 (the semi-derivative): the peaks narrower, the sweeps easier to tell apart.', 'Set the definition to Grünwald–Letnikov: the same curve, by another way of computing it.'],
+  },
+  'Signals: a chirp taken out by the fractional Fourier transform': {
+    what: 'A chirp sweeps every frequency of the pulse under it, so no filter of the FFT can take it out; at one order of the fractional Fourier transform it is a spike, removed with a narrow notch.',
+    try: ['In the scan, read the order that gathers the signal most and the chirp rate it means (350 Hz/s here).', 'In the filter, widen the band (± 6): less chirp left, more of the pulse changed.', 'Untick its mirror: half of the real chirp stays.'],
+  },
+  'Signals: wavelets (transform, coherence, multiresolution, denoising, peaks)': {
+    what: 'Five uses of wavelets: when an oscillation changes its period, where two signals go together, a record split by scales, noise taken off by scale, peaks found on a sloping background.',
+    try: ['In the transform, compare the global spectrum with its significance line; switch to Paul.', 'In the multiresolution analysis, rebuild from S6 alone (the drift), D4-D6 (the oscillation) or D1-D2 (the noise).', 'In the peaks, five found and one at the left end (the step where the data begin, as SciPy finds it too); lower the signal / noise to 1: the noise found as peaks.'],
+  },
+  'Signals: uneven periods, harmonics, mains hum (FFT)': {
+    what: 'Three modes of FFT: a period from observations made at uneven times (Lomb–Scargle), the distortion of an amplifier (harmonics, THD, SINAD, ENOB), the mains hum taken out with its harmonics (notch).',
+    try: ['In Lomb–Scargle, read the period (2.73 d) and its false-alarm probability; the peaks beside it are aliases of the nights.', 'In the harmonics, lower the drive in the data or read the levels of the odd harmonics (a symmetric clipping).', 'In the notch, set the harmonics to 1: the 150 and 250 Hz stay; tick causal: the phase shifts near the notches. Look at the response in the graph list.'],
+  },
+  'Signals: baseline, waveform, steps, event averaging': {
+    what: 'Four everyday jobs on signals: the background under a spectrum, the timing of pulses, the levels of a trace in steps and a response hidden in noise brought out by averaging.',
+    try: ['In Baseline correction, switch to SNIP or rubber band, or draw background ranges and take a polynomial.', 'In Step detection, set the penalty to AIC: more, smaller steps.', 'In Event averaging, untick the baseline of every segment, or show SE instead of SD.'],
+  },
   'Laboratory: method comparison, agreement, distributions, power': {
     what: 'The questions of a laboratory: do two analyzers agree, do the pathologists grade alike, how long do the sensors last, how does the response grow with the dose, and how many animals the next study needs.',
     try: ['In Method comparison, set λ to 2: Deming with the second analyzer twice as variable.', 'In the κ of two pathologists, switch the weights to none: the near misses no longer count.', 'In Power & sample size, set Find to the power and n to 30.'],
@@ -3502,7 +3712,12 @@ const LIST: { group: string; name: string; desc: string; make: () => Project }[]
   { group: 'Electrochemistry & impedance', name: 'Kramers–Kronig (impedance): a stable cell passes, a drifting one fails', desc: 'The Lin-KK test on two spectra of one cell: as measured, the residuals within ±1 %; with the cell changing during the sweep, out of the band with a trend.', make: kkImpedanceExample },
   { group: 'Signals', name: 'Signal processing: smooth, FFT, deconvolution, interpolation', desc: 'A noisy spectrum smoothed (Savitzky–Golay) and normalized; the FFT spectrum of a sampled signal and an FFT low pass; a spectrum blurred by the instrument deconvolved (Richardson–Lucy); two curves on different X read on a common X (spline).', make: signalExample },
   { group: 'Signals', name: 'Signals: PSD, a Butterworth filter, the Allan deviation', desc: 'The FFT node in three modes: the power spectral density (Welch, dB), a zero-phase Butterworth low pass, the Allan deviation of a drifting sensor on log–log axes.', make: spectralExample },
+  { group: 'Electrochemistry & impedance', name: 'Electrochemistry: semi-integral (convolution) voltammetry', desc: 'A cyclic voltammogram of a reversible couple made here (ferricyanide-like, 1 mM, a 3 mm disc, 0.1 V/s): Fractional calculus gives its semi-integral (both sweeps on one step: the couple reversible) and the diffusion coefficient from its plateau, m_L = nFAc√D, and its semi-derivative (sharper peaks). After Oldham 1972 and Bard and Faulkner, §6.7.', make: semiIntegralExample },
   { group: 'Electrochemistry & impedance', name: 'Cyclic voltammogram: area between the branches', desc: 'A potentiostat file with three cycles in one table: Split into columns makes a current column per cycle (a Plot coloured by the cycle) and cuts the pieces going up and coming back; Integrate takes the area between them, absolute, over a region (hatched); Pick points reads the peaks and the current at 0.5 V.', make: cvExample },
+  { group: 'Signals', name: 'Signals: wavelets (transform, coherence, multiresolution, denoising, peaks)', desc: 'Signals made here: an oscillation of 8 s that fades as a burst of 3 s begins (the wavelet power with its cone and significance, to a Contour map; the power in the 6–10 s band in time); the coherence with a second signal of 8 s and its phase; a drifting noisy record split into details and a smooth (MODWT) and denoised (BayesShrink); the peaks of a diffraction pattern on a sloping background (CWT ridges).', make: waveletExample },
+  { group: 'Signals', name: 'Signals: uneven periods, harmonics, mains hum (FFT)', desc: 'Made here: the brightness of a star seen on 180 uneven nights (Lomb–Scargle finds its period of 2.73 days, with the false-alarm probability of the peak); an amplifier driven near clipping (its harmonics, THD, SNR, SINAD, ENOB, SFDR); a slow signal under the mains hum at 50 Hz and its harmonics (a notch at 50 Hz with 5 harmonics, drawn over the signal without the hum).', make: spectraExample },
+  { group: 'Signals', name: 'Signals: a chirp taken out by the fractional Fourier transform', desc: 'A pulse under a chirp from 20 to 200 Hz: the scan of the orders finds where the chirp gathers (and its rate, 350 Hz/s); a narrow notch at that order (and at its mirror) takes it out, the pulse left, drawn over the pulse alone.', make: chirpExample },
+  { group: 'Signals', name: 'Signals: baseline, waveform, steps, event averaging', desc: 'Signals made here: a Raman spectrum on a fluorescence background (Baseline correction with arPLS, the corrected spectrum in a Plot); a pulse train with ringing (Waveform measurements: levels, rise and fall times, period, duty cycle, overshoot); a photobleaching trace (Step detection by PELT: the levels and step sizes); a response five times smaller than the noise (Event averaging on the stimulus channel).', make: signalToolsExample },
   { group: 'Statistics', name: 'Laboratory: method comparison, agreement, distributions, power', desc: 'Data made here. Two analyzers on 50 samples (Passing–Bablok and Deming, with the data in a Plot; Lin’s concordance); three pathologists grading 60 biopsies (Cohen’s weighted κ, Fleiss’s κ, the ICC of their scores); 40 sensor lifetimes (five distributions fitted and ranked, the bootstrap interval of the median life); dose and response of 160 animals (logistic regression, its ROC curve); the size of the next study (Power & sample size with its curve).', make: labExample },
   { group: 'Statistics', name: 'Clinical study: survival, ROC, contingency, regression', desc: '120 patients made here, in two arms: Kaplan–Meier curves with the censored times, the log-rank test and the hazard ratio; a biomarker and the age as ROC curves (AUC, DeLong, the best threshold); the arm against the response (χ², Fisher, the odds ratio); the tumour size against age, marker and stage (linear regression, its p adjusted by Holm).', make: clinicalExample },
   { group: 'Statistics', name: 'Drug study: ANOVA, t-test, nonparametric, correlation', desc: 'The three layouts of the data for the statistics nodes — each group a column, indexed (value + factors), a row per subject — with Normality & outliers, one-way ANOVA + Tukey (the means ± SE in a Plot), a t-test, Kruskal–Wallis + Dunn, two-way ANOVA (Dose × Sex), repeated-measures ANOVA, Friedman and correlations.', make: drugExample },

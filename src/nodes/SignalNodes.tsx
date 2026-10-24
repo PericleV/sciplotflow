@@ -297,7 +297,7 @@ function DataRows<T extends { x: string; ys: string }>({ data, set, names, avail
 }
 // the graph of the Y chosen, the messages
 // (with its tools — zoom, pan, out, rescale, the data reader, the graph large — as the other graphs of the nodes)
-function Result({ r, children }: { r?: NodeResult; children?: ReactNode }) {
+export function Result({ r, children }: { r?: NodeResult; children?: ReactNode }) {
   const [k, setK] = useState(0);
   const [zoom, setZoom] = useState<ZoomMode>('none');
   const [view, setView] = useState<View | null>(null);
@@ -389,9 +389,21 @@ export function SmoothNodeView({ id, data }: NodeProps<SmoothNode>) {
             ['lowess', 'LOWESS'],
             ['fft', 'FFT low pass'],
             ['wavelet', 'wavelet denoising'],
+            ['hampel', 'Hampel (outliers replaced)'],
           ]}
           onChange={(method) => set({ method })}
         />
+        {m === 'hampel' && (
+          <>
+            <span>Window</span>
+            <span className="row">
+              <NumInput className="tiny" min={3} step={2} value={data.points} title="Points in the window (odd): the median and the MAD of every point’s neighbours" onChange={(points) => set({ points: Math.max(3, Math.floor(points) || 3) })} />
+              <span className="muted">points, beyond</span>
+              <NumInput className="tiny" min={0} step={0.5} value={data.nsigma ?? 3} title="A point further from the median of its window than this many robust SDs (1.4826 · MAD) is replaced by the median (0: a median filter)" onChange={(nsigma) => set({ nsigma: Number.isFinite(nsigma) && nsigma >= 0 ? nsigma : 3 })} />
+              <span className="muted">σ</span>
+            </span>
+          </>
+        )}
         {m === 'wavelet' && (
           <>
             <span>Wavelet</span>
@@ -464,7 +476,7 @@ export function SmoothNodeView({ id, data }: NodeProps<SmoothNode>) {
             </span>
           </>
         )}
-        {m !== 'lowess' && m !== 'fft' && m !== 'wavelet' && (
+        {m !== 'lowess' && m !== 'fft' && m !== 'wavelet' && m !== 'hampel' && (
           <>
             <span>Ends</span>
             <Select value={data.edge} options={m === 'savgol' ? [['interp', 'the polynomial of the end window'], ...EDGES.filter(([k]) => k !== 'shrink')] : EDGES} onChange={(edge) => set({ edge: edge as SmoothData['edge'] })} />
@@ -654,10 +666,39 @@ export function FFTNodeView({ id, data }: NodeProps<FFTNode>) {
             ['hilbert', 'envelope and phase (Hilbert)'],
             ['allan', 'Allan deviation'],
             ['cwt', 'wavelet scalogram (Morlet)'],
+            ['lombscargle', 'Lomb–Scargle (X uneven)'],
+            ['harmonics', 'harmonics (THD, SNR, SINAD)'],
             ['filter', 'filter (low / high / band)'],
           ]}
           onChange={(mode) => set({ mode })}
         />
+        {mode === 'lombscargle' && (
+          <>
+            <span>Frequencies</span>
+            <span className="row">
+              <NumInput className="short" min={0} value={data.lsMin ?? NaN} placeholder="auto" title="From (empty: half of the step of the frequencies)" onChange={(lsMin) => set({ lsMin: Number.isFinite(lsMin) && lsMin > 0 ? lsMin : undefined })} />
+              <span>–</span>
+              <NumInput className="short" min={0} value={data.lsMax ?? NaN} placeholder="auto" title="To (empty: the mean Nyquist frequency, points / 2 T; uneven sampling can show higher ones)" onChange={(lsMax) => set({ lsMax: Number.isFinite(lsMax) && lsMax > 0 ? lsMax : undefined })} />
+            </span>
+            <span>Per peak</span>
+            <span className="row">
+              <NumInput className="tiny" min={1} step={1} value={data.lsOver ?? 5} title="The frequencies in the width of a peak (1 / T): the step 1 / (this · T)" onChange={(lsOver) => set({ lsOver: Math.max(1, Math.round(lsOver) || 5) })} />
+              <span className="muted">points, false alarm</span>
+              <NumInput className="tiny" min={0.001} max={50} step={0.1} value={data.lsFap ?? 1} title="The line drawn at the power with this false-alarm probability, in % (Baluev 2008)" onChange={(lsFap) => set({ lsFap: lsFap > 0 ? Math.min(50, lsFap) : 1 })} />
+              <span className="muted">%</span>
+            </span>
+          </>
+        )}
+        {mode === 'harmonics' && (
+          <>
+            <span>Harmonics</span>
+            <span className="row">
+              <NumInput className="tiny" min={2} max={50} step={1} value={data.nHarm ?? 6} title="With the fundamental (6: the fundamental and 5 harmonics, as MATLAB’s thd)" onChange={(nHarm) => set({ nHarm: Math.max(2, Math.min(50, Math.round(nHarm) || 6)) })} />
+              <span className="muted">fundamental</span>
+              <NumInput className="short" min={0} value={data.f0 ?? NaN} placeholder="strongest" title="The frequency of the fundamental (empty: the strongest peak)" onChange={(f0) => set({ f0: Number.isFinite(f0) && f0 > 0 ? f0 : undefined })} />
+            </span>
+          </>
+        )}
         {spec && (
           <>
             <span>Output</span>
@@ -740,12 +781,21 @@ export function FFTNodeView({ id, data }: NodeProps<FFTNode>) {
                 ['high', 'high pass'],
                 ['band', 'band pass'],
                 ['stop', 'band stop'],
+                ['notch', 'notch (mains, its harmonics)'],
               ]}
-              onChange={(filter) => set({ filter })}
+              onChange={(filter) => set({ filter, ...(filter === 'notch' && !(data.f1 > 0) ? { f1: 50 } : {}) })}
             />
-            <span>Cut-off</span>
+            <span>{data.filter === 'notch' ? 'At' : 'Cut-off'}</span>
             <span className="row">
-              <NumInput className="short" value={data.f1} title="In 1 / the unit of X (the frequencies of the spectrum)" onChange={(f1) => set({ f1 })} />
+              <NumInput className="short" value={data.f1} title={data.filter === 'notch' ? 'The frequency taken out (50 or 60 Hz: the mains), in 1 / the unit of X' : 'In 1 / the unit of X (the frequencies of the spectrum)'} onChange={(f1) => set({ f1 })} />
+              {data.filter === 'notch' && (
+                <>
+                  <span className="muted">harmonics</span>
+                  <NumInput className="tiny" min={1} max={50} step={1} value={data.notchN ?? 1} title="The notches with the first: 1 the frequency alone, 3 also its 2nd and 3rd harmonics (those below the Nyquist frequency)" onChange={(notchN) => set({ notchN: Math.max(1, Math.min(50, Math.round(notchN) || 1)) })} />
+                  <span className="muted">Q</span>
+                  <NumInput className="tiny" min={0.5} step={5} value={data.notchQ ?? 30} title="The quality: the frequency / the width at −3 dB (30 at 50 Hz: 1.7 Hz wide); larger, narrower" onChange={(notchQ) => set({ notchQ: notchQ > 0 ? notchQ : 30 })} />
+                </>
+              )}
               {(data.filter === 'band' || data.filter === 'stop') && (
                 <>
                   <span>–</span>
@@ -753,15 +803,17 @@ export function FFTNodeView({ id, data }: NodeProps<FFTNode>) {
                 </>
               )}
             </span>
-            <span>Design</span>
+            {data.filter !== 'notch' && <span>Design</span>}
+            {data.filter !== 'notch' && (
             <span className="row">
-              <Select<'fft' | 'butter' | 'cheby1'>
+              <Select<'fft' | 'butter' | 'cheby1' | 'bessel'>
                 value={data.design ?? 'fft'}
-                title="By the FFT (the frequencies cut in the spectrum), or a recursive (IIR) filter as electronics make them: Butterworth (flat in the band), Chebyshev I (steeper, a ripple in the band)"
+                title="By the FFT (the frequencies cut in the spectrum), or a recursive (IIR) filter as electronics make them: Butterworth (flat in the band), Chebyshev I (steeper, a ripple in the band), Bessel (the delay nearly the same at every frequency: pulses keep their shape, no ringing)"
                 options={[
                   ['fft', 'FFT'],
                   ['butter', 'Butterworth (IIR)'],
                   ['cheby1', 'Chebyshev I (IIR)'],
+                  ['bessel', 'Bessel (IIR)'],
                 ]}
                 onChange={(design) => set({ design: design === 'fft' ? undefined : design, ...(design !== 'fft' && !(data.order > 0) ? { order: 4 } : {}) })}
               />
@@ -772,9 +824,12 @@ export function FFTNodeView({ id, data }: NodeProps<FFTNode>) {
                 </>
               )}
             </span>
-            <span>Edge</span>
+            )}
+            <span>{data.filter === 'notch' ? 'Way' : 'Edge'}</span>
             <span className="row">
-              {iir ? (
+              {data.filter === 'notch' ? (
+                <Check label="causal (one way)" title="Filtered forward only, as in real time (the phase shifted near the notch); else forward and backward: no shift, the notch twice as deep" value={!!data.causal} onChange={(causal) => set({ causal: causal || undefined })} />
+              ) : iir ? (
                 <>
                   <span className="muted">order</span>
                   <NumInput className="tiny" min={1} max={12} step={1} value={data.order > 0 ? data.order : 4} onChange={(order) => set({ order: Math.max(1, Math.min(12, Math.floor(order) || 4)) })} />
@@ -792,11 +847,21 @@ export function FFTNodeView({ id, data }: NodeProps<FFTNode>) {
       </div>
       <div className="row wrap">
         {spec && <Check label="Zeros up to a power of 2" value={data.pad} onChange={(pad) => set({ pad })} />}
-        {mode === 'filter' && !iir && <Check label="Mirror the ends first" value={data.mirror} onChange={(mirror) => set({ mirror })} />}
+        {mode === 'filter' && !iir && data.filter !== 'notch' && <Check label="Mirror the ends first" value={data.mirror} onChange={(mirror) => set({ mirror })} />}
       </div>
       </NodeOptions>
+      {(r?.view.report ?? []).length > 0 && (
+        <div className="stat-report">
+          {r!.view.report!.map((l, i) => (
+            <div key={i}>{l}</div>
+          ))}
+        </div>
+      )}
       <Result r={r} />
-      <OutPort label="dataset" port="dataset" id="out" title="The spectrum, the PSD, the spectrogram or scalogram (time, frequency, power: for Contour), the coherence, the envelope and phase, the Allan deviation, or the filtered curves" />
+      <OutPort label="dataset" port="dataset" id="out" title="The spectrum, the PSD, the spectrogram or scalogram (time, frequency, power: for Contour), the coherence, the envelope and phase, the Allan deviation, the Lomb–Scargle periodogram (power, amplitude, false-alarm probability), the harmonics (frequency, amplitude, dBc) or the filtered curves" />
+      {mode === 'harmonics' && <OutPort label="measures" port="dataset" id="measures" title="THD (dB and %), SNR, SINAD, ENOB, SFDR, the fundamental and the noise of every Y" />}
+      {mode === 'filter' && <OutPort label="response" port="dataset" id="response" title="The filter’s response: the frequency, the gain (dB) and the phase (°); forward and backward: the gain twice, no phase" />}
+      {mode === 'harmonics' && <OutPort label="spectrum" port="dataset" id="spectrum" title="The spectrum in dB (Kaiser window), for a Plot" />}
     </div>
   );
 }

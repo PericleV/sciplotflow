@@ -7,22 +7,27 @@ import { pick } from './extract.ts';
 import { column, curvesByRole, findColumn, fmtNum, roleOf, type Column, type Dataset } from './table.ts';
 import * as S from './signal.ts';
 import { maxOf, minOf } from './minmax.ts';
+import { hampel, harmonics, lombScargle, lsFap, lsFrequencies, lsLevel } from './signal2.ts';
 
 export type SignalIn = { x: string; ys: string };
 // wavelet: denoised by the discrete wavelet transform (src/engine/wavelet.ts) — its wavelet, levels, threshold
-export type SmoothData = SignalIn & { method: 'average' | 'savgol' | 'median' | 'gauss' | 'lowess' | 'fft' | 'wavelet'; points: number; order: number; sigma: number; frac: number; iter: number; cutoff: number; edge: S.Edge | 'interp'; withData: boolean; withResid: boolean; wavelet?: string; wlevel?: number; wmode?: 'soft' | 'hard'; wscale?: number };
+// hampel: a point further than nsigma (3) robust SDs (1.4826 · MAD) from the median of its window replaced by it
+export type SmoothData = SignalIn & { method: 'average' | 'savgol' | 'median' | 'gauss' | 'lowess' | 'fft' | 'wavelet' | 'hampel'; points: number; order: number; sigma: number; frac: number; iter: number; cutoff: number; edge: S.Edge | 'interp'; withData: boolean; withResid: boolean; wavelet?: string; wlevel?: number; wmode?: 'soft' | 'hard'; wscale?: number; nsigma?: number };
 export type InterpData = SignalIn & { method: S.InterpMethod; extrap: S.Extrap; grid: 'points' | 'step' | 'at'; from: number; to: number; points: number; step: number };
 export type NormalizeData = SignalIn & { method: 'max' | 'maxabs' | 'minmax' | 'area' | 'atx' | 'zscore' | 'first' | 'value' | 'column'; at: number; value: number; from: number; to: number };
 // modes of src/engine/spectral.ts: psd (Welch: seg points, overlap, scaling, in dB), spectrogram, coherence (the first two
 // Y), hilbert (envelope, phase, frequency), allan (deviation against τ), cwt (Morlet: scales, w0); the filter: by the FFT
-// (absent design) or an IIR one — Butterworth, Chebyshev I (ripple dB) —, zero phase (forward and backward) or causal
+// (absent design) or an IIR one — Butterworth, Chebyshev I (ripple dB) —, zero phase (forward and backward) or causal;
+// lombscargle: X uneven (from … to, points per peak, the false-alarm level in %); harmonics: their number with the
+// fundamental, the fundamental given (else the strongest)
 export type FFTData = SignalIn & {
-  mode: 'spectrum' | 'filter' | 'psd' | 'spectrogram' | 'coherence' | 'hilbert' | 'allan' | 'cwt';
+  mode: 'spectrum' | 'filter' | 'psd' | 'spectrogram' | 'coherence' | 'hilbert' | 'allan' | 'cwt' | 'lombscargle' | 'harmonics';
   output: 'amp' | 'power' | 'db' | 'phase' | 'reim';
   window: S.Window;
   detrend: 'none' | 'mean' | 'linear';
   pad: boolean;
-  filter: S.FilterKind;
+  // notch: at f1 and its harmonics (notchN with it), the quality notchQ (f1 / the width at −3 dB)
+  filter: S.FilterKind | 'notch';
   f1: number;
   f2: number;
   order: number;
@@ -31,12 +36,20 @@ export type FFTData = SignalIn & {
   overlap?: number;
   scaling?: 'density' | 'spectrum';
   psdDb?: boolean;
-  design?: 'fft' | 'butter' | 'cheby1';
+  design?: 'fft' | 'butter' | 'cheby1' | 'bessel';
+  notchQ?: number;
+  notchN?: number;
   ripple?: number;
   causal?: boolean;
   allanSpacing?: 'octave' | 'decade' | 'all';
   scales?: number;
   w0?: number;
+  lsMin?: number;
+  lsMax?: number;
+  lsOver?: number;
+  lsFap?: number;
+  nHarm?: number;
+  f0?: number;
 };
 // corr: the correlation of every Y with the curve on the “kernel” port (or with itself), normalized as asked
 export type ConvData = SignalIn & { op: 'conv' | 'wiener' | 'rl' | 'corr'; shape: S.KernelShape | 'port'; fwhm: number; lambda: number; iterations: number; edge: 'zero' | 'reflect' | 'nearest'; corrNorm?: 'coeff' | 'biased' | 'unbiased' | 'none' };
@@ -63,7 +76,7 @@ export type SignalPlot = {
   zero?: boolean;
   legend?: string[];
 };
-export type SignalOut = { dataset: Dataset; extra?: Record<string, Dataset>; plots: SignalPlot[]; labels: string[]; warnings: string[] } | string;
+export type SignalOut = { dataset: Dataset; extra?: Record<string, Dataset>; plots: SignalPlot[]; labels: string[]; warnings: string[]; report?: string[] } | string;
 
 type Curve = { X: Column | undefined; Y: Column; x: number[]; y: number[] };
 // the Y columns (a list, else the designated ones) with their X; the points with both numbers, in the order of X
@@ -121,7 +134,13 @@ export function smoothNode(ds: Dataset, d: SmoothData): SignalOut {
     const n = c.y.length;
     const edge = d.edge === 'interp' && d.method !== 'savgol' ? 'reflect' : d.edge;
     let s: number[];
-    if (d.method === 'lowess') s = S.lowess(c.x, c.y, Math.min(1, Math.max(0.01, d.frac)), Math.max(0, Math.floor(d.iter)));
+    let replaced: number[] = [];
+    if (d.method === 'hampel') {
+      if (!stepOf(c.x).even) warnings.push(`${c.Y.name}: X not evenly spaced — the window counts points, not X.`);
+      const r = hampel(c.y, Math.max(1, Math.floor(Math.max(3, Math.floor(d.points)) / 2)), Math.max(0, d.nsigma ?? 3));
+      s = r.y;
+      replaced = r.out;
+    } else if (d.method === 'lowess') s = S.lowess(c.x, c.y, Math.min(1, Math.max(0.01, d.frac)), Math.max(0, Math.floor(d.iter)));
     else if (d.method === 'wavelet') {
       if (!stepOf(c.x).even) warnings.push(`${c.Y.name}: X not evenly spaced — the wavelets count points, not X.`);
       const r = waveletDenoise(c.y, d.wavelet ?? 'db4', d.wlevel ?? 4, d.wmode ?? 'soft', d.wscale ?? 1);
@@ -144,7 +163,7 @@ export function smoothNode(ds: Dataset, d: SmoothData): SignalOut {
               ? S.gaussianSmooth(c.y, Math.max(0.1, d.sigma), edge as S.Edge)
               : S.savgol(c.y, pts, Math.max(0, Math.floor(d.order)), d.edge === 'shrink' ? 'nearest' : d.edge);
     }
-    plots.push({ data: { x: c.x, y: c.y }, result: { x: c.x, y: s }, xName: c.X?.name ?? 'row', yName: c.Y.name });
+    plots.push({ data: { x: c.x, y: c.y }, result: { x: c.x, y: s }, xName: c.X?.name ?? 'row', yName: c.Y.name, ...(d.method === 'hampel' ? { series: [{ name: `replaced (${replaced.length})`, x: replaced.map((i) => c.x[i]), y: replaced.map((i) => c.y[i]), color: '#d62728', dots: true }] } : {}) });
     const cols: Column[] = [];
     if (d.withData) cols.push(yCol(c.Y.name, c.y, 'none'));
     cols.push({ ...yCol(`${c.Y.name} (smoothed)`, s), ...(c.Y.key ? { key: c.Y.key } : {}) });
@@ -243,12 +262,31 @@ export function fftNode(ds: Dataset, d: FFTData, xUnit: (name: string) => string
   const warnings: string[] = [];
   const plots: SignalPlot[] = [];
   if (d.mode === 'filter') {
-    const items = cs.map((c) => {
+    let resp: { f: number[]; db: number[]; ph: number[] } | null = null;
+    const u = xUnit(cs[0]?.X?.name ?? '');
+    const fName = u ? `Frequency (1/${u})` : 'Frequency';
+    const items = cs.map((c, ci) => {
       const e = evenly(c);
       if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced — read on an even grid.`);
       const nyq = 0.5 / e.dx;
+      // (the response: of the first Y's step; both ways, the gain squared and no phase)
+      const wr = Array.from({ length: 512 }, (_, k) => (0.5 * k) / 511);
+      const fromSos = (sos: number[][], twice: boolean) => {
+        const H = Sp.sosResponse(sos, wr);
+        const g = H.map(([a, b]) => 10 * Math.log10(a * a + b * b));
+        return { f: wr.map((w) => w / e.dx), db: twice ? g.map((v) => 2 * v) : g, ph: twice ? wr.map(() => 0) : H.map(([a, b]) => (180 / Math.PI) * Math.atan2(b, a)) };
+      };
       let f: number[];
-      if (d.design && d.design !== 'fft') {
+      if (d.filter === 'notch') {
+        const sos = Sp.notchSos(d.f1, Math.max(0.1, d.notchQ ?? 30), 1 / e.dx, Math.max(1, Math.round(d.notchN ?? 1)));
+        if (!sos.length || !(d.f1 > 0)) {
+          if (d.f1 > 0) warnings.push(`The notch must be below the Nyquist frequency (${fmtNum(nyq, 5)}).`);
+          f = e.y.slice();
+        } else {
+          f = d.causal ? Sp.sosfilt(sos, e.y).y : Sp.sosfiltfilt(sos, e.y);
+          if (ci === 0) resp = fromSos(sos, !d.causal);
+        }
+      } else if (d.design && d.design !== 'fft') {
         const [w1, w2] = [d.f1 / nyq, d.f2 / nyq];
         const bad = !(w1 > 0 && w1 < 1) || ((d.filter === 'band' || d.filter === 'stop') && !(w2 > 0 && w2 < 1 && w2 !== w1));
         if (bad) {
@@ -257,15 +295,25 @@ export function fftNode(ds: Dataset, d: FFTData, xUnit: (name: string) => string
         } else {
           const sos = Sp.designSos(d.design, Math.max(1, Math.min(12, Math.round(d.order) || 4)), d.filter, w1, w2, d.ripple ?? 1);
           f = d.causal ? Sp.sosfilt(sos, e.y).y : Sp.sosfiltfilt(sos, e.y);
+          if (ci === 0) resp = fromSos(sos, !d.causal);
         }
-      } else f = S.fftFilter(e.y, e.dx, d.filter, d.f1, d.f2, Math.max(0, Math.floor(d.order)), d.mirror);
+      } else {
+        f = S.fftFilter(e.y, e.dx, d.filter, d.f1, d.f2, Math.max(0, Math.floor(d.order)), d.mirror);
+        const g = S.fftGain(d.filter, d.f1, d.f2, Math.max(0, Math.floor(d.order)));
+        if (ci === 0) resp = { f: wr.map((w) => w / e.dx), db: wr.map((w) => 20 * Math.log10(g(w / e.dx))), ph: wr.map(() => 0) };
+      }
       const out = e.resampled ? c.x.map(S.interpolator(e.x, f, 'linear', 'constant')) : f;
       plots.push({ data: { x: c.x, y: c.y }, result: { x: c.x, y: out }, xName: c.X?.name ?? 'row', yName: c.Y.name });
       return { xName: c.X?.name ?? 'row', x: c.x, cols: [{ ...yCol(`${c.Y.name} (filtered)`, out), ...(c.Y.key ? { key: c.Y.key } : {}) }] };
     });
-    if (!(d.f1 > 0)) return 'Write the cut-off frequency (in 1 / the unit of X).';
-    return { dataset: { name: `${ds.name} filtered`, columns: layout(items) }, plots, labels: cs.map((c) => c.Y.name), warnings: [...new Set(warnings)] };
+    if (!(d.f1 > 0)) return d.filter === 'notch' ? 'Write the frequency of the notch (50 or 60 Hz: the mains; in 1 / the unit of X).' : 'Write the cut-off frequency (in 1 / the unit of X).';
+    const r = resp as { f: number[]; db: number[]; ph: number[] } | null;
+    if (r) plots.push({ result: { x: r.f, y: r.db.map((v) => Math.max(v, -200)) }, xName: fName, yName: 'gain (dB)' });
+    const extra = r ? { response: { name: `${ds.name} filter response`, columns: [{ ...column(fName, Float64Array.from(r.f)), role: 'x' as const }, yCol('Gain (dB)', r.db), yCol('Phase (°)', r.ph, 'none')] } } : undefined;
+    return { dataset: { name: `${ds.name} filtered`, columns: layout(items) }, ...(extra ? { extra } : {}), plots, labels: [...cs.map((c) => c.Y.name), ...(r ? ['the filter’s response'] : [])], warnings: [...new Set(warnings)] };
   }
+  if (d.mode === 'lombscargle') return lombNode(ds, d, cs, xUnit);
+  if (d.mode === 'harmonics') return harmonicsNode(ds, d, cs, xUnit);
   if (d.mode !== 'spectrum') return spectralModes(ds, d, cs, xUnit);
   const items = cs.map((c) => {
     const e = evenly(c);
@@ -287,6 +335,74 @@ export function fftNode(ds: Dataset, d: FFTData, xUnit: (name: string) => string
     return { xName: u ? `Frequency (1/${u})` : 'Frequency', x: sp.f, cols };
   });
   return { dataset: { name: `${ds.name} spectrum`, columns: layout(items) }, plots, labels: cs.map((c) => c.Y.name), warnings: [...new Set(warnings)] };
+}
+
+// The Lomb–Scargle periodogram of every Y (X as it is, uneven too): the power (0 … 1), the amplitude of the sine, the
+// false-alarm probability of every frequency; the graph with the level of the false-alarm probability asked
+function lombNode(ds: Dataset, d: FFTData, cs: Curve[], xUnit: (name: string) => string): SignalOut {
+  const warnings: string[] = [];
+  const plots: SignalPlot[] = [];
+  const report: string[] = [];
+  const u = xUnit(cs[0]?.X?.name ?? '');
+  const fName = u ? `Frequency (1/${u})` : 'Frequency';
+  const p = Math.min(50, Math.max(1e-6, d.lsFap ?? 1));
+  const ok = cs.filter((c) => {
+    if (c.x.length >= 8) return true;
+    warnings.push(`${c.Y.name}: fewer than 8 points.`);
+    return false;
+  });
+  if (!ok.length) return 'Lomb–Scargle: at least 8 points.';
+  const items = ok.map((c) => {
+    const freqs = lsFrequencies(c.x, Math.max(1, d.lsOver ?? 5), d.lsMin ?? NaN, d.lsMax ?? NaN);
+    if (freqs.length >= 100000) warnings.push(`${c.Y.name}: 100000 frequencies at most (a narrower range, or fewer points per peak).`);
+    const r = lombScargle(c.x, c.y, freqs);
+    const fmax = freqs[freqs.length - 1];
+    let best = 0;
+    for (let k = 1; k < freqs.length; k++) if (r.power[k] > r.power[best] || !Number.isFinite(r.power[best])) best = k;
+    const fap = r.power.map((z) => lsFap(z, c.x, fmax));
+    const level = lsLevel(p / 100, c.x, fmax);
+    plots.push({ result: { x: freqs, y: r.power }, xName: fName, yName: `${c.Y.name} power`, series: [{ name: `false alarm ${fmtNum(p, 3)} %`, x: [freqs[0], fmax], y: [level, level], color: '#d62728', line: true, dash: true }], marks: [freqs[best]] });
+    report.push(`${c.Y.name}: the highest peak at ${fmtNum(freqs[best], 6)} (a period of ${fmtNum(1 / freqs[best], 6)}${u ? ` ${u}` : ''}), power ${fmtNum(r.power[best], 4)}, amplitude ${fmtNum(r.amp[best], 4)}; its false-alarm probability ${fmtNum(fap[best], 3)} (Baluev; ${p} % at the power ${fmtNum(level, 3)}); ${freqs.length} frequencies up to ${fmtNum(fmax, 4)}, ${c.x.length} points.`);
+    return { xName: fName, x: freqs, cols: [yCol(`${c.Y.name} power`, r.power), yCol(`${c.Y.name} amplitude`, r.amp, 'none'), yCol(`${c.Y.name} false-alarm probability`, fap, 'none')] };
+  });
+  return { dataset: { name: `${ds.name} Lomb–Scargle`, columns: layout(items) }, plots, labels: ok.map((c) => c.Y.name), warnings: [...new Set(warnings)], report };
+}
+
+// The harmonics of every Y (X even, else read on an even grid): the table of the fundamental and its harmonics, the
+// measures (THD, SNR, SINAD, ENOB, SFDR) and the spectrum in dB with the harmonics marked
+function harmonicsNode(ds: Dataset, d: FFTData, cs: Curve[], xUnit: (name: string) => string): SignalOut {
+  const warnings: string[] = [];
+  const plots: SignalPlot[] = [];
+  const report: string[] = [];
+  const u = xUnit(cs[0]?.X?.name ?? '');
+  const fName = u ? `Frequency (1/${u})` : 'Frequency';
+  const nh = Math.max(2, Math.min(50, Math.round(d.nHarm ?? 6)));
+  const done = cs.flatMap((c) => {
+    const e = evenly(c);
+    if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced — read on an even grid.`);
+    const r = harmonics(e.y, e.dx, nh, d.f0 ?? NaN);
+    if (typeof r === 'string') {
+      warnings.push(`${c.Y.name}: ${r}`);
+      return [];
+    }
+    const hs = r.harmonics;
+    const over = hs.filter((h) => h.overlap).map((h) => h.k);
+    if (over.length) warnings.push(`${c.Y.name}: the harmonics ${over.join(', ')} too close to another for the window (a main lobe of ±13 bins), left out: a longer record (the fundamental at least 27 bins from 0, ${fmtNum(27 / (e.y.length * e.dx), 3)}).`);
+    const al = hs.filter((h) => h.aliased && !h.overlap).map((h) => h.k);
+    if (al.length) warnings.push(`${c.Y.name}: the harmonics ${al.join(', ')} above the Nyquist frequency, folded back.`);
+    const ok = hs.filter((h) => !h.overlap);
+    plots.push({ result: { x: r.f, y: r.db }, xName: fName, yName: `${c.Y.name} (dB)`, series: [{ name: 'harmonics', x: ok.map((h) => h.f), y: ok.map((h) => 10 * Math.log10((h.amp * h.amp) / 2)), color: '#d62728', dots: true }] });
+    const f = (v: number) => fmtNum(v, 4);
+    report.push(`${c.Y.name}: the fundamental at ${fmtNum(r.f0, 6)}${u ? ` (1/${u})` : ''}, amplitude ${fmtNum(hs[0].amp, 4)}; THD ${f(r.thd)} dB (${fmtNum(r.thdPct, 3)} %), SNR ${f(r.snr)} dB, SINAD ${f(r.sinad)} dB, ENOB ${fmtNum(r.enob, 3)} bits, SFDR ${f(r.sfdr)} dBc (${nh} harmonics with the fundamental; a Kaiser window, β 38).`);
+    return [{ c, r }];
+  });
+  if (!done.length) return warnings[0] ?? 'Harmonics: no curve.';
+  const ks = Array.from({ length: nh }, (_, k) => k + 1);
+  const table = layout(done.map(({ c, r }) => ({ xName: 'Harmonic', x: ks, cols: [yCol(`${c.Y.name} frequency`, r.harmonics.map((h) => h.f), 'none'), yCol(`${c.Y.name} amplitude`, r.harmonics.map((h) => h.amp)), yCol(`${c.Y.name} level (dBc)`, r.harmonics.map((h) => h.dbc), 'none')] })));
+  const names = ['THD (dB)', 'THD (%)', 'SNR (dB)', 'SINAD (dB)', 'ENOB (bits)', 'SFDR (dBc)', 'Fundamental', 'Noise (RMS)'];
+  const measures: Column[] = [{ ...column('Measure', new Float64Array(names.length).fill(NaN), names), role: 'label' }, ...done.map(({ c, r }) => yCol(c.Y.name, [r.thd, r.thdPct, r.snr, r.sinad, r.enob, r.sfdr, r.f0, r.noise]))];
+  const spectrum = layout(done.map(({ c, r }) => ({ xName: fName, x: r.f, cols: [yCol(`${c.Y.name} (dB)`, r.db)] })));
+  return { dataset: { name: `${ds.name} harmonics`, columns: table }, extra: { measures: { name: `${ds.name} THD, SNR, SINAD`, columns: measures }, spectrum: { name: `${ds.name} spectrum (dB)`, columns: spectrum } }, plots, labels: done.map(({ c }) => c.Y.name), warnings: [...new Set(warnings)], report };
 }
 
 // ---- Convolution / deconvolution ----

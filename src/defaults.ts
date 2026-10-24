@@ -7,6 +7,10 @@ import type { PhaseDigitizerData } from './engine/phasedigitize.ts';
 import type { EisData } from './engine/eis.ts';
 import type { ContingencyData, PAdjustData, RegressData, RocData, SurvivalData } from './engine/statnodes2.ts';
 import type { AgreeData, DistFitData, LogisticData, MethCompData, PowerData, ResampleData } from './engine/statnodes3.ts';
+import type { BaselineData } from './engine/baselinenode.ts';
+import type { FracData, FrftData } from './engine/fracnodes.ts';
+import type { WaveletData } from './engine/waveletnode.ts';
+import type { WaveformData, StepsData, EventsData } from './engine/signal2nodes.ts';
 import type { ImageAnalysisData } from './image/node.ts';
 import type { MatrixPlotSpec } from './engine/matrixplot.ts';
 
@@ -44,6 +48,13 @@ export const DISTFIT_DEFAULTS: DistFitData = { col: '', censor: '', dists: [], l
 export const AGREE_DEFAULTS: AgreeData = { mode: 'icc', cols: '', weights: 'none', level: 0.95, alpha: 0.05 };
 export const METHCOMP_DEFAULTS: MethCompData = { x: '', y: '', method: 'both', lambda: 1, level: 0.95 };
 export const LOGISTIC_DEFAULTS: LogisticData = { y: '', positive: '', xs: '', factors: '', interact: false, intercept: true, threshold: 0.5, alpha: 0.05 };
+export const BASELINE_DEFAULTS: BaselineData = { x: '', ys: '', regions: [], method: 'arpls', base: 0, baseOpt: { lambda: 6 }, bgOrder: 2, mode: 'subtract', outside: 'empty', original: false };
+export const WAVEFORM_DEFAULTS: WaveformData = { x: '', ys: '', regions: [], levels: 'histogram', base: 0, top: 1, lo: 10, hi: 90, hyst: 5, tol: 2 };
+export const STEPS_DEFAULTS: StepsData = { x: '', ys: '', regions: [], cost: 'mean', method: 'pelt', penalty: 'bic', factor: 3, minSize: 5, count: 0 };
+export const EVENTS_DEFAULTS: EventsData = { x: '', ys: '', regions: [], trigger: 'rising', level: NaN, markCol: '', times: '', before: NaN, after: NaN, gap: NaN, baseline: true, spread: 'sd' };
+export const WAVELET_DEFAULTS: WaveletData = { x: '', ys: '', regions: [], mode: 'cwt', mother: 'morlet', param: NaN, voices: 12, pMin: NaN, pMax: NaN, level: 0.95, noise: 'red', band1: NaN, band2: NaN, y2: '', wavelet: 'sym8', levels: 5, keep: '', rule: 'bayes', thr: 'soft', perLevel: false, wMin: NaN, wMax: NaN, minSnr: 1, noisePerc: 10 };
+export const FRAC_DEFAULTS: FracData = { x: '', ys: '', regions: [], orders: '-0.5', method: 'rl', along: 'x', rate: 0.1, semi: false, electrons: 1, area: 0.0707, conc: 1, unit: 'A' };
+export const FRFT_DEFAULTS: FrftData = { x: '', ys: '', regions: [], mode: 'scan', order: 0.5, auto: true, u1: NaN, u2: NaN, width: 3, keep: 'remove' };
 export const REGRESS_DEFAULTS: RegressData = { y: '', xs: '', factors: '', interact: false, intercept: true, weights: '', alpha: 0.05 };
 export const CURVEMATH_DEFAULTS: CurveMathData = { ya: '', yb: '', op: 'dxAtY', values: '', crossing: 'first', abs: false, grid: 'a', from: NaN, to: NaN, points: 200 };
 export const TRANSLATE_DEFAULTS: TranslateData = { roles: {}, mode: 'value', dx: 0, dy: 0, own: {}, point: 'max', atx: 0, moveX: false, moveY: true, x0: 0, y0: 0 };
