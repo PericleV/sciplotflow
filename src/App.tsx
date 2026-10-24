@@ -25,7 +25,7 @@ import '@xyflow/react/dist/style.css';
 import './App.css';
 import { EngineContext, useEngine } from './engine/engine.ts';
 import { canConnect, isMultiInput, PORT_COLORS, sourcePort, targetAccepts, type PortContext } from './engine/ports.ts';
-import { KK_DEFAULTS, CONVERT_DEFAULTS, TRANSPOSE_DEFAULTS, STACK_DEFAULTS, MATCOMP_DEFAULTS, MATRIX_DEFAULTS, COLUMNS_DEFAULTS, PEAKWIDTH_DEFAULTS, AUTOEXTRACT_DEFAULTS, CANVAS_DEFAULTS, DRAWING_DEFAULTS, COMBINE_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS, CALCULUS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, AVERAGE_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, IMAGE_DEFAULTS, PHASE_DEFAULTS, HISTOGRAM_DEFAULTS, BARCHART_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, CURVEMATH_DEFAULTS, TRANSLATE_DEFAULTS, PEAK_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, ANOVA_DEFAULTS, NONPAR_DEFAULTS, CORR_DEFAULTS, PADJUST_DEFAULTS, CONTINGENCY_DEFAULTS, ROC_DEFAULTS, SURVIVAL_DEFAULTS, REGRESS_DEFAULTS, PICK_DEFAULTS, DATAMANIP_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, PYTHON_DEFAULTS, NOTE_DEFAULTS, NOTE_SIZE,PLOT1D_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
+import { KK_DEFAULTS, CONVERT_DEFAULTS, TRANSPOSE_DEFAULTS, STACK_DEFAULTS, MATCOMP_DEFAULTS, MATRIX_DEFAULTS, COLUMNS_DEFAULTS, PEAKWIDTH_DEFAULTS, AUTOEXTRACT_DEFAULTS, CANVAS_DEFAULTS, DRAWING_DEFAULTS, COMBINE_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS, CALCULUS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, AVERAGE_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, IMAGE_DEFAULTS, PHASE_DEFAULTS, HISTOGRAM_DEFAULTS, BARCHART_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, CURVEMATH_DEFAULTS, TRANSLATE_DEFAULTS, PEAK_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, ANOVA_DEFAULTS, NONPAR_DEFAULTS, CORR_DEFAULTS, PADJUST_DEFAULTS, CONTINGENCY_DEFAULTS, ROC_DEFAULTS, SURVIVAL_DEFAULTS, REGRESS_DEFAULTS, POWER_DEFAULTS, RESAMPLE_DEFAULTS, DISTFIT_DEFAULTS, AGREE_DEFAULTS, METHCOMP_DEFAULTS, LOGISTIC_DEFAULTS, PICK_DEFAULTS, DATAMANIP_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, PYTHON_DEFAULTS, NOTE_DEFAULTS, NOTE_SIZE,PLOT1D_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
 import { NODE_HELP, NODE_SHORT } from './help.ts';
 import { DRAG_TYPE, NodePalette, type PaletteGroup } from './NodePalette.tsx';
 // side panels: separate chunks, loaded when first opened
@@ -98,6 +98,7 @@ import { MatCompNodeView, MatrixNodeView } from './nodes/MatrixNodes.tsx';
 import { AverageNodeView, ConvNodeView, FFTNodeView, InterpNodeView, KramersKronigNodeView, NormalizeNodeView, SmoothNodeView } from './nodes/SignalNodes.tsx';
 import { AnovaNodeView, CorrNodeView, NonparNodeView, NormNodeView, TTestNodeView } from './nodes/TestNodes.tsx';
 import { ContingencyNodeView, PAdjustNodeView, RegressNodeView, RocNodeView, SurvivalNodeView } from './nodes/StatNodes2.tsx';
+import { AgreeNodeView, DistFitNodeView, LogisticNodeView, MethCompNodeView, PowerNodeView, ResampleNodeView } from './nodes/StatNodes3.tsx';
 import { RerouteNodeView } from './nodes/RerouteNode.tsx';
 import { BatchFileBar, GroupInNodeView, GroupNodeView, GroupOutNodeView } from './nodes/GroupNodes.tsx';
 import { GroupNavContext } from './nodes/groupNav.ts';
@@ -152,6 +153,12 @@ const baseNodeTypes = {
   roc: RocNodeView,
   survival: SurvivalNodeView,
   regress: RegressNodeView,
+  power: PowerNodeView,
+  resample: ResampleNodeView,
+  distfit: DistFitNodeView,
+  agree: AgreeNodeView,
+  methcomp: MethCompNodeView,
+  logistic: LogisticNodeView,
   correl: CorrNodeView,
   unstack: UnstackNodeView,
   convert: ConvertNodeView,
@@ -244,10 +251,16 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
       { type: 'nonparam', label: 'Nonparametric tests', data: NONPAR_DEFAULTS },
       { type: 'correl', label: 'Correlation', data: CORR_DEFAULTS },
       { type: 'regress', label: 'Linear regression', data: REGRESS_DEFAULTS },
+      { type: 'logistic', label: 'Logistic regression', data: LOGISTIC_DEFAULTS },
       { type: 'contingency', label: 'Contingency tables', data: CONTINGENCY_DEFAULTS },
       { type: 'survival', label: 'Survival (Kaplan–Meier)', data: SURVIVAL_DEFAULTS },
       { type: 'roc', label: 'ROC curve', data: ROC_DEFAULTS },
       { type: 'padjust', label: 'Adjust p-values', data: PADJUST_DEFAULTS },
+      { type: 'distfit', label: 'Distribution fit', data: DISTFIT_DEFAULTS },
+      { type: 'agree', label: 'Agreement & reliability', data: AGREE_DEFAULTS },
+      { type: 'methcomp', label: 'Method comparison', data: METHCOMP_DEFAULTS },
+      { type: 'resample', label: 'Bootstrap & permutation', data: RESAMPLE_DEFAULTS },
+      { type: 'power', label: 'Power & sample size', data: POWER_DEFAULTS },
     ],
   },
   {

@@ -2,7 +2,7 @@
 import { peakRunKey } from './engine/peaks.ts';
 import type { Edge } from '@xyflow/react';
 import { REGION_COLORS } from './nodes/regionColors.ts';
-import { DRAWING_DEFAULTS, PYTHON_DEFAULTS, CONVERT_DEFAULTS, STACK_DEFAULTS, TRANSPOSE_DEFAULTS, COLUMNS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, DATAMANIP_DEFAULTS, AVERAGE_DEFAULTS, COMBINE_DEFAULTS, TRANSLATE_DEFAULTS, CURVEMATH_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, PADJUST_DEFAULTS, CONTINGENCY_DEFAULTS, ROC_DEFAULTS, SURVIVAL_DEFAULTS, REGRESS_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, IMAGE_DEFAULTS, KK_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
+import { DRAWING_DEFAULTS, PYTHON_DEFAULTS, CONVERT_DEFAULTS, STACK_DEFAULTS, TRANSPOSE_DEFAULTS, COLUMNS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, DATAMANIP_DEFAULTS, AVERAGE_DEFAULTS, COMBINE_DEFAULTS, TRANSLATE_DEFAULTS, CURVEMATH_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, PADJUST_DEFAULTS, CONTINGENCY_DEFAULTS, ROC_DEFAULTS, SURVIVAL_DEFAULTS, REGRESS_DEFAULTS, POWER_DEFAULTS, RESAMPLE_DEFAULTS, DISTFIT_DEFAULTS, AGREE_DEFAULTS, METHCOMP_DEFAULTS, LOGISTIC_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, IMAGE_DEFAULTS, KK_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
 import { INSET_DEFAULTS, AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, COLORBAR_DEFAULTS, CURVE_STYLE_DEFAULTS, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, SIDE_DEFAULTS, TEXT_SPEC_DEFAULTS, type AxesStyle, type CurveStyle, type SideStyle } from './figure/spec.ts';
 import { PROJECT_VERSION, type Project } from './project.ts';
 import type { AnnotationItem, AppNode, ImportSheet, NodeType, Plot1DData, PlotLegend, PlotPage } from './types.ts';
@@ -316,6 +316,79 @@ function drugFiles(): { columns: string; indexed: string; subjects: string } {
 // steps with the censored times; a biomarker (and the age) against the response (ROC, the best threshold); the arm
 // against the response (a contingency table, the odds ratio); the tumour size against age, marker and stage (linear
 // regression), its coefficients' p adjusted (Holm)
+// A laboratory made here: two analyzers on the same 50 samples (Passing–Bablok and Deming, Lin's concordance); three
+// pathologists grading 60 biopsies and scoring them (Cohen's and Fleiss's κ, the ICC); the lifetimes of 40 sensors
+// (distributions fitted, the bootstrap interval of the median life); a dose and the response of 160 animals (logistic
+// regression, its ROC curve); the size of the next study (Power & sample size)
+function labExample(): Project {
+  const b = builder();
+  const r = rng(1009);
+  const m = ['Sample;Analyzer A;Analyzer B'];
+  for (let i = 0; i < 50; i++) {
+    const c = 2 + 18 * r();
+    m.push(`S${i + 1};${(c + 0.3 * gauss(r)).toFixed(2)};${(0.4 + 1.05 * c + 0.35 * gauss(r) * (1 + 0.04 * c)).toFixed(2)}`);
+  }
+  const grades = ['mild', 'moderate', 'severe'];
+  const g = ['Biopsy;Pathologist 1;Pathologist 2;Pathologist 3;Score 1;Score 2;Score 3'];
+  for (let i = 0; i < 60; i++) {
+    const t = 1 + 8 * r();
+    const grade = (s: number) => grades[Math.min(2, Math.max(0, Math.floor((s - 1) / 3)))];
+    const s = [0, 1, 2].map((k) => t + (k === 1 ? 0.4 : 0) + 0.9 * gauss(r));
+    g.push(`B${i + 1};${s.map(grade).join(';')};${s.map((v) => Math.max(0, v).toFixed(1)).join(';')}`);
+  }
+  const l = ['Sensor;Life (h)'];
+  for (let i = 0; i < 40; i++) l.push(`U${i + 1};${(1200 * (-Math.log(1 - r())) ** (1 / 2.2)).toFixed(0)}`);
+  const d = ['Animal;Dose (mg/kg);Weight (g);Response'];
+  for (let i = 0; i < 160; i++) {
+    const dose = [0, 5, 10, 20, 40][i % 5];
+    const w = 250 + 30 * gauss(r);
+    const eta = -2.4 + 0.11 * dose + 0.006 * (w - 250);
+    d.push(`A${i + 1};${dose};${w.toFixed(0)};${r() < 1 / (1 + Math.exp(-eta)) ? 'yes' : 'no'}`);
+  }
+  const mi = add(b, 'import', 'lab-methods', 0, 0, { ...IMPORT_DEFAULTS, name: 'two analyzers', fileName: 'analyzers.txt', text: m.join('\n'), textId: 'lab-1' });
+  const mc = add(b, 'methcomp', 'lab-mc', 680, 0, { ...METHCOMP_DEFAULTS, x: 'Analyzer A', y: 'Analyzer B' });
+  link(b, mi, mc, 'in');
+  const mp = add(b, 'plot1d', 'lab-mcplot', 1360, 0, {
+    ...plot(
+      {
+        label: 'samples',
+        style: dots(0, 3),
+        cols: { x: 'Analyzer A', y: 'Analyzer B' },
+        rows: [
+          { label: 'Passing–Bablok', style: curve(1, { mode: 'line', lineWidth: 1.4 }), cols: { x: 'Analyzer A (line)', y: 'Passing–Bablok' } },
+          { label: 'y = x', style: curve(7, { mode: 'line', lineWidth: 0.8, dash: 'dash' }), cols: { x: 'Analyzer A (line)', y: 'Identity (y = x)' } },
+        ],
+      },
+      { axes: { sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Analyzer A' }), left: side({ title: 'Analyzer B' }) } }, legend: { x: 4, y: 4, anchor: 'tl' }, page: { name: 'method_comparison' } },
+    ),
+  });
+  link(b, mi, mp, 'dataset');
+  link(b, mc, mp, 'dataset', 'line');
+  const cc = add(b, 'agree', 'lab-ccc', 680, 900, { ...AGREE_DEFAULTS, mode: 'ccc', cols: 'Analyzer A, Analyzer B' });
+  link(b, mi, cc, 'in');
+  const gi = add(b, 'import', 'lab-grades', 0, 1500, { ...IMPORT_DEFAULTS, name: 'three pathologists', fileName: 'biopsies.txt', text: g.join('\n'), textId: 'lab-2' });
+  const kp = add(b, 'agree', 'lab-kappa', 680, 1500, { ...AGREE_DEFAULTS, mode: 'kappa', cols: 'Pathologist 1, Pathologist 2', weights: 'quadratic' });
+  link(b, gi, kp, 'in');
+  const fk = add(b, 'agree', 'lab-fleiss', 680, 2200, { ...AGREE_DEFAULTS, mode: 'kappa', cols: 'Pathologist 1, Pathologist 2, Pathologist 3' });
+  link(b, gi, fk, 'in');
+  const ic = add(b, 'agree', 'lab-icc', 1360, 1500, { ...AGREE_DEFAULTS, mode: 'icc', cols: 'Score 1, Score 2, Score 3' });
+  link(b, gi, ic, 'in');
+  const li = add(b, 'import', 'lab-life', 0, 3000, { ...IMPORT_DEFAULTS, name: 'sensor lifetimes', fileName: 'lifetimes.txt', text: l.join('\n'), textId: 'lab-3' });
+  const df = add(b, 'distfit', 'lab-dist', 680, 3000, { ...DISTFIT_DEFAULTS, col: 'Life (h)', dists: ['normal', 'lognormal', 'weibull', 'gamma', 'exponential'] });
+  link(b, li, df, 'in');
+  const bs = add(b, 'resample', 'lab-boot', 1360, 3000, { ...RESAMPLE_DEFAULTS, stat: 'median', cols: 'Life (h)' });
+  link(b, li, bs, 'in');
+  const di = add(b, 'import', 'lab-dose', 0, 4300, { ...IMPORT_DEFAULTS, name: 'dose and response', fileName: 'dose_response.txt', text: d.join('\n'), textId: 'lab-4' });
+  const lg = add(b, 'logistic', 'lab-logit', 680, 4300, { ...LOGISTIC_DEFAULTS, y: 'Response', positive: 'yes', xs: 'Dose (mg/kg), Weight (g)' });
+  link(b, di, lg, 'in');
+  const rc = add(b, 'roc', 'lab-roc', 1360, 4300, { ...ROC_DEFAULTS, truth: 'Observed', positive: 'yes', scores: 'Probability' });
+  link(b, lg, rc, 'in', 'fitted');
+  const pw = add(b, 'power', 'lab-power', 680, 5600, { ...POWER_DEFAULTS, test: 't2', solve: 'n', effect: 0.6, power: 0.9 });
+  const pc = add(b, 'plot1d', 'lab-powerplot', 1360, 5600, plot({ label: 'power', style: curve(0, { mode: 'line', lineWidth: 1.4 }), cols: { x: 'n (per group)', y: 'Power' } }, { page: { name: 'power_curve' } }));
+  link(b, pw, pc, 'dataset', 'curve');
+  return project(b, 'Laboratory: method comparison, agreement, distributions, power');
+}
+
 function clinicalExample(): Project {
   const b = builder();
   const r = rng(911);
@@ -3239,6 +3312,10 @@ const ABOUT: Record<string, About> = {
     what: 'A potentiostat file with three cycles in one table: cut into cycles and into the pieces going up and coming back, the area between the branches, the peaks read off.',
     try: ['Drag the edges of the hatched region in Integrate.', 'Add a value to read in Pick points (e.g. 0.3 V).'],
   },
+  'Laboratory: method comparison, agreement, distributions, power': {
+    what: 'The questions of a laboratory: do two analyzers agree, do the pathologists grade alike, how long do the sensors last, how does the response grow with the dose, and how many animals the next study needs.',
+    try: ['In Method comparison, set λ to 2: Deming with the second analyzer twice as variable.', 'In the κ of two pathologists, switch the weights to none: the near misses no longer count.', 'In Power & sample size, set Find to the power and n to 30.'],
+  },
   'Clinical study: survival, ROC, contingency, regression': {
     what: 'A small clinical study: who lives longer on which treatment, how well a biomarker tells the responders, whether the treatment changes the response, and what the tumour size depends on.',
     try: ['In Survival, switch the test to Gehan–Breslow–Wilcoxon: the early deaths weigh more.', 'In ROC curve, set Best threshold to a sensitivity reached of 0.9: the threshold and the specificity it costs.', 'In Linear regression, tick interactions: does the marker act differently by stage?'],
@@ -3426,6 +3503,7 @@ const LIST: { group: string; name: string; desc: string; make: () => Project }[]
   { group: 'Signals', name: 'Signal processing: smooth, FFT, deconvolution, interpolation', desc: 'A noisy spectrum smoothed (Savitzky–Golay) and normalized; the FFT spectrum of a sampled signal and an FFT low pass; a spectrum blurred by the instrument deconvolved (Richardson–Lucy); two curves on different X read on a common X (spline).', make: signalExample },
   { group: 'Signals', name: 'Signals: PSD, a Butterworth filter, the Allan deviation', desc: 'The FFT node in three modes: the power spectral density (Welch, dB), a zero-phase Butterworth low pass, the Allan deviation of a drifting sensor on log–log axes.', make: spectralExample },
   { group: 'Electrochemistry & impedance', name: 'Cyclic voltammogram: area between the branches', desc: 'A potentiostat file with three cycles in one table: Split into columns makes a current column per cycle (a Plot coloured by the cycle) and cuts the pieces going up and coming back; Integrate takes the area between them, absolute, over a region (hatched); Pick points reads the peaks and the current at 0.5 V.', make: cvExample },
+  { group: 'Statistics', name: 'Laboratory: method comparison, agreement, distributions, power', desc: 'Data made here. Two analyzers on 50 samples (Passing–Bablok and Deming, with the data in a Plot; Lin’s concordance); three pathologists grading 60 biopsies (Cohen’s weighted κ, Fleiss’s κ, the ICC of their scores); 40 sensor lifetimes (five distributions fitted and ranked, the bootstrap interval of the median life); dose and response of 160 animals (logistic regression, its ROC curve); the size of the next study (Power & sample size with its curve).', make: labExample },
   { group: 'Statistics', name: 'Clinical study: survival, ROC, contingency, regression', desc: '120 patients made here, in two arms: Kaplan–Meier curves with the censored times, the log-rank test and the hazard ratio; a biomarker and the age as ROC curves (AUC, DeLong, the best threshold); the arm against the response (χ², Fisher, the odds ratio); the tumour size against age, marker and stage (linear regression, its p adjusted by Holm).', make: clinicalExample },
   { group: 'Statistics', name: 'Drug study: ANOVA, t-test, nonparametric, correlation', desc: 'The three layouts of the data for the statistics nodes — each group a column, indexed (value + factors), a row per subject — with Normality & outliers, one-way ANOVA + Tukey (the means ± SE in a Plot), a t-test, Kruskal–Wallis + Dunn, two-way ANOVA (Dose × Sex), repeated-measures ANOVA, Friedman and correlations.', make: drugExample },
   { group: 'Fitting', name: 'Python script: peaks found and fitted with scipy', desc: 'A spectrum given to a Python script: scipy finds its peaks and fits a Gaussian for each on a straight line; the table of the peaks to a Workbook, the fit drawn over the data. Runs when Run is pressed (the first time Python is downloaded, about 10 MB).', make: pythonExample },

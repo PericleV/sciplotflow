@@ -62,6 +62,7 @@ import { bracketCurves, bracketTable, SIG_DEFAULTS, significance, type SigElemen
 import { averageNode, convNode, fftNode, interpNode, normalizeNode, smoothNode, valuesOf, type SignalOut, type SignalPlot } from './signalnodes.ts';
 import { anovaNode, corrNode, nonparNode, normalityNode, tTestNode, type StatOut } from './statnodes.ts';
 import { contingencyNode, pAdjustNode, regressNode, rocNode, STAT_WAIT, statLevels, survivalNode } from './statnodes2.ts';
+import { agreeNode, distFitNode, logisticNode, methCompNode, powerNode, resampleNode, STAT3_WAIT, stat3Levels } from './statnodes3.ts';
 import { findPeaksIn, fittedPeak, fixedBaseline, fwhmAt, isFitted, measurePeaks, peakRunKey, regionPeak, type Found, type PeakItem } from './peaks.ts';
 import { curveThrough } from './baselines.ts';
 import { areaBetween, derivative, integrate, interp, pointsCurve, regionName, regionRows, type IntegralOptions } from './calculus.ts';
@@ -4640,9 +4641,14 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
     case 'contingency':
     case 'roc':
     case 'survival':
-    case 'regress': {
+    case 'regress':
+    case 'resample':
+    case 'distfit':
+    case 'agree':
+    case 'methcomp':
+    case 'logistic': {
       const v = one('in');
-      if (v?.t !== 'dataset') return { view: { waiting: STAT_WAIT[n.type] ?? 'Connect a dataset: the groups as columns, or a value column with factor columns (indexed), or a row per subject.' } };
+      if (v?.t !== 'dataset') return { view: { waiting: STAT_WAIT[n.type] ?? STAT3_WAIT[n.type] ?? 'Connect a dataset: the groups as columns, or a value column with factor columns (indexed), or a row per subject.' } };
       const available = v.v.columns.map(colInfo);
       const r: StatOut =
         n.type === 'normality'
@@ -4663,11 +4669,28 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
                         ? survivalNode(v.v, n.data)
                         : n.type === 'regress'
                           ? regressNode(v.v, n.data)
-                          : corrNode(v.v, n.data);
-      const levels = statLevels(v.v, n);
+                          : n.type === 'resample'
+                            ? resampleNode(v.v, n.data)
+                            : n.type === 'distfit'
+                              ? distFitNode(v.v, n.data)
+                              : n.type === 'agree'
+                                ? agreeNode(v.v, n.data)
+                                : n.type === 'methcomp'
+                                  ? methCompNode(v.v, n.data)
+                                  : n.type === 'logistic'
+                                    ? logisticNode(v.v, n.data)
+                                    : corrNode(v.v, n.data);
+      const levels = statLevels(v.v, n) ?? stat3Levels(v.v, n);
       if (r.errors.length) return { errors: r.errors, view: { available, ...(levels ? { levels } : {}) } };
       const outputs: Record<string, Value> = Object.fromEntries(Object.entries(r.tables).map(([k, t]) => [k, { t: 'dataset', v: t } as Value]));
       return { outputs, warnings: r.warnings, view: { available, report: r.report, ...(levels ? { levels } : {}) } };
+    }
+    case 'power': {
+      // (a calculator: no data)
+      const r = powerNode(n.data);
+      if (r.errors.length) return { errors: r.errors };
+      const outputs: Record<string, Value> = Object.fromEntries(Object.entries(r.tables).map(([k, t]) => [k, { t: 'dataset', v: t } as Value]));
+      return { outputs, warnings: r.warnings, view: { report: r.report } };
     }
     case 'pick':
       return pickNode(n.data, one('in'));

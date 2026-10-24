@@ -401,32 +401,26 @@ export function survivalNode(ds: Dataset, d: SurvivalData): StatOut {
 }
 
 // ---- Linear regression ----
-type Term = { name: string; vars: string[]; cols: number[] };
-export function regressNode(ds: Dataset, d: RegressData): StatOut {
-  const a = d.alpha;
-  const lvl = 1 - a;
-  const report: string[] = [];
-  const warnings: string[] = [];
-  const yc = byName(ds, d.y);
-  if (!yc) return err(d.y ? `No column “${d.y}”.` : 'Choose Y, the column explained.');
-  if (!d.xs.trim()) return err('Choose the predictors (X).');
+export type Term = { name: string; vars: string[]; cols: number[] };
+// The design of a linear model: the intercept, every predictor (a category its dummies against its reference, the
+// first in natural order unless chosen), every two predictors' interaction; the rows complete (Y by rowOk)
+export type Design = { xs: Column[]; rowsUsed: number[]; names: string[]; cols: number[][]; terms: Term[] };
+export type DesignSpec = { xs: string; factors: string; refs?: Record<string, string>; interact: boolean; intercept: boolean };
+export function designOf(ds: Dataset, d: DesignSpec, yc: Column, rowOk: (i: number) => boolean): Design | string {
+  if (!d.xs.trim()) return 'Choose the predictors (X).';
   const px = pick(d.xs, ds.columns.map((c) => c.name), true);
-  if (px.missing.length) return err(`Predictors: no ${px.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`);
+  if (px.missing.length) return `Predictors: no ${px.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`;
   const xs = px.found.map((j) => ds.columns[j]).filter((c) => c !== yc);
-  if (!xs.length) return err('Choose the predictors (X), other than Y.');
+  if (!xs.length) return 'Choose the predictors (X), other than Y.';
   const fset = new Set(d.factors.trim() ? pick(d.factors, ds.columns.map((c) => c.name), true).found.map((j) => ds.columns[j].name) : []);
   const isCat = (c: Column) => isText(c) || fset.has(c.name);
-  const wc = d.weights ? byName(ds, d.weights) : undefined;
-  if (d.weights && !wc) return err(`No column “${d.weights}”.`);
   // (the complete rows)
   const rowsUsed: number[] = [];
   for (let i = 0; i < yc.values.length; i++) {
-    if (!Number.isFinite(yc.values[i])) continue;
+    if (!rowOk(i)) continue;
     if (xs.some((c) => (isCat(c) ? !levelOf(c, i) : !Number.isFinite(c.values[i])))) continue;
-    if (wc && !(wc.values[i] > 0)) continue;
     rowsUsed.push(i);
   }
-  const n = rowsUsed.length;
   // (the design: the intercept, every predictor — a category its dummies against its reference —, the interactions)
   const names: string[] = [];
   const cols: number[][] = [];
@@ -455,6 +449,21 @@ export function regressNode(ds: Dataset, d: RegressData): StatOut {
         for (const p of main[x].cols) for (const q of main[y].cols) T.cols.push(add(`${names[p]} × ${names[q]}`, cols[p].map((v, i) => v * cols[q][i])));
         terms.push(T);
       }
+  return { xs, rowsUsed, names, cols, terms };
+}
+export function regressNode(ds: Dataset, d: RegressData): StatOut {
+  const a = d.alpha;
+  const lvl = 1 - a;
+  const report: string[] = [];
+  const warnings: string[] = [];
+  const yc = byName(ds, d.y);
+  if (!yc) return err(d.y ? `No column “${d.y}”.` : 'Choose Y, the column explained.');
+  const wc = d.weights ? byName(ds, d.weights) : undefined;
+  if (d.weights && !wc) return err(`No column “${d.weights}”.`);
+  const dz = designOf(ds, d, yc, (i) => Number.isFinite(yc.values[i]) && (!wc || wc.values[i] > 0));
+  if (typeof dz === 'string') return err(dz);
+  const { xs, rowsUsed, names, cols, terms } = dz;
+  const n = rowsUsed.length;
   const p = cols.length;
   if (n <= p) return err(`${n} complete rows for ${p} coefficients: more rows are needed.`);
   const w = rowsUsed.map((i) => (wc ? 1 / wc.values[i] ** 2 : 1));

@@ -6,6 +6,7 @@ import { SET_COLORS } from './engine/digitize.ts';
 import type { PhaseDigitizerData } from './engine/phasedigitize.ts';
 import type { EisData } from './engine/eis.ts';
 import type { ContingencyData, PAdjustData, RegressData, RocData, SurvivalData } from './engine/statnodes2.ts';
+import type { AgreeData, DistFitData, LogisticData, MethCompData, PowerData, ResampleData } from './engine/statnodes3.ts';
 import type { ImageAnalysisData } from './image/node.ts';
 import type { MatrixPlotSpec } from './engine/matrixplot.ts';
 
@@ -37,6 +38,12 @@ export const PADJUST_DEFAULTS: PAdjustData = { col: '', method: 'holm', alpha: 0
 export const CONTINGENCY_DEFAULTS: ContingencyData = { layout: 'raw', rowCol: '', colCol: '', count: '', cols: '', test: 'independence', yates: false, expected: '', alpha: 0.05 };
 export const ROC_DEFAULTS: RocData = { truth: '', positive: '', scores: '', dir: 'auto', cutoff: 'youden', target: 0.9, alpha: 0.05 };
 export const SURVIVAL_DEFAULTS: SurvivalData = { time: '', event: '', eventIs: '', group: '', test: 'logrank', pairs: true, ci: 'loglog', at: '', alpha: 0.05 };
+export const POWER_DEFAULTS: PowerData = { test: 't2', solve: 'n', effect: 0.5, n: 20, power: 0.8, alpha: 0.05, alt: 'two-sided', ratio: 1, k: 3, p1: 0.3, events: 0.6 };
+export const RESAMPLE_DEFAULTS: ResampleData = { mode: 'bootstrap', layout: 'columns', cols: '', value: '', factor: '', stat: 'median', q: 0.9, B: 9999, ci: 'bca', level: 0.95, alt: 'two-sided', seed: 1 };
+export const DISTFIT_DEFAULTS: DistFitData = { col: '', censor: '', dists: [], level: 0.95 };
+export const AGREE_DEFAULTS: AgreeData = { mode: 'icc', cols: '', weights: 'none', level: 0.95, alpha: 0.05 };
+export const METHCOMP_DEFAULTS: MethCompData = { x: '', y: '', method: 'both', lambda: 1, level: 0.95 };
+export const LOGISTIC_DEFAULTS: LogisticData = { y: '', positive: '', xs: '', factors: '', interact: false, intercept: true, threshold: 0.5, alpha: 0.05 };
 export const REGRESS_DEFAULTS: RegressData = { y: '', xs: '', factors: '', interact: false, intercept: true, weights: '', alpha: 0.05 };
 export const CURVEMATH_DEFAULTS: CurveMathData = { ya: '', yb: '', op: 'dxAtY', values: '', crossing: 'first', abs: false, grid: 'a', from: NaN, to: NaN, points: 200 };
 export const TRANSLATE_DEFAULTS: TranslateData = { roles: {}, mode: 'value', dx: 0, dy: 0, own: {}, point: 'max', atx: 0, moveX: false, moveY: true, x0: 0, y0: 0 };
