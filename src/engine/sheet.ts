@@ -16,6 +16,7 @@ export type SheetEdits = {
   addCols?: number; // empty columns after the last
   order?: number[]; // the columns (by their place as read) in the order shown — moved with the mouse; others after them
   rowOrder?: number[]; // the rows (by their place as read) in the order shown — a row inserted between; others after them
+  locked?: number[]; // the columns (by their place as read) locked: their name and values not changed, not deleted
 };
 // How the worksheet of an Import or a Workbook is drawn: the node's width and the table's height (dragged at its corner),
 // the rows' height (one for all), every column's width (by its name). Pixels of the canvas; absent: the defaults.

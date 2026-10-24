@@ -1722,3 +1722,24 @@ input[type='checkbox'], input[type='radio'] { box-shadow: none; }
 .ie-texture .test { fill: none; stroke: #64d2ff; stroke-width: 1; }
 .ie-texture .hit { fill: #ff453a; stroke: #ffffff; stroke-width: 0.75; }
 .ie-texture .orient { opacity: 0.85; image-rendering: pixelated; }
+
+/* Inspect: the data of a node or a connection, in the options panel */
+.canvas.inspecting .react-flow__node, .canvas.inspecting .react-flow__edge { cursor: help; }
+.inspect-body { display: flex; flex-direction: column; gap: 4px; padding: 2px 0 6px; }
+.inspect-info { gap: 6px; align-items: center; font-size: var(--fs-small); }
+.inspect-tabs { gap: 4px; }
+.inspect-tabs button.on { border-color: var(--accent); color: var(--accent); }
+.inspect-scroll { overflow: auto; max-width: 100%; border: 1px solid var(--border); border-radius: 4px; }
+.inspect-scroll table { border-collapse: separate; border-spacing: 0; font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
+.inspect-scroll th { position: sticky; top: 0; z-index: 2; background: var(--panel); text-align: right; padding: 2px 8px; white-space: nowrap; border-bottom: 1px solid var(--border); }
+.inspect-scroll td { text-align: right; padding: 0 8px; white-space: nowrap; border-bottom: 1px solid var(--border); }
+.inspect-scroll .rowhead { position: sticky; left: 0; z-index: 1; background: var(--panel); color: var(--muted); font-weight: 400; }
+.inspect-scroll th.rowhead { z-index: 3; }
+.inspect-role { font-weight: 400; color: var(--muted); font-size: 0.85em; }
+.inspect-big { width: min(92vw, 1500px); }
+
+/* a locked column of a worksheet (and the read-only columns of a Workbook's inputs): tinted, a lock by its letter */
+.sheet-scroll .locked-col { background: color-mix(in srgb, var(--muted) 12%, var(--panel)); }
+.sheet-scroll th.col-letter .sheet-lock { margin-right: 2px; color: var(--muted); }
+.sheet-scroll th.col-letter .sheet-lock svg { width: 10px; height: 10px; vertical-align: -1px; }
+.sheet-lock-note { margin-top: 4px; }

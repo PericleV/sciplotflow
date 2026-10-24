@@ -11,7 +11,7 @@ import { columnLetter } from '../engine/csv.ts';
 import { convertInSheet, editCount, fillSeries, pasteSplitter, type SheetEdits, type SheetLook, type SheetMap } from '../engine/sheet.ts';
 import { cellText, ROLE_LABELS, roleOf, type ColumnRole, type Dataset } from '../engine/table.ts';
 import { maxOf } from '../engine/minmax.ts';
-import { X } from 'lucide-react';
+import { Lock, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
 import { ask } from '../ui/dialogStore.ts';
 import { looksNumeric } from '../engine/convert.ts';
@@ -62,6 +62,9 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   const map: SheetMap = given ?? { rows: Array.from({ length: nAll }, (_, i) => i), cols: dataset.columns.map((_, j) => j), baseRows: nAll, baseCols: dataset.columns.length };
   const [top, setTop] = useState(0);
   const [editing, setEditing] = useState<Cell>(null);
+  // a column's name being typed (its place, the text): shown as typed, not as the table read before it, which comes back
+  // a moment later (the cursor would jump to the end and the letters land elsewhere)
+  const [nameDraft, setNameDraft] = useState<{ j: number; v: string } | null>(null);
   const [draft, setDraft] = useState('');
   const [sel, setSel] = useState<Sel | null>(null);
   // whole columns or rows picked one by one (Ctrl + click on their letters or numbers): not side by side, unlike `sel`
@@ -83,6 +86,8 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   // the rows of its own table (with inputs: those past it are the inputs' only)
   const nOwn = layout ? (given ? Math.min(n, given.rows.length) : 0) : n;
   const lockedCol = (c: number) => reads[c] < 0;
+  // a column of its own locked by hand (right-click its letter): its name and values kept, not deleted (moved: yes)
+  const userLocked = (c: number) => reads[c] >= 0 && !!e.locked?.includes(reads[c]);
   // its own columns whose text looks like numbers: proposed under the table (converted when asked: conv, the columns)
   const proposed = cols.flatMap((c, j) => {
     if (reads[j] < 0 || !c.text) return [];
@@ -91,9 +96,24 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   });
   const [conv, setConv] = useState<number[] | null>(null);
   const [later, setLater] = useState(false);
-  const locked = (r: number, c: number) => lockedCol(c) || r >= nOwn;
+  const locked = (r: number, c: number) => lockedCol(c) || userLocked(c) || r >= nOwn;
   // a column moved or left out: of its own table, or (with inputs) any
   const canArrange = (c: number) => (layout ? c < layout.keys.length : !lockedCol(c));
+  const canRemove = (c: number) => canArrange(c) && !userLocked(c);
+  // a change asked of a locked column: said under the table for a moment
+  const [lockNote, setLockNote] = useState(false);
+  const noteLocked = () => {
+    setLockNote(true);
+    window.setTimeout(() => setLockNote(false), 2500);
+  };
+  // the columns of its own chosen locked, or all unlocked when they all are
+  const toggleLock = (cs: number[]) => {
+    const own = cs.filter((c) => reads[c] >= 0).map((c) => reads[c]);
+    if (!own.length) return;
+    const all = own.every((q) => e.locked?.includes(q));
+    const next = all ? (e.locked ?? []).filter((q) => !own.includes(q)) : [...new Set([...(e.locked ?? []), ...own])];
+    onEdits({ ...e, locked: next.length ? next : undefined });
+  };
   const canAddCol = layout ? !!layout.onAdd : !readOnly;
   const rowsEditable = !readOnly && !layout;
   // the rows that can be left out: any (a table of its own), or those of its own table (with inputs)
@@ -128,7 +148,8 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   };
   // the columns listed left out: those of its own table (deleted), the inputs' (hidden)
   const removeCols = (cs: number[]) => {
-    const list = cs.filter(canArrange);
+    if (cs.some(userLocked)) noteLocked();
+    const list = cs.filter(canRemove);
     const ownCols = list.filter((c) => reads[c] >= 0).map((c) => reads[c]);
     if (ownCols.length) onEdits({ ...e, delCols: [...(e.delCols ?? []), ...ownCols] });
     const inCols = layout ? list.filter((c) => reads[c] < 0).map((c) => layout.keys[c]) : [];
@@ -169,7 +190,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   // the whole columns (rows) chosen: picked one by one, or a block of them
   const chosenCols = picks?.on === 'col' ? picks.list : !picks && wholeCols && lo && hi ? span(lo.c, hi.c) : [];
   const chosenRows = picks?.on === 'row' ? picks.list : !picks && wholeRows && lo && hi ? span(lo.r, hi.r) : [];
-  const goneCols = chosenCols.filter(canArrange);
+  const goneCols = chosenCols.filter(canRemove);
   const goneRows = chosenRows.filter(rowGone);
 
   useEffect(() => {
@@ -322,6 +343,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
     else if (y + rowH > el.scrollTop + el.clientHeight - head) el.scrollTop = y + rowH - el.clientHeight + head;
   };
   const start = (r: number, c: number, typed?: string) => {
+    if (userLocked(c) && r < nOwn) noteLocked();
     if (locked(r, c)) return;
     setEditing({ r, c });
     setSel({ r0: r, c0: c, r1: r, c1: c });
@@ -429,6 +451,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   const withHeader = useRef(false);
   const clear = () => {
     if (!lo || !hi) return;
+    if (span(lo.c, hi.c).some(userLocked)) noteLocked();
     const cells = { ...e.cells };
     let any = false;
     for (let r = lo.r; r <= hi.r; r++)
@@ -468,10 +491,12 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
     const rowAt = (r: number) => (r < nOwn ? map.rows[r] : map.baseRows + (e.addRows ?? 0) + (r - nOwn));
     const colAt = (c: number) => (c < cols.length ? reads[c] : map.baseCols + (e.addCols ?? 0) + (c - cols.length));
     const cells = { ...e.cells };
+    // (not into a locked column)
+    if (span(c0, Math.min(cols.length - 1, c0 + width - 1)).some(userLocked)) noteLocked();
     table.forEach((t, i) =>
       t.forEach((v, j) => {
         const c = colAt(c0 + j);
-        if (c >= 0) cells[`${rowAt(r0 + i)}:${c}`] = v.trim();
+        if (c >= 0 && !(c0 + j < cols.length && userLocked(c0 + j))) cells[`${rowAt(r0 + i)}:${c}`] = v.trim();
       }),
     );
     onEdits({ ...e, cells, ...(moreRows ? { addRows: (e.addRows ?? 0) + moreRows } : {}), ...(moreCols ? { addCols: (e.addCols ?? 0) + moreCols } : {}) });
@@ -527,6 +552,8 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   // the entries of the menu for the selection (columns: when a column or a cell was clicked; rows: a row or a cell)
   const items: { label: string; run: () => void; danger?: boolean; kbd?: string }[] = [];
   if (menu && picks) {
+    const ownPicked = picks.on === 'col' ? picks.list.filter((c) => reads[c] >= 0) : [];
+    if (ownPicked.length) items.push({ label: ownPicked.every(userLocked) ? `Unlock ${ownPicked.length === 1 ? 'column' : `${ownPicked.length} columns`}` : `Lock ${ownPicked.length === 1 ? 'column' : `${ownPicked.length} columns`}`, run: () => toggleLock(ownPicked) });
     if (picks.on === 'col' && goneCols.length) {
       const hides = goneCols.every(lockedCol);
       items.push({ label: `${hides ? 'Hide' : 'Delete'} ${goneCols.length === 1 ? 'column' : `${goneCols.length} columns`}`, run: () => removeCols(goneCols), danger: true, kbd: 'Delete' });
@@ -540,8 +567,11 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
         if (lo.c > 0) items.push({ label: 'Move column left', run: () => moveCol(lo.c, lo.c - 1) });
         if (lo.c < cols.length - 1) items.push({ label: 'Move column right', run: () => moveCol(lo.c, lo.c + 1) });
       }
-      if (nc === 1 && !lockedCol(lo.c) && cols[lo.c]?.text) items.push({ label: 'Convert to numbers…', run: () => setConv([lo.c]) });
-      const gone = span(lo.c, hi.c).filter(canArrange);
+      if (nc === 1 && !lockedCol(lo.c) && !userLocked(lo.c) && cols[lo.c]?.text) items.push({ label: 'Convert to numbers…', run: () => setConv([lo.c]) });
+      // (a column of its own locked: its name and values kept)
+      const own = span(lo.c, hi.c).filter((c) => reads[c] >= 0);
+      if (own.length) items.push({ label: own.every(userLocked) ? `Unlock ${own.length === 1 ? 'column' : `${own.length} columns`}` : `Lock ${own.length === 1 ? 'column' : `${own.length} columns`}`, run: () => toggleLock(own) });
+      const gone = span(lo.c, hi.c).filter(canRemove);
       if (gone.length) {
         const hides = gone.every(lockedCol);
         items.push({ label: `${hides ? 'Hide' : 'Delete'} ${gone.length === 1 ? 'column' : `${gone.length} columns`}`, run: () => removeCols(gone), danger: true, kbd: menu.on === 'col' ? 'Delete' : undefined });
@@ -569,7 +599,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
               {cols.map((_c, j) => (
                 <th
                   key={j}
-                  className={`col-letter${chosenCols.includes(j) ? ' sel' : ''}${dropAt === j && moving !== null && moving !== j ? (moving < j ? ' drop-after' : ' drop-before') : ''}`}
+                  className={`col-letter${userLocked(j) || (lockedCol(j) && !readOnly) ? ' locked-col' : ''}${chosenCols.includes(j) ? ' sel' : ''}${dropAt === j && moving !== null && moving !== j ? (moving < j ? ' drop-after' : ' drop-before') : ''}`}
                   title={canArrange(j) ? 'Select the whole column (Shift: up to this one); drag it to move the column; right-click: insert, delete, move' : 'Select the whole column (Shift: up to this one)'}
                   onClick={(ev) => selCols(j, ev.shiftKey, ev.ctrlKey || ev.metaKey)}
                   onContextMenu={(ev) => openMenu(ev, 'col', 0, j)}
@@ -595,16 +625,22 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
                     setDropAt(null);
                   }}
                 >
+                  {userLocked(j) && (<span className="sheet-lock" aria-label="locked"><Lock {...IC} /></span>)}
                   {columnLetter(j)}({ROLE_LABELS[roleOf(cols, j)]})
                   {onLook && <span className="col-grip" title="Drag: the column's width; double-click: it fits its values" onPointerDown={(ev) => dragCol(ev, j)} onClick={(ev) => ev.stopPropagation()} onDoubleClick={(ev) => (ev.stopPropagation(), fitCol(j))} />}
-                  {canArrange(j) && (
+                  {canRemove(j) && (
                     <button
                       className="sheet-x"
+                      draggable={false}
                       title={lockedCol(j) ? 'Hide this column of the inputs (it comes back from the foot of the table)' : 'Leave this column out'}
-                      onClick={(ev) => {
+                      onPointerDown={(ev) => {
+                        // (on the press: a click could be taken by the drag of the column letter it sits in)
+                        if (ev.button !== 0) return;
+                        ev.preventDefault();
                         ev.stopPropagation();
                         removeCols([j]);
                       }}
+                      onClick={(ev) => ev.stopPropagation()}
                     >
                       <X {...IC} />
                     </button>
@@ -632,7 +668,23 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
               <th className="rowhead">name</th>
               {cols.map((c, j) => (
                 <th key={j} style={wide(j)}>
-                  <input style={colW(c.name) ? { width: colW(c.name) } : undefined} className={!plain && !lockedCol(j) && e.cols?.[reads[j]]?.name !== undefined ? 'edited' : ''} value={c.name} placeholder={columnLetter(j)} spellCheck={false} readOnly={lockedCol(j)} title="The name of the column, with its unit if it has one: “Wavelength (nm)”" onChange={(ev) => setHead(j, { name: ev.target.value })} />
+                  <input
+                    style={colW(c.name) ? { width: colW(c.name) } : undefined}
+                    className={!plain && !lockedCol(j) && e.cols?.[reads[j]]?.name !== undefined ? 'edited' : ''}
+                    value={nameDraft?.j === j ? nameDraft.v : c.name}
+                    placeholder={columnLetter(j)}
+                    spellCheck={false}
+                    readOnly={lockedCol(j) || userLocked(j)}
+                    title={userLocked(j) ? 'Locked column: right-click its letter ▸ Unlock column to rename it' : 'The name of the column, with its unit if it has one: “Wavelength (nm)”'}
+                    onFocus={() => !lockedCol(j) && !userLocked(j) && setNameDraft({ j, v: c.name })}
+                    onClick={() => userLocked(j) && noteLocked()}
+                    onBlur={() => setNameDraft(null)}
+                    onKeyDown={(ev) => (ev.key === 'Enter' || ev.key === 'Escape') && (ev.currentTarget as HTMLInputElement).blur()}
+                    onChange={(ev) => {
+                      setNameDraft({ j, v: ev.target.value });
+                      setHead(j, { name: ev.target.value });
+                    }}
+                  />
                 </th>
               ))}
             </tr>
@@ -652,10 +704,13 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
                     <button
                       className="sheet-x"
                       title="Leave this row out"
-                      onClick={(ev) => {
+                      onPointerDown={(ev) => {
+                        if (ev.button !== 0) return;
+                        ev.preventDefault();
                         ev.stopPropagation();
                         removeRows([r]);
                       }}
+                      onClick={(ev) => ev.stopPropagation()}
                     >
                       <X {...IC} />
                     </button>
@@ -672,7 +727,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
                       style={wide(j)}
                       data-r={r}
                       data-c={j}
-                      className={`${!locked(r, j) && edited(r, j) ? 'edited' : ''}${isSel(r, j) ? ' sel' : ''}${inFill(r, j) ? ' fill-preview' : ''}${showHandle && hi && r === hi.r && j === hi.c ? ' fill-at' : ''}`}
+                      className={`${!locked(r, j) && edited(r, j) ? 'edited' : ''}${userLocked(j) || (lockedCol(j) && !readOnly) ? ' locked-col' : ''}${isSel(r, j) ? ' sel' : ''}${inFill(r, j) ? ' fill-preview' : ''}${showHandle && hi && r === hi.r && j === hi.c ? ' fill-at' : ''}`}
                       onMouseDown={(ev) => {
                         if (ev.button !== 0) return;
                         dragging.current = true;
@@ -701,6 +756,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
         </table>
       </div>
       {onLook && <span className="sheet-grip nodrag" title="Drag: the node's width and the table's height" onPointerDown={dragCorner} />}
+      {lockNote && <div className="msg warn sheet-lock-note">Locked column: right-click its letter ▸ Unlock column to change it.</div>}
       <div className="row wrap sheet-foot">
         {rowsEditable || (layout && !readOnly) ? (
           <>
@@ -738,7 +794,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
           </button>
         )}
         {count > 0 && (
-          <button className="nodrag danger" onClick={() => void ask('Undo every change made by hand in this table (the file stays as it is)?', { ok: 'Undo all', danger: true }).then((yes) => yes && onEdits({}))}>
+          <button className="nodrag danger" onClick={() => void ask('Undo every change made by hand in this table (the file stays as it is)?', { ok: 'Undo all', danger: true }).then((yes) => yes && onEdits(e.locked ? { locked: e.locked } : {}))}>
             Undo all changes
           </button>
         )}

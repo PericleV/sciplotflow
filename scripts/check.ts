@@ -17,7 +17,7 @@ import { adjustedPositions, bLife, fisherCov, fitMLE, fitRR, fitThreshold, kapla
 import { isErrorName, errorTargets } from '../src/engine/errcols.ts';
 import { CONV_DEFAULTS, FFT_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, SMOOTH_DEFAULTS } from '../src/defaults.ts';
 import { CURVEMATH_DEFAULTS, PEAKWIDTH_DEFAULTS, TRANSLATE_DEFAULTS } from '../src/defaults.ts';
-import type { CurveMathData, TranslateData } from '../src/types.ts';
+import type { CurveMathData, ExtractData, TranslateData } from '../src/types.ts';
 import { anovaNode } from '../src/engine/statnodes.ts';
 import { ANOVA_DEFAULTS } from '../src/defaults.ts';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -120,7 +120,7 @@ import { darkShade, loadColors, SWATCHES } from '../src/theme.ts';
 import { doStep, figureSaved, importWithData, plotOfImport, stepsOf, TOURS, uvVisText, type TourState } from '../src/tour/tours.ts';
 import { groupNodes } from '../src/groups.ts';
 import { asBatch, emptyBatch, GROUP_IN, GROUP_OUT } from '../src/engine/subgraph.ts';
-import { columnRuns, guessPattern, patternOf, readName, tidyOwn, withOwn } from '../src/engine/batch.ts';
+import { columnRuns, guessPattern, patternOf, portNames, readName, sideBySide, tidyOwn, withOwn } from '../src/engine/batch.ts';
 import type { GroupData } from '../src/types.ts';
 import { fileProject, isPng, makeEmbedded, openEmbedded, pngProject, pngWithProject, projectRevision, svgProject, svgWithProject, withoutImported } from '../src/figure/embed.ts';
 import { EMU_PER_PT, readOffice, writeOffice } from '../src/figure/office.ts';
@@ -910,6 +910,21 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   ok(res.get('s')!.view.stats?.mean === 30 && res.get('s')!.warnings.length === 1, 'mask: Statistics leaves the masked rows out');
   const pc = res.get('p')!.view.curves;
   ok(!!pc && Array.from(pc[0].mask ?? []).join(',') === '0,0,1', 'mask: the masked points of a Plot curve');
+}
+
+// ---- Extract column: the rows taken (all, ranges, a list, where), one value of them; an older one value kept ----
+{
+  const imp = { id: 'i', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, text: 'E;I\n' + Array.from({ length: 10 }, (_, k) => `${(k * 0.1).toFixed(1)};${k * k}`).join('\n'), textId: 'ex-rows' } } as AppNode;
+  const run = (d: Partial<ExtractData>) => {
+    const r = evaluateGraph([imp, { id: 'e', type: 'extract', position: { x: 0, y: 0 }, data: { column: 'I', index: 1, ...d } } as AppNode], [{ id: '1', source: 'i', sourceHandle: 'out', target: 'e', targetHandle: 'in' }]).get('e')!;
+    const o = r.outputs.out;
+    return o?.t === 'column' ? Array.from(o.v.values).join(',') : o?.t === 'scalar' ? String(+o.v.value.toPrecision(10)) : `error: ${r.errors.join(' ')}`;
+  };
+  const where = { mode: 'rule' as const, rule: 'x > 0.55' };
+  const ok1 = run({}) === '0,1,4,9,16,25,36,49,64,81' && run({ rows: where }) === '36,49,64,81' && run({ rows: { mode: 'list', list: '2, 4-5' } }) === '1,9,16' && run({ rows: { mode: 'range', by: 'x', ranges: [{ from: 0.2, to: 0.4 }] } }) === '4,9,16';
+  const ok2 = run({ value: true, rows: where }) === '36' && run({ value: true, rows: where, pick: 'last' }) === '81' && run({ value: true, rows: where, pick: 'mean' }) === '57.5' && run({ value: true, rows: where, pick: 'count' }) === '4' && run({ value: true, rows: { mode: 'rule', rule: 'x == 0.3' } }) === '9';
+  const ok3 = run({ value: true, row: 4 }) === '9' && run({ rows: { mode: 'rule', rule: 'x > 5' } }).startsWith('error: No row chosen');
+  ok(ok1 && ok2 && ok3, `Extract column: rows where x > 0.55 (${run({ rows: where })}), a list, a range of X; one value (first, last, mean ${run({ value: true, rows: where, pick: 'mean' })}, count; I where E = 0.3: ${run({ value: true, rows: { mode: 'rule', rule: 'x == 0.3' } })}); an older one value kept; none chosen said`);
 }
 
 // ---- Statistics on columns / rows, the rows chosen ----
@@ -5859,6 +5874,25 @@ for (const ex of EXAMPLES) {
       const k0 = r2.outputs['k-out-0']?.t === 'dataset' ? r2.outputs['k-out-0'].v : undefined;
       const k1 = r2.outputs['k-out-1']?.t === 'dataset' ? r2.outputs['k-out-1'].v : undefined;
       ok(k0?.name === 'peak' && k0.columns[0].values.length === 3 && Array.from(k0.columns.find((c) => c.name === 'x')?.values ?? []).join(' ') === '30 50 70' && !k0.columns.some((c) => c.name === 'y' && c.values.length > 3) && k1?.name === 'smoothed' && k1.columns[0].name === 'File' && k1.columns[0].values.length === 303 && sourcePort(two, 'k-out-1') === 'dataset', `Batch: each result kept on a port of its own (${k0?.columns.map((c) => c.name).join(', ')} · ${k1?.columns.length} columns, ${k1?.columns[0].values.length} rows)`);
+      // side by side: one X (the same in every file), a Y per file named after it; the kept results named by hand (a
+      // name met twice numbered), the auto names back when cleared
+      const side = { ...two, data: { ...(two.data as GroupData), batch: { ...(two.data as GroupData).batch, long: 'side' as const }, outputs: (two.data as GroupData).outputs.map((p, k) => ({ ...p, name: k === 0 ? 'Maximum' : 'Curves' })) } } as AppNode;
+      const r3 = evaluateGraph([imp, side], g.edges).get('b1')!;
+      const s1 = r3.outputs['k-out-1']?.t === 'dataset' ? r3.outputs['k-out-1'].v : undefined;
+      const s0 = r3.outputs['k-out-0']?.t === 'dataset' ? r3.outputs['k-out-0'].v : undefined;
+      const all = r3.outputs.stacked?.t === 'dataset' ? r3.outputs.stacked.v : undefined;
+      const sideOk = s1?.name === 'Curves' && s1.columns.filter((c) => c.role === 'x' || c.role === 'y').map((c) => `${c.name}:${c.role}`).join(',') === 'x:x,y (smoothed) (sample_20C):y,y (smoothed) (sample_30C):y,y (smoothed) (sample_40C):y' && s1.columns[0].values.length === 101 && s0?.name === 'Maximum' && s0.columns[0].values.length === 3 && all?.columns[0].name === 'File' && all.columns[0].values.length === 3;
+      // (an X that differs: every file's X before its columns)
+      const sb = sideBySide([{ name: 'a', ds: { name: 'a', columns: [{ ...column('t', Float64Array.from([0, 1])), role: 'x' }, { ...column('v', Float64Array.from([5, 6])), role: 'y' }] } }, { name: 'b', ds: { name: 'b', columns: [{ ...column('t', Float64Array.from([0, 2])), role: 'x' }, { ...column('v', Float64Array.from([7, 8])), role: 'y' }] } }]);
+      const names = portNames([{ id: '1', label: 'Smooth' }, { id: '2', label: 'Smooth' }, { id: '3', label: 'Fit', name: 'Peaks' }, { id: '4', label: 'Fit', name: '  ' }]);
+      // two results kept with the same name made (two Split into columns): each its own data (they were gathered by
+      // name, so the second port gave the first one's)
+      const mn = { id: 'mn', type: 'pick', position: { x: 0, y: 0 }, data: { ...structuredClone(PICK_DEFAULTS), rules: [{ kind: 'min', value: '' }] } } as AppNode;
+      const twin = { ...batch, data: { ...(batch.data as GroupData), nodes: [...inner, mn], edges: [...innerE, { id: 'm1', source: GROUP_IN, sourceHandle: 'in-0', target: 'mn', targetHandle: 'in' }, { id: 'm2', source: 'mn', sourceHandle: 'out', target: GROUP_OUT, targetHandle: 'out-1' }], outputs: [{ id: 'out-0', label: 'Pick points', type: 'dataset' }, { id: 'out-1', label: 'Pick points', type: 'dataset' }] } } as AppNode;
+      const rt = evaluateGraph([imp, twin], g.edges).get('b1')!;
+      const xs = (h: string) => (rt.outputs[h]?.t === 'dataset' ? Array.from((rt.outputs[h].v as { columns: { name: string; values: Float64Array }[] }).columns.find((c) => c.name === 'x')?.values ?? []).join(' ') : '');
+      ok(xs('k-out-0') === '30 50 70' && xs('k-out-1') !== xs('k-out-0') && xs('k-out-1') !== '', `Batch: two results kept with the same name, each its own data (max ${xs('k-out-0')}, min ${xs('k-out-1')})`);
+      ok(sideOk && sb?.columns.map((c) => `${c.name}:${c.role}`).join(',') === 't (a):x,v (a):y,t (b):x,v (b):y' && names.join('|') === 'Smooth|Smooth (2)|Peaks|Fit', `Batch: long tables side by side (${s1?.columns.map((c) => c.name).join(', ')}; one-row tables still a row per file); an X that differs before each file; kept results named by hand (${names.join(', ')})`);
     }
     // the same files again: nothing computed again (the cache of every file kept)
     const again = evaluateGraph(g.nodes, g.edges, cache);

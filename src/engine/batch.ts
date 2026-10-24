@@ -5,6 +5,19 @@
 // evaluate.ts (it evaluates the group's graph once per file).
 import { column, findColumn, roleOf, type Column, type Dataset, type Scalar, type Workbook } from './table.ts';
 import { pick } from './extract.ts';
+import type { GroupPort } from '../types.ts';
+
+// The names of a group's ports: the one given by hand, else the one made; a name met twice numbered (“Smooth (2)”), as
+// the results of a Batch are gathered by their names
+export function portNames(ports: GroupPort[]): string[] {
+  const seen = new Map<string, number>();
+  return ports.map((p) => {
+    const base = p.name?.trim() || p.label;
+    const k = (seen.get(base) ?? 0) + 1;
+    seen.set(base, k);
+    return k > 1 ? `${base} (${k})` : base;
+  });
+}
 
 // pattern: “{Name}” takes a number, “{Name:text}” a word, the rest is written as in the names (empty: nothing read);
 // order: the files as they come, by name (numbers in their order: run 2 before run 10), or by the first value read;
@@ -13,8 +26,9 @@ import { pick } from './extract.ts';
 export type BatchOwn = Record<string, Record<string, Record<string, unknown>>>;
 // over 'columns': the steps run on every column of one table (not on every file) — sheet: of a workbook, by its name
 // (absent: the first); cols: the columns (2-6, B-F, names, R*, !C; empty: every Y); xFrom: their X — one column for all
-// (x: its name; empty: the designated X), the X on the left of each (its designations: X, Y, X, Y …), or the row number
-export type BatchSpec = { pattern?: string; order?: 'given' | 'name' | 'value'; show?: number; own?: BatchOwn; over?: 'columns'; sheet?: string; cols?: string; xFrom?: 'one' | 'left' | 'row'; x?: string };
+// (x: its name; empty: the designated X), the X on the left of each (its designations: X, Y, X, Y …), or the row number;
+// long: the tables of more than one row, every file's rows one under the other (absent) or its columns side by side
+export type BatchSpec = { pattern?: string; order?: 'given' | 'name' | 'value'; show?: number; own?: BatchOwn; over?: 'columns'; sheet?: string; cols?: string; xFrom?: 'one' | 'left' | 'row'; x?: string; long?: 'side' };
 // the steps with a file's own settings over the common ones
 export function withOwn<T extends { id: string; data: unknown }>(nodes: T[], own: Record<string, Record<string, unknown>> | undefined): T[] {
   if (!own || !Object.keys(own).length) return nodes;
@@ -125,11 +139,38 @@ const textCol = (name: string, t: string[]): Column => column(name, Float64Array
 const partCol = (q: Part, vals: (number | string | undefined)[]): Column =>
   q.text ? textCol(q.name, vals.map((v) => (v === undefined ? '' : String(v)))) : numCol(q.name, vals.map((v) => (typeof v === 'number' ? v : NaN)));
 
+// Every file's table side by side: its columns named after the file (“Counts (sample_25C)”), each with its designation;
+// one X for all when every file has the same X (as many values, equal), else every file's X before its columns
+export function sideBySide(runs: { name: string; ds: Dataset | undefined }[]): Dataset | null {
+  const got = runs.filter((r): r is { name: string; ds: Dataset } => !!r.ds?.columns.length);
+  if (!got.length) return null;
+  const xOf = (ds: Dataset) => ds.columns.findIndex((_, j) => roleOf(ds.columns, j) === 'x');
+  const xs = got.map((r) => xOf(r.ds));
+  const X0 = xs[0] >= 0 ? got[0].ds.columns[xs[0]] : undefined;
+  const same =
+    !!X0 &&
+    xs.every((j, i) => {
+      const X = j >= 0 ? got[i].ds.columns[j] : undefined;
+      if (!X || X.values.length !== X0.values.length) return false;
+      const tol = 1e-12 * Math.max(1, ...Array.from(X0.values, (v) => (Number.isFinite(v) ? Math.abs(v) : 0)));
+      return X.values.every((v, k) => (Number.isNaN(v) && Number.isNaN(X0.values[k])) || Math.abs(v - X0.values[k]) <= tol);
+    });
+  const named = (c: Column, run: string): Column => ({ ...c, name: `${c.name} (${run})` });
+  const out: Column[] = same ? [{ ...X0!, role: 'x' }] : [];
+  got.forEach((r, i) => {
+    r.ds.columns.forEach((c, j) => {
+      if (j === xs[i] && same) return;
+      out.push({ ...named(c, r.name), role: roleOf(r.ds.columns, j) });
+    });
+  });
+  return { name: 'all files', columns: out };
+}
+
 // the three outputs: a row per file (its name, what its name says, its values, the one row of a table it gave);
 // a sheet per file (and per table when the steps give several); every file's rows one under the other (of its first
-// table), the file and what its name says before them
+// table), the file and what its name says before them — or, side, its columns side by side
 // (unit: what a run is — its column in the table and the rows: File, or Column for a batch over columns)
-export function gather(runs: FileRun[], read: ((number | string)[] | null)[], parts: Part[], unit = 'File'): { table: Dataset; sheets: Workbook; stacked: Dataset | null } {
+export function gather(runs: FileRun[], read: ((number | string)[] | null)[], parts: Part[], unit = 'File', side = false): { table: Dataset; sheets: Workbook; stacked: Dataset | null } {
   const n = runs.length;
   const cols: Column[] = [textCol(unit, runs.map((r) => r.name)), ...parts.map((q, k) => partCol(q, read.map((r) => r?.[k])))];
   // the values, by their label (a file without one: empty)
@@ -155,7 +196,9 @@ export function gather(runs: FileRun[], read: ((number | string)[] | null)[], pa
   // stacked: the first table of every file, its columns matched by name (in the order first met)
   const firsts = runs.map((r) => r.tables[0]?.ds);
   let stacked: Dataset | null = null;
-  if (firsts.some(Boolean)) {
+  // (side by side: only tables of more than one row; one row per file stays a row per file)
+  if (side && firsts.some((ds) => Math.max(0, ...(ds?.columns.map((c) => c.values.length) ?? [0])) > 1)) stacked = sideBySide(runs.map((r, i) => ({ name: r.name, ds: firsts[i] })));
+  else if (firsts.some(Boolean)) {
     const names: string[] = [];
     for (const ds of firsts) for (const c of ds?.columns ?? []) if (!names.includes(c.name)) names.push(c.name);
     const rows = firsts.map((ds) => Math.max(0, ...(ds?.columns.map((c) => c.values.length) ?? [0])));
@@ -186,13 +229,13 @@ export function gather(runs: FileRun[], read: ((number | string)[] | null)[], pa
 }
 
 // One result kept, on a port of its own (its label): a value, or a table of one row (a Fit's parameters), gives a table
-// with a row per run; a longer table, every run's rows one under the other (the run and what its name says before them);
-// null: no run gave it
-export function gatherOne(runs: FileRun[], read: ((number | string)[] | null)[], parts: Part[], label: string, unit = 'File'): Dataset | null {
+// with a row per run; a longer table, every run's rows one under the other (the run and what its name says before them)
+// or, side, its columns side by side; null: no run gave it
+export function gatherOne(runs: FileRun[], read: ((number | string)[] | null)[], parts: Part[], label: string, unit = 'File', side = false): Dataset | null {
   const only = runs.map((r) => ({ ...r, values: r.values.filter((v) => v.label === label), tables: r.tables.filter((t) => t.label === label) }));
   if (!only.some((r) => r.values.length || r.tables.length)) return null;
   const long = only.some((r) => r.tables.some((t) => Math.max(0, ...t.ds.columns.map((c) => c.values.length)) > 1));
-  const g = gather(only, read, parts, unit);
+  const g = gather(only, read, parts, unit, side);
   return { ...(long && g.stacked ? g.stacked : g.table), name: label };
 }
 

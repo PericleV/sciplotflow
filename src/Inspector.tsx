@@ -2,7 +2,8 @@
 // » (it folds to a thin strip; folded when the app opens, unfolded by a node clicked — also after it was folded by
 // hand —, folded again by a click on the empty canvas unless something is pinned), sections that fold. A section for the node clicked (the one selected) and
 // one for every node pinned (the pin: it stays while other nodes are clicked, so several can be seen at once); a section
-// holds its node's options (NodeOptions draws them there). Its width is dragged at its left edge and kept.
+// holds its node's options (NodeOptions draws them there). Its width is dragged at its left edge and kept. Above them,
+// the data inspected (Inspect: a node's outputs, or what a connection carries), each pinned or closed apart.
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { useLeaving } from './useLeaving.ts';
 import { nodeColor, nodeDisplayName } from './nodeColors.ts';
@@ -11,6 +12,12 @@ import { PinIcon } from './nodes/icons.tsx';
 import type { AppNode } from './types.ts';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { IC } from './nodes/iconProps.ts';
+import { DataSection, type DataTarget } from './DataInspect.tsx';
+import type { Edge } from '@xyflow/react';
+import type { NodeResult } from './engine/evaluate.ts';
+
+// the data inspected and what they are read from (the results, the nodes and connections of the graph shown)
+export type InspectData = { targets: DataTarget[]; results: Map<string, NodeResult>; nodes: AppNode[]; edges: Edge[]; onPin: (t: DataTarget, on: boolean) => void; onClose: (t: DataTarget) => void };
 
 const KEY = 'graph-flow:inspector';
 const MIN_W = 300;
@@ -61,7 +68,7 @@ function Section({ node, pinned, onPin }: { node: AppNode; pinned: boolean; onPi
 
 // paneClicks: counts the clicks on the empty canvas (each folds the panel when nothing is pinned); nodeClicks: the
 // clicks on a node (each unfolds it, the same node clicked again too)
-export function Inspector({ current, pinned, onPin, paneClicks = 0, nodeClicks = 0 }: { current: AppNode | null; pinned: AppNode[]; onPin: (id: string, on: boolean) => void; paneClicks?: number; nodeClicks?: number }) {
+export function Inspector({ current, pinned, onPin, paneClicks = 0, nodeClicks = 0, data }: { current: AppNode | null; pinned: AppNode[]; onPin: (id: string, on: boolean) => void; paneClicks?: number; nodeClicks?: number; data?: InspectData }) {
   // folded when the app opens; a node clicked (or chosen another way) unfolds it
   const [state, setState] = useState<State>(() => ({ ...load(), open: false }));
   const update = (patch: Partial<State>) =>
@@ -81,7 +88,7 @@ export function Inspector({ current, pinned, onPin, paneClicks = 0, nodeClicks =
   const [seenClicks, setSeenClicks] = useState(paneClicks);
   if (paneClicks !== seenClicks) {
     setSeenClicks(paneClicks);
-    if (!pinned.length && state.open) setState({ ...state, open: false });
+    if (!pinned.length && !data?.targets.some((t) => t.pinned) && state.open) setState({ ...state, open: false });
   }
   const fold = (open: boolean) => update({ open });
   const drag = useRef<{ x: number; w: number } | null>(null);
@@ -121,10 +128,13 @@ export function Inspector({ current, pinned, onPin, paneClicks = 0, nodeClicks =
             </button>
           </div>
           <div className="palette-list">
+            {data?.targets.map((t) => (
+              <DataSection key={`${t.kind}-${t.id}`} target={t} results={data.results} nodes={data.nodes} edges={data.edges} onPin={(on) => data.onPin(t, on)} onClose={() => data.onClose(t)} />
+            ))}
             {sections.map((n) => (
               <Section key={n.id} node={n} pinned={pinned.some((p) => p.id === n.id)} onPin={(on) => onPin(n.id, on)} />
             ))}
-            {!sections.length && <div className="muted palette-empty">Click a node: its options appear here.</div>}
+            {!sections.length && !data?.targets.length && <div className="muted palette-empty">Click a node: its options appear here.</div>}
           </div>
           <div className="hint palette-foot">Click a node to see its options; the pin keeps them while you click others.</div>
         </aside>

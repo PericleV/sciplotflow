@@ -39,6 +39,7 @@ import { ContextMenu, type MenuAction, type MenuItem, type MenuState } from './C
 import { groupNodes, releaseChildren, removeFromGroup, ungroup } from './groups.ts';
 import { useHistory } from './history.ts';
 import { Inspector } from './Inspector.tsx';
+import type { DataTarget } from './DataInspect.tsx';
 import { hasPanel } from './nodes/inspectorStore.ts';
 import { editCaption } from './nodes/captionStore.ts';
 import { FlowEdge } from './FlowEdge.tsx';
@@ -112,13 +113,13 @@ import type { NodeResult } from './engine/evaluate.ts';
 import { canPaste, copySettings, pastedData, useClipboard } from './nodes/clipboard.ts';
 import { clearDefaultStyle, defaultStyleFor, forgetStyle, saveStyle, setDefaultStyle, styledData, stylesFor, userStylesFor, withDefaultStyle } from './nodes/styles.ts';
 import { FRAME_COLORS, GROUP_COLORS, NODE_COLORS, nodeColor, nodeDisplayName, nodeTitle } from './nodeColors.ts';
-import { tidyOwn, type BatchOwn, type BatchSpec } from './engine/batch.ts';
+import { portNames, tidyOwn, type BatchOwn, type BatchSpec } from './engine/batch.ts';
 import { FindNode } from './FindNode.tsx';
 import { PlotColumnsDialog, type PlotChoice } from './PlotColumnsDialog.tsx';
 import { buildFigure } from './plotBuild.ts';
 import { readFiles } from './readFiles.ts';
 import type { AppNode, NodeType } from './types.ts';
-import { ArrowLeft, ArrowRight, CircleHelp, CornerDownRight, FilePlus2, FolderOpen, Grid3x3, Library, Link2, Map as MapIcon, Maximize, Monitor, Moon, Redo2, Save, Search, Spline, Sun, TriangleAlert, Undo2, Users } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CircleHelp, CornerDownRight, FilePlus2, FolderOpen, Grid3x3, Library, Link2, Map as MapIcon, Maximize, Monitor, Moon, Redo2, Save, Search, Spline, Sun, TableProperties, TriangleAlert, Undo2, Users } from 'lucide-react';
 import { IC } from './nodes/iconProps.ts';
 import { ask as askUser, askText, notify } from './ui/dialogStore.ts';
 
@@ -383,6 +384,14 @@ function Flow() {
   const [paneClicks, setPaneClicks] = useState(0);
   // the clicks on a node (each unfolds the options panel, even when it was folded by hand)
   const [nodeClicks, setNodeClicks] = useState(0);
+  // Inspect: on, a click on a node or a connection shows its data in the options panel; the data shown (pinned ones kept
+  // while others are chosen)
+  const [inspecting, setInspecting] = useState(false);
+  const [dataTargets, setDataTargets] = useState<DataTarget[]>([]);
+  const inspectData = (t: { kind: 'node' | 'edge'; id: string }) => {
+    setDataTargets((ts) => [...ts.filter((x) => x.pinned && !(x.kind === t.kind && x.id === t.id)), { ...t, pinned: ts.some((x) => x.kind === t.kind && x.id === t.id && x.pinned) || undefined }]);
+    setNodeClicks((k) => k + 1);
+  };
   const togglePanel = (p: 'projects' | 'docs' | 'help' | 'collab') => setPanel((cur) => (cur === p ? null : p));
   // the panel on the right closed with an animation
   const { shown: shownPanel, closing: panelClosing } = useLeaving(panel);
@@ -1151,6 +1160,7 @@ function Flow() {
       actions: [
         { label: n.data.caption ? 'Edit label' : 'Add label', onClick: () => editCaption(n.id) },
         { label: n.data.collapsed ? 'Expand' : 'Collapse', onClick: () => setCollapsed([n.id], !n.data.collapsed) },
+        ...(n.type === 'note' || n.type === 'reroute' ? [] : [{ label: 'Inspect data', onClick: () => inspectData({ kind: 'node', id: n.id }) }]),
         {
           label: 'Duplicate',
           onClick: () => {
@@ -1574,6 +1584,9 @@ function Flow() {
         <button className={finding ? 'active' : ''} onClick={() => setFinding(true)} title="Find a node on the canvas by its name or type (Ctrl+F)">
           <Search {...IC} /> <span className="tb-label">Find node</span>
         </button>
+        <button className={inspecting ? 'active' : ''} onClick={() => setInspecting((v) => !v)} title={inspecting ? 'Inspect: on, click a node or a connection to see its data in the options panel; click here to stop' : 'Inspect: see the data a node gives or a connection carries (a table, in the options panel), without making a workbook'}>
+          <TableProperties {...IC} /> <span className="tb-label">Inspect</span>
+        </button>
         <span className="undo-redo">
           <button onClick={history.undo} disabled={!history.canUndo} title="Undo (Ctrl+Z)" aria-label="Undo"><Undo2 {...IC} /></button>
           <button onClick={history.redo} disabled={!history.canRedo} title="Redo (Ctrl+Y / Ctrl+Shift+Z)" aria-label="Redo"><Redo2 {...IC} /></button>
@@ -1616,7 +1629,7 @@ function Flow() {
         <EngineContext.Provider value={engine}>
           <GroupNavContext.Provider value={{ open: openGroup, current: currentGroup }}>
           <div
-            className="canvas"
+            className={`canvas${inspecting ? ' inspecting' : ''}`}
             ref={canvasRef}
             onDragOver={onDragOver}
             onDrop={onDrop}
@@ -1636,7 +1649,7 @@ function Flow() {
                     .map((l) => (l.nodes.find((n) => n.id === l.groupId)?.data as { name?: string } | undefined)?.name || 'Group')
                     .join(' › ')}
                 </b>
-                {currentGroup?.batch ? <BatchFileBar files={batchFiles} shown={batchShown} kept={currentGroup.outputs.map((q) => q.label)} onShow={showBatchFile} mode={batchMode} setMode={setBatchMode} ownSteps={ownSteps} ownCount={(name) => Object.keys(currentGroup.batch?.own?.[name] ?? {}).length} onBack={ownBack} onForAll={ownForAll} /> : <span className="hint">The Group input and Group output nodes are its ports.</span>}
+                {currentGroup?.batch ? <BatchFileBar files={batchFiles} shown={batchShown} kept={portNames(currentGroup.outputs)} onShow={showBatchFile} mode={batchMode} setMode={setBatchMode} ownSteps={ownSteps} ownCount={(name) => Object.keys(currentGroup.batch?.own?.[name] ?? {}).length} onBack={ownBack} onForAll={ownForAll} /> : <span className="hint">The Group input and Group output nodes are its ports.</span>}
               </div>
             )}
             <ReactFlow
@@ -1662,7 +1675,11 @@ function Flow() {
                 closeMenu();
                 setPaneClicks((k) => k + 1);
               }}
-              onNodeClick={() => setNodeClicks((k) => k + 1)}
+              onNodeClick={(_, n) => {
+                setNodeClicks((k) => k + 1);
+                if (inspecting) inspectData({ kind: 'node', id: n.id });
+              }}
+              onEdgeClick={(_, e) => inspecting && inspectData({ kind: 'edge', id: e.id })}
               onMoveStart={closeMenu}
               onNodeDragStart={closeMenu}
               onNodeDrag={(ev, n) => {
@@ -1852,7 +1869,21 @@ function Flow() {
           </GroupNavContext.Provider>
         </EngineContext.Provider>
         </ProjectInfoContext.Provider>
-        <Inspector current={selectedOne} pinned={pinnedNodes} onPin={pin} paneClicks={paneClicks} nodeClicks={nodeClicks} />
+        <Inspector
+          current={selectedOne}
+          pinned={pinnedNodes}
+          onPin={pin}
+          paneClicks={paneClicks}
+          nodeClicks={nodeClicks}
+          data={{
+            targets: dataTargets,
+            results: engine.results,
+            nodes,
+            edges,
+            onPin: (t, on) => setDataTargets((ts) => ts.map((x) => (x.kind === t.kind && x.id === t.id ? { ...x, pinned: on || undefined } : x))),
+            onClose: (t) => setDataTargets((ts) => ts.filter((x) => !(x.kind === t.kind && x.id === t.id))),
+          }}
+        />
       </div>
     </div>
   );

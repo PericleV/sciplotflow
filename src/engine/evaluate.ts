@@ -21,7 +21,7 @@ import { columnLetter, readTable, type CsvResult } from './csv.ts';
 import { curveColumns, digest, figPort, outValue, toPy, type PyJob, type PyResult, type PyValue } from './python.ts';
 import { applySheet, hasEdits, readSheet, type SheetMap } from './sheet.ts';
 import { flattenGroups, GROUP_IN, GROUP_OUT } from './subgraph.ts';
-import { columnRuns, gather, gatherOne, orderFiles, readText, resultOf, withOwn, type FileRun } from './batch.ts';
+import { columnRuns, gather, gatherOne, orderFiles, portNames, readText, resultOf, withOwn, type FileRun } from './batch.ts';
 import { takeRows } from './split.ts';
 import { parseRows } from './rows.ts';
 export { parseRows };
@@ -4506,8 +4506,30 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       const { column: name, index } = n.data;
       const c = !name ? cols[0] : cols[index]?.name === name ? cols[index] : findColumn(cols, name);
       if (!c) return { errors: [`No column “${name}” in the ${sheets ? 'sheet' : 'dataset'}.`], view: { available, sheets } };
+      // the rows chosen (all, ranges, a list, where conditions are true), of the rows of the column; X: the designated one
+      if (n.data.rows) {
+        const X = cols.find((_, j) => roleOf(cols, j) === 'x');
+        const sel = selectRows(n.data.rows, c.values.length, X, cols);
+        if (typeof sel === 'string') return { errors: [`Rows: ${sel}`], view: { available, sheets } };
+        const statRows = { used: sel.rows.length, of: c.values.length, text: sel.text };
+        if (!sel.rows.length) return { errors: ['No row chosen: no row is in the ranges, the list, or meets the conditions.'], view: { available, sheets, statRows } };
+        if (!n.data.value) {
+          const picked: Column = { ...column(c.name, Float64Array.from(sel.rows, (i) => c.values[i]), c.text ? sel.rows.map((i) => c.text![i]) : undefined), ...(c.role ? { role: c.role } : {}), ...(c.mask ? { mask: Uint8Array.from(sel.rows, (i) => c.mask![i]) } : {}) };
+          return { outputs: { out: { t: 'column', v: picked } }, view: { available, sheets, statRows } };
+        }
+        // one value: of the rows chosen, the first, the last, or a statistic (the masked rows and the empty cells left out)
+        const pick = n.data.pick ?? 'first';
+        const used = sel.rows.filter((i) => !c.mask?.[i]);
+        const v = used.map((i) => c.values[i]).filter(Number.isFinite);
+        const sorted = [...v].sort((a, b) => a - b);
+        const mean = v.reduce((s, q) => s + q, 0) / v.length;
+        const value =
+          pick === 'first' ? c.values[used[0]] : pick === 'last' ? c.values[used[used.length - 1]] : pick === 'count' ? v.length : !v.length ? NaN : pick === 'mean' ? mean : pick === 'sum' ? v.reduce((s, q) => s + q, 0) : pick === 'min' ? sorted[0] : pick === 'max' ? sorted[sorted.length - 1] : pick === 'median' ? (sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2) : v.length > 1 ? Math.sqrt(v.reduce((s, q) => s + (q - mean) ** 2, 0) / (v.length - 1)) : NaN;
+        const warnings = used.length < sel.rows.length ? [`${sel.rows.length - used.length} masked row${sel.rows.length - used.length === 1 ? '' : 's'} left out.`] : [];
+        return { outputs: { out: { t: 'scalar', v: { name: pick === 'first' || pick === 'last' ? c.name : `${pick} of ${c.name}`, value } } }, warnings, view: { available, sheets, statRows } };
+      }
       if (n.data.value) {
-        // one value: the row chosen (1 … n)
+        // one value: the row chosen (1 … n; an older project, no rows chosen)
         const k = Math.floor(n.data.row ?? 1);
         if (!(k >= 1 && k <= c.values.length)) return { errors: [`Row ${k}: the column has ${c.values.length} row${c.values.length === 1 ? '' : 's'}.`], view: { available, sheets } };
         const warnings = c.mask?.[k - 1] ? [`Row ${k} is masked.`] : [];
@@ -5116,6 +5138,8 @@ function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cac
   if (!files.length) return { errors: ['The files must be a workbook (a sheet per file) or a dataset.'] };
   const ordered = orderFiles(files, spec);
   const inner = flattenGroups(g.nodes, g.edges);
+  // (what is kept, by its name: given by hand, else made from what it is connected to)
+  const keptNames = portNames(g.outputs);
   const warnings = [...ordered.warnings];
   if (inner.nodes.some((q) => q.type === 'python')) warnings.push('Python steps do not run inside a batch.');
   // the other inputs: the same for every file
@@ -5141,10 +5165,10 @@ function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cac
     const steps = own ? flattenGroups(withOwn(g.nodes, own), g.edges) : inner;
     const res = evaluateFlat(steps.nodes, steps.edges, sub, seed);
     const run: FileRun = { name: f.name, values: [], tables: [], errors: [] };
-    for (const p of g.outputs) {
+    g.outputs.forEach((p, q) => {
       const e = inner.edges.find((x) => x.target === GROUP_OUT && x.targetHandle === p.id);
-      resultOf(p.label, e ? res.get(e.source)?.outputs[e.sourceHandle ?? 'out'] : undefined, run);
-    }
+      resultOf(keptNames[q], e ? res.get(e.source)?.outputs[e.sourceHandle ?? 'out'] : undefined, run);
+    });
     for (const q of inner.nodes) for (const err of res.get(q.id)?.errors ?? []) run.errors.push(`${q.type}: ${err}`);
     runs.push(run);
     if (k === shown) preview = res;
@@ -5155,7 +5179,8 @@ function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cac
   if (!g.outputs.length) warnings.push('Nothing leaves the steps: connect what to keep (a value, a table) to the Group output inside the batch.');
   const failed = runs.filter((r) => r.errors.length).map((r) => ({ name: r.name, errors: r.errors }));
   if (failed.length) warnings.push(`${failed.length} of ${runs.length} file${runs.length > 1 ? 's' : ''} had errors (see the options).`);
-  const out = gather(runs, ordered.read, ordered.parts, overCols ? 'Column' : 'File');
+  const side = spec.long === 'side';
+  const out = gather(runs, ordered.read, ordered.parts, overCols ? 'Column' : 'File', side);
   // the files with their own settings: which steps (a column of the table, when any file has them)
   const ownOf = (name: string) => Object.keys(spec.own?.[name] ?? {}).flatMap((sid) => {
     const q = g.nodes.find((x) => x.id === sid);
@@ -5164,10 +5189,10 @@ function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cac
   if (runs.some((r) => ownOf(r.name).length)) out.table.columns.push(column('Own settings', new Float64Array(runs.length).fill(NaN), runs.map((r) => ownOf(r.name).join(', '))));
   // every result kept on a port of its own (k-…, by its id inside)
   const each: Record<string, Value> = {};
-  for (const p of g.outputs) {
-    const one = gatherOne(runs, ordered.read, ordered.parts, p.label, overCols ? 'Column' : 'File');
+  g.outputs.forEach((p, q) => {
+    const one = gatherOne(runs, ordered.read, ordered.parts, keptNames[q], overCols ? 'Column' : 'File', side);
     if (one) each[`k-${p.id}`] = { t: 'dataset', v: one };
-  }
+  });
   return {
     outputs: { table: { t: 'dataset', v: out.table }, sheets: { t: 'workbook', v: out.sheets }, ...(out.stacked ? { stacked: { t: 'dataset', v: out.stacked } } : {}), ...each },
     warnings,

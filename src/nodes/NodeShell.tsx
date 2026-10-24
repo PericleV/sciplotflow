@@ -9,6 +9,7 @@ import { useNodeResult } from '../engine/engine.ts';
 import { nodeColor, nodeTitle, textOn } from '../nodeColors.ts';
 import type { AppNode } from '../types.ts';
 import { ErrorBoundary } from '../ErrorBoundary.tsx';
+import { isStaleChunk, STALE_TEXT } from '../staleChunk.ts';
 import { NODE_SHORT } from '../help.ts';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { IC } from './iconProps.ts';
@@ -92,13 +93,22 @@ export function withShell<P extends NodeProps<AppNode>>(View: ComponentType<P>) 
         )}
         <ErrorBoundary
           resetKey={data}
-          fallback={(e, reset) => (
-            <div className="node view-error">
-              <div className="msg err">This node could not be drawn: {e.message}</div>
-              <div className="hint">The rest of the graph keeps working. Change a setting of the node, or retry.</div>
-              <button className="nodrag" onClick={reset}>Retry</button>
-            </div>
-          )}
+          fallback={(e, reset) =>
+            isStaleChunk(e) ? (
+              <div className="node view-error">
+                <div className="msg warn">{STALE_TEXT}</div>
+                <button className="nodrag" onClick={() => location.reload()}>
+                  Reload the page
+                </button>
+              </div>
+            ) : (
+              <div className="node view-error">
+                <div className="msg err">This node could not be drawn: {e.message}</div>
+                <div className="hint">The rest of the graph keeps working. Change a setting of the node, or retry.</div>
+                <button className="nodrag" onClick={reset}>Retry</button>
+              </div>
+            )
+          }
         >
           <View {...props} />
         </ErrorBoundary>

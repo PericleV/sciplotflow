@@ -4,6 +4,16 @@ import './index.css'
 import App from './App.tsx'
 import { AppCrash, ErrorBoundary } from './ErrorBoundary.tsx'
 import { UiProvider } from './ui/Provider.tsx'
+import { notify } from './ui/dialogStore.ts'
+import { STALE_TEXT } from './staleChunk.ts'
+
+// a part of the app that could not be loaded after a new version was published: said once (the nodes that need it say
+// it too, with a button to reload)
+let staleSaid = false
+window.addEventListener('vite:preloadError', () => {
+  if (!staleSaid) notify(STALE_TEXT, 'error')
+  staleSaid = true
+})
 
 const root = document.getElementById('root')!
 // #ui-lab: a page to try the new look of the panels (src/lab), loaded only there

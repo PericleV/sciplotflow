@@ -20,7 +20,8 @@ export type ColumnItem = { from: string; name?: string; role?: ColumnRole; keep?
 // a column added: a formula, one value in every row, a column of an input or a copy of one ([name], [=id], {A}; its
 // name, when it has none of its own), or generated (as Generate column, as many rows as the data); its place: its item's
 export type ComputedKind = 'formula' | 'value' | 'copy' | 'generate';
-export type ComputedColumn = { id: string; name: string; kind?: ComputedKind; formula?: string; value?: number; copy?: string; gen?: Partial<GenSpec> };
+// folded: shown as one line in the node's options (its name and formula), the rest hidden
+export type ComputedColumn = { id: string; name: string; kind?: ComputedKind; formula?: string; value?: number; copy?: string; gen?: Partial<GenSpec>; folded?: boolean };
 // the names of columns from the values of a column ([name] of the data or {A}), in order: of all the others, the Y
 // columns, or a list (2-4, B-D, names); the column itself left out of the data when drop
 export type NamesFrom = { col: string; to?: 'others' | 'y' | 'list'; list?: string; drop?: boolean };

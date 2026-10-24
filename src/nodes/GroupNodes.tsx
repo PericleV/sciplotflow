@@ -5,9 +5,9 @@ import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import { sourcePort, targetAccepts, type PortType } from '../engine/ports.ts';
 import { NEW_OUT } from '../engine/subgraph.ts';
-import { guessPattern, type BatchSpec } from '../engine/batch.ts';
+import { guessPattern, portNames, type BatchSpec } from '../engine/batch.ts';
 import { nodeTitle } from '../nodeColors.ts';
-import type { AppNode, GroupNode } from '../types.ts';
+import type { AppNode, GroupNode, GroupPort } from '../types.ts';
 import { useGroupNav } from './groupNav.ts';
 import { Field, InPort, Messages, OutPort, Select, TextInput } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
@@ -18,6 +18,21 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { IC } from './iconProps.ts';
 
 const known = (t: string | undefined | null): PortType => (t && t !== 'any' ? (t as PortType) : 'any');
+
+// The outputs of a group (what a Batch keeps), each with a name of its own: typed here (empty: the name made from what
+// it is connected to, shown greyed)
+function OutputNames({ outputs, onChange, what }: { outputs: GroupPort[]; onChange: (outputs: GroupPort[]) => void; what: string }) {
+  if (!outputs.length) return null;
+  return (
+    <div className="col-form">
+      {outputs.map((p) => (
+        <Field key={p.id} label={what} title={`Its name on the port and in the tables (empty: “${p.label}”, made from what it is connected to)`}>
+          <TextInput value={p.name ?? ''} placeholder={p.label} onChange={(name) => onChange(outputs.map((q) => (q.id === p.id ? { ...q, name: name || undefined } : q)))} />
+        </Field>
+      ))}
+    </div>
+  );
+}
 
 export function GroupNodeView(props: NodeProps<GroupNode>) {
   if (props.data.batch) return <BatchView {...props} />;
@@ -30,6 +45,7 @@ function PlainGroup({ id, data }: NodeProps<GroupNode>) {
   const nav = useGroupNav();
   const self = { id, type: 'subgraph', data } as AppNode;
   const inside = data.nodes.filter((n) => n.type !== 'groupin' && n.type !== 'groupout').length;
+  const names = portNames(data.outputs);
   return (
     <div className="node node-group">
       <div className="row">
@@ -44,8 +60,11 @@ function PlainGroup({ id, data }: NodeProps<GroupNode>) {
       {data.inputs.map((p) => (
         <InPort key={p.id} label={p.label} port={known(targetAccepts(self, p.id)[0] ?? p.type)} id={p.id} />
       ))}
-      {data.outputs.map((p) => (
-        <OutPort key={p.id} label={p.label} port={known(sourcePort(self, p.id) ?? p.type)} id={p.id} />
+      <NodeOptions>
+        <OutputNames outputs={data.outputs} what="Output" onChange={(outputs) => updateNodeData(id, { outputs })} />
+      </NodeOptions>
+      {data.outputs.map((p, k) => (
+        <OutPort key={p.id} label={names[k]} port={known(sourcePort(self, p.id) ?? p.type)} id={p.id} />
       ))}
       <Messages result={r} />
     </div>
@@ -72,7 +91,7 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
   const cols = spec.over === 'columns';
   const unit = cols ? 'column' : 'file';
   // the three steps: the files connected, steps inside, something kept
-  const kept = data.outputs.map((p) => p.label);
+  const kept = portNames(data.outputs);
   const done = [!!b, steps.length > 0, kept.length > 0];
   const stepNames = [...new Set(steps.map((n) => nodeTitle(n)))];
   const guide: [string, string][] = [
@@ -175,8 +194,19 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
             onChange={(order) => set({ order: order === 'given' ? undefined : order })}
           />
         </Field>
+        <Field label="Long tables" title={`The tables of more than one row kept (a curve, a spectrum): every ${unit}'s rows one under the other, the ${unit} in a column before them; or its columns side by side, named after the ${unit} (one X for all when every ${unit} has the same X), ready for a Plot`}>
+          <Select<'stack' | 'side'>
+            value={spec.long ?? 'stack'}
+            options={[
+              ['stack', 'one under the other'],
+              ['side', 'side by side'],
+            ]}
+            onChange={(long) => set({ long: long === 'side' ? 'side' : undefined })}
+          />
+        </Field>
+        <OutputNames outputs={data.outputs} what="Kept" onChange={(outputs) => updateNodeData(id, { outputs })} />
         <div className="hint">
-          {kept.length ? `Kept from every ${unit}: ${kept.join(', ')}.` : 'Nothing is kept yet.'} To keep more, open the batch and connect a value or a table to “+ keep” on its Group output.
+          {kept.length ? `Kept from every ${unit}: ${kept.join(', ')} (named above).` : 'Nothing is kept yet.'} To keep more, open the batch and connect a value or a table to “+ keep” on its Group output.
         </div>
         {list.length > 0 && (
           <div className="batch-files nowheel">
@@ -210,9 +240,9 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
       <Messages result={r} />
       <OutPort label="table" port="dataset" id="table" title={`A row per ${unit}: its name, what the name says, the values kept (and the one row of a table kept)`} />
       <OutPort label="sheets" port="workbook" id="sheets" title={`A sheet per ${unit}: the tables kept (Auto-extract or a Plot of a workbook draws them all)`} />
-      <OutPort label="all rows" port="dataset" id="stacked" title={`The rows of every ${unit} one under the other, the ${unit} and what its name says before them`} />
-      {data.outputs.map((p) => (
-        <OutPort key={p.id} label={p.label} port="dataset" id={`k-${p.id}`} title={`“${p.label}” alone: a value (or a table of one row) gives a row per ${unit}; a longer table, the rows of every ${unit} one under the other`} />
+      <OutPort label="all rows" port="dataset" id="stacked" title={spec.long === 'side' ? `The first table kept, every ${unit}'s columns side by side (named after the ${unit})` : `The rows of every ${unit} one under the other, the ${unit} and what its name says before them`} />
+      {data.outputs.map((p, k) => (
+        <OutPort key={p.id} label={kept[k]} port="dataset" id={`k-${p.id}`} title={`“${kept[k]}” alone: a value (or a table of one row) gives a row per ${unit}; a longer table, ${spec.long === 'side' ? `every ${unit}'s columns side by side` : `the rows of every ${unit} one under the other`}`} />
       ))}
     </div>
   );
@@ -306,8 +336,8 @@ export function GroupOutNodeView() {
   const { current } = useGroupNav();
   return (
     <div className="node node-groupio">
-      {(current?.outputs ?? []).map((p) => (
-        <InPort key={p.id} label={p.label} port={known(p.type)} id={p.id} />
+      {(current?.outputs ?? []).map((p, k) => (
+        <InPort key={p.id} label={portNames(current?.outputs ?? [])[k]} port={known(p.type)} id={p.id} />
       ))}
       <InPort label={current?.batch ? '+ keep' : '+ output'} port="any" id={NEW_OUT} title={current?.batch ? 'Connect a value or a table: it is kept for every file' : 'Connect anything: it becomes a new output of the group'} />
     </div>

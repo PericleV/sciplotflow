@@ -12,13 +12,15 @@ import { COLUMNS_SPEC_KEYS, formulaShown, formulaStored, lineLetter, type Column
 import { GEN_SPEC_DEFAULTS, type GenSpec } from '../engine/gencol.ts';
 import { hasEdits, type SheetEdits } from '../engine/sheet.ts';
 import { ACCEPT, ENCODINGS, pickDataFiles, readFiles } from '../readFiles.ts';
-import type { AppNode, ColumnsData, ColumnsNode, AutoExtractData, AutoExtractNode, ExtractNode, GenColData, GenColNode, ImportData, ImportNode, MathColData, MathColNode } from '../types.ts';
+import type { AppNode, ColumnsData, ColumnsNode, AutoExtractData, AutoExtractNode, ExtractNode, ExtractPick, GenColData, GenColNode, ImportData, ImportNode, MathColData, MathColNode } from '../types.ts';
 import { AutoText, Check, Field, InPort, Messages, NumInput, OutPort, Select, TextInput, ResultSummary } from './ui.tsx';
 import { RowRules } from './RowRules.tsx';
+import { RowsControls } from './RowsPanel.tsx';
+import type { RowSelect } from '../engine/rowsel.ts';
 import { NodeOptions } from './NodeOptions.tsx';
 import { Worksheet } from './Worksheet.tsx';
 import { maxOf } from '../engine/minmax.ts';
-import { RotateCcw, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, RotateCcw, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
 import { ask, notify } from '../ui/dialogStore.ts';
 
@@ -383,6 +385,8 @@ export function ExtractNodeView({ id, data }: NodeProps<ExtractNode>) {
   const idx = data.column ? (avail[data.index]?.name === data.column ? data.index : avail.findIndex((c) => c.name === data.column)) : 0;
   const out = r?.outputs.out?.t === 'column' ? r.outputs.out.v : undefined;
   const val = r?.outputs.out?.t === 'scalar' ? r.outputs.out.v : undefined;
+  // the rows taken (an older project's one value: its row, as a list)
+  const rowSel: RowSelect = data.rows ?? (data.value ? { mode: 'list', list: String(Math.floor(data.row ?? 1)) } : { mode: 'all' });
   return (
     <div className="node node-extract">
       <InPort label="dataset" port="dataset" id="in" title="A dataset, or a workbook (then choose the sheet)" />
@@ -399,14 +403,31 @@ export function ExtractNodeView({ id, data }: NodeProps<ExtractNode>) {
         </select>
       </Field>
       <div className="row">
-        <Field label="Output" title="The whole column, or one value of it (a row)">
+        <Field label="Output" title="The rows chosen as a column, or one value of them">
           <Select<'column' | 'value'> value={data.value ? 'value' : 'column'} options={[['column', 'column'], ['value', 'one value']]} onChange={(v) => updateNodeData(id, { value: v === 'value' })} />
         </Field>
         {data.value && (
-          <Field label="Row" title="The row of the value (1 … n)">
-            <NumInput value={data.row ?? 1} min={1} step={1} onChange={(row) => updateNodeData(id, { row })} />
+          <Field label="Value" title="Of the rows chosen: the first, the last, or a statistic of them (the masked rows and the empty cells left out)">
+            <Select<ExtractPick>
+              value={data.pick ?? 'first'}
+              options={[
+                ['first', 'the first'],
+                ['last', 'the last'],
+                ['mean', 'mean'],
+                ['median', 'median'],
+                ['sum', 'sum'],
+                ['min', 'min'],
+                ['max', 'max'],
+                ['count', 'count'],
+                ['sd', 'SD'],
+              ]}
+              onChange={(pick) => updateNodeData(id, { pick: pick === 'first' ? undefined : pick })}
+            />
           </Field>
         )}
+      </div>
+      <div className="props-panel props-embed nodrag" onKeyDown={(e) => !e.ctrlKey && !e.metaKey && !e.altKey && e.stopPropagation()}>
+        <RowsControls value={rowSel} onChange={(rows) => updateNodeData(id, { rows, row: undefined })} hasX={avail.some((c) => c.role === 'x')} result={r} names={avail.map((c) => c.name)} />
       </div>
       {out && (
         <div className="hint ellipsis">
@@ -1095,48 +1116,70 @@ export function ColumnsNodeView({ id, data: nodeData }: NodeProps<ColumnsNode>) 
         <button className="nodrag" disabled={!items.length} title="Every column back as it comes: its name, designation, place, kept (the columns added stay)" onClick={() => set({ items: items.filter((it) => it.from.startsWith('=')) })}>
           <RotateCcw {...IC} /> Reset the columns
         </button>
+        {computed.length > 1 && (
+          <>
+            <button className="nodrag" disabled={computed.every((c) => c.folded)} title="Every column added shown as one line (its name and formula)" onClick={() => set({ computed: computed.map((c) => ({ ...c, folded: true })) })}>
+              <ChevronsDownUp {...IC} /> Fold all
+            </button>
+            <button className="nodrag" disabled={!computed.some((c) => c.folded)} title="Every column added shown whole" onClick={() => set({ computed: computed.map(({ folded: _f, ...c }) => c) })}>
+              <ChevronsUpDown {...IC} /> Unfold all
+            </button>
+          </>
+        )}
       </div>
       {computed.map((c) => {
         const kind = c.kind ?? 'formula';
         const line = lines.find((L) => L.from === `=${c.id}`);
+        // (folded: one line, what it is)
+        const what = kind === 'formula' ? `= ${c.formula ?? ''}` : kind === 'copy' ? `a copy of ${c.copy ?? '…'}` : kind === 'value' ? `= ${Number.isFinite(c.value) ? c.value : '…'}` : 'generated';
         return (
           <div key={c.id} className="col-added">
             <div className="row">
-              <b className="ellipsis">ƒ {line?.name ?? (c.name || 'Column')}</b>
+              <button className="nodrag ts-btn" title={c.folded ? 'Show it whole' : 'Fold it to one line'} onClick={() => setComputed(c.id, { folded: c.folded ? undefined : true })}>
+                {c.folded ? <ChevronRight {...IC} /> : <ChevronDown {...IC} />}
+              </button>
+              <b className="ellipsis" title={c.folded ? what : undefined}>
+                ƒ {line?.name ?? (c.name || 'Column')}
+                {c.folded && <span className="muted mono"> {what}</span>}
+              </b>
               <button className="nodrag ts-btn" title="Remove this column" onClick={() => removeComputed(c.id)}>
                 <X {...IC} />
               </button>
             </div>
-            <div className="row">
-              <Select<ComputedKind>
-                value={kind}
-                options={[
-                  ['formula', 'formula'],
-                  ['copy', 'a column (input / copy)'],
-                  ['generate', 'generated'],
-                  ['value', 'one value'],
-                ]}
-                onChange={(k) => setComputed(c.id, { kind: k, ...(k === 'generate' && !c.gen ? { gen: { ...GEN_SPEC_DEFAULTS } } : {}) })}
-              />
-              <Select<string>
-                value=""
-                title="Its place among the columns (then drag ƒ in the list)"
-                options={placeOptions(`=${c.id}`)}
-                onChange={(w) => w && place(c.id, w)}
-              />
-            </div>
-            {kind === 'formula' && <ColumnFormula c={c} lines={lines} inputs={inputs} result={r} setFormula={(formula) => setComputed(c.id, { formula })} />}
-            {kind === 'value' && (
-              <Field label="Value" title="The same number in every row">
-                <NumInput className="short" value={c.value ?? NaN} onChange={(value) => setComputed(c.id, { value })} />
-              </Field>
-            )}
-            {kind === 'generate' && <GenFields g={{ ...GEN_SPEC_DEFAULTS, ...c.gen }} set={(p) => setComputed(c.id, { gen: { ...c.gen, ...p } })} />}
-            {kind === 'generate' && line && <div className="hint">{line.rows} rows, as the data.</div>}
-            {kind === 'copy' && (
-              <Field label="Column" title="A column of an input (A, B …), or of the data to copy; the name is its own until you write one">
-                <Select<string> value={c.copy ?? ''} options={[['', '—'], ...refOptions.filter(([ref]) => ref !== `[=${c.id}]`)]} onChange={(copy) => setComputed(c.id, { copy: copy || undefined })} />
-              </Field>
+            {!c.folded && (
+              <>
+                <div className="row">
+                  <Select<ComputedKind>
+                    value={kind}
+                    options={[
+                      ['formula', 'formula'],
+                      ['copy', 'a column (input / copy)'],
+                      ['generate', 'generated'],
+                      ['value', 'one value'],
+                    ]}
+                    onChange={(k) => setComputed(c.id, { kind: k, ...(k === 'generate' && !c.gen ? { gen: { ...GEN_SPEC_DEFAULTS } } : {}) })}
+                  />
+                  <Select<string>
+                    value=""
+                    title="Its place among the columns (then drag ƒ in the list)"
+                    options={placeOptions(`=${c.id}`)}
+                    onChange={(w) => w && place(c.id, w)}
+                  />
+                </div>
+                {kind === 'formula' && <ColumnFormula c={c} lines={lines} inputs={inputs} result={r} setFormula={(formula) => setComputed(c.id, { formula })} />}
+                {kind === 'value' && (
+                  <Field label="Value" title="The same number in every row">
+                    <NumInput className="short" value={c.value ?? NaN} onChange={(value) => setComputed(c.id, { value })} />
+                  </Field>
+                )}
+                {kind === 'generate' && <GenFields g={{ ...GEN_SPEC_DEFAULTS, ...c.gen }} set={(p) => setComputed(c.id, { gen: { ...c.gen, ...p } })} />}
+                {kind === 'generate' && line && <div className="hint">{line.rows} rows, as the data.</div>}
+                {kind === 'copy' && (
+                  <Field label="Column" title="A column of an input (A, B …), or of the data to copy; the name is its own until you write one">
+                    <Select<string> value={c.copy ?? ''} options={[['', '—'], ...refOptions.filter(([ref]) => ref !== `[=${c.id}]`)]} onChange={(copy) => setComputed(c.id, { copy: copy || undefined })} />
+                  </Field>
+                )}
+              </>
             )}
           </div>
         );

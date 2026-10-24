@@ -101,7 +101,11 @@ export type BookLayout = { order?: string[]; hide?: string[]; rowHide?: number[]
 export type WorkbookData = { name: string; sheets: BookSheet[]; sheet: number; into?: string[]; matrix?: Record<string, { rows: boolean; cols: boolean }>; roles?: Record<string, Record<string, ColumnRole>>; layout?: Record<string, BookLayout>; hideSheets?: string[]; export?: Partial<TableExport>; look?: SheetLook };
 // The column is chosen by its name (a file with the columns in another order still works), the index when names repeat.
 // sheet: from a workbook, by name; value: one value (the row `row`, 1 … n) instead of the column
-export type ExtractData = { column: string; index: number; sheet?: string; value?: boolean; row?: number };
+// Extract column: a column (by its name; index: its place, when names repeat) of a dataset or of a sheet of a workbook;
+// rows: the rows taken (all, ranges, a list, where conditions are true; absent: all, or the row `row` of an older
+// project's one value); value: one value of them instead (pick: the first, the last, or a statistic of them)
+export type ExtractPick = 'first' | 'last' | 'mean' | 'median' | 'sum' | 'min' | 'max' | 'count' | 'sd';
+export type ExtractData = { column: string; index: number; sheet?: string; value?: boolean; row?: number; rows?: RowSelect; pick?: ExtractPick };
 // Auto-extract: columns of the sheets of a workbook taken by rules, into one dataset with their designations.
 // mode 'simple' (absent in older projects: the rules): the sheets ticked (by name; absent: all) and every column of the
 // first of them with its designation (by its place; 'none': not taken; absent: the sheet's own), the same in every sheet.
@@ -457,8 +461,9 @@ export type NoteData = { text: string; doc?: RichDoc; mathFont?: 'sans' | 'serif
 export type FrameData = { name: string; color: string };
 export type RerouteData = Record<string, never>;
 // A group node: a graph inside one node. Its ports: what enters by the Group input node inside, what leaves by the
-// Group output node (key: the outside node and port it was made from; type: of the value, for the port colours).
-export type GroupPort = { id: string; label: string; key?: string; type?: string };
+// Group output node (key: the outside node and port it was made from; type: of the value, for the port colours; name:
+// the name given to it by hand, else its label, made from what it was connected to).
+export type GroupPort = { id: string; label: string; key?: string; type?: string; name?: string };
 // batch: a Batch (the steps run on every file of its first input, their results gathered; engine/batch.ts)
 export type GroupData = { name: string; nodes: AppNode[]; edges: Edge[]; inputs: GroupPort[]; outputs: GroupPort[]; batch?: BatchSpec };
 export type GroupIoData = Record<string, never>;
