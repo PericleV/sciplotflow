@@ -37,6 +37,8 @@ type Menu = { x: number; y: number; on: 'col' | 'row' | 'cell' };
 // inputs' columns left out, a column of its own added at a place (absent: none can be added), the inputs' columns hidden
 // (their names) and showing them again.
 export type SheetLayout = { keys: string[]; onOrder: (keys: string[]) => void; onHide: (keys: string[]) => void; onAdd?: (at: number) => void; hidden?: string[]; onShowAll?: () => void };
+// the rows of a Workbook sheet of the inputs (read-only): left out and moved by their places shown (hidden: how many)
+export type RowLayout = { onHide: (rows: number[]) => void; onMove: (from: number, to: number) => void; hidden: number; onShowAll: () => void };
 
 // readOnly: a view (Workbook with something connected): select and copy only — but for the designations when onRole is
 // given. plain: a table of its own (a Workbook sheet): every cell typed in, so nothing is marked as changed by hand.
@@ -44,7 +46,7 @@ export type SheetLayout = { keys: string[]; onOrder: (keys: string[]) => void; o
 // look / onLook: how it is drawn (the node's width, the table's height, the rows' height, the columns' widths), changed by
 // dragging the table's corner, the border under a row number, the border right of a column letter (double-click: the
 // column fits its values)
-export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain, onRole, layout, look, onLook }: { dataset: Dataset; map?: SheetMap; edits: SheetEdits | undefined; onEdits: (e: SheetEdits) => void; readOnly?: boolean; plain?: boolean; onRole?: (j: number, role: ColumnRole) => void; layout?: SheetLayout; look?: SheetLook; onLook?: (l: SheetLook) => void }) {
+export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain, onRole, layout, rowLayout, look, onLook }: { dataset: Dataset; map?: SheetMap; edits: SheetEdits | undefined; onEdits: (e: SheetEdits) => void; readOnly?: boolean; plain?: boolean; rowLayout?: RowLayout; onRole?: (j: number, role: ColumnRole) => void; layout?: SheetLayout; look?: SheetLook; onLook?: (l: SheetLook) => void }) {
   // (while a border or the corner is dragged: the look shown, kept when the mouse is let go)
   const [live, setLive] = useState<SheetLook | null>(null);
   const lk = live ?? look ?? {};
@@ -95,7 +97,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   const canAddCol = layout ? !!layout.onAdd : !readOnly;
   const rowsEditable = !readOnly && !layout;
   // the rows that can be left out: any (a table of its own), or those of its own table (with inputs)
-  const rowGone = (r: number) => !readOnly && (rowsEditable || (!!layout && r < nOwn));
+  const rowGone = (r: number) => (!!rowLayout && r < n) || (!readOnly && (rowsEditable || (!!layout && r < nOwn)));
   const first = Math.max(0, Math.floor(top / rowH) - 5);
   const last = Math.min(n, Math.ceil((top + viewH) / rowH) + 5);
   const key = (r: number, c: number) => `${map.rows[r]}:${reads[c]}`;
@@ -145,6 +147,12 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   };
   const removeRows = (rs: number[]) => {
     const list = rs.filter((r) => r < n && rowGone(r));
+    if (rowLayout) {
+      if (list.length) rowLayout.onHide(list);
+      setSel(null);
+      setPicks(null);
+      return;
+    }
     if (list.length) onEdits({ ...e, delRows: [...(e.delRows ?? []), ...list.map((r) => map.rows[r])] });
     setSel(null);
     setPicks(null);
@@ -539,6 +547,11 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
         items.push({ label: `${hides ? 'Hide' : 'Delete'} ${gone.length === 1 ? 'column' : `${gone.length} columns`}`, run: () => removeCols(gone), danger: true, kbd: menu.on === 'col' ? 'Delete' : undefined });
       }
     }
+    // (the rows of a sheet of the inputs: moved one place)
+    if (menu.on !== 'col' && rowLayout && hi.r === lo.r && lo.r < n) {
+      if (lo.r > 0) items.push({ label: 'Move row up', run: () => (rowLayout.onMove(lo.r, lo.r - 1), setSel({ ...sel!, r0: lo.r - 1, r1: lo.r - 1 })) });
+      if (lo.r < n - 1) items.push({ label: 'Move row down', run: () => (rowLayout.onMove(lo.r, lo.r + 1), setSel({ ...sel!, r0: lo.r + 1, r1: lo.r + 1 })) });
+    }
     if (menu.on !== 'col' && rowsEditable) items.push({ label: 'Insert row above', run: () => insertRow(lo.r), kbd: menu.on === 'row' ? 'Ctrl+Shift+=' : undefined }, { label: 'Insert row below', run: () => insertRow(Math.min(n, hi.r + 1)) });
     const rowsOut = span(lo.r, Math.min(hi.r, n - 1)).filter(rowGone);
     if (menu.on !== 'col' && rowsOut.length) items.push({ label: `Delete ${rowsOut.length === 1 ? 'row' : `${rowsOut.length} rows`}`, run: () => removeRows(rowsOut), danger: true, kbd: menu.on === 'row' ? 'Delete' : undefined });
@@ -714,6 +727,11 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
           {picks ? ` · ${picks.list.length} ${picks.on === 'col' ? 'columns' : 'rows'} picked` : selText && ` · ${selText}`}
           {count > 0 && ` · ${count} change${count > 1 ? 's' : ''} by hand (marked)`}
         </span>
+        {!!rowLayout?.hidden && (
+          <button className="nodrag" title="The rows left out of this sheet of the inputs shown again" onClick={rowLayout.onShowAll}>
+            Show {rowLayout.hidden} hidden row{rowLayout.hidden === 1 ? '' : 's'}
+          </button>
+        )}
         {!!layout?.hidden?.length && (
           <button className="nodrag" title={`Hidden: ${layout.hidden.join(', ')}`} onClick={layout.onShowAll}>
             Show {layout.hidden.length} hidden

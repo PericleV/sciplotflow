@@ -176,6 +176,9 @@
 .where > .mantine-Button-root { align-self: flex-start; }
 .where-cond { display: flex; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid var(--border); border-radius: 6px; background: color-mix(in srgb, var(--text) 3%, transparent); }
 .where-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* Filter & sort rows ▸ Split into parts: a part, its name and its conditions */
+.split-part { display: flex; flex-direction: column; gap: 6px; padding: 6px; margin-bottom: 6px; border: 1px dashed var(--border); border-radius: 6px; }
+.split-part > .where-line > .mantine-TextInput-root { flex: 1; min-width: 0; }
 .where-line > .list-field, .where-line > .num-field { flex: 1; min-width: 0; }
 .where-word { flex: none; width: 38px; color: var(--muted); font-size: 11.5px; }
 .where-line > .where-word + .num-field { flex: 1; }

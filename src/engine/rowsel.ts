@@ -1,19 +1,34 @@
 // The rows a statistics node works on: all, ranges (by the row number or by the value of X, "+ break" adds one), a
-// list as in Math column rules ("3, 7-12, 20-end") or where: conditions chosen (a column, a comparison, a value), or
-// written as a formula (a condition of x, the columns A, B, C …, i and n).
+// list as in Math column rules ("3, 7-12, 20-end") or where: conditions chosen (a column, the row number, a comparison,
+// a value), or written as a formula (a condition of x, the columns A, B, C …, row (or i) and n). Then, of the rows
+// chosen, the odd or even ones (by their row number), and those where a formula is true too.
 import { columnLetter } from './csv.ts';
 import { compile } from './expr.ts';
 import { parseRows } from './rows.ts';
 import { findColumn, fmtNum, type Column } from './table.ts';
 
 export type RowRange = { from: number; to: number }; // NaN: from the first / up to the last
-// A condition of a row: a column ('' = the X column) compared with a value (between: from v to v2, both included),
-// or empty / not empty
+// A condition of a row: a column ('' = the X column, '#' = the row number, 1 … n) compared with a value (between: from
+// v to v2, both included), or empty / not empty
 export type RowOp = '<' | '<=' | '=' | '!=' | '>=' | '>' | 'between' | 'empty' | 'filled';
 export type RowCond = { col: string; op: RowOp; v?: number; v2?: number };
 // rule: the formula; conds: the conditions chosen, all of them true (join 'all') or any one (join 'any'); formula: the
-// formula used instead of the conditions (absent: when it is written and there are no conditions, as older projects)
-export type RowSelect = { mode: 'all' | 'range' | 'list' | 'rule'; by?: 'row' | 'x'; ranges?: RowRange[]; list?: string; rule?: string; conds?: RowCond[]; join?: 'all' | 'any'; formula?: boolean };
+// formula used instead of the conditions (absent: when it is written and there are no conditions, as older projects);
+// pick: of the rows chosen, the odd or the even ones (by row number); also: a formula true on them too (on, alsoOn)
+export type RowSelect = {
+  mode: 'all' | 'range' | 'list' | 'rule';
+  by?: 'row' | 'x';
+  ranges?: RowRange[];
+  list?: string;
+  rule?: string;
+  conds?: RowCond[];
+  join?: 'all' | 'any';
+  formula?: boolean;
+  pick?: 'odd' | 'even';
+  also?: string;
+  alsoOn?: boolean;
+};
+export const ROW_COL = '#';
 export const usesFormula = (s: RowSelect) => s.formula ?? (!s.conds?.length && !!s.rule?.trim());
 export const ROW_OPS: [RowOp, string][] = [
   ['<', '<'],
@@ -33,9 +48,9 @@ export const condReady = (c: RowCond) => (needs(c.op) < 1 || Number.isFinite(c.v
 export function condsFormula(conds: RowCond[], join: 'all' | 'any', x: Column | undefined, cols: Column[]): string | null {
   const parts: string[] = [];
   for (const c of conds.filter(condReady)) {
-    const col = c.col ? findColumn(cols, c.col) : x;
-    if (!col) return null;
-    const v = c.col ? columnLetter(cols.indexOf(col)) : 'x';
+    const col = c.col === ROW_COL ? x : c.col ? findColumn(cols, c.col) : x;
+    if (!col && c.col !== ROW_COL) return null;
+    const v = c.col === ROW_COL ? 'row' : c.col ? columnLetter(cols.indexOf(col!)) : 'x';
     const n = (a: number | undefined) => String(+(a ?? NaN).toPrecision(15));
     const one =
       c.op === 'empty' ? `isnan(${v})` : c.op === 'filled' ? `(not isnan(${v}))` : c.op === 'between' ? `${v} >= ${n(Math.min(c.v!, c.v2!))} and ${v} <= ${n(Math.max(c.v!, c.v2!))}` : `${v} ${c.op === '=' ? '==' : c.op} ${n(c.v)}`;
@@ -44,11 +59,14 @@ export function condsFormula(conds: RowCond[], join: 'all' | 'any', x: Column | 
   return parts.join(join === 'any' ? ' or ' : ' and ');
 }
 const cellEmpty = (c: Column, i: number) => !(i < c.values.length && Number.isFinite(c.values[i])) && !c.text?.[i]?.trim();
-// one condition on one row
-function condTrue(c: RowCond, col: Column, i: number): boolean {
-  if (c.op === 'empty') return cellEmpty(col, i);
-  if (c.op === 'filled') return !cellEmpty(col, i);
-  const a = i < col.values.length ? col.values[i] : NaN;
+// one condition on one row (col null: the row number)
+function condTrue(c: RowCond, col: Column | null, i: number): boolean {
+  if (!col) {
+    if (c.op === 'empty') return false;
+    if (c.op === 'filled') return true;
+  } else if (c.op === 'empty') return cellEmpty(col, i);
+  else if (c.op === 'filled') return !cellEmpty(col, i);
+  const a = !col ? i + 1 : i < col.values.length ? col.values[i] : NaN;
   if (!Number.isFinite(a)) return false;
   const v = c.v!;
   switch (c.op) {
@@ -73,8 +91,45 @@ export const ROWSEL_ALL: RowSelect = { mode: 'all' };
 // The rows chosen (from 0, in order) of n rows, and a short text of the choice; x: the X column (ranges by X, x in a
 // rule), cols: the columns named A, B, C … in a rule.
 export function selectRows(sel: RowSelect | undefined, n: number, x: Column | undefined, cols: Column[]): { rows: number[]; text: string } | string {
-  const all = () => Array.from({ length: n }, (_, i) => i);
   const s = sel ?? ROWSEL_ALL;
+  const got = chosen(s, n, x, cols);
+  if (typeof got === 'string') return got;
+  let { rows, text } = got;
+  // (of them, the odd or the even rows; those where a formula is true too)
+  if (s.pick) {
+    rows = rows.filter((i) => (i + 1) % 2 === (s.pick === 'odd' ? 1 : 0));
+    text = `${text ? `${text}, ` : ''}${s.pick} rows`;
+  }
+  if (s.alsoOn && s.also?.trim()) {
+    const f = formulaRows(s.also.trim(), n, x, cols);
+    if (typeof f === 'string') return f;
+    const keep = new Set(f);
+    rows = rows.filter((i) => keep.has(i));
+    text = `${text ? `${text}, ` : ''}where ${s.also.trim()}`;
+  }
+  return { rows, text };
+}
+// the rows where a formula is true (x, the columns A, B, C …, row or i: the row number, n)
+function formulaRows(src: string, n: number, x: Column | undefined, cols: Column[]): number[] | string {
+  const f = compile(src);
+  if (typeof f === 'string') return f;
+  const letters = cols.map((_, k) => columnLetter(k));
+  const bad = f.names.filter((v) => v !== 'i' && v !== 'row' && v !== 'n' && !(v === 'x' && x) && !letters.includes(v));
+  if (bad.length) return `Unknown name${bad.length > 1 ? 's' : ''} ${bad.join(', ')} in the rule: it may use ${x ? 'x (the X column), ' : ''}the columns ${letters.length ? `${letters[0]}${letters.length > 1 ? ` … ${letters[letters.length - 1]}` : ''}` : '(none)'}, row (the row number, also i) and n.`;
+  const used = f.names.filter((v) => letters.includes(v)).map((v) => [v, cols[letters.indexOf(v)].values] as const);
+  const vars: Record<string, number> = { i: 0, row: 0, n };
+  const rows: number[] = [];
+  for (let i = 0; i < n; i++) {
+    vars.i = vars.row = i + 1;
+    if (x) vars.x = x.values[i];
+    for (const [v, a] of used) vars[v] = i < a.length ? a[i] : NaN;
+    if (f.fn(vars) > 0) rows.push(i);
+  }
+  return rows;
+}
+// the rows the mode chooses
+function chosen(s: RowSelect, n: number, x: Column | undefined, cols: Column[]): { rows: number[]; text: string } | string {
+  const all = () => Array.from({ length: n }, (_, i) => i);
   switch (s.mode) {
     case 'all':
       return { rows: all(), text: '' };
@@ -109,34 +164,26 @@ export function selectRows(sel: RowSelect | undefined, n: number, x: Column | un
       if (!usesFormula(s)) {
         const conds = (s.conds ?? []).filter(condReady);
         if (!conds.length) return { rows: all(), text: '' };
-        const used: Column[] = [];
+        const used: (Column | null)[] = [];
         for (const c of conds) {
+          if (c.col === ROW_COL) {
+            used.push(null);
+            continue;
+          }
           const col = c.col ? findColumn(cols, c.col) : x;
           if (!col) return c.col ? `No column “${c.col}” for the condition.` : 'A condition on X needs an X column.';
           used.push(col);
         }
         const any = s.join === 'any';
         const rows = all().filter((i) => (any ? conds.some((c, k) => condTrue(c, used[k], i)) : conds.every((c, k) => condTrue(c, used[k], i))));
-        const name = (k: number) => (conds[k].col ? used[k].name : 'x');
+        const name = (k: number) => (conds[k].col === ROW_COL ? 'row' : conds[k].col ? used[k]!.name : 'x');
         const said = conds.map((c, k) => (c.op === 'empty' ? `${name(k)} is empty` : c.op === 'filled' ? `${name(k)} is not empty` : c.op === 'between' ? `${name(k)} between ${fmtNum(c.v!, 6)} and ${fmtNum(c.v2!, 6)}` : `${name(k)} ${ROW_OPS.find(([o]) => o === c.op)![1]} ${fmtNum(c.v!, 6)}`));
         return { rows, text: `where ${said.join(any ? ' or ' : ' and ')}` };
       }
       const src = s.rule?.trim();
       if (!src) return { rows: all(), text: '' };
-      const f = compile(src);
-      if (typeof f === 'string') return f;
-      const letters = cols.map((_, k) => columnLetter(k));
-      const bad = f.names.filter((v) => v !== 'i' && v !== 'n' && !(v === 'x' && x) && !letters.includes(v));
-      if (bad.length) return `Unknown name${bad.length > 1 ? 's' : ''} ${bad.join(', ')} in the rule: it may use ${x ? 'x (the X column), ' : ''}the columns ${letters.length ? `${letters[0]}${letters.length > 1 ? ` … ${letters[letters.length - 1]}` : ''}` : '(none)'}, i (the row, 1 … n) and n.`;
-      const used = f.names.filter((v) => letters.includes(v)).map((v) => [v, cols[letters.indexOf(v)].values] as const);
-      const vars: Record<string, number> = { i: 0, n };
-      const rows: number[] = [];
-      for (let i = 0; i < n; i++) {
-        vars.i = i + 1;
-        if (x) vars.x = x.values[i];
-        for (const [v, a] of used) vars[v] = i < a.length ? a[i] : NaN;
-        if (f.fn(vars) > 0) rows.push(i);
-      }
+      const rows = formulaRows(src, n, x, cols);
+      if (typeof rows === 'string') return rows;
       return { rows, text: `where ${src}` };
     }
   }

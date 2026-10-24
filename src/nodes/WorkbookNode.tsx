@@ -14,7 +14,7 @@ import { sheetText, type SheetEdits } from '../engine/sheet.ts';
 import type { ColumnRole, Dataset } from '../engine/table.ts';
 import { newSheet } from '../defaults.ts';
 import type { AppNode, BookLayout, BookSheet, WorkbookData, WorkbookNode } from '../types.ts';
-import { Worksheet, type SheetLayout } from './Worksheet.tsx';
+import { Worksheet, type RowLayout, type SheetLayout } from './Worksheet.tsx';
 import { Check, Field, InPort, Messages, OutPort, TextInput } from './ui.tsx';
 import type { NodeView } from '../engine/evaluate.ts';
 import { maxOf } from '../engine/minmax.ts';
@@ -123,6 +123,23 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
           ...(k < own.length ? { onAdd: addOwnCol } : {}),
           hidden: hiddenKeys.map((q) => q.replace(/^i:/, '')),
           onShowAll: () => setLayout({ hide: [] }),
+        }
+      : undefined;
+  // the rows of a sheet of the inputs (read-only): left out, moved, by their places in it (rowsOf: of every row shown)
+  const lay = data.layout?.[names[k] ?? ''];
+  const shownRows = r?.view.book?.rowsOf ?? (ds ? Array.from({ length: Math.max(0, maxOf(ds.columns.map((c) => c.values.length))) }, (_, i) => i) : []);
+  const rowLayout: RowLayout | undefined =
+    kinds[k] === 'input'
+      ? {
+          onHide: (rows) => setLayout({ rowHide: [...new Set([...(lay?.rowHide ?? []), ...rows.map((q) => shownRows[q]).filter((q) => q !== undefined)])] }),
+          onMove: (from, to) => {
+            const order = [...shownRows];
+            const [q] = order.splice(from, 1);
+            order.splice(to, 0, q);
+            setLayout({ rowOrder: order });
+          },
+          hidden: lay?.rowHide?.length ?? 0,
+          onShowAll: () => setLayout({ rowHide: undefined }),
         }
       : undefined;
   const addSheet = (s: BookSheet) => set({ sheets: [...own, s], sheet: own.length });
@@ -239,6 +256,7 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
           onEdits={(e: SheetEdits) => !viewOnly && setSheet(k, { edits: e })}
           readOnly={viewOnly}
           layout={layout}
+          rowLayout={rowLayout}
           look={data.look}
           onLook={(look) => set({ look })}
           onRole={kinds[k] !== 'own' ? (j, role) => setRole(names[k], ds.columns[j]?.name, role) : undefined}

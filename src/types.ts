@@ -81,7 +81,8 @@ export type BookSheet = { name: string; text: string; edits?: SheetEdits; textRe
 // but for their designations — roles: sheet name → column name → the designation given here. layout: sheet name → its
 // columns as arranged when it has inputs (keys: o<n> a column of its own table, n its place as read; i:<name> an
 // input's): the order moved by hand, the inputs' columns left out
-export type BookLayout = { order?: string[]; hide?: string[] };
+// rowHide, rowOrder: a sheet of the inputs' rows left out and moved (by their place in it, from 0; the others after)
+export type BookLayout = { order?: string[]; hide?: string[]; rowHide?: number[]; rowOrder?: number[] };
 // hideSheets: sheets of the inputs taken out of the workbook (by their names; shown again from the node)
 // matrix: a matrix on an input (by its port): its rows' names (or Y) as the first column, its columns' names (or X) as the
 // names (absent: not asked yet — both, and the node asks)

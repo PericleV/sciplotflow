@@ -136,7 +136,7 @@ import { zoomAt } from '../src/nodes/plotZoom.ts';
 import { pickPoints, pickValues, type PickRule } from '../src/engine/pick.ts';
 import { findPeaksIn, peakRunKey, regionPeak } from '../src/engine/peaks.ts';
 import { findSpec } from '../src/engine/fit.ts';
-import { cleanData, filterRows, findOutliers, sortKeysOf } from '../src/engine/cleaning.ts';
+import { cleanData, filterRows, findOutliers, sortKeysOf, splitParts } from '../src/engine/cleaning.ts';
 import { curveMath } from '../src/engine/curvemath.ts';
 import { averageNode } from '../src/engine/signalnodes.ts';
 import { AVERAGE_DEFAULTS, BARCHART_DEFAULTS, DIGITIZER_DEFAULTS, HISTOGRAM_DEFAULTS } from '../src/defaults.ts';
@@ -929,6 +929,23 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
     return typeof r === 'string' ? r : r.rows.join(',');
   };
   ok(sg('empty') === '1,4' && sg('filled') === '0,2,3,5', 'rows: is empty / is not empty (a 0 is a value)');
+  // the odd or even rows of those chosen; a formula on top of any choice; the row number in a condition; % in formulas
+  const m = compile('(-1) % 2 + 7 % 3');
+  ok(
+    sr({ mode: 'all', pick: 'odd' }) === '0,2,4' &&
+      sr({ mode: 'list', list: '1, 2, 4-6', pick: 'even' }) === '1,3,5' &&
+      sr({ mode: 'all', also: 'row % 2 == 0 and x > 450', alsoOn: true }) === '3,5' &&
+      sr({ mode: 'all', also: 'row % 2 == 0', alsoOn: false }) === '0,1,2,3,4,5' &&
+      sr({ mode: 'rule', conds: [cx('>', 3, undefined, '#')] }) === '3,4,5' &&
+      sr({ mode: 'rule', rule: 'row % 3 == 0', formula: true }) === '2,5' &&
+      typeof m !== 'string' &&
+      m.fn({}) === 2,
+    'rows: odd and even rows, a formula on top, the row number in a condition, row and % in formulas',
+  );
+  // Filter & sort rows ▸ split: x < 500 and x ≥ 500 parts, the rest (none), and a part by row number
+  const xa = { name: 'd', columns: [{ ...x, role: 'x' as const }, a] };
+  const sp = splitParts(xa, [{ name: 'low', sel: { mode: 'rule', conds: [cx('<', 500)] } }, { name: 'high', sel: { mode: 'rule', conds: [cx('>=', 500)] } }, { name: 'odd', sel: { mode: 'all', pick: 'odd' } }], true);
+  ok(typeof sp !== 'string' && sp.map((p) => `${p.name}:${Array.from(p.columns[1].values).join('/')}`).join(' ') === 'low:1/2 high:3/4/5/6 odd:1/3/5 the rest:', `filter: split into parts (${typeof sp === 'string' ? sp : sp.map((p) => p.name).join(', ')})`);
   const text = 'λ;r1;r2;r3;note\n400;1;2;3;5\n410;2;4;6;5\n420;3;3;3;5\n';
   const imp = { id: 'i', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, text, textId: 'st' } } as AppNode;
   const rows = { id: 'r', type: 'stats', position: { x: 0, y: 0 }, data: { on: 'rows', cols: '2-4', x: '', err: 'sd', rows: { mode: 'range', ranges: [{ from: 1, to: 2 }] } } } as AppNode;
@@ -4073,6 +4090,14 @@ for (const ex of EXAMPLES) {
     { id: 'e1', source: 'm', sourceHandle: 'out', target: 'c', targetHandle: 'in-0' },
     { id: 'e2', source: 'c', sourceHandle: 's-s1', target: 'p', targetHandle: 'matrix' },
   ];
+  // a Workbook sheet of the inputs: rows left out and moved (by their places), the others after them
+  {
+    const imp = { id: 'i', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, text: 'x\ty\n1\t10\n2\t20\n3\t30\n4\t40\n', textId: 'rows' } } as AppNode;
+    const wb = { id: 'w', type: 'book', position: { x: 0, y: 0 }, data: { ...WORKBOOK_DEFAULTS, layout: { Sheet1: { rowHide: [1], rowOrder: [3, 0] } } } } as AppNode;
+    const rw = evaluateGraph([imp, wb], [{ id: 'e', source: 'i', sourceHandle: 'out', target: 'w', targetHandle: 'in-0' }]).get('w')!;
+    const o = rw.outputs.out?.t === 'dataset' ? rw.outputs.out.v : undefined;
+    ok(Array.from(o?.columns[0].values ?? []).join() === '4,1,3' && rw.view.book?.rowsOf?.join() === '3,0,2', `Workbook: rows of an input sheet left out and moved (${Array.from(o?.columns[0].values ?? []).join()}; ${rw.view.book?.kinds?.join()})`);
+  }
   // a matrix on a Workbook's input: a table, its rows' and columns' names as asked (not asked yet: both, and asked)
   {
     const named = { ...Mx.newMatrix(2, 2, 'T', Float64Array.of(1, 2, 3, 4)), rowNames: ['400 nm', '410 nm'], colNames: ['-0.5', '0'] };

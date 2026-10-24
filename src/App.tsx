@@ -15,6 +15,7 @@ import {
   useReactFlow,
   type Connection,
   type Edge,
+  type FinalConnectionState,
   type IsValidConnection,
   type Node,
   type NodeChange,
@@ -23,7 +24,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import './App.css';
 import { EngineContext, useEngine } from './engine/engine.ts';
-import { canConnect, isMultiInput, PORT_COLORS, sourcePort, type PortContext } from './engine/ports.ts';
+import { canConnect, isMultiInput, PORT_COLORS, sourcePort, targetAccepts, type PortContext } from './engine/ports.ts';
 import { KK_DEFAULTS, CONVERT_DEFAULTS, TRANSPOSE_DEFAULTS, STACK_DEFAULTS, MATCOMP_DEFAULTS, MATRIX_DEFAULTS, COLUMNS_DEFAULTS, PEAKWIDTH_DEFAULTS, AUTOEXTRACT_DEFAULTS, CANVAS_DEFAULTS, DRAWING_DEFAULTS, COMBINE_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS, CALCULUS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, AVERAGE_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, IMAGE_DEFAULTS, PHASE_DEFAULTS, HISTOGRAM_DEFAULTS, BARCHART_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, CURVEMATH_DEFAULTS, TRANSLATE_DEFAULTS, PEAK_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, ANOVA_DEFAULTS, NONPAR_DEFAULTS, CORR_DEFAULTS, PICK_DEFAULTS, DATAMANIP_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, PYTHON_DEFAULTS, NOTE_DEFAULTS, NOTE_SIZE,PLOT1D_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
 import { NODE_HELP, NODE_SHORT } from './help.ts';
 import { DRAG_TYPE, NodePalette, type PaletteGroup } from './NodePalette.tsx';
@@ -779,6 +780,94 @@ function Flow() {
     [setEdges, getNode],
   );
 
+  // A node dragged onto a connection goes into it (source → node → target): the connection under the mouse, when the
+  // node is connected to nothing and has an input that takes what the connection carries and an output its target
+  // takes (the first of each, as its handles are drawn); shown while dragging, made when the node is let go
+  const [dropEdge, setDropEdge] = useState<{ edge: string; inH: string; outH: string } | null>(null);
+  const spliceAt = (nodeId: string, x: number, y: number): { edge: string; inH: string; outH: string } | null => {
+    const n = getNode(nodeId) as AppNode | undefined;
+    const es = getEdges();
+    if (!n || es.some((e) => e.source === nodeId || e.target === nodeId)) return null;
+    const under = document
+      .elementsFromPoint(x, y)
+      .map((el) => el.closest('.react-flow__edge'))
+      .find((el): el is Element => !!el);
+    const id = under?.getAttribute('data-id') ?? under?.getAttribute('data-testid')?.replace(/^rf__edge-/, '');
+    const e = es.find((q) => q.id === id);
+    if (!e) return null;
+    const ctx = { node: getNode as PortContext['node'], edges: es, groupInputs: currentGroup?.inputs };
+    const [src, tgt] = [getNode(e.source) as AppNode | undefined, getNode(e.target) as AppNode | undefined];
+    const el = document.querySelector(`.react-flow__node[data-id="${CSS.escape(nodeId)}"]`);
+    const handles = (kind: string) => [...(el?.querySelectorAll(`.react-flow__handle.${kind}`) ?? [])].map((h) => h.getAttribute('data-handleid') ?? '');
+    const inH = handles('target').find((h) => canConnect(src, n, h, e.sourceHandle ?? null, ctx));
+    const outH = handles('source').find((h) => canConnect(n, tgt, e.targetHandle ?? null, h, ctx));
+    return inH !== undefined && outH !== undefined ? { edge: e.id, inH, outH } : null;
+  };
+  // (a node just added: what to do once it is in the flow and its ports are drawn, a frame or a few later)
+  const whenDrawn = (id: string, fn: () => void, tries = 30) =>
+    requestAnimationFrame(() => {
+      const drawn = getNode(id) && document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"] .react-flow__handle`);
+      if (drawn || tries <= 0) fn();
+      else whenDrawn(id, fn, tries - 1);
+    });
+  const splice = (nodeId: string, d: { edge: string; inH: string; outH: string }) =>
+    setEdges((es) => {
+      const e = es.find((q) => q.id === d.edge);
+      if (!e) return es;
+      return [
+        ...es.filter((q) => q.id !== d.edge),
+        { id: `e-${e.source}-${e.sourceHandle ?? ''}-${nodeId}-${d.inH}`, source: e.source, sourceHandle: e.sourceHandle, target: nodeId, targetHandle: d.inH },
+        { id: `e-${nodeId}-${d.outH}-${e.target}-${e.targetHandle ?? ''}`, source: nodeId, sourceHandle: d.outH, target: e.target, targetHandle: e.targetHandle },
+      ];
+    });
+
+  // A connection let go on the empty canvas (not on a node, not near a port): the menu of the nodes that fit, there
+  const onConnectEnd = (ev: MouseEvent | TouchEvent, st: FinalConnectionState) => {
+    if (st.isValid || st.toNode || st.toHandle || !st.fromNode || !st.fromHandle) return;
+    const target = ev.target as Element | null;
+    if (!target?.closest('.react-flow__pane')) return;
+    const pt = 'changedTouches' in ev ? ev.changedTouches[0] : ev;
+    if (!pt) return;
+    setMenu({ kind: 'connect', x: pt.clientX, y: pt.clientY, from: { node: st.fromNode.id, handle: st.fromHandle.id ?? null, type: st.fromHandle.type } });
+  };
+  // the node types a connection from (to) a port can go to (come from): a node of the kind as added, one of its usual
+  // ports taking (giving) what the port gives (takes)
+  const IN_PORTS = ['in', 'in-0', 'dataset', 'data', 'matrix', 'figures', 'insets', 'x', 'a', 'b', 'at', 'base', 'by', 'irf', 'kernel', 'like', 'overlay', 'pvalues', 'under', 'ya', 'yb'];
+  const OUT_PORTS = ['out', 'dataset', 'book', 'workbook', 'figure', 'matrix', 'table', 'sheets', 'stacked', 'parameters'];
+  const fitsConnect = (from: { node: string; handle: string | null; type: 'source' | 'target' }, t: Template): boolean => {
+    const other = getNode(from.node) as AppNode | undefined;
+    if (!other) return false;
+    const tmp = { id: '__new', type: t.type, position: { x: 0, y: 0 }, data: t.data } as AppNode;
+    const ctx = { node: getNode as PortContext['node'], edges: getEdges(), groupInputs: currentGroup?.inputs };
+    if (from.type === 'source') return IN_PORTS.some((h) => canConnect(other, tmp, h, from.handle, ctx));
+    const takes = targetAccepts(other, from.handle);
+    return OUT_PORTS.some((h) => {
+      const p = sourcePort(tmp, h, ctx);
+      return !!p && (p === 'any' ? takes.length > 0 : takes.includes(p));
+    });
+  };
+  // the node chosen: added where the connection was let go, then connected by its first port that fits (once drawn)
+  const addConnected = (t: Template, m: Extract<MenuState, { kind: 'connect' }>) => {
+    const id = addNode(t, { x: m.x, y: m.y });
+    whenDrawn(id, () => {
+      const n = getNode(id) as AppNode | undefined;
+      const other = getNode(m.from.node) as AppNode | undefined;
+      const el = document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`);
+      if (!n || !other || !el) return;
+      const ctx = { node: getNode as PortContext['node'], edges: getEdges(), groupInputs: currentGroup?.inputs };
+      const handles = (kind: string) => [...el.querySelectorAll(`.react-flow__handle.${kind}`)].map((h) => h.getAttribute('data-handleid') ?? '');
+      if (m.from.type === 'source') {
+        const h = handles('target').find((q) => canConnect(other, n, q, m.from.handle, ctx));
+        if (h !== undefined) onConnect({ source: m.from.node, sourceHandle: m.from.handle, target: id, targetHandle: h });
+        else notify(`${t.label} has no input that takes this connection.`);
+      } else {
+        const h = handles('source').find((q) => canConnect(n, other, m.from.handle, q, ctx));
+        if (h !== undefined) onConnect({ source: id, sourceHandle: h, target: m.from.node, targetHandle: m.from.handle });
+        else notify(`${t.label} has no output this port takes.`);
+      }
+    });
+  };
+
   // Colour each edge by the type of value it carries (a Reroute: the type of what reaches it).
   const colorKey = nodes.map((n) => `${n.id}:${n.type}`).join('|');
   // The nodes of this render (not getNode: right after loading a project the React Flow store does not hold the new
@@ -797,9 +886,11 @@ function Flow() {
         // custom line: curved or orthogonal, arrow at the middle (direction of the data); a selected line is thicker
         // and drawn over a halo (FlowEdge)
         const lit = hovered !== null && (e.source === hovered || e.target === hovered);
-        return { ...e, type: 'flow', className: lit ? 'edge-lit' : undefined, style: { stroke: color, strokeWidth: e.selected || lit ? 4.5 : 3 }, data: { arrow: prefs.arrows, shape: prefs.shape } };
+        // (the connection a node dragged over it would go into)
+        const into = dropEdge?.edge === e.id;
+        return { ...e, type: 'flow', className: into ? 'edge-drop' : lit ? 'edge-lit' : undefined, style: { stroke: color, strokeWidth: e.selected || lit || into ? 4.5 : 3 }, data: { arrow: prefs.arrows, shape: prefs.shape } };
       }),
-    [edges, nodeById, portCtx, prefs.arrows, prefs.shape, hovered],
+    [edges, nodeById, portCtx, prefs.arrows, prefs.shape, hovered, dropEdge],
   );
 
   // Deleting a frame keeps its nodes (they leave the frame) unless “remove the group and its nodes” was chosen.
@@ -945,7 +1036,7 @@ function Flow() {
     void fitView({ nodes: showNodes.map((id) => ({ id })), padding: 0.12, duration: 300 });
   }, [showNodes, nodes, getNode, fitView]);
   const nodeMenu = (): { title: string; actions: MenuAction[] } | null => {
-    if (!menu || menu.kind === 'pane') return null;
+    if (!menu || menu.kind === 'pane' || menu.kind === 'connect') return null;
     const ids = menu.kind === 'node' ? [menu.nodeId] : menu.ids;
     const remove: MenuAction = { label: ids.length > 1 ? 'Remove selected nodes' : 'Remove node', danger: true, kbd: 'Del', onClick: () => deleteElements({ nodes: ids.map((id) => ({ id })) }) };
     const inGroup = ids.some((id) => getNode(id)?.parentId);
@@ -1173,7 +1264,13 @@ function Flow() {
     const t = template(e.dataTransfer.getData(DRAG_TYPE) as AppNode['type']);
     if (!t) return;
     e.preventDefault();
-    addNode(t, { x: e.clientX, y: e.clientY });
+    const at = { x: e.clientX, y: e.clientY };
+    const id = addNode(t, at);
+    // (dropped on a connection: put into it once its handles are drawn)
+    whenDrawn(id, () => {
+      const d = spliceAt(id, at.x, at.y);
+      if (d) splice(id, d);
+    });
   };
 
   // data files dropped on the canvas: an Import node holding them (a table, or a workbook's sheets)
@@ -1228,6 +1325,7 @@ function Flow() {
     // the settings chosen as the default of its kind (this browser)
     const made = withDefaultStyle({ id, type: t.type, position, data, ...size, selected: true } as AppNode);
     setNodes((ns) => [...ns.map((n) => (n.selected ? { ...n, selected: false } : n)), made]);
+    return id;
   };
 
   // a guided tour: its step, its window over the canvas; where it was left (step, project) kept in this browser
@@ -1505,6 +1603,7 @@ function Flow() {
               onNodesChange={onNodesRouted}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
+              onConnectEnd={onConnectEnd}
               isValidConnection={isValidConnection}
               nodeTypes={nodeTypes}
               defaultEdgeOptions={{ animated: true }}
@@ -1524,6 +1623,15 @@ function Flow() {
               onNodeClick={() => setNodeClicks((k) => k + 1)}
               onMoveStart={closeMenu}
               onNodeDragStart={closeMenu}
+              onNodeDrag={(ev, n) => {
+                const d = 'clientX' in ev ? spliceAt(n.id, ev.clientX, ev.clientY) : null;
+                if (d?.edge !== dropEdge?.edge) setDropEdge(d);
+              }}
+              onNodeDragStop={(ev, n) => {
+                const d = 'clientX' in ev ? spliceAt(n.id, ev.clientX, ev.clientY) : null;
+                setDropEdge(null);
+                if (d) splice(n.id, d);
+              }}
               onPaneContextMenu={(e) => {
                 e.preventDefault();
                 setMenu({ kind: 'pane', x: e.clientX, y: e.clientY });
@@ -1687,11 +1795,12 @@ function Flow() {
             {menu && (
               <ContextMenu
                 menu={menu}
-                items={menuItems}
+                items={menu.kind === 'connect' ? menuItems.filter((i) => fitsConnect(menu.from, GROUPS.flatMap((g) => g.items).find((q) => (q.key ?? q.type) === i.type)!)) : menuItems}
                 onClose={closeMenu}
                 onAdd={(type) => {
                   const t = GROUPS.flatMap((g) => g.items).find((i) => (i.key ?? i.type) === type);
-                  if (t) addNode(t, { x: menu.x, y: menu.y });
+                  if (t && menu.kind === 'connect') addConnected(t, menu);
+                  else if (t) addNode(t, { x: menu.x, y: menu.y });
                 }}
                 title={nm?.title}
                 actions={nm?.actions}

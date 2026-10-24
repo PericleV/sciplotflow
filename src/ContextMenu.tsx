@@ -12,7 +12,10 @@ export type MenuAction =
 export type MenuState =
   | { kind: 'pane'; x: number; y: number }
   | { kind: 'node'; x: number; y: number; nodeId: string; label: string }
-  | { kind: 'selection'; x: number; y: number; ids: string[] };
+  | { kind: 'selection'; x: number; y: number; ids: string[] }
+  // a connection dragged from a port and let go on the empty canvas: the nodes that can take it (or give to it), the one
+  // chosen added there and connected
+  | { kind: 'connect'; x: number; y: number; from: { node: string; handle: string | null; type: 'source' | 'target' } };
 
 // Keeps the menu inside the window.
 const place = (x: number, y: number, w: number, h: number): CSSProperties => ({
@@ -56,7 +59,7 @@ export function ContextMenu(props: {
     };
   }, [onClose]);
 
-  if (menu.kind !== 'pane') {
+  if (menu.kind !== 'pane' && menu.kind !== 'connect') {
     return (
       <div className="ctx-menu" ref={box} style={place(menu.x, menu.y, 220, 60 + 30 * actions.length)} onContextMenu={(e) => e.preventDefault()}>
         <div className="ctx-title">{title}</div>

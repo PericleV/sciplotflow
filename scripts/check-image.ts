@@ -22,6 +22,7 @@ import { encodePNG } from '../src/image/render.ts';
 import { niceBar, scaleBarPlace, BAR_DEFAULTS } from '../src/image/node.ts';
 import { unzlibSync } from 'fflate';
 import { evaluateGraph, logicalData } from '../src/engine/evaluate.ts';
+import { analyzeNetwork, learnRatio, type NetworkResult } from '../src/image/network.ts';
 import type { AppNode } from '../src/types.ts';
 
 type Ok = (cond: boolean, what: string) => void;
@@ -525,6 +526,71 @@ export function checkImage(ok: Ok) {
     const byForest = findParticles(a.r.ch[0], tx.w, tx.h, { ...PARTICLE_DEFAULTS, minSize: 60 }).found;
     const none = applySteps(r, [step], 1, undefined, 1, { train: train.slice(0, 4) });
     ok(a.r.kind === 'mask' && Math.abs(byForest - tx.truth.length) <= 1 && Math.abs(byOtsu - tx.truth.length) > 3 && a.r.ch[0].every((v, i) => v === b.r.ch[0][i]) && /^object: \d+ px, background: \d+ px → object$/.test(a.notes.c ?? '') && /two classes/.test(none.errors.c ?? ''), `trainable classifier: ${byForest} textured particles of ${tx.truth.length} from 4 lines and 3 background examples (Otsu: ${byOtsu} pieces); the same twice; one class only: said (${a.notes.c})`);
+  }
+  // Structure: a lattice of bars 6 and 7 px wide, 40 px apart (25 junctions inside the image, 40 ligaments between
+  // them), with three bumps on its bars: the ligaments 40 px long, their thickness the bars' width, the bumps cut as
+  // spurs; the pores the squares between the bars
+  {
+    // (a bar W px wide on the line c: an odd width centred on the pixel c, an even one on the edge between c − 1 and c)
+    const inBar = (x: number, c: number, W: number) => (W % 2 ? Math.abs(x - c) <= (W - 1) / 2 : Math.abs(x + 0.5 - c) < W / 2);
+    const grid = (W: number, bumps: Pt[] = []) => {
+      const [w, h] = [200, 200];
+      const m = new Float32Array(w * h);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) for (const c of [20, 60, 100, 140, 180]) if (inBar(x, c, W) || inBar(y, c, W)) m[y * w + x] = 1;
+      for (const [cx, cy] of bumps) for (let y = cy - 2; y < cy + 3; y++) for (let x = cx - 2; x < cx + 3; x++) m[y * w + x] = 1;
+      return m;
+    };
+    const med = (xs: number[]) => [...xs].sort((a, b) => a - b)[xs.length >> 1];
+    const bumps: Pt[] = [
+      [40, 25],
+      [80, 105],
+      [145, 120],
+    ];
+    const res = [6, 7].map((W) => analyzeNetwork(grid(W, bumps), 200, 200, {}));
+    const lig = res.map((r) => r.branches.filter((b) => b.counted));
+    const inner = res[1].pores.filter((p) => !p.edge);
+    ok(
+      lig.every((l) => l.length === 40 && Math.abs(med(l.map((b) => b.length)) - 40) < 0.5) && Math.abs(med(lig[0].map((b) => b.diameter)) - 6) < 0.6 && Math.abs(med(lig[1].map((b) => b.diameter)) - 7) < 0.6 && res.every((r) => r.pruned === 3 && r.nodes.filter((n) => n.degree >= 3).length === 25) && inner.length === 16 && Math.abs(med(inner.map((p) => p.inscribed)) - 33) <= 1.5 && lig[1].every((b) => b.surface < b.length && b.surface > 28),
+      `structure: 40 ligaments of 40 px (median ${med(lig[1].map((b) => b.length)).toFixed(2)}), ${med(lig[0].map((b) => b.diameter))} and ${med(lig[1].map((b) => b.diameter))} px thick, 25 junctions, the 3 bumps cut, 16 pores (${med(inner.map((p) => p.inscribed))} px across)`,
+    );
+    // by hand: a ligament deleted (its junctions keep three branches each), a spur kept, a
+    // line drawn across a pore (two junctions more, three ligaments where there was one pore), a stroke erased, a node
+    // added, a node moved; the cut learnt from a spur deleted and one kept
+    const m = grid(7, bumps);
+    const plain = analyzeNetwork(m, 200, 200, {});
+    const del = analyzeNetwork(m, 200, 200, { hand: { del: [[40, 60]] } });
+    const kept = analyzeNetwork(m, 200, 200, { hand: { keep: [[40, 25]] } });
+    const drawnR = analyzeNetwork(m, 200, 200, { hand: { add: [[[80, 63], [80, 97]]] } });
+    const erased = analyzeNetwork(m, 200, 200, { hand: { erase: [{ pts: [[40, 100]], r: 3 }] } });
+    const split = analyzeNetwork(m, 200, 200, { hand: { split: [[120, 60]] } });
+    const moved = analyzeNetwork(m, 200, 200, { hand: { move: [[[100, 100], [104, 100]]] } });
+    const at = (r: NetworkResult, p: Pt) => r.branches.find((b) => b.path.some(([x, y]) => Math.hypot(x - p[0], y - p[1]) < 2));
+    const learnt = learnRatio(analyzeNetwork(m, 200, 200, { prune: 'off', hand: { erase: [{ pts: [[40, 100]], r: 3 }], del: [[40, 25]], keep: [[27, 100]] } }).examples);
+    ok(
+      del.branches.length === plain.branches.length - 1 &&
+        kept.branches.some((b) => b.keep && b.type === 'end') &&
+        drawnR.branches.filter((b) => b.counted).length === 43 &&
+        drawnR.branches.some((b) => b.hand) &&
+        erased.branches.filter((b) => b.counted).length === 39 &&
+        split.branches.length === plain.branches.length + 1 &&
+        split.branches.filter((b) => b.counted).length === 41 &&
+        Math.abs((at(moved, [90, 100])?.length ?? 0) - 44) < 0.5 &&
+        !!learnt &&
+        learnt.right === 2 &&
+        learnt.ratio > 0.3 &&
+        learnt.ratio < 2.4,
+      `structure by hand: deleted, kept, drawn, erased, a node added and one moved; the cut learnt (${JSON.stringify(learnt)})`,
+    );
+    // in the node: the lattice drawn as an image, a threshold, Structure on (1 px = 2 nm, a skeleton step after the
+    // threshold not taken for the mask): the sheets Network, Ligaments, Junctions, Pores in its workbook
+    const img = packPixels(200, 200, 1, 8, Array.from(grid(7), (v) => (v ? 200 : 30)));
+    const thr = { ...newStep('threshold', 't1'), p: { ...newStep('threshold', 't1').p, method: 'otsu' } };
+    const nd = { id: 'im', type: 'image', position: { x: 0, y: 0 }, data: { name: 'npg.tif', pixels: img, pixelsId: 'npg', steps: [thr, newStep('skeleton', 'k1')], cal: { size: 2, unit: 'nm' }, network: { on: true } } } as AppNode;
+    const out = evaluateGraph([nd], []).get('im')!;
+    const book = out.outputs.workbook?.t === 'workbook' ? out.outputs.workbook.v : undefined;
+    const sheet = (n: string) => book?.sheets.find((q) => q.name === n);
+    const val = (q: string) => sheet('Network')?.columns[1].values[sheet('Network')!.columns[0].text!.indexOf(q)];
+    ok(!!sheet('Ligaments') && sheet('Ligaments')!.columns[4].name === 'Length (nm)' && val('Ligaments counted') === 40 && Math.abs(val('Ligament length, median')! - 80) < 1 && Math.abs(val('Ligament diameter, median')! - 14) < 1.2 && val('Junctions') === 25 && sheet('Pores')!.columns[0].values.length === 36 && !!out.view.network, `structure in the node: its sheets, in nm (median ${val('Ligament length, median')} nm long, ${val('Ligament diameter, median')} nm thick)`);
   }
   // layers: a square drawn over two others (brighter, their corners cut by it) is on top, they under it; one alone on top
   {

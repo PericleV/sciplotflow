@@ -38,7 +38,7 @@ import { describe, STATS, type StatKey } from './stats.ts';
 import { combineNode, combineSettings, labelRuns, sideBySide, unstack, type BlockInfo, type CombineInput, type CombineSettings, type SplitGraph } from './reshape.ts';
 import { pickPoints, type PickGraph, type PickKind, type Picked } from './pick.ts';
 import { CURVE_OP_LABELS, curveFormulas, curveMath, curveOf, curveOpPort, curveOps, translate, type Curve2, type TranslateCurve, type CurveMathData, type CurveOpView, type CurvePlotLine, stepInfo, type StepInfo } from './curvemath.ts';
-import { changesTable, cleanData, filterRows } from './cleaning.ts';
+import { changesTable, cleanData, filterRows, splitParts } from './cleaning.ts';
 import { digitized } from './digitize.ts';
 import { runPhaseDigitizer } from './phasedigitize.ts';
 import { colKey, colLabel, drawCircuit, type EisRangeSpec, fitCurve, guessColumns, looksAngular, runEis, type EisData, type EisPoints } from './eis.ts';
@@ -76,7 +76,8 @@ import { compare, compareTable, modelName, yorkRuns, type Scored } from './fitco
 import { parseRowHandle, rowHandle } from './ports.ts';
 import { hasGrad, type GradFill, AXIS_DEFAULTS, COLORBAR_DEFAULTS, SIDE_DEFAULTS, curveStyle, axesStyle, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, toPt, type Annotation, type AxesFig, type AxesStyle, type AxisSpec, type Curve, type CurveStyle, type Figure, type FigureBox, type LegendEntry, type LegendSpec, type LengthUnit, type Placement, type ShapeSpec, type TextDefaults, resolveText, type Side, INSET_DEFAULTS, insetBackground, scaledSize } from '../figure/spec.ts';
 import { CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, DRAWING_DEFAULTS, MATRIX_PLOT_DEFAULTS, PLOT_PAGE_DEFAULTS } from '../defaults.ts';
-import { figurePng, imageFigure, imageMatrix, imageMeasurements, processImage, scaleBarPlace, type ImageAnalysisData } from '../image/node.ts';
+import { figurePng, imageFigure, imageMatrix, imageMeasurements, imageNetwork, networkSheets, processImage, scaleBarPlace, type ImageAnalysisData } from '../image/node.ts';
+import type { NetworkResult } from '../image/network.ts';
 import { isArea, roiCentre, roiOutline, ROI_COLOR } from '../image/roi.ts';
 import { cropBox } from '../image/raster.ts';
 import { STEP_DEFS } from '../image/steps.ts';
@@ -135,7 +136,8 @@ export type NodeView = {
   // it has inputs — o<n>: of its own table (n: its place as read), i:<name>: an input's
   // hiddenSheets: the inputs' sheets taken out of the workbook (by their names)
   // (a matrix: ask, the node asks how it goes on the sheet; rowsAre, colsAre: what its rows and columns have — names, Y / X, or nothing)
-  book?: { own: number; ins: { letter: string; kind: 'column' | 'dataset' | 'workbook' | 'matrix'; name: string; sheet: string; ask?: boolean; rowsAre?: string; colsAre?: string }[]; kinds?: ('own' | 'input' | 'mixed')[]; keys?: string[]; hiddenSheets?: string[] };
+  // (rowsOf: of the sheet shown, when it is the inputs' with rows left out or moved: the place of every row shown)
+  book?: { own: number; rowsOf?: number[]; ins: { letter: string; kind: 'column' | 'dataset' | 'workbook' | 'matrix'; name: string; sheet: string; ask?: boolean; rowsAre?: string; colsAre?: string }[]; kinds?: ('own' | 'input' | 'mixed')[]; keys?: string[]; hiddenSheets?: string[] };
   // Data manipulation: the points of its graph (moved), the state of every input row (ROW_MASKED …), the columns shown
   manip?: { x: Float64Array; y: Float64Array; state: Uint8Array; nIn: number; xName: string; yName: string };
   // Fit: the data (every point, which run it is in, whether it was fitted), the results of every run, the model
@@ -187,6 +189,7 @@ export type NodeView = {
   layerInputs?: { port: number; letter: string; name: string; columns: string[]; labels: Record<string, string[]> }[];
   figure?: Figure;
   cooling?: Figure; // Phase diagram: the amounts of the phases of the alloy cooled
+  network?: NetworkResult; // Image analysis, Structure: the network found (drawn over the image, a ligament explained)
   image?: { w: number; h: number; ch: number; kind: string; notes: Record<string, string>; errors: Record<string, string>; summary?: string }; // Image analysis: the result's size, every step's note and error, what the measurements found
   under?: Figure; // Figure Drawing: the figure connected under it
   pinShift?: Record<string, [number, number]>; // … and how far its objects pinned to that figure's data are moved (mm)
@@ -2345,10 +2348,15 @@ function imageNodeOut(id: string, d: ImageAnalysisData): Out {
   const figure = drawingFigure(id, page);
   const warnings = (d.steps ?? []).flatMap((s, k) => (p.errors[s.id] ? [`Step ${k + 1} (${STEP_DEFS[s.kind]?.label ?? s.kind}): ${p.errors[s.id]}.`] : []));
   const m = imageMeasurements(d, p);
+  // (Structure: the network's sheets after the measurements')
+  const net = d.network?.on ? imageNetwork(d, p) : null;
+  if (typeof net === 'string') warnings.push(net);
+  const netSheets = net && typeof net !== 'string' ? networkSheets(net, d) : [];
+  const book = m || netSheets.length ? { name: m?.book.name ?? (d.name.replace(/\.[a-z0-9]+$/i, '') || 'image'), sheets: [...(m?.book.sheets ?? []), ...netSheets] } : null;
   return {
-    outputs: { matrix: { t: 'matrix', v: imageMatrix(p.out, d.name || 'image', d.cal) }, figure: { t: 'figure', v: figure }, ...(m ? { workbook: { t: 'workbook' as const, v: m.book } } : {}) },
+    outputs: { matrix: { t: 'matrix', v: imageMatrix(p.out, d.name || 'image', d.cal) }, figure: { t: 'figure', v: figure }, ...(book ? { workbook: { t: 'workbook' as const, v: book } } : {}) },
     warnings,
-    view: { figure, image: { w: p.out.w, h: p.out.h, ch: p.base.ch.length, kind: p.out.kind, notes: p.notes, errors: p.errors, ...(m?.summary ? { summary: m.summary } : {}) } },
+    view: { figure, image: { w: p.out.w, h: p.out.h, ch: p.base.ch.length, kind: p.out.kind, notes: p.notes, errors: p.errors, ...(m?.summary ? { summary: m.summary } : {}) }, ...(net && typeof net !== 'string' ? { network: net } : {}) },
   };
 }
 
@@ -4392,6 +4400,19 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
         const columns = sideBySide(shown.map(({ e }) => e.col));
         return { columns, keys: shown.map(({ e }) => e.key) };
       };
+      // (a sheet of the inputs: its rows left out and moved as set in the node; rowsOf: the place of every row shown)
+      let rowsOf: number[] | undefined;
+      const laidRows = (sheet: string, columns: Column[], shown: boolean): Column[] => {
+        const l = n.data.layout?.[sheet];
+        if (!l?.rowHide?.length && !l?.rowOrder?.length) return columns;
+        const total = Math.max(0, maxOf(columns.map((c) => c.values.length)));
+        const gone = new Set(l.rowHide ?? []);
+        const pos = new Map((l.rowOrder ?? []).map((r, i) => [r, i]));
+        const rows = Array.from({ length: total }, (_, i) => i).filter((i) => !gone.has(i));
+        rows.sort((a, b) => (pos.get(a) ?? 1e9 + a) - (pos.get(b) ?? 1e9 + b));
+        if (shown) rowsOf = rows;
+        return columns.map((c) => ({ ...c, values: Float64Array.from(rows, (i) => (i < c.values.length ? c.values[i] : NaN)), ...(c.text ? { text: rows.map((i) => c.text![i] ?? '') } : {}), ...(c.mask ? { mask: Uint8Array.from(rows, (i) => c.mask![i] ?? 0) } : {}) }));
+      };
       const inputKeyed = (sheet: string, cols: Column[]): Keyed[] => withRoles(sheet, sideBySide(cols)).map((col) => ({ key: `i:${col.name}`, col }));
       let map: SheetMap | undefined;
       let keys: string[] | undefined;
@@ -4415,16 +4436,17 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
           keys = out.keys;
           if (ownUsed) map = r.map;
         }
-        return { name: s.name, columns: out.columns };
+        return { name: s.name, columns: ownUsed ? out.columns : laidRows(s.name, out.columns, j === k) };
       });
       for (const s of inSheets) {
         const nm = s.name;
         const out = arrange(nm, inputKeyed(nm, s.columns));
-        if (sheets.length === k) keys = out.keys;
+        const shown = sheets.length === k;
+        if (shown) keys = out.keys;
         kinds.push('input');
-        sheets.push({ ...s, name: nm, columns: out.columns });
+        sheets.push({ ...s, name: nm, columns: laidRows(nm, out.columns, shown) });
       }
-      return { outputs: { out: { t: 'dataset', v: sheets[k] }, book: { t: 'workbook', v: { name: n.data.name || 'Book', sheets } } }, view: { sheets: sheets.map((s) => s.name), book: { own: own.length, ins, kinds, ...(keys ? { keys } : {}), ...(hiddenSheets.length ? { hiddenSheets } : {}) }, ...(map ? { sheet: map } : {}) } };
+      return { outputs: { out: { t: 'dataset', v: sheets[k] }, book: { t: 'workbook', v: { name: n.data.name || 'Book', sheets } } }, view: { sheets: sheets.map((s) => s.name), book: { own: own.length, ins, kinds, ...(rowsOf ? { rowsOf } : {}), ...(keys ? { keys } : {}), ...(hiddenSheets.length ? { hiddenSheets } : {}) }, ...(map ? { sheet: map } : {}) } };
     }
     case 'extract': {
       const v = one('in');
@@ -4529,7 +4551,16 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       if (typeof r === 'string') return { errors: [r], view: { available } };
       const of = Math.max(0, maxOf(v.v.columns.map((c) => c.values.length)));
       const used = Math.max(0, maxOf(r.dataset.columns.map((c) => c.values.length)));
-      return { outputs: { out: { t: 'dataset', v: r.dataset } }, view: { available, report: [r.report], statRows: { used, of, text: r.text } } };
+      // (split: every part an output, p-0, p-1 … and p-rest; all of them as sheets, and side by side)
+      const parts: Record<string, Value> = {};
+      if (n.data.parts?.length) {
+        const sp = splitParts(r.dataset, n.data.parts, !!n.data.rest);
+        if (typeof sp === 'string') return { errors: [sp], view: { available } };
+        sp.forEach((p, k) => (parts[k < n.data.parts!.length ? `p-${k}` : 'p-rest'] = { t: 'dataset', v: p }));
+        parts.parts = { t: 'workbook', v: { name: 'parts', sheets: sp } };
+        parts.side = { t: 'dataset', v: { name: 'parts', columns: sideBySide(sp.flatMap((p) => p.columns.map((c) => ({ ...c, name: `${p.name}: ${c.name}` })))) } };
+      }
+      return { outputs: { out: { t: 'dataset', v: r.dataset }, ...parts }, view: { available, report: [r.report], statRows: { used, of, text: r.text } } };
     }
     case 'clean': {
       const v = one('in');

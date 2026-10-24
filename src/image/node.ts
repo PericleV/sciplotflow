@@ -10,6 +10,8 @@ import { trainingExamples } from './classify.ts';
 import type { ParticleOpts } from './particles.ts';
 import type { MatchOpts, MatchModelSpec } from './match.ts';
 import type { RegularShape } from './refine.ts';
+import { analyzeNetwork, NETWORK_DEFAULTS, type NetworkResult, type NetworkSpec } from './network.ts';
+import { column, type Column, type Dataset } from '../engine/table.ts';
 import { pngDataUrl, toRGBA, type Lut } from './render.ts';
 import type { Matrix } from '../engine/matrix.ts';
 import type { PageData } from '../types.ts';
@@ -40,6 +42,9 @@ export type ImageAnalysisData = {
   particles?: Partial<ParticleOpts> & { group?: string; shapes?: RegularShape[]; snap?: boolean; layers?: boolean };
   // Find like this: its turns, sizes, least similarity; the edges fitted; models: the list of models, each its settings
   match?: Partial<MatchOpts> & { fit?: boolean; models?: MatchModelSpec[] };
+  // Structure: the network of the mask (its skeleton's ligaments, junctions, pores) and the changes by hand
+  network?: NetworkSpec;
+  tab?: 'image' | 'objects' | 'structure' | 'results'; // the editor's panel shown last
 };
 export const BAR_DEFAULTS: ScaleBar = { show: true, length: NaN, at: 'br', color: '#ffffff', thickness: 3, label: true, size: 8 };
 export const IMAGE_FIGURE_DEFAULTS: ImageFigure = { width: 80, show: 'result', lut: 'gray', lo: NaN, hi: NaN, overlay: '#ff3b30', alpha: 0.45, bar: BAR_DEFAULTS, rois: 'outlines' };
@@ -60,7 +65,8 @@ export function niceBar(widthUnits: number): number {
 // The image read and processed: the raster at the end of the steps, the original, every step's note and error; the
 // image measured and the mask that covers (measure.ts). Kept for the same image, crop and steps (a selection moved
 // measures again, the steps do not run again)
-export type Processed = { base: Raster; out: Raster; notes: Record<string, string>; errors: Record<string, string>; image: Raster; mask: Raster | null };
+// solid: the last mask of the steps that is not a skeleton or a distance map (what Structure measures)
+export type Processed = { base: Raster; out: Raster; notes: Record<string, string>; errors: Record<string, string>; image: Raster; mask: Raster | null; solid: Raster | null };
 const processed = new Map<string, { key: string; p: Processed }>();
 export function processImage(d: ImageAnalysisData): Processed | null {
   // no image, or its pixels not back yet from the browser's storage
@@ -78,7 +84,8 @@ export function processImage(d: ImageAnalysisData): Processed | null {
   const ins: Raster[] = [];
   const { r, notes, errors } = applySteps(base, steps, steps.length, (k, x) => (ins[k] = x), 1, { train });
   const outs = steps.map((_, k) => ins[k + 1] ?? r);
-  const p: Processed = { base, out: r, notes, errors, ...measureInputs(base, outs, steps, on) };
+  const solidAt = outs.map((o, k) => (o.kind === 'mask' && steps[k].kind !== 'skeleton' && steps[k].kind !== 'distance' ? k : -1)).filter((k) => k >= 0).pop();
+  const p: Processed = { base, out: r, notes, errors, ...measureInputs(base, outs, steps, on), solid: solidAt !== undefined ? outs[solidAt] : null };
   if (d.pixelsId) {
     // (a few images kept: those of the nodes worked on)
     processed.delete(d.pixelsId);
@@ -96,6 +103,111 @@ export function imageMeasurements(d: ImageAnalysisData, p: Processed): MeasureRe
   const full = d.pixels ? { w: d.pixels.w, h: d.pixels.h } : { w: p.base.w, h: p.base.h };
   const c = cropBox(d.crop, full.w, full.h);
   return measureRois({ image: p.image, mask: p.mask, ox: c?.[0] ?? 0, oy: c?.[1] ?? 0, cal: d.cal, rois, spec: measureSpec(d.measure), name: `${d.name.replace(/\.[a-z0-9]+$/i, '') || 'image'} measurements` });
+}
+
+// Structure: the network of the last mask (its solid), kept while the mask and the settings are the same; a text: why
+// there is none
+const networks = new WeakMap<Processed, { key: string; res: NetworkResult }>();
+export function imageNetwork(d: ImageAnalysisData, p: Processed): NetworkResult | string {
+  if (!p.solid) return 'Structure: make a mask in the steps first (a threshold or a trainable classifier).';
+  const key = JSON.stringify([d.network ?? {}, d.crop ?? null]);
+  const hit = networks.get(p);
+  if (hit && hit.key === key) return hit.res;
+  const full = d.pixels ? { w: d.pixels.w, h: d.pixels.h } : { w: p.base.w, h: p.base.h };
+  const c = cropBox(d.crop, full.w, full.h);
+  const res = analyzeNetwork(p.solid.ch[0], p.solid.w, p.solid.h, d.network ?? {}, c?.[0] ?? 0, c?.[1] ?? 0);
+  networks.set(p, { key, res });
+  return res;
+}
+// its tables: the network's numbers, the ligaments (every branch), the junctions, the pores (in the calibrated unit)
+export function networkSheets(r: NetworkResult, d: ImageAnalysisData): Dataset[] {
+  const s = { ...NETWORK_DEFAULTS, ...d.network };
+  const k = d.cal && d.cal.size > 0 ? d.cal.size : 1;
+  const u = d.cal && d.cal.size > 0 ? unitText(d.cal.unit) : 'px';
+  const num = (name: string, v: number[]) => column(name, Float64Array.from(v));
+  const txt = (name: string, v: string[]): Column => column(name, new Float64Array(v.length).fill(NaN), v);
+  const B = r.branches;
+  const mid = (b: NetworkResult['branches'][number]) => b.path[b.path.length >> 1] ?? [NaN, NaN];
+  const TYPE = { junction: 'junction–junction', end: 'junction–end', free: 'end–end', loop: 'loop' };
+  const ligaments: Dataset = {
+    name: 'Ligaments',
+    columns: [
+      txt('Ligament', B.map((b) => `L${b.id + 1}`)),
+      txt('Type', B.map((b) => TYPE[b.type])),
+      txt('From', B.map((b) => `J${b.a + 1}`)),
+      txt('To', B.map((b) => `J${b.b + 1}`)),
+      num(`Length (${u})`, B.map((b) => b.length * k)),
+      num(`Surface length (${u})`, B.map((b) => b.surface * k)),
+      num(`Diameter (${u})`, B.map((b) => b.diameter * k)),
+      num(`Mean diameter (${u})`, B.map((b) => b.mean * k)),
+      num(`Neck (${u})`, B.map((b) => b.neck * k)),
+      num('Straightness', B.map((b) => b.straight)),
+      num('Angle (°)', B.map((b) => b.angle)),
+      txt('Counted', B.map((b) => (b.counted ? 'yes' : 'no'))),
+      txt('Edge', B.map((b) => (b.edge ? 'yes' : ''))),
+      txt('By hand', B.map((b) => [b.hand ? '✎' : '', b.keep ? 'kept' : '', b.excl ? 'left out' : ''].filter(Boolean).join(' '))),
+      num(`X (${u})`, B.map((b) => mid(b)[0] * k)),
+      num(`Y (${u})`, B.map((b) => mid(b)[1] * k)),
+    ],
+  };
+  const junctions: Dataset = {
+    name: 'Junctions',
+    columns: [
+      txt('Node', r.nodes.map((n) => `J${n.id + 1}`)),
+      num(`X (${u})`, r.nodes.map((n) => n.x * k)),
+      num(`Y (${u})`, r.nodes.map((n) => n.y * k)),
+      num('Degree', r.nodes.map((n) => n.degree)),
+      num(`Diameter (${u})`, r.nodes.map((n) => 2 * n.r * k)),
+      txt('Edge', r.nodes.map((n) => (n.edge ? 'yes' : ''))),
+      txt('By hand', r.nodes.map((n) => (n.hand ? '✎' : ''))),
+    ],
+  };
+  const P = r.pores;
+  const pores: Dataset = {
+    name: 'Pores',
+    columns: [
+      txt('Pore', P.map((p) => `P${p.id + 1}`)),
+      num(`X (${u})`, P.map((p) => p.x * k)),
+      num(`Y (${u})`, P.map((p) => p.y * k)),
+      num(`Area (${u}²)`, P.map((p) => p.area * k * k)),
+      num(`Equivalent diameter (${u})`, P.map((p) => p.eq * k)),
+      num(`Inscribed diameter (${u})`, P.map((p) => p.inscribed * k)),
+      txt('Edge', P.map((p) => (p.edge ? 'yes' : ''))),
+    ],
+  };
+  // (the numbers: of the ligaments counted — both ends junctions, not left out, off the edge when asked)
+  const C = B.filter((b) => b.counted);
+  const L = C.map((b) => (s.measure === 'surface' ? b.surface : b.length) * k);
+  const D = C.map((b) => b.diameter * k).filter(Number.isFinite);
+  const stat = (v: number[]) => {
+    const n = v.length;
+    const mean = n ? v.reduce((a, b) => a + b, 0) / n : NaN;
+    const sd = n > 1 ? Math.sqrt(v.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1)) : NaN;
+    const sorted = [...v].sort((a, b) => a - b);
+    return { mean, sd, median: n ? sorted[n >> 1] : NaN };
+  };
+  const [sl, sd] = [stat(L), stat(D)];
+  const area = r.w * r.h * k * k;
+  const inner = P.filter((p) => !p.edge).map((p) => p.inscribed * k);
+  const junctionCount = r.nodes.filter((n) => n.degree >= 3).length;
+  const rows: [string, number, string][] = [
+    ['Solid fraction', r.solid, ''],
+    ['Ligaments counted', C.length, ''],
+    ['Junctions', junctionCount, ''],
+    [`Ligament length, mean (${s.measure === 'surface' ? 'surface to surface' : 'centre to centre'})`, sl.mean, u],
+    ['Ligament length, SD', sl.sd, u],
+    ['Ligament length, median', sl.median, u],
+    ['Ligament diameter, mean', sd.mean, u],
+    ['Ligament diameter, SD', sd.sd, u],
+    ['Ligament diameter, median', sd.median, u],
+    ['Skeleton length per area', (B.reduce((a, b) => a + b.length, 0) * k) / area, `${u}⁻¹`],
+    ['Junctions per area', junctionCount / area, `${u}⁻²`],
+    ['Pores inside the image', inner.length, ''],
+    ['Pore inscribed diameter, mean', stat(inner).mean, u],
+    ['Spurs cut', r.pruned, ''],
+  ];
+  const network: Dataset = { name: 'Network', columns: [txt('Quantity', rows.map((q) => q[0])), num('Value', rows.map((q) => q[1])), txt('Unit', rows.map((q) => q[2]))] };
+  return [network, ligaments, junctions, pores];
 }
 
 // the result as a matrix: gray (RGB: its luminance), X and Y of every column and row in the calibrated unit

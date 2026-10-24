@@ -306,3 +306,46 @@ export function textureImage(): TestImage {
     truth,
   };
 }
+
+// Nanoporous gold as an electron microscope shows it: a bicontinuous structure (white noise smoothed and cut: ligaments
+// and pores of about the same size, the ligaments joined everywhere), the ligaments bright with brighter edges,
+// a little blur and noise. Its truth: none (its ligaments are measured by Structure)
+export function porousImage(): TestImage {
+  const [w, h] = [320, 240];
+  const rnd = rng(23);
+  // (the noise smoothed by a Gaussian of σ px: three box blurs each way)
+  const sigma = 3;
+  let a = Float32Array.from({ length: w * h }, () => rnd());
+  const r = Math.max(1, Math.round(Math.sqrt((12 * sigma * sigma) / 3 + 1) / 2));
+  for (let pass = 0; pass < 3; pass++)
+    for (const dir of [0, 1]) {
+      const b = new Float32Array(w * h);
+      for (let y = 0; y < h; y++)
+        for (let x = 0; x < w; x++) {
+          let [s, n] = [0, 0];
+          for (let d = -r; d <= r; d++) {
+            const [u, v] = dir ? [x, y + d] : [x + d, y];
+            if (u < 0 || v < 0 || u >= w || v >= h) continue;
+            s += a[v * w + u];
+            n++;
+          }
+          b[y * w + x] = s / n;
+        }
+      a = b;
+    }
+  // (cut a little under the median: the ligaments a little more than half, the pores apart)
+  const cut = [...a].sort((p, q) => p - q)[Math.floor(w * h * 0.42)];
+  const solid = Float32Array.from(a, (v) => (v > cut ? 1 : 0));
+  // (the edges: the pixels of a ligament next to a pore, brighter)
+  const px = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      let edge = false;
+      if (solid[i]) for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (!solid[Math.min(h - 1, Math.max(0, y + dy)) * w + Math.min(w - 1, Math.max(0, x + dx))]) edge = true;
+      const v = solid[i] ? (edge ? 225 : 175) : 40;
+      const g = Math.sqrt(-2 * Math.log(1 - rnd())) * Math.cos(2 * Math.PI * rnd());
+      px[i] = Math.max(0, Math.min(255, Math.round(v + 10 * g)));
+    }
+  return { name: 'nanoporous gold', w, h, px, truth: [] };
+}

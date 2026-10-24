@@ -73,7 +73,7 @@ function tokenize(src: string): Tok[] {
     } else if ('≤≥≠'.includes(c)) {
       out.push({ k: 'op', v: c === '≤' ? '<=' : c === '≥' ? '>=' : '!=' });
       i++;
-    } else if ('+-*/^(),·×−<>=!'.includes(c)) {
+    } else if ('+-*/%^(),·×−<>=!'.includes(c)) {
       out.push({ k: 'op', v: c === '·' || c === '×' ? '*' : c === '−' ? '-' : c === '=' ? '==' : c });
       i++;
     } else throw new Error(`Unexpected “${c}” at ${i + 1}`);
@@ -81,7 +81,7 @@ function tokenize(src: string): Tok[] {
   return out;
 }
 
-type BinOp = '+' | '-' | '*' | '/' | '^' | '<' | '>' | '<=' | '>=' | '==' | '!=' | 'and' | 'or';
+type BinOp = '+' | '-' | '*' | '/' | '%' | '^' | '<' | '>' | '<=' | '>=' | '==' | '!=' | 'and' | 'or';
 type Ast = { k: 'num'; v: number } | { k: 'var'; v: string } | { k: 'pi' } | { k: 'neg'; a: Ast } | { k: 'not'; a: Ast } | { k: 'bin'; op: BinOp; a: Ast; b: Ast } | { k: 'call'; f: string; args: Ast[] };
 
 // or := and (or and)* ; and := not (and not)* ; not := not not | cmp ; cmp := sum (cmpop sum)? ;
@@ -142,7 +142,7 @@ function parse(src: string, extra?: Record<string, unknown>, own?: Set<string>):
   };
   const term = (): Ast => {
     let f = unary();
-    while (isOp('*') || isOp('/')) f = { k: 'bin', op: toks[p++].v as '*' | '/', a: f, b: unary() };
+    while (isOp('*') || isOp('/') || isOp('%')) f = { k: 'bin', op: toks[p++].v as '*' | '/' | '%', a: f, b: unary() };
     return f;
   };
   const unary = (): Ast => {
@@ -319,6 +319,12 @@ export function compile(src: string, extra?: Record<string, (...a: number[]) => 
             return (v) => a(v) * b(v);
           case '/':
             return (v) => a(v) / b(v);
+          case '%':
+            // (the remainder, with the sign of the divisor: -1 % 2 is 1, as mod)
+            return (v) => {
+              const [x, y] = [a(v), b(v)];
+              return ((x % y) + y) % y;
+            };
           case '^':
             return (v) => a(v) ** b(v);
           case '<':
@@ -472,6 +478,13 @@ export function compileComplex(src: string): CompiledCx | string {
         if (op === '*') return (v) => cx.mul(a(v), b(v));
         if (op === '/') return (v) => cx.div(a(v), b(v));
         if (op === '^') return (v) => cpow(a(v), b(v));
+        if (op === '%') {
+          const [ra, rb] = [a, b];
+          return (v) => {
+            const [x, y] = [ra(v), rb(v)];
+            return x[1] !== 0 || y[1] !== 0 ? nan : [((x[0] % y[0]) + y[0]) % y[0], 0];
+          };
+        }
         // comparisons and logic: of real values
         const real = (f: (x: number, y: number) => number): G => (v) => {
           const [x, y] = [a(v), b(v)];

@@ -553,6 +553,8 @@ button:active:not(:disabled) { transform: translateY(0.5px); box-shadow: none; }
 @keyframes node-in { from { opacity: 0; } to { opacity: 1; } }
 /* the connections of the node under the mouse: thicker (App.tsx) and solid */
 .react-flow__edge.edge-lit .react-flow__edge-path { stroke-dasharray: none; animation: none; }
+/* the connection a node dragged over it goes into */
+.react-flow__edge.edge-drop .react-flow__edge-path { stroke-dasharray: none; animation: none; filter: drop-shadow(0 0 4px var(--accent, #0a84ff)); }
 /* side panels slide in from the right; right-click menus open from the cursor */
 .library { animation: panel-in 0.18s ease-out; }
 @keyframes panel-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
@@ -1678,3 +1680,25 @@ input[type='checkbox'], input[type='radio'] { box-shadow: none; }
 /* a particle seen in 3D: its visible faces, each its colour */
 .sheet-convert { margin-top: 4px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; display: flex; flex-direction: column; gap: 3px; }
 .sheet-convert.row { flex-direction: row; align-items: center; }
+/* the image editor's side: its panels (Image, Objects, Structure, Results) */
+.image-editor .ie-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.image-editor .ie-tabs button { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.image-editor .ie-cal-line { margin: 0; }
+/* Structure: the network over the image */
+.image-editor .ie-net { overflow: visible; }
+.image-editor .ie-net.drawing { pointer-events: all; cursor: crosshair; }
+.ie-net .ie-net-branch polyline:first-child { fill: none; stroke-width: 2; stroke-linejoin: round; }
+.ie-net .ie-net-branch.faint { opacity: 0.35; }
+.ie-net .ie-net-branch.edge polyline:first-child { stroke-dasharray: 4 3; }
+.ie-net .ie-net-hit { fill: none; stroke: transparent; stroke-width: 9; pointer-events: stroke; cursor: pointer; }
+.ie-net.drawing .ie-net-hit, .ie-net.drawing .ie-net-node { pointer-events: none; }
+.ie-net .ie-net-node { pointer-events: all; cursor: move; stroke: #000; stroke-width: 1; }
+.ie-net .ie-net-node.junction { fill: #ffffff; }
+.ie-net .ie-net-node.end { fill: #ff453a; }
+.ie-net .ie-net-picked polyline { fill: none; stroke: #ffd60a; stroke-width: 4; opacity: 0.85; pointer-events: none; }
+.ie-net .ie-net-picked circle { fill: none; stroke: #ffd60a; stroke-width: 1; pointer-events: none; }
+.ie-net .ie-net-stroke { fill: none; stroke: #0a84ff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.ie-net .ie-net-stroke.erase { stroke: rgba(255, 69, 58, 0.5); }
+.ie-net-scale { display: flex; align-items: center; gap: 6px; }
+.ie-net-scale .ie-net-bar { flex: 1; height: 8px; border-radius: 2px; background: linear-gradient(to right, hsl(240, 90%, 55%), hsl(180, 90%, 55%), hsl(120, 90%, 55%), hsl(60, 90%, 55%), hsl(0, 90%, 55%)); }
+.ie-net-explain { border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; display: flex; flex-direction: column; gap: 3px; }

@@ -5,11 +5,11 @@ import { useState } from 'react';
 import { ActionIcon, Button, TextInput, Tooltip } from '@mantine/core';
 import { Plus, X } from 'lucide-react';
 import type { AppNode, CleanData, CleanNode, FilterData, FilterNode } from '../types.ts';
-import { sortRulesOf, type SortKey, type SortRule } from '../engine/cleaning.ts';
+import { sortRulesOf, type FilterPart, type SortKey, type SortRule } from '../engine/cleaning.ts';
 import { DataPreview } from './DataNodes.tsx';
 import { Y_AUTO } from './xAuto.ts';
-import { RowsControls } from './RowsPanel.tsx';
-import { Choice, ListField, NumField, Row, Section, Sections } from '../ui/props.tsx';
+import { RowsControls, WhereConds } from './RowsPanel.tsx';
+import { Choice, ListField, NumField, Row, Section, Sections, Toggle } from '../ui/props.tsx';
 import { Field, InPort, Messages, NumInput, OutPort, Select, ResultSummary } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
 import { ColumnsPicker } from './ColumnsPicker.tsx';
@@ -180,6 +180,9 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
             <Section value="sort" title="Sort" aside={rules.length ? `${rules.length} rule${rules.length > 1 ? 's' : ''}` : 'not sorted'}>
               <SortRules data={data} names={names} set={set} />
             </Section>
+            <Section value="split" title="Split into parts" aside={data.parts?.length ? `${data.parts.length + (data.rest ? 1 : 0)} parts` : 'none'}>
+              <SplitParts data={data} names={names} set={set} />
+            </Section>
             <Section value="keep" title="Keep" aside={data.top ? `${data.topFrom === 'end' ? 'last' : 'first'} ${data.top}` : data.every > 1 ? `1 in ${data.every}` : 'all'}>
               <Row label="Only the" hint="After sorting: only this many rows, from the top or from the bottom (sorted largest first, the first 5 are the 5 largest values). Empty: all">
                 <Choice<'start' | 'end'>
@@ -204,7 +207,48 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
       <ResultSummary result={r} />
       <Messages result={r} />
       <OutPort label={out?.t === 'workbook' ? 'workbook' : 'dataset'} port={out?.t === 'workbook' ? 'workbook' : 'dataset'} id="out" title="The rows kept, merged, sorted, thinned (every column); every sheet: a workbook" />
+      {(data.parts ?? []).map((p, k) => (
+        <OutPort key={k} label={p.name || `Part ${k + 1}`} port="dataset" id={`p-${k}`} title={`The rows of the part “${p.name || `Part ${k + 1}`}”`} />
+      ))}
+      {!!data.parts?.length && data.rest && <OutPort label="the rest" port="dataset" id="p-rest" title="The rows in no part" />}
+      {!!data.parts?.length && (
+        <>
+          <OutPort label="parts" port="workbook" id="parts" title="Every part as a sheet" />
+          <OutPort label="side by side" port="dataset" id="side" title="The parts side by side in one table, their columns named “part: column”" />
+        </>
+      )}
     </div>
+  );
+}
+
+// Split into parts: every part its name and its rows (where conditions are true: a column or the row number compared
+// with a value, or a formula), the rows in none a part too if asked
+function SplitParts({ data, names, set }: { data: FilterData; names: string[]; set: (p: Partial<FilterData>) => void }) {
+  const parts = data.parts ?? [];
+  const put = (k: number, p: Partial<FilterPart>) => set({ parts: parts.map((q, j) => (j === k ? { ...q, ...p } : q)) });
+  const blank = (k: number): FilterPart => ({ name: `Part ${k + 1}`, sel: { mode: 'rule', conds: [{ col: '', op: k ? '>' : '<', v: 0 }] } });
+  return (
+    <>
+      {parts.map((p, k) => (
+        <div key={k} className="split-part">
+          <div className="where-line">
+            <TextInput size="xs" value={p.name} placeholder={`Part ${k + 1}`} onChange={(e) => put(k, { name: e.currentTarget.value })} aria-label="The part's name" />
+            <Tooltip label="Remove this part">
+              <ActionIcon variant="subtle" size="sm" onClick={() => set({ parts: parts.filter((_, j) => j !== k) })} aria-label="Remove this part">
+                <X size={14} />
+              </ActionIcon>
+            </Tooltip>
+          </div>
+          <WhereConds value={p.sel} onChange={(sel) => put(k, { sel })} names={names} hasX />
+        </div>
+      ))}
+      <Row label="">
+        <Button variant="default" size="xs" leftSection={<Plus size={13} />} title="A part of its own: its rows (x < 0, x > 0, the row number …), an output of its own" onClick={() => set({ parts: [...parts, blank(parts.length)] })}>
+          Add a part
+        </Button>
+      </Row>
+      {parts.length > 0 && <Toggle value={!!data.rest} label="The rest as a part too" onChange={(rest) => set({ rest: rest || undefined })} />}
+    </>
   );
 }
 

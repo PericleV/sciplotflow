@@ -4,12 +4,12 @@
 import { ActionIcon, Button, TextInput, Tooltip } from '@mantine/core';
 import { Plus, X } from 'lucide-react';
 import type { NodeResult } from '../engine/evaluate.ts';
-import { condReady, condsFormula, ROW_OPS, usesFormula, type RowCond, type RowRange, type RowSelect } from '../engine/rowsel.ts';
+import { condReady, condsFormula, ROW_COL, ROW_OPS, usesFormula, type RowCond, type RowRange, type RowSelect } from '../engine/rowsel.ts';
 import { roleOf, type Column } from '../engine/table.ts';
 import { Choice, ListField, NumField, Row, Toggle } from '../ui/props.tsx';
 
 const NO_RANGE: RowRange = { from: NaN, to: NaN };
-const FORMULA_HINT = (hasX: boolean) => `A condition, true on the rows used: ${hasX ? 'x (the X column), ' : ''}the columns A, B, C … (their letters), i (the row, 1 … n), n; < > <= >= == !=, and, or, not, mod, isnan …`;
+const FORMULA_HINT = (hasX: boolean) => `A condition, true on the rows used: ${hasX ? 'x (the X column), ' : ''}the columns A, B, C … (their letters), row (the row number, 1 … n; also i), n; < > <= >= == !=, % (row % 2 == 0: the even rows), and, or, not, mod, isnan …`;
 
 // Where: the conditions, or the formula
 export function WhereConds({ value, onChange, names, hasX }: { value: RowSelect; onChange: (v: RowSelect) => void; names: string[]; hasX: boolean }) {
@@ -17,7 +17,7 @@ export function WhereConds({ value, onChange, names, hasX }: { value: RowSelect;
   const formula = usesFormula(value);
   const first: RowCond = { col: hasX ? '' : (names[0] ?? ''), op: '>', v: NaN };
   const setCond = (k: number, p: Partial<RowCond>) => onChange({ ...value, conds: conds.map((c, j) => (j === k ? { ...c, ...p } : c)) });
-  const cols: [string, string][] = [...(hasX ? [['', 'x (the X column)'] as [string, string]] : []), ...names.map((n): [string, string] => [n, n])];
+  const cols: [string, string][] = [...(hasX ? [['', 'x (the X column)'] as [string, string]] : []), [ROW_COL, 'row number'], ...names.map((n): [string, string] => [n, n])];
   // the columns as the formula names them (their letters; x: the X column)
   const asColumns = names.map((name) => ({ name, values: new Float64Array(0) }) as Column);
   const toFormula = () => condsFormula(conds, value.join ?? 'all', hasX ? asColumns.find((_, j) => roleOf(asColumns, j) === 'x') : undefined, asColumns);
@@ -147,7 +147,28 @@ export function RowsControls({ value, onChange, hasX, result, names }: { value: 
         </Row>
       )}
       {v.mode === 'rule' && <WhereConds value={v} onChange={onChange} names={names} hasX={hasX} />}
-      {sr && v.mode !== 'all' && (
+      <Row label="Of them" hint="Of the rows chosen: all, or only the odd or the even ones (by their row number, 1 … n)">
+        <Choice<'all' | 'odd' | 'even'>
+          value={v.pick ?? 'all'}
+          onChange={(pick) => onChange({ ...v, pick: pick === 'all' ? undefined : pick })}
+          options={[
+            ['all', 'All'],
+            ['odd', 'Odd'],
+            ['even', 'Even'],
+          ]}
+        />
+      </Row>
+      {v.mode !== 'rule' && (
+        <div className="where">
+          {v.alsoOn && (
+            <Tooltip label={FORMULA_HINT(hasX)} multiline w={280}>
+              <TextInput value={v.also ?? ''} placeholder={hasX ? 'x > 0 and row % 2 == 0' : 'row % 2 == 0'} onChange={(e) => onChange({ ...v, also: e.currentTarget.value })} aria-label="And a formula" />
+            </Tooltip>
+          )}
+          <Toggle value={!!v.alsoOn} label="And a formula" onChange={(on) => onChange({ ...v, alsoOn: on || undefined })} />
+        </div>
+      )}
+      {sr && (v.mode !== 'all' || v.pick || (v.alsoOn && v.also?.trim())) && (
         <div className="hint rows-count">
           {sr.used} of {sr.of} rows{sr.text ? `: ${sr.text}` : ''}
         </div>

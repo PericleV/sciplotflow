@@ -29,6 +29,9 @@ import { isArea, moveRoi, nearRoi, roiCentre, roiOutline, TOOL_HINTS, type Pt, t
 import { measureSpec, roiPerimeter, type MeasureSpec } from '../image/measure.ts';
 import type { Workbook } from '../engine/table.ts';
 import { MeasurePanel, ParticlesPanel, RoiOverlay, RoiPanel } from './RoiManager.tsx';
+import { NetworkOverlay, NetworkPanel, type NetTool } from './NetworkPanel.tsx';
+import { branchAt, midOf, type HandKind, type NetBranch, type NetworkHand, type NetworkSpec } from '../image/network.ts';
+import { useNodeResult } from '../engine/engine.ts';
 import { ask } from '../ui/dialogStore.ts';
 import { toRGBA, type Lut } from '../image/render.ts';
 import { COLOR_MAPS } from '../figure/colors.ts';
@@ -117,11 +120,57 @@ const ROI_TOOLS: [RoiTool, typeof Square, string][] = [
   ['rays', Sun, 'Rays'],
   ['stamp', Stamp, 'Stamp'],
 ];
+// the panels of the side: the image (its histogram, view, crop, calibration), its objects (selections, particles),
+// Structure (the network of the mask), the results (what is measured, the tables)
+type SideTab = NonNullable<ImageAnalysisData['tab']>;
+const SIDE_TABS: [SideTab, string, string][] = [
+  ['image', 'Image', 'The histogram, the view, the crop, the calibration'],
+  ['objects', 'Objects', 'Selections, particles found, Find like this, Refine, layers'],
+  ['structure', 'Structure', 'The network of the mask: ligaments, junctions, pores (skeleton analysis), changed by hand'],
+  ['results', 'Results', 'What is measured and the tables'],
+];
 let stepSeq = 0;
 let roiSeq = 0;
 export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnalysisData; onClose: () => void }) {
   const { updateNodeData } = useReactFlow<AppNode>();
   const set = (p: Partial<ImageAnalysisData>) => updateNodeData(id, p);
+  // the panel shown (kept in the node); Structure: the network found (the node's result), its tools, the branch picked
+  const tab: SideTab = data.tab ?? 'image';
+  const setTab = (t: SideTab) => {
+    set({ tab: t === 'image' ? undefined : t });
+    if (t === 'structure') setTool('pan');
+  };
+  // (the calibration: the size of a pixel and its unit; none: pixels)
+  const calK = data.cal && data.cal.size > 0 ? data.cal.size : 1;
+  const calU = data.cal && data.cal.size > 0 ? unitText(data.cal.unit) : 'px';
+  const nodeRes = useNodeResult(id);
+  const net = nodeRes?.view.network;
+  const netError = data.network?.on ? nodeRes?.warnings.find((w) => w.startsWith('Structure:')) : undefined;
+  const [netTool, setNetTool] = useState<NetTool>('select');
+  const [netSel, setNetSel] = useState<Pt | null>(null);
+  const [eraseR, setEraseR] = useState(1.5);
+  const setNet = (p: Partial<NetworkSpec>) => set({ network: { ...data.network, ...p } });
+  const hand: NetworkHand = data.network?.hand ?? {};
+  const addEdit = (kind: HandKind, v: unknown) => setNet({ hand: { ...hand, [kind]: [...((hand[kind] as unknown[] | undefined) ?? []), v], order: [...(hand.order ?? []), kind] } });
+  const undoEdit = () => {
+    const order = [...(hand.order ?? [])];
+    const kind = order.pop();
+    if (!kind) return;
+    const list = [...((hand[kind] as unknown[] | undefined) ?? [])];
+    list.pop();
+    setNet({ hand: { ...hand, [kind]: list.length ? list : undefined, order: order.length ? order : undefined } });
+  };
+  // (keep, leave out: on again takes the branch's mark off)
+  const toggleEdit = (kind: 'keep' | 'excl', b: NetBranch) => {
+    const list = hand[kind] ?? [];
+    const at = list.findIndex((q) => branchAt(net, q)?.id === b.id);
+    if (at < 0) return addEdit(kind, midOf(b));
+    const order = [...(hand.order ?? [])];
+    const last = order.lastIndexOf(kind);
+    if (last >= 0) order.splice(last, 1);
+    const rest = list.filter((_, j) => j !== at);
+    setNet({ hand: { ...hand, [kind]: rest.length ? rest : undefined, order: order.length ? order : undefined } });
+  };
   // the selections (in pixels of the original), the one picked, the one being drawn or edited (shown in its place)
   const rois = useMemo(() => data.rois ?? [], [data.rois]);
   const setRois = (r: Roi[]) => set({ rois: r });
@@ -911,6 +960,10 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       const c = stepClasses(classifier, rois)[Number(e.key) - 1];
       if (!c) return;
       setPaint(paint === c ? null : c);
+    } else if ((e.key === 'Delete' || e.key === 'Backspace') && tab === 'structure' && netSel) {
+      const b = branchAt(net, netSel);
+      if (b) addEdit('del', midOf(b));
+      setNetSel(null);
     } else if (e.key === 'Enter' && draft) finishDraft();
     else if ((e.key === 'Delete' || e.key === 'Backspace') && picked) removeRoi(picked.id);
     else if ((e.key === 'd' || e.key === 'D') && (e.ctrlKey || e.metaKey) && picked) duplicate();
@@ -1014,13 +1067,17 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       })}
     </svg>
   );
-  const layers = (
-    <>
-      {roiLayer}
-      {contextLayer}
-      {rejectedLayer}
-    </>
-  );
+  // (Structure: the network over the image, instead of the selections)
+  const layers =
+    tab === 'structure' ? (
+      net && !onOriginal && data.network?.on && <NetworkOverlay net={net} spec={data.network} k={k} ox={ox} oy={oy} W={W} H={H} tool={netTool} sel={netSel} eraseR={eraseR} onSelect={setNetSel} onEdit={addEdit} />
+    ) : (
+      <>
+        {roiLayer}
+        {contextLayer}
+        {rejectedLayer}
+      </>
+    );
   const cmpButton = (m: Cmp, label: string, title: string) => (
     <button className={`nodrag${cmp === m ? ' on' : ''}`} disabled={onOriginal} title={title} onClick={() => setCmp(m)}>
       {label}
@@ -1217,6 +1274,16 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
           {readout && <div className="ie-readout">{readout}</div>}
         </div>
         <div className="ie-side">
+          <div className="hint ellipsis ie-cal-line" title="The size of a pixel (Image ▸ Calibration)">{data.cal && data.cal.size > 0 ? `1 px = ${fmt(data.cal.size)} ${unitText(data.cal.unit)}` : 'not calibrated: the results in pixels'}</div>
+          <div className="ie-tabs">
+            {SIDE_TABS.map(([t, label, title]) => (
+              <button key={t} className={`nodrag${tab === t ? ' on' : ''}`} title={title} onClick={() => setTab(t)}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {tab === 'image' && (
+            <>
           <div className="ie-section">Histogram{thr ? ' (into the threshold)' : upToIndex < steps.length ? ` (up to step ${upToIndex})` : ''}</div>
           <Histogram hist={sideHist?.h ?? null} lo={sideHist?.lo ?? 0} hi={sideHist?.hi ?? 1} marks={marks} />
           <div className="ie-section">View</div>
@@ -1264,6 +1331,10 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
               </button>
             )}
           </div>
+            </>
+          )}
+          {tab === 'objects' && (
+            <>
           <RoiPanel
             rois={rois}
             sel={sel}
@@ -1329,9 +1400,34 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
               if (on) layersFor(rois.filter((r) => r.auto));
             }}
           />
-          <MeasurePanel spec={spec} set={setSpec} steps={steps} rgb={(base?.ch.length ?? 1) === 3} rois={rois} book={book} sheet={sheet} setSheet={setSheet} pick={(name) => setSel(rois.find((r) => r.name === name)?.id ?? sel)} />
+            </>
+          )}
+          {tab === 'structure' && (
+            <NetworkPanel
+              net={net}
+              error={netError}
+              spec={data.network ?? {}}
+              set={setNet}
+              k={calK}
+              u={calU}
+              tool={netTool}
+              setTool={setNetTool}
+              sel={netSel}
+              setSel={setNetSel}
+              eraseR={eraseR}
+              setEraseR={setEraseR}
+              onEdit={addEdit}
+              toggle={toggleEdit}
+              undo={undoEdit}
+            />
+          )}
+          {tab === 'results' && <MeasurePanel spec={spec} set={setSpec} steps={steps} rgb={(base?.ch.length ?? 1) === 3} rois={rois} book={book} sheet={sheet} setSheet={setSheet} pick={(name) => setSel(rois.find((r) => r.name === name)?.id ?? sel)} />}
+          {tab === 'image' && (
+            <>
           <div className="ie-section">Keys</div>
           <div className="hint">Wheel: zoom · drag: move · \ original / edited · Y side by side · B: the original while held · + − 0: zoom, fit · Esc: the drawing, then the tool off, then close · a selection picked: Delete removes it, Ctrl+D copies it, the arrows move it (Shift: by 10)</div>
+            </>
+          )}
         </div>
       </div>
     </div>,

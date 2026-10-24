@@ -85,8 +85,8 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
     case 'stack':
       return handle === 'book' ? 'workbook' : 'dataset';
     case 'filterrows':
-      // every sheet of a workbook: a workbook
-      return node.data.sheet === '*' ? 'workbook' : 'dataset';
+      // every sheet of a workbook: a workbook; the parts: a dataset each, all of them as sheets
+      return handle === 'parts' || node.data.sheet === '*' ? 'workbook' : 'dataset';
     case 'combine': {
       if (handle === 'source') return 'column';
       // what it gives: one column, a dataset, a workbook (in sheets; into a sheet of a workbook)

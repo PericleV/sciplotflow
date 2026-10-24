@@ -14,7 +14,7 @@ import { FRAME_COLORS } from './nodeColors.ts';
 import { packPixels, type Raster } from './image/raster.ts';
 import { eisPlotData, eisPlotEdges } from './eisPlots.ts';
 import type { Roi } from './image/roi.ts';
-import { clustersImage, cubesImage, shapesImage, textureImage, type TestImage } from './image/testImages.ts';
+import { clustersImage, cubesImage, porousImage, shapesImage, textureImage, type TestImage } from './image/testImages.ts';
 import { findLike, fitBox, MATCH_DEFAULTS } from './image/match.ts';
 import { applySteps, newStep, type ImgStep } from './image/steps.ts';
 import { findParticles, PARTICLE_DEFAULTS, SHAPE_COLORS, shapeFeatures, shapeName, tracedPerimeter } from './image/particles.ts';
@@ -2329,6 +2329,30 @@ function foundParticles(t: TestImage, steps: ImgStep[], rois: Roi[], separate: b
   });
 }
 const otsuStep = (light: boolean): ImgStep => ({ ...newStep('threshold', 'st-otsu'), p: { ...newStep('threshold', 'st-otsu').p, method: 'otsu', light } });
+// Nanoporous gold: a median filter, a threshold, and Structure on: its skeleton's ligaments (length, thickness), the
+// junctions, the pores, in the workbook; the ligament lengths in a histogram
+function porousExample(): Project {
+  const b = builder();
+  const t = porousImage();
+  const im = add(b, 'image', 'np-image', 0, 0, {
+    ...IMAGE_DEFAULTS,
+    name: 'nanoporous_gold.png',
+    pixels: packPixels(t.w, t.h, 1, 8, t.px),
+    pixelsId: 'example-nanoporous-gold',
+    steps: [newStep('median', 'st-median'), otsuStep(false)],
+    cal: { size: 2, unit: 'nm' },
+    network: { on: true },
+    tab: 'structure',
+    figure: { width: 110 },
+  });
+  const wb = add(b, 'book', 'np-book', 700, 0, { ...WORKBOOK_DEFAULTS, name: 'network', sheets: [], into: [] });
+  link(b, im, wb, 'in-0', 'workbook');
+  const hd = { ...HISTOGRAM_DEFAULTS, ys: 'Length (nm)', sheet: 'Ligaments', opacity: 0.6, page: { ...PLOT_PAGE_DEFAULTS, name: 'ligament_lengths' } };
+  const hi = add(b, 'histogram', 'np-hist', 700, 700, hd);
+  link(b, im, hi, 'dataset', 'workbook');
+  return project(b, 'Nanoporous gold: ligaments from the skeleton');
+}
+
 function particlesExample(): Project {
   const b = builder();
   const shapes = shapesImage();
@@ -2961,6 +2985,10 @@ const ABOUT: Record<string, About> = {
     what: 'Nanocubes touching side to side, as an electron microscope shows them: found like one of them (template matching, any turn, the edges fitted) or by cutting the mask along the dark lines between them; each cube’s side, orientation and the alignment of all of them in a Workbook and a Plot.',
     try: ['Analyze (top): pick the green model, change Similarity or Sizes in Particles, then Find like this.', 'Draw a rectangle around another cube, turn it with its handle to fit, pick it, Find like this.', 'Analyze (below): change the Line width of Split along dark lines, then Find particles.'],
   },
+  'Nanoporous gold: ligaments from the skeleton': {
+    what: 'The skeleton analysis used for nanoporous metals: the ligament length between junctions and the ligament thickness, measured on every ligament, with the junctions and the pores.',
+    try: ['Open the editor (Edit) and the Structure tab: click a ligament to see its path, its circles and how its length is made.', 'Delete a few spurs, keep a short branch, then Learn from my edits.', 'Set Length to surface to surface and compare the medians in the Network sheet.'],
+  },
   'Particles: clusters cut apart, shapes named, their sizes': {
     what: 'Two images in the Image analysis node: shapes of every kind and round particles in clusters; a threshold and Fill holes make the mask, its particles are found as selections (touching ones cut apart) and named by their shape; area, perimeter, Feret, ellipse, circularity, corners, nearest neighbours in a Workbook; circularity against area in a Plot.',
     try: ['Analyze ▸ Particles: change Clusters (cut apart, its tolerance) or the size range, then Find particles.', 'Pick a particle in the list and give it a group; give a few of each shape one, then Group like the examples.', 'Look at the Summary sheet: every shape’s count, mean size, and Clark–Evans R.'],
@@ -3195,6 +3223,7 @@ const LIST: { group: string; name: string; desc: string; make: () => Project }[]
   { group: 'Data preparation', name: 'Replicate scans: mean ± SD on a common X', desc: 'Three scans on different wavelength grids: Average curves gives their mean ± SD on a common grid (a band in the Plot); Combine columns puts every point of the three scans in one table, in the order of the wavelength.', make: scansExample },
   { group: 'Data preparation', name: 'Difference spectrum: sample minus reference', desc: 'A sample measured 2 nm off: Translate moves it back, Curve math gives sample − reference and sample / reference on a common grid; the difference on its own axis shows the band the sample has more.', make: differenceExample },
   { group: 'Images', name: 'Nanocubes: found like one, their side and orientation', desc: 'Image analysis of nanocubes touching side to side: Find like this (template matching at any turn, the edges fitted) and Split along dark lines; each cube’s side and orientation, the alignment, in a Workbook and a Plot.', make: nanocubesExample },
+  { group: 'Images', name: 'Nanoporous gold: ligaments from the skeleton', desc: 'A nanoporous gold image (made here): a median filter and a threshold make the mask; Structure thins it to its skeleton and measures every ligament between two junctions (its length, its thickness from the inscribed circles), the junctions and the pores, in the workbook; the ligament lengths in a histogram. Open the editor: the Structure tab draws the network, a click on a ligament shows how it was measured.', make: porousExample },
   { group: 'Images', name: 'Particles: clusters cut apart, shapes named, their sizes', desc: 'Image analysis: the particles of a mask as selections (touching ones cut apart), named by their shape (circle, triangle, square …), measured (area, perimeter, Feret, ellipse, circularity, corners, nearest neighbours), in a Workbook and a Plot.', make: particlesExample },
   { group: 'Images', name: 'Trainable classifier: textured particles a threshold misses', desc: 'Image analysis: a random forest taught by a few lines drawn on particles and on the ground (as ImageJ’s Trainable Weka Segmentation) finds grainy particles a threshold cannot; their length and width in a Plot.', make: classifierExample },
   { group: 'Images', name: 'Microarray spots: signal over a ring of background, red / green ratio', desc: 'Image analysis of a two-colour microarray scan: spots stamped as ellipses, a ring of background around each, measured on the red and green channels (net signal, SNR, ratio and log2 ratio, a summary by replicate) in a Workbook.', make: microarrayExample },

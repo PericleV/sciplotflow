@@ -40,7 +40,12 @@ export type FilterData = {
   every: number; // one row in every N (1: all)
   // the rows empty in every column: kept (absent) or removed
   empty?: 'keep' | 'remove';
+  // split: the rows that come out cut into parts, each its rows chosen (its conditions, the row number …), an output of
+  // its own; rest: the rows in no part, a part too
+  parts?: FilterPart[];
+  rest?: boolean;
 };
+export type FilterPart = { name: string; sel: RowSelect };
 // the sort keys of a filter (an older project: its one column)
 export const sortKeysOf = (d: Pick<FilterData, 'sorts' | 'sortBy' | 'desc'>): SortKey[] => d.sorts ?? (d.sortBy ? [{ col: d.sortBy, desc: d.desc }] : []);
 // A sort rule: the columns it moves (cols: '' = whole rows, every column with them; else a list: 2-4, B-D, names) —
@@ -132,6 +137,22 @@ function applySortRule(cols: Column[], r: SortRule): { cols: Column[]; text: str
   for (const j of moved) out[j] = reordered(cols[j], idx);
   return { cols: out, text: `${whole ? 'sorted' : `${which} sorted`} by ${by.map((k) => `${k.s.name}${k.desc ? ' (largest first)' : ''}`).join(', then ')}` };
 }
+// The rows that come out cut into parts (a dataset each, named; rows in several parts: in each), and the rows in none
+export function splitParts(ds: Dataset, parts: FilterPart[], rest: boolean): Dataset[] | string {
+  const n = Math.max(0, maxOf(ds.columns.map((c) => c.values.length)));
+  const X = designatedX(ds);
+  const used = new Uint8Array(n);
+  const out: Dataset[] = [];
+  for (const [k, p] of parts.entries()) {
+    const sel = selectRows(p.sel, n, X, ds.columns);
+    if (typeof sel === 'string') return `${p.name || `Part ${k + 1}`}: ${sel}`;
+    for (const i of sel.rows) used[i] = 1;
+    out.push({ name: p.name || `Part ${k + 1}`, columns: takeRows(ds, sel.rows) });
+  }
+  if (rest) out.push({ name: 'the rest', columns: takeRows(ds, Array.from({ length: n }, (_, i) => i).filter((i) => !used[i])) });
+  return out;
+}
+
 export function filterRows(ds: Dataset, d: FilterData): { dataset: Dataset; report: string; text: string } | string {
   const n = Math.max(0, maxOf(ds.columns.map((c) => c.values.length)));
   const X = designatedX(ds);
