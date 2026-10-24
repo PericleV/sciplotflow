@@ -208,7 +208,7 @@ export function quickFit(xIn: ArrayLike<number>, yIn: ArrayLike<number>, q: Quic
   const qm = quickModel(q);
   if (typeof qm === 'string') return qm;
   const { model, shapes, offs, nb } = qm;
-  if (q.kind === 'peaks' && q.place && !q.points?.length) warnings.push('Peaks: place them on the figure (Place the peaks), or untick it — until then found by themselves.');
+  if (q.kind === 'peaks' && q.place && !q.points?.length) warnings.push('Peaks: place them on the figure (Place the peaks), or untick it: until then found by themselves.');
   for (const job of jobs) {
     const { xs, ys } = pick(job.rs);
     if (!xs.length) {

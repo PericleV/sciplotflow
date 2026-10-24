@@ -732,8 +732,8 @@ export function fitWarnings(res: EisResult, pts: EisPoints, use: boolean[]): str
     }
     if (e.kind === 'Q') {
       const n = p[e.params[1]];
-      if (n >= 0.995) out.push(`${e.id} n → 1 (${fmtNum(n, 4)}): ${e.id} is a capacitor — C would do.`);
-      else if (n <= 0.005) out.push(`${e.id} n → 0 (${fmtNum(n, 4)}): ${e.id} is a resistor — R would do.`);
+      if (n >= 0.995) out.push(`${e.id} n → 1 (${fmtNum(n, 4)}): ${e.id} is a capacitor; C would do.`);
+      else if (n <= 0.005) out.push(`${e.id} n → 0 (${fmtNum(n, 4)}): ${e.id} is a resistor; R would do.`);
     }
   }
   return out;

@@ -227,7 +227,7 @@ export function HistogramNodeView({ id, data: d }: NodeProps<HistogramNode>) {
                 ) : f.kind !== 'kernel' ? (
                   <Select<HistFit['method']>
                     value={f.method}
-                    title="From the data: the values themselves (mean and SD; maximum likelihood) — not changed by the bins. Fitted to the bars: least squares on the heights of the bins"
+                    title="From the data: the values themselves (mean and SD; maximum likelihood): not changed by the bins. Fitted to the bars: least squares on the heights of the bins"
                     options={[
                       ['data', 'from the data'],
                       ['bars', 'fitted to the bars'],
@@ -290,7 +290,7 @@ export function HistogramNodeView({ id, data: d }: NodeProps<HistogramNode>) {
           <div key={k} className="stat-report hist-result">
             <div>
               <b>{f.fit}</b>
-              {f.range ? ` (${f.range})` : ''} — {f.method}
+              {f.range ? ` (${f.range})` : ''}: {f.method}
               {bars.length > 1 ? ` · ${f.series}` : ''}
             </div>
             {f.params.map((q) => (

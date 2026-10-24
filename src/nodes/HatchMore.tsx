@@ -23,7 +23,7 @@ export function HatchMore({ h, look, onChange, spacing = true }: { h: Hatch; loo
   };
   return (
     <>
-      {h === 'text' && <TextInput className="tiny-text" value={v.text ?? ''} placeholder="×" title="The text repeated: at most 5 characters (letters, signs, emoji — emoji may look different in Word / PowerPoint)" onChange={(text) => set({ text: [...text].slice(0, 5).join('') })} />}
+      {h === 'text' && <TextInput className="tiny-text" value={v.text ?? ''} placeholder="×" title="The text repeated: at most 5 characters (letters, signs, emoji: emoji may look different in Word / PowerPoint)" onChange={(text) => set({ text: [...text].slice(0, 5).join('') })} />}
       <button className={`nodrag ts-btn${open ? ' on' : ''}`} title="More of the hatching: spacing, line, size, angle, opacity, background, staggered rows" onClick={() => setOpen((o) => !o)}>
         <Ellipsis {...IC} />
       </button>

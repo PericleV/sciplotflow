@@ -92,7 +92,7 @@ export function applyFit(model: Model, r: RunResult, ctx: ModelCtx, o: UseOption
       rows.push({ what: 'x from y', name: 'X', input: y, value: NaN, error: NaN, lo: NaN, hi: NaN });
       continue;
     }
-    if (roots.length > 1) warnings.push(`X from Y = ${y}: ${roots.length} places reach it — the first (${roots[0].toPrecision(6)}) given.`);
+    if (roots.length > 1) warnings.push(`X from Y = ${y}: ${roots.length} places reach it; the first (${roots[0].toPrecision(6)}) given.`);
     const x0 = roots[0];
     const b = slopeAt(x0);
     // σx² = (s²/m + var f(x0)) / slope²

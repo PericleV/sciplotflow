@@ -17,14 +17,14 @@ export const MATH_PRESETS: MathPreset[] = [
   { group: 'Spectroscopy', label: 'Frequency (THz) from wavelength (nm)', formula: `${C_NM_THZ}/A`, name: 'Frequency (THz)', inputs: 'A: wavelength in nm' },
   { group: 'Spectroscopy', label: 'Raman shift (cm⁻¹) from wavelength (nm), laser B (nm)', formula: '1e7/B - 1e7/A', name: 'Raman shift (cm⁻¹)', inputs: 'A: scattered wavelength in nm, B: the laser in nm (one value)' },
   { group: 'Spectroscopy', label: 'Kubelka–Munk F(R) from reflectance (0–1)', formula: '(1 - A)^2/(2*A)', name: 'F(R)', inputs: 'A: diffuse reflectance, 0–1' },
-  { group: 'Spectroscopy', label: 'Tauc, direct gap: (α·hν)² — A absorbance or α, B energy (eV)', formula: '(A*B)^2', name: '(αhν)²', inputs: 'A: absorbance (or α, or F(R)), B: photon energy in eV' },
-  { group: 'Spectroscopy', label: 'Tauc, indirect gap: (α·hν)^½ — A absorbance or α, B energy (eV)', formula: 'sqrt(A*B)', name: '(αhν)^½', inputs: 'A: absorbance (or α, or F(R)), B: photon energy in eV' },
+  { group: 'Spectroscopy', label: 'Tauc, direct gap: (α·hν)²: A absorbance or α, B energy (eV)', formula: '(A*B)^2', name: '(αhν)²', inputs: 'A: absorbance (or α, or F(R)), B: photon energy in eV' },
+  { group: 'Spectroscopy', label: 'Tauc, indirect gap: (α·hν)^½: A absorbance or α, B energy (eV)', formula: 'sqrt(A*B)', name: '(αhν)^½', inputs: 'A: absorbance (or α, or F(R)), B: photon energy in eV' },
   { group: 'Spectroscopy', label: 'Absorption coefficient α (cm⁻¹) from absorbance, thickness B (cm)', formula: '2.302585*A/B', name: 'α (cm⁻¹)', inputs: 'A: absorbance, B: thickness in cm' },
   // ---- chemistry ----
   { group: 'Chemistry', label: 'Concentration from absorbance (Beer–Lambert), ε B, path C (cm)', formula: 'A/(B*C)', name: 'Concentration (mol/L)', inputs: 'A: absorbance, B: ε in L/(mol·cm), C: the path in cm' },
   { group: 'Chemistry', label: 'pH from [H⁺] (mol/L)', formula: '-log10(A)', name: 'pH', inputs: 'A: [H⁺] in mol/L' },
   { group: 'Chemistry', label: '[H⁺] (mol/L) from pH', formula: '10^(-A)', name: '[H⁺] (mol/L)', inputs: 'A: pH' },
-  { group: 'Chemistry', label: 'Arrhenius: ln k against 1/T — 1000/T from T (K)', formula: '1000/A', name: '1000/T (1/K)', inputs: 'A: temperature in K' },
+  { group: 'Chemistry', label: 'Arrhenius: ln k against 1/T; 1000/T from T (K)', formula: '1000/A', name: '1000/T (1/K)', inputs: 'A: temperature in K' },
   { group: 'Chemistry', label: 'ln of a column', formula: 'ln(A)', name: 'ln', inputs: 'A: positive values' },
   // ---- engineering ----
   { group: 'Engineering', label: 'dB from a power ratio', formula: '10*log10(A)', name: 'dB', inputs: 'A: power ratio' },

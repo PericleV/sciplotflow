@@ -187,7 +187,7 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
       {Array.from({ length: count }, (_, j) => {
         const inp = ins.get(columnLetter(j));
         return (
-          <InPort key={j} label={columnLetter(j)} port="dataset" id={`in-${j}`} title="Optional: a column, a dataset or a matrix, on the first sheet, or the sheet named in the options (read-only, it follows the input), side by side with the other inputs there; a workbook — its sheets as they are">
+          <InPort key={j} label={columnLetter(j)} port="dataset" id={`in-${j}`} title="Optional: a column, a dataset or a matrix, on the first sheet, or the sheet named in the options (read-only, it follows the input), side by side with the other inputs there; a workbook: its sheets as they are">
             <span className="muted ellipsis grow">{inp ? `${inp.name} · ${inp.kind}${inp.kind !== 'workbook' ? ` → ${into(j) || firstSheet}` : ''}` : 'connect a column, dataset, workbook or matrix'}</span>
           </InPort>
         );
@@ -202,7 +202,7 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
           <span className="muted ellipsis grow">
             {data.name || 'Book'} · {names.length} sheet{names.length === 1 ? '' : 's'}
           </span>
-          <button className="nodrag btn-run plot-btn" title="Plot these columns: every curve its sheet, X, Y and errors, the graph chosen — a figure made and connected beside this node (or curves added to a Plot)" onClick={() => window.dispatchEvent(new CustomEvent('graph-flow:plot', { detail: id }))}>
+          <button className="nodrag btn-run plot-btn" title="Plot these columns: every curve its sheet, X, Y and errors, the graph chosen; a figure made and connected beside this node (or curves added to a Plot)" onClick={() => window.dispatchEvent(new CustomEvent('graph-flow:plot', { detail: id }))}>
             Plot…
           </button>
         </div>

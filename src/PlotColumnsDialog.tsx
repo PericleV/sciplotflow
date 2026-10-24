@@ -109,7 +109,7 @@ export function PlotColumnsDialog({ name, shown, sheets, shownSheet, plots, onDo
       <div className="plot-dialog">
         <h3>Plot these columns</h3>
         <div className="hint">
-          “{name}”: every curve its {book && oneD ? 'sheet, ' : ''}X, Y and error (filled from the designations of the worksheet; columns named SD, SE, err … are taken as errors). + Curve adds another — {book ? 'from any sheet, ' : ''}any pair of columns.
+          “{name}”: every curve its {book && oneD ? 'sheet, ' : ''}X, Y and error (filled from the designations of the worksheet; columns named SD, SE, err … are taken as errors). + Curve adds another: {book ? 'from any sheet, ' : ''}any pair of columns.
         </div>
         <div className="row wrap">
           <label className="row" title="How the curves are drawn (a 1D plot), or another graph made of the columns">

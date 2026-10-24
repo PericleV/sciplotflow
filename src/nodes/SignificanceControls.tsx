@@ -89,7 +89,7 @@ export function SignificanceControls({ value, onChange, groups, subgroups }: { v
       {s.on && (s.source === 'typed' || (s.source === 'test' && s.pairs === 'list')) && (
         <>
           <span>{s.source === 'typed' ? 'p values' : 'List'}</span>
-          <TextInput value={s.list} placeholder={listHint} title={`Separated by ; — the groups by name or number (1 vs 3). Groups: ${groups.join(', ')}`} onChange={(list) => set({ list })} />
+          <TextInput value={s.list} placeholder={listHint} title={`Separated by ; the groups by name or number (1 vs 3). Groups: ${groups.join(', ')}`} onChange={(list) => set({ list })} />
         </>
       )}
       {s.on && (

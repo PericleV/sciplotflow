@@ -282,7 +282,7 @@ function Graph({ g, view, W, H, zoom, box: zbox, onView, zoomOut, tool, snap, to
     ctx.textAlign = 'right';
     for (let v = Math.ceil(box.y0 / sy) * sy; v <= box.y1 + sy * 1e-9; v += sy) ctx.fillText(fmtNum(Math.abs(v) < sy * 1e-9 ? 0 : v, 4), M.l - 4, fy(v) + 3);
     ctx.textAlign = 'center';
-    ctx.fillText(rowsView ? `row — ${g.f.name || 'X'} along the rows` : `${g.x.name || 'X'} — ${Y?.name ?? ''}`, M.l + pw / 2, H - 3);
+    ctx.fillText(rowsView ? `row: ${g.f.name || 'X'} along the rows` : `${g.x.name || 'X'}: ${Y?.name ?? ''}`, M.l + pw / 2, H - 3);
     if (z.rect) {
       ctx.strokeStyle = '#1f6fd6';
       ctx.setLineDash([4, 3]);
@@ -515,7 +515,7 @@ export function SplitGraphView({ g, view, setView, edits, tol }: { g: SplitGraph
         {g.contiguous && (
           <Select<SplitSnap>
             value={snap}
-            title="Where a cut placed or dragged lands — data: the nearest data point; max & min, max, min: the nearest one within reach (along the rows: where the column turns, a scan's vertices; on the curves: the peaks of the Y drawn — the tolerance of Turns), else the nearest data point; off: the row under the mouse. Alt: off while held"
+            title="Where a cut placed or dragged lands: data: the nearest data point; max & min, max, min: the nearest one within reach (along the rows: where the column turns, a scan's vertices; on the curves: the peaks of the Y drawn; the tolerance of Turns), else the nearest data point; off: the row under the mouse. Alt: off while held"
             options={[
               ['data', 'snap: data'],
               ['turns', 'snap: max & min'],

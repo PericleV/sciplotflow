@@ -8,7 +8,7 @@ export function HideControls({ value, onChange }: { value: HideSpec | undefined;
   const set = (p: Partial<HideSpec>) => onChange({ ...h, ...p });
   return (
     <>
-      <span title="Values left out of the map (not drawn — or in the colour of missing values —, not in the colour range nor the levels): below / above a threshold, or equal to values written (−999, 0 …). The outputs keep them">Hide values</span>
+      <span title="Values left out of the map (not drawn (or in the colour of missing values), not in the colour range nor the levels): below / above a threshold, or equal to values written (−999, 0 …). The outputs keep them">Hide values</span>
       <span className="row wrap">
         <Field label="Below">
           <NumInput className="short" value={h.below ?? NaN} placeholder="none" onChange={(below) => set({ below: Number.isFinite(below) ? below : undefined })} />

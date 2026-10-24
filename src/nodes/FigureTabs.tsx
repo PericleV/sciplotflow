@@ -21,7 +21,7 @@ type PlotTab = 'axes' | 'legend' | 'annotate' | 'page' | 'insets';
 export type FigureParts = Pick<Plot1DData, 'axes' | 'legend' | 'annotations' | 'page' | 'insets'>;
 
 // The insets port of a figure node (in the node itself: a port cannot be in the options panel).
-export const InsetsPort = () => <InPort label="insets" port="figure" id="insets" title="Other Plots (their “figure” output), drawn inside this one's frame: insets — placed in Insets, or dragged with Edit layout; with zoom, the part they show marked here" />;
+export const InsetsPort = () => <InPort label="insets" port="figure" id="insets" title="Other Plots (their “figure” output), drawn inside this one's frame: insets, placed in Insets, or dragged with Edit layout; with zoom, the part they show marked here" />;
 
 // port: the insets port drawn here, above the tabs (false: the node draws it — its tabs are in the options panel)
 // dataKinds: its axes can hold categories or times (a 1D plot)

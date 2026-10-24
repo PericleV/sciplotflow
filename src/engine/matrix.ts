@@ -52,7 +52,7 @@ function keep(A: Matrix, R: Matrix): Matrix {
 export function elementwise(A: Matrix, B: Matrix, f: (a: number, b: number) => number, sym: string): Matrix | string {
   const r = A.rows === B.rows ? A.rows : A.rows === 1 ? B.rows : B.rows === 1 ? A.rows : -1;
   const c = A.cols === B.cols ? A.cols : A.cols === 1 ? B.cols : B.cols === 1 ? A.cols : -1;
-  if (r < 0 || c < 0) return `${sym}: A is ${dims(A)}, B is ${dims(B)} — element by element they need the same size (or one of them a single row, a single column or a single value).`;
+  if (r < 0 || c < 0) return `${sym}: A is ${dims(A)}, B is ${dims(B)}: element by element they need the same size (or one of them a single row, a single column or a single value).`;
   const out = newMatrix(r, c, '');
   for (let i = 0; i < r; i++) {
     const ia = (A.rows === 1 ? 0 : i) * A.cols;
@@ -72,7 +72,7 @@ export function transpose(A: Matrix): Matrix {
 }
 
 export function matmul(A: Matrix, B: Matrix): Matrix | string {
-  if (A.cols !== B.rows) return `A × B: A is ${dims(A)}, B is ${dims(B)} — B needs as many rows as A has columns (${A.cols}).`;
+  if (A.cols !== B.rows) return `A × B: A is ${dims(A)}, B is ${dims(B)}: B needs as many rows as A has columns (${A.cols}).`;
   const [m, k, n] = [A.rows, A.cols, B.cols];
   const C = newMatrix(m, n, '');
   for (let i = 0; i < m; i++)
@@ -198,7 +198,7 @@ export function inverse(A: Matrix): { M: Matrix; warning: string } | string {
   const e = square(A, 'The inverse');
   if (e) return e;
   const X = luSolve(luOf(A), identity(A.rows));
-  if (!X) return 'The inverse: the matrix is singular (its determinant is 0) — try the pseudo-inverse A⁺.';
+  if (!X) return 'The inverse: the matrix is singular (its determinant is 0): try the pseudo-inverse A⁺.';
   const M = { ...X, name: '', ...(A.xs ? { ys: A.xs } : {}), ...(A.ys ? { xs: A.ys } : {}) };
   return { M, warning: condWarning(A, X, 'The inverse') };
 }
@@ -739,7 +739,7 @@ export function solve(A: Matrix, B: Matrix): { M: Matrix; warning: string } | st
   if (B.rows !== A.rows) return `Solve A·x = B: B needs as many rows as A (${A.rows}; it has ${B.rows}).`;
   if (A.rows === A.cols) {
     const X = luSolve(luOf(A), B);
-    if (!X) return 'Solve A·x = B: A is singular (its determinant is 0) — no single solution.';
+    if (!X) return 'Solve A·x = B: A is singular (its determinant is 0): no single solution.';
     const inv = luSolve(luOf(A), identity(A.rows))!;
     return { M: { ...X, name: '', ...(B.colNames ? { colNames: B.colNames } : {}) }, warning: condWarning(A, inv, 'Solve A·x = B') };
   }
@@ -986,7 +986,7 @@ const WHOLE = new Set<MatOp>(['matpow', 'inverse', 'pinv', 'det', 'rank', 'cond'
 // one operation on its operands: its results in the order of stepParts, or an error
 function apply(s: MatStep, A: Operand, B: Operand | undefined, warn: (w: string) => void): Operand[] | string {
   const a = asMatrix(A);
-  if ((WHOLE.has(s.op) || (s.op === 'norm' && s.fn === '2')) && [a, ...(s.op === 'solve' && B !== undefined ? [asMatrix(B)] : [])].some((m) => m.v.some((q) => !Number.isFinite(q)))) return `${OP_LABEL[s.op]}: the matrix has empty (or infinite) cells — fill them first.`;
+  if ((WHOLE.has(s.op) || (s.op === 'norm' && s.fn === '2')) && [a, ...(s.op === 'solve' && B !== undefined ? [asMatrix(B)] : [])].some((m) => m.v.some((q) => !Number.isFinite(q)))) return `${OP_LABEL[s.op]}: the matrix has empty (or infinite) cells: fill them first.`;
   const needB = () => (B === undefined ? `${OP_LABEL[s.op]}: choose B.` : null);
   const bin = (f: (x: number, y: number) => number, sym: string) => {
     const e = needB();

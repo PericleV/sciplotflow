@@ -373,7 +373,7 @@ function Flow() {
   useEffect(() => openProject(projectId, !hasPython(initial.nodes)), []); // eslint-disable-line react-hooks/exhaustive-deps
   const [examples, setExamples] = useState<ExampleList>([]);
   useEffect(() => {
-    document.title = `${projectName || 'Untitled project'} — SciPlotFlow`;
+    document.title = `${projectName || 'Untitled project'} · SciPlotFlow`;
   }, [projectName]);
   const [panel, setPanel] = useState<'projects' | 'docs' | 'help' | 'collab' | null>(() => (location.hash.startsWith('#join=') ? 'collab' : null));
   // the welcome window: at start (unless turned off; not over a project opened from a link — shared, a session, an
@@ -1258,7 +1258,7 @@ function Flow() {
         items: [
           ...g.items.filter((t) => !t.hidden).map((t) => ({ type: (t.key ?? t.type) as AppNode['type'], label: t.label, help: NODE_SHORT[t.type] ?? NODE_HELP[t.type], color: NODE_COLORS[t.type] })),
           // a Batch with no steps yet: its steps built inside, on one file
-          ...(g.name === 'Data' ? [{ type: BATCH_NEW as AppNode['type'], label: 'Batch (every file)', help: 'The same analysis on every file: connect an Import with several files (or a folder) to “files”, open it, build the steps on one file, connect to “+ keep” what to keep — a table with a row per file comes out.', color: GROUP_COLORS.Groups }] : []),
+          ...(g.name === 'Data' ? [{ type: BATCH_NEW as AppNode['type'], label: 'Batch (every file)', help: 'The same analysis on every file: connect an Import with several files (or a folder) to “files”, open it, build the steps on one file, connect to “+ keep” what to keep: a table with a row per file comes out.', color: GROUP_COLORS.Groups }] : []),
         ],
       })),
       ...(templates.length
@@ -1484,7 +1484,7 @@ function Flow() {
   return (
     <div className="app">
       <header className="toolbar">
-        <span className="brand" title="SciPlotFlow — node-based data analysis and graphs">
+        <span className="brand" title="SciPlotFlow: node-based data analysis and graphs">
           <img className="logo" src="./logo.svg" alt="" width={22} height={22} />
           <strong className="brand-text">SciPlotFlow</strong>
         </span>
@@ -1498,7 +1498,7 @@ function Flow() {
         {history.canUndo && <span className="muted" title="Modified since it was loaded">•</span>}
         {autosaveFailed && (
           <span className="save-warning" title="The browser storage is full: the changes are not kept for the next visit. Save the project to a file (Save), or delete projects kept in the browser (Projects).">
-            <TriangleAlert {...IC} /> not autosaved — use Save
+            <TriangleAlert {...IC} /> not autosaved: use Save
           </span>
         )}
         <span className="tb-group" role="group" aria-label="Project">
@@ -1711,7 +1711,7 @@ function Flow() {
                 <ControlButton
                   className={prefs.snap ? 'on' : ''}
                   onClick={() => setPref({ snap: !prefs.snap })}
-                  title={prefs.snap ? `Snap to grid: on (${prefs.step} px) — click to move freely` : 'Snap to grid: off — click to position on a grid'}
+                  title={prefs.snap ? `Snap to grid: on (${prefs.step} px), click to move freely` : 'Snap to grid: off, click to position on a grid'}
                   aria-label="Snap to grid"
                 >
                   <Grid3x3 {...IC} />
@@ -1724,7 +1724,7 @@ function Flow() {
                 <ControlButton
                   className={prefs.shape === 'orthogonal' ? 'on' : ''}
                   onClick={() => setPref({ shape: prefs.shape === 'orthogonal' ? 'curved' : 'orthogonal' })}
-                  title={prefs.shape === 'orthogonal' ? 'Connections: right angles — click for curves' : 'Connections: curves — click for right angles'}
+                  title={prefs.shape === 'orthogonal' ? 'Connections: right angles, click for curves' : 'Connections: curves, click for right angles'}
                   aria-label="Connection shape"
                 >
                   {prefs.shape === 'orthogonal' ? <CornerDownRight {...IC} /> : <Spline {...IC} />}
@@ -1735,7 +1735,7 @@ function Flow() {
                 <ControlButton onClick={() => setFinding(true)} title="Find a node (Ctrl+F)" aria-label="Find a node">
                   <Search {...IC} />
                 </ControlButton>
-                <ControlButton className={prefs.minimap ? 'on' : ''} onClick={() => setPref({ minimap: !prefs.minimap })} title={prefs.minimap ? 'Minimap: on — click to hide it' : 'Minimap: off — click to show it'} aria-label="Minimap">
+                <ControlButton className={prefs.minimap ? 'on' : ''} onClick={() => setPref({ minimap: !prefs.minimap })} title={prefs.minimap ? 'Minimap: on, click to hide it' : 'Minimap: off, click to show it'} aria-label="Minimap">
                   <MapIcon {...IC} />
                 </ControlButton>
               </Controls>

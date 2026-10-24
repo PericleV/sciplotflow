@@ -35,7 +35,7 @@ export function BarChartNodeView({ id, data: d }: NodeProps<BarChartNode>) {
   return (
     <div className="node node-plot1d node-barchart">
       <InPort label="dataset" port="dataset" id="dataset" title="A table (categories and value columns), or raw values with the column of their groups" />
-      <InPort label="overlay" port="dataset" id="overlay" title="Optional: curves drawn over the bars — every Y of a dataset with its X (names: at the bars of those categories) as lines and symbols; on a second axis if asked (Options ▸ Overlay)" />
+      <InPort label="overlay" port="dataset" id="overlay" title="Optional: curves drawn over the bars; every Y of a dataset with its X (names: at the bars of those categories) as lines and symbols; on a second axis if asked (Options ▸ Overlay)" />
       <InPort label="p values" port="dataset" id="pvalues" title="Significance ▸ from the p values port: a post hoc table (an ANOVA / Nonparametric node's: pair, p (adjusted)), or two columns of group names and a p" />
       <NodeOptions>
       <details open>
@@ -118,7 +118,7 @@ export function BarChartNodeView({ id, data: d }: NodeProps<BarChartNode>) {
             <Check label="Overlay on a second axis" value={!!d.overlayRight} onChange={(overlayRight) => set({ overlayRight: overlayRight || undefined })} />
             <Select<NonNullable<BarSpec['sort']>>
               value={d.sort ?? 'none'}
-              title="The categories in the order of their value (stacked: their total) — names only; numbers keep their places"
+              title="The categories in the order of their value (stacked: their total), names only; numbers keep their places"
               options={[
                 ['none', 'as in the data'],
                 ['desc', 'sorted: largest first'],

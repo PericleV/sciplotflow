@@ -78,8 +78,8 @@ const NULL4: (Px | null)[] = [null, null, null, null];
 const HINT: Record<Tool, string> = {
   none: 'Select: drag a point, a name of a region or a point of a boundary (the arrow keys: 1 px; Shift: 0.1 px); double-click on a boundary: a point put there, on its point: removed; right click on a point of a boundary: a corner or smooth. Wheel: zoom.',
   axes: 'Axes: drag a calibration point (the buttons in the options place them, one after another).',
-  border: 'Frame: drag its corners (the ends of the boundaries on it follow). No frame yet: click its corners in turn — bottom left, bottom right, top right, top left (Place again, in the options: anew).',
-  spline: 'Draw boundary: click its points one after another; double-click (or Enter) ends it — on its first point it closes. Near a corner, a point or a line a point is caught (Alt: not); Backspace takes the last point back. Not drawing: drag a point of a boundary; right click on it: a corner or smooth.',
+  border: 'Frame: drag its corners (the ends of the boundaries on it follow). No frame yet: click its corners in turn; bottom left, bottom right, top right, top left (Place again, in the options: anew).',
+  spline: 'Draw boundary: click its points one after another; double-click (or Enter) ends it: on its first point it closes. Near a corner, a point or a line a point is caught (Alt: not); Backspace takes the last point back. Not drawing: drag a point of a boundary; right click on it: a corner or smooth.',
   point: 'Click in the diagram: a point of the kind chosen below (the lever rule, a value read, a path down or up). Drag it to move it, double-click to remove it.',
   noteText: 'Click on the diagram: a text (write it in the options).',
   noteArrow: 'Drag on the diagram: an arrow.',
@@ -1310,7 +1310,7 @@ export function PhaseDigitizerNode({ id, data }: NodeProps<PhaseDigitizerNodeTyp
           {calMode === 'grid' && (
             <>
               <div className="row wrap">
-                <button className={btn(placing?.kind === 'grid')} title="Then click on the image, point after point: ticks on the axes, crossings of the grid, the corners — spread over the graph" onClick={() => place({ kind: 'grid' })}>
+                <button className={btn(placing?.kind === 'grid')} title="Then click on the image, point after point: ticks on the axes, crossings of the grid, the corners; spread over the graph" onClick={() => place({ kind: 'grid' })}>
                   + Reference points
                 </button>
                 <Field label="Map">
@@ -1424,7 +1424,7 @@ export function PhaseDigitizerNode({ id, data }: NodeProps<PhaseDigitizerNodeTyp
                 </span>
                 <span className="row">
                   <Check label="Closed" title="Back to its first point (an island, a dome)" value={!!s.closed} onChange={(closed) => setLine(i, { closed: closed || undefined })} />
-                  <Check label="Invariant" title="An invariant line (eutectic, eutectoid, peritectic …): a path crossing it gives the microconstituents — the primary phase and the constituent formed on the line" value={!!s.invariant} onChange={(invariant) => setLine(i, { invariant: invariant || undefined })} />
+                  <Check label="Invariant" title="An invariant line (eutectic, eutectoid, peritectic …): a path crossing it gives the microconstituents; the primary phase and the constituent formed on the line" value={!!s.invariant} onChange={(invariant) => setLine(i, { invariant: invariant || undefined })} />
                   {s.invariant && (
                     <Field label="Constituent" title="The name of what forms on the line (eutectic, pearlite, ledeburite …; empty: the name of the boundary)">
                       <TextInput className="short" value={s.micro ?? ''} placeholder={s.name || 'eutectic'} onChange={(micro) => setLine(i, { micro })} />

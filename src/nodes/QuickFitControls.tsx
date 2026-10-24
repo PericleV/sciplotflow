@@ -54,7 +54,7 @@ export function QuickFitControls({ value, onChange, results, drawing, onDraw, pl
   return (
     <div className="trend-controls quick-fits">
       <div className="row wrap">
-        <b title="Fits drawn with this curve: lines and curves (least squares), peaks over a baseline, or a formula — on all its points or on ranges of x drawn on the figure">Quick fit</b>
+        <b title="Fits drawn with this curve: lines and curves (least squares), peaks over a baseline, or a formula: on all its points or on ranges of x drawn on the figure">Quick fit</b>
         <span className="grow" />
         <button className="nodrag" title="Another fit of this curve (another model, or other ranges)" onClick={() => onChange([...value, { kind: 'linear' }])}>
           + Fit
@@ -212,7 +212,7 @@ function QuickFitItem({ q, set, remove, results, drawing, onDraw, placing, onPla
           </button>
       </div>
       {styling && <CurveStyleEditor st={st} set={setSt} hasYErr={false} hasXErr={false} noErrors curves={curves} />}
-      <div className="row wrap" title="Its legend entry: the equation (lines) or its name, with R²; its name; its name with the parameters; none. Name: empty — the curve's and the model's">
+      <div className="row wrap" title="Its legend entry: the equation (lines) or its name, with R²; its name; its name with the parameters; none. Name: empty, the curve's and the model's">
           <span className="muted">Legend</span>
           <Select<NonNullable<QuickFitSpec['legend']>>
             value={q.legend ?? (trend ? 'equation' : 'name')}

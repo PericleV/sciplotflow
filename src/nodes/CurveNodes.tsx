@@ -216,7 +216,7 @@ export function TranslateNodeView({ id, data }: NodeProps<TranslateNode>) {
     <div className="node node-translate">
       <InPort label="dataset" port="dataset" id="data" title="Optional: a dataset (its designations, changed below if you wish)" />
       {Array.from({ length: count }, (_, k) => (
-        <InPort key={k} label={columnLetter(k)} port="column" id={`in-${k}`} title="Optional: a column — designate it below (X, Y, ±Y …)">
+        <InPort key={k} label={columnLetter(k)} port="column" id={`in-${k}`} title="Optional: a column, designate it below (X, Y, ±Y …)">
           <span className="muted ellipsis">{tv?.cols.filter((c) => c.from === 'port')[k]?.name ?? 'connect a column'}</span>
         </InPort>
       ))}

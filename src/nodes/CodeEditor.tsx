@@ -30,7 +30,7 @@ const NAMES: [string, string][] = [
   ['from scipy import stats', 'import'],
   ['import pandas as pd', 'import'],
   ['import matplotlib.pyplot as plt', 'import'],
-  ['roles', 'SciPlotFlow: roles(df, x=…, y=[…]) — the designations of a table'],
+  ['roles', 'SciPlotFlow: roles(df, x=…, y=[…]): the designations of a table'],
   ['Table', 'SciPlotFlow: a dataset (columns by name, .df)'],
 ];
 

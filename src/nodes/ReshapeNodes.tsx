@@ -171,7 +171,7 @@ export function UnstackNodeView({ id, data }: NodeProps<UnstackNode>) {
           </Field>
         )}
         {sweep && (
-          <Field label="Incomplete" title="The pieces that are not a whole cycle (segment): the scan started or stopped on the way — kept (marked * in the list and dashed on the graph), left out, or joined to the block next to them">
+          <Field label="Incomplete" title="The pieces that are not a whole cycle (segment): the scan started or stopped on the way; kept (marked * in the list and dashed on the graph), left out, or joined to the block next to them">
             <Select<NonNullable<UnstackData['partial']>>
               value={data.partial ?? 'keep'}
               options={[
@@ -334,7 +334,7 @@ export function UnstackNodeView({ id, data }: NodeProps<UnstackNode>) {
       <ResultSummary result={r} />
       <Messages result={r} />
       <OutPort label="dataset" port="dataset" title="The blocks side by side, designated (X, then the Y columns)" />
-      <OutPort label="long" port="dataset" id="long" title="The long table: every row of the blocks kept, once, with its block (and its cycle or segment, and the way the column goes there: up / down) — to colour or filter by block" />
+      <OutPort label="long" port="dataset" id="long" title="The long table: every row of the blocks kept, once, with its block (and its cycle or segment, and the way the column goes there: up / down); to colour or filter by block" />
     </div>
   );
 }

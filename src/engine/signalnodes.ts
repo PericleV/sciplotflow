@@ -150,7 +150,7 @@ function byRanges(c: Curve, rs: Region[], outside: SignalIn['outside'], warnings
   rs.forEach((r, k) => {
     const [a, b] = bounds(r);
     const rows = c.x.map((v, i) => (v >= a && v <= b ? i : -1)).filter((i) => i >= 0);
-    if (rows.length < 3) return void warnings.push(`${c.Y.name}: range ${k + 1} has fewer than 3 points — left as it is.`);
+    if (rows.length < 3) return void warnings.push(`${c.Y.name}: range ${k + 1} has fewer than 3 points; left as it is.`);
     const v = f({ ...c, x: rows.map((i) => c.x[i]), y: rows.map((i) => c.y[i]) }, k);
     rows.forEach((i, j) => (out[i] = v[j]));
   });
@@ -193,24 +193,24 @@ export function smoothNode(ds: Dataset, d: SmoothData): SignalOut {
       const edge = d.edge === 'interp' && d.method !== 'savgol' ? 'reflect' : d.edge;
       let s: number[];
       if (d.method === 'hampel') {
-        if (!stepOf(c.x).even) warnings.push(`${c.Y.name}: X not evenly spaced — the window counts points, not X.`);
+        if (!stepOf(c.x).even) warnings.push(`${c.Y.name}: X not evenly spaced; the window counts points, not X.`);
         const r = hampel(c.y, Math.max(1, Math.floor(Math.max(3, Math.floor(d.points)) / 2)), Math.max(0, d.nsigma ?? 3));
         s = r.y;
         // (the points replaced, by their place in the whole curve)
         for (const i of r.out) replaced.push(c0.x.indexOf(c.x[i]));
       } else if (d.method === 'lowess') s = S.lowess(c.x, c.y, Math.min(1, Math.max(0.01, d.frac)), Math.max(0, Math.floor(d.iter)));
       else if (d.method === 'wavelet') {
-        if (!stepOf(c.x).even) warnings.push(`${c.Y.name}: X not evenly spaced — the wavelets count points, not X.`);
+        if (!stepOf(c.x).even) warnings.push(`${c.Y.name}: X not evenly spaced; the wavelets count points, not X.`);
         const r = waveletDenoise(c.y, d.wavelet ?? 'db4', d.wlevel ?? 4, d.wmode ?? 'soft', d.wscale ?? 1);
         if (r.level < (d.wlevel ?? 4)) warnings.push(`${c.Y.name}: ${r.level} levels at most for ${n} points.`);
         s = r.y;
       } else if (d.method === 'fft') {
         const e = evenly(c);
-        if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced — read on an even grid for the FFT.`);
+        if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced; read on an even grid for the FFT.`);
         const fs = S.fftFilter(e.y, e.dx, 'low', (Math.min(1, Math.max(0.001, d.cutoff)) * 0.5) / e.dx, 0, 0, true);
         s = e.resampled ? c.x.map(S.interpolator(e.x, fs, 'linear', 'constant')) : fs;
       } else {
-        if (d.method !== 'gauss' && !stepOf(c.x).even) warnings.push(`${c.Y.name}: X not evenly spaced — the window counts points, not X.`);
+        if (d.method !== 'gauss' && !stepOf(c.x).even) warnings.push(`${c.Y.name}: X not evenly spaced; the window counts points, not X.`);
         const pts = Math.max(1, Math.min(Math.floor(d.points), n));
         s =
           d.method === 'average'
@@ -311,7 +311,7 @@ export function normalizeNode(ds: Dataset, d: NormalizeData, by: number[] | unde
       if (c.X) order.sort((p, q) => c.X!.values[p] - c.X!.values[q]);
       v = c.y.map((u, k) => u / byRow[order[k]]);
     } else v = c.y.map((u) => (u - offset) / scale);
-    if (!Number.isFinite(scale) || scale === 0) warnings.push(`${c.Y.name}: the factor is ${scale} — the result is not defined.`);
+    if (!Number.isFinite(scale) || scale === 0) warnings.push(`${c.Y.name}: the factor is ${scale}; the result is not defined.`);
     factors.push({ name: c.Y.name, offset, scale });
     plots.push({ data: { x: c.x, y: c.y }, result: { x: c.x, y: v }, xName: c.X?.name ?? 'row', yName: c.Y.name, ownAxis: true, ranges: true, run: c.Y.name });
     return { xName: c.X?.name ?? 'row', x: c.x, cols: [{ ...yCol(`${c.Y.name} (normalized)`, v), ...(c.Y.key ? { key: c.Y.key } : {}) }] };
@@ -351,7 +351,7 @@ function fftModes(ds: Dataset, d: FFTData, cs: Curve[], xUnit: (name: string) =>
     const items = cs.map((c, ci) => {
       const out = byRanges(c, rangesOf(d, c.Y.name), d.outside, warnings, (p, part) => {
         const e = evenly(p);
-        if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced — read on an even grid.`);
+        if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced; read on an even grid.`);
         const nyq = 0.5 / e.dx;
         // (the response: of the first Y's step; both ways, the gain squared and no phase)
         const wr = Array.from({ length: 512 }, (_, k) => (0.5 * k) / 511);
@@ -402,7 +402,7 @@ function fftModes(ds: Dataset, d: FFTData, cs: Curve[], xUnit: (name: string) =>
   if (d.mode !== 'spectrum') return spectralModes(ds, d, cs, xUnit);
   const items = cs.map((c) => {
     const e = evenly(c);
-    if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced — read on an even grid for the FFT.`);
+    if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced; read on an even grid for the FFT.`);
     const sp = S.spectrum(e.y, e.dx, d.window, d.detrend, d.pad);
     const name = c.Y.name;
     const cols: Column[] =
@@ -464,7 +464,7 @@ function harmonicsNode(ds: Dataset, d: FFTData, cs: Curve[], xUnit: (name: strin
   const nh = Math.max(2, Math.min(50, Math.round(d.nHarm ?? 6)));
   const done = cs.flatMap((c) => {
     const e = evenly(c);
-    if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced — read on an even grid.`);
+    if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced; read on an even grid.`);
     const r = harmonics(e.y, e.dx, nh, d.f0 ?? NaN);
     if (typeof r === 'string') {
       warnings.push(`${c.Y.name}: ${r}`);
@@ -501,14 +501,14 @@ export function convNode(ds: Dataset, d: ConvData, kernelValues: number[] | unde
   const items = cs.map((c) => {
     const out = byRanges(c, rangesOf(d, c.Y.name), d.outside, warnings, (p) => {
       const e = evenly(p);
-      if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced — read on an even grid.`);
+      if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced; read on an even grid.`);
       const k = d.shape === 'port' ? S.kernelFrom(kernelValues!) : S.kernelOf(d.shape, d.fwhm, e.dx, e.y.length);
-      if (k.length < 2) warnings.push(`${c.Y.name}: the kernel is narrower than one step of X — nothing changes.`);
+      if (k.length < 2) warnings.push(`${c.Y.name}: the kernel is narrower than one step of X; nothing changes.`);
       let r: number[];
       if (d.op === 'conv') r = S.convolve(e.y, k, d.edge);
       else if (d.op === 'wiener') r = S.wiener(e.y, k, Math.max(1e-12, d.lambda));
       else {
-        if (e.y.some((v) => v < 0)) warnings.push(`${c.Y.name}: Richardson–Lucy takes values ≥ 0 — the negative ones are set to 0.`);
+        if (e.y.some((v) => v < 0)) warnings.push(`${c.Y.name}: Richardson–Lucy takes values ≥ 0; the negative ones are set to 0.`);
         r = S.richardsonLucy(e.y, k, Math.max(1, Math.min(10000, Math.floor(d.iterations))), d.edge);
       }
       return e.resampled ? p.x.map(S.interpolator(e.x, r, 'linear', 'constant')) : r;
@@ -536,7 +536,7 @@ function spectralModes(ds: Dataset, d: FFTData, cs: Curve[], xUnit: (name: strin
   };
   const ev = cs.map((c) => {
     const e = evenly(c);
-    if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced — read on an even grid.`);
+    if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced; read on an even grid.`);
     return e;
   });
   const labels = cs.map((c) => c.Y.name);
@@ -545,7 +545,7 @@ function spectralModes(ds: Dataset, d: FFTData, cs: Curve[], xUnit: (name: strin
       const e = ev[k];
       const o = opts(e.y.length);
       const r = Sp.welch(e.y, 1 / e.dx, o);
-      if (r.segments < 2) warnings.push(`${c.Y.name}: one segment of ${o.nperseg} points — fewer points per segment average more.`);
+      if (r.segments < 2) warnings.push(`${c.Y.name}: one segment of ${o.nperseg} points; fewer points per segment average more.`);
       const v = d.psdDb ? r.p.map((q) => 10 * Math.log10(q)) : r.p;
       const nm = `${c.Y.name} ${o.scaling === 'density' ? 'PSD' : 'power'}${d.psdDb ? ' (dB)' : ''}`;
       plots.push({ result: { x: r.f, y: v }, xName: fName, yName: nm });
@@ -557,7 +557,7 @@ function spectralModes(ds: Dataset, d: FFTData, cs: Curve[], xUnit: (name: strin
     if (cs.length < 2) return 'Coherence: two Y columns (the first two chosen, or designated).';
     const [a, b] = [ev[0], ev[1]];
     const n = Math.min(a.y.length, b.y.length);
-    if (Math.abs(a.dx - b.dx) > 1e-9 * Math.abs(a.dx)) warnings.push('Coherence: the two curves have different steps of X — taken point by point.');
+    if (Math.abs(a.dx - b.dx) > 1e-9 * Math.abs(a.dx)) warnings.push('Coherence: the two curves have different steps of X; taken point by point.');
     const r = Sp.coherence(a.y.slice(0, n), b.y.slice(0, n), 1 / a.dx, opts(n));
     plots.push({ result: { x: r.f, y: r.c }, xName: fName, yName: 'coherence' });
     const name = `${cs[0].Y.name} & ${cs[1].Y.name}`;
@@ -595,7 +595,7 @@ function spectralModes(ds: Dataset, d: FFTData, cs: Curve[], xUnit: (name: strin
   if (d.mode === 'spectrogram') {
     const o = opts(e.y.length);
     const r = Sp.spectrogram(e.y, 1 / e.dx, o);
-    if (r.t.length < 2) return `Spectrogram: ${o.nperseg} points per segment leave ${r.t.length} segment — fewer points per segment.`;
+    if (r.t.length < 2) return `Spectrogram: ${o.nperseg} points per segment leave ${r.t.length} segment; fewer points per segment.`;
     [T, Fq, Pw] = [r.t.map((t) => e.x[0] + t), r.f, r.p];
   } else {
     const n = e.y.length;
@@ -632,7 +632,7 @@ function spectralModes(ds: Dataset, d: FFTData, cs: Curve[], xUnit: (name: strin
     dataset: { name: `${ds.name} ${d.mode === 'cwt' ? 'scalogram' : 'spectrogram'}`, columns: [{ ...column(tName, tc), role: 'x' }, { ...column(fName, fc), role: 'none' }, { ...column(pn, pc), role: 'y' }] },
     plots,
     labels: [c.Y.name],
-    warnings: [...new Set([...warnings, `${T.length} × ${Fq.length}: X, frequency and ${pn} as columns — a map with Contour (X, Y = frequency, Z = ${pn}).`])],
+    warnings: [...new Set([...warnings, `${T.length} × ${Fq.length}: X, frequency and ${pn} as columns; a map with Contour (X, Y = frequency, Z = ${pn}).`])],
   };
 }
 
@@ -645,7 +645,7 @@ function corrNode(ds: Dataset, d: ConvData, cs: Curve[], kernelValues: number[] 
   const norm = d.corrNorm ?? 'coeff';
   const items = cs.map((c) => {
     const e = evenly(c);
-    if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced — read on an even grid.`);
+    if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced; read on an even grid.`);
     const other = kernelValues?.filter(Number.isFinite) ?? e.y;
     const center = (v: number[]) => {
       if (norm !== 'coeff') return v;
@@ -682,7 +682,7 @@ function corrNode(ds: Dataset, d: ConvData, cs: Curve[], kernelValues: number[] 
     plots.push({ result: { x: lags, y: vals }, xName: `lag${c.X ? ` (${c.X.name})` : ''}`, yName: c.Y.name });
     return { xName: `lag${c.X ? ` (${c.X.name})` : ''}`, x: lags, cols: [yCol(`${kernelValues ? 'cross' : 'auto'}correlation (${c.Y.name})`, vals)] };
   });
-  if (kernelValues && cs.some((c) => Math.abs(c.y.length - kernelValues.length) > 0)) warnings.push('Correlation: the curves have different lengths — both on the step of the data.');
+  if (kernelValues && cs.some((c) => Math.abs(c.y.length - kernelValues.length) > 0)) warnings.push('Correlation: the curves have different lengths; both on the step of the data.');
   const table: Dataset = { name: 'lags', columns: [{ ...column('Y column', Float64Array.from(peaks, (_, i) => i + 1), peaks.map((p) => p.name)), role: 'x' }, yCol('lag of the maximum', peaks.map((p) => p.lag)), yCol('maximum', peaks.map((p) => p.value), 'none')] };
   return { dataset: { name: `${ds.name} correlation`, columns: layout(items) }, extra: { lags: table }, plots, labels: cs.map((c) => c.Y.name), warnings: [...new Set(warnings)] };
 }
@@ -716,7 +716,7 @@ export function averageNode(sets: Dataset[], d: AverageData): SignalOut {
         const xs = Array.from(c.X.values).filter((v, i) => Number.isFinite(v) && Number.isFinite(c.Y.values[i]));
         const up = xs.slice(1).some((v, i) => v > xs[i]);
         const down = xs.slice(1).some((v, i) => v < xs[i]);
-        if (up && down) warnings.push(`${c.Y.name}: its X goes back (a loop, a scan up and down?) — taken in the order of X, the branches mixed.`);
+        if (up && down) warnings.push(`${c.Y.name}: its X goes back (a loop, a scan up and down?): taken in the order of X, the branches mixed.`);
       }
       cs.push({ ...c, label: sets.length > 1 ? `${c.Y.name} (${ds.name})` : c.Y.name });
     }

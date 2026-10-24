@@ -527,7 +527,7 @@ function OpFields({ o, k, set, adding, setAdding }: { o: CurveOpData; k: number;
               <code>{f}</code>{' '}
             </span>
           ))}
-          — and a range: <code>xmin(A, 600, 700)</code>; + − × / ^, sqrt, log, abs …
+: and a range: <code>xmin(A, 600, 700)</code>; + − × / ^, sqrt, log, abs …
         </div>
       </>
     );
@@ -824,7 +824,7 @@ export function CurveMathNodeView({ id, data }: NodeProps<CurveMathNode>) {
             + Add operation
           </button>
           {cm?.ops.some((o) => o.overlay.curve) && (
-            <Field label="Curves computed" title="On the graph: on the axis of A and B, on an axis of their own at the right, or automatically — at the right when their values are of another size (A × B, A / B …), so that every curve stays visible">
+            <Field label="Curves computed" title="On the graph: on the axis of A and B, on an axis of their own at the right, or automatically; at the right when their values are of another size (A × B, A / B …), so that every curve stays visible">
               <Select<'auto' | 'same' | 'own'>
                 value={data.resultAxis ?? 'auto'}
                 options={[

@@ -366,7 +366,7 @@ function DataRows<T extends { x: string; ys: string }>({ data, set, names, avail
       <span>X</span>
       <Select value={data.x} options={[['', xAutoLabel(avail)], ['-', 'row number'], ...names.map((n): [string, string] => [n, n])]} onChange={(x) => set({ x } as Partial<T>)} />
       <span>Y</span>
-      <ColumnsPicker value={data.ys} names={names} auto={Y_AUTO} title="The Y columns: one, or several (a list: 2, B-D, names, A*); auto: the designated ones — each processed on its own" onChange={(ys) => set({ ys } as Partial<T>)} />
+      <ColumnsPicker value={data.ys} names={names} auto={Y_AUTO} title="The Y columns: one, or several (a list: 2, B-D, names, A*); auto: the designated ones; each processed on its own" onChange={(ys) => set({ ys } as Partial<T>)} />
     </>
   );
 }
@@ -654,7 +654,7 @@ export function InterpNodeView({ id, data }: NodeProps<InterpNode>) {
   return (
     <div className="node node-signal">
       <InPort label="dataset" port="dataset" id="in" title="X and the Y columns (designated, or chosen)" />
-      <InPort label="at" port="column" id="at" title="Optional: the new X (a column, or a dataset: its X) — New X ▸ from the “at” port" />
+      <InPort label="at" port="column" id="at" title="Optional: the new X (a column, or a dataset: its X), New X ▸ from the “at” port" />
       <NodeOptions>
       <div className="col-form">
         <DataRows data={data} set={set} names={names} avail={avail} />
@@ -888,7 +888,7 @@ export function FFTNodeView({ id, data }: NodeProps<FFTNode>) {
                 <span className="row">
                   <Select<'density' | 'spectrum'>
                     value={data.scaling ?? 'density'}
-                    title="Density: power per unit of frequency (V²/Hz) — for noise; spectrum: power (V²) — for the height of a sine"
+                    title="Density: power per unit of frequency (V²/Hz): for noise; spectrum: power (V²): for the height of a sine"
                     options={[
                       ['density', 'density (per unit of frequency)'],
                       ['spectrum', 'power spectrum'],
@@ -1027,7 +1027,7 @@ export function ConvNodeView({ id, data }: NodeProps<ConvNode>) {
   return (
     <div className="node node-signal">
       <InPort label="dataset" port="dataset" id="in" title="X (evenly spaced) and the Y columns" />
-      <InPort label="kernel" port="column" id="kernel" title="Optional: the response (a column, or a dataset: its first Y) on the same step of X — Response ▸ from the “kernel” port; for a correlation: the other signal (none: each Y with itself)" />
+      <InPort label="kernel" port="column" id="kernel" title="Optional: the response (a column, or a dataset: its first Y) on the same step of X; Response ▸ from the “kernel” port; for a correlation: the other signal (none: each Y with itself)" />
       <NodeOptions>
       <div className="col-form">
         <DataRows data={data} set={set} names={names} avail={avail} />
@@ -1037,8 +1037,8 @@ export function ConvNodeView({ id, data }: NodeProps<ConvNode>) {
           value={data.op}
           options={[
             ['conv', 'convolve (broaden)'],
-            ['wiener', 'deconvolve — Wiener'],
-            ['rl', 'deconvolve — Richardson–Lucy'],
+            ['wiener', 'deconvolve: Wiener'],
+            ['rl', 'deconvolve: Richardson–Lucy'],
             ['corr', 'correlation (cross / auto)'],
           ]}
           onChange={(op) => set({ op })}
@@ -1123,7 +1123,7 @@ export function AverageNodeView({ id, data }: NodeProps<AverageNode>) {
   return (
     <div className="node node-signal">
       {Array.from({ length: count }, (_, k) => (
-        <InPort key={k} label={columnLetter(k)} port="dataset" id={`in-${k}`} title="A dataset: its Y columns (designated, or chosen), each with its X — a new port appears when the last one is used" />
+        <InPort key={k} label={columnLetter(k)} port="dataset" id={`in-${k}`} title="A dataset: its Y columns (designated, or chosen), each with its X: a new port appears when the last one is used" />
       ))}
       <NodeOptions>
       <div className="col-form">

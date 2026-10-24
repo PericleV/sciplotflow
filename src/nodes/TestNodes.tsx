@@ -95,7 +95,7 @@ const ALT: [TTestData['alt'], string][] = [
 function PowerRow({ power, target, set, what }: { power?: boolean; target?: number; set: (p: { power?: boolean; target?: number }) => void; what: string }) {
   return (
     <div className="row wrap">
-      <Check label="Power and sample size" title={`The power of the test at the effect found (${what}) — the chance of finding it when it is there —, and the size needed for the target power`} value={!!power} onChange={(p) => set({ power: p || undefined })} />
+      <Check label="Power and sample size" title={`The power of the test at the effect found (${what}) (the chance of finding it when it is there), and the size needed for the target power`} value={!!power} onChange={(p) => set({ power: p || undefined })} />
       {power && (
         <Field label="target" title="The power wanted (0.8: an effect of this size found 4 times in 5)">
           <NumInput className="tiny" min={0.1} max={0.99} step={0.05} value={target ?? 0.8} onChange={(t) => set({ target: t > 0 && t < 1 ? t : undefined })} />
@@ -157,7 +157,7 @@ export function TTestNodeView({ id, data }: NodeProps<TTestNode>) {
             <NumInput className="short" value={data.mu} onChange={(mu) => set({ mu })} />
           </Field>
         )}
-        {data.test === 'two' && <Check label="Equal variances (Student)" title="Off: Welch's t (unequal variances) — the safer choice" value={data.equalVar} onChange={(equalVar) => set({ equalVar })} />}
+        {data.test === 'two' && <Check label="Equal variances (Student)" title="Off: Welch's t (unequal variances): the safer choice" value={data.equalVar} onChange={(equalVar) => set({ equalVar })} />}
         <Select value={data.alt} options={ALT} onChange={(alt) => set({ alt })} title="Two-sided: a difference either way; one-sided: the first group (or the mean) less / greater" />
       </div>
       <PowerRow power={data.power} target={data.target} set={(p) => set(p)} what="Cohen's d" />
@@ -250,7 +250,7 @@ export function AnovaNodeView({ id, data }: NodeProps<AnovaNode>) {
       <Main r={r} />
       <OutPort label="ANOVA" port="dataset" id="out" title="Source, SS, df, MS, F, p, partial η²" />
       <OutPort label="post hoc" port="dataset" id="posthoc" title="Every pair: difference, SE, statistic, adjusted p, CI, significant" />
-      <OutPort label="groups" port="dataset" id="groups" title="Every group (cell): N, mean, SE, SD, CI … — mean ± SE ready for a Plot" />
+      <OutPort label="groups" port="dataset" id="groups" title="Every group (cell): N, mean, SE, SD, CI …; mean ± SE ready for a Plot" />
       <OutPort label="checks" port="dataset" id="checks" title="Equal variances (Brown–Forsythe), normal residuals (Shapiro–Wilk), sphericity (Mauchly)" />
       {data.power && data.design === 'one' && <OutPort label="power" port="dataset" id="power" title="The effect found (Cohen's f), the power of the test at it, and the size needed for the target power" />}
     </div>
@@ -334,7 +334,7 @@ export function CorrNodeView({ id, data }: NodeProps<CorrNode>) {
         <span>Matrix order</span>
         <Select<'given' | 'cluster'>
           value={data.order ?? 'given'}
-          title="The columns of the matrix as given, or ordered by a clustering of 1 − |r| (average linkage): related columns next to each other — for a correlation map"
+          title="The columns of the matrix as given, or ordered by a clustering of 1 − |r| (average linkage): related columns next to each other; for a correlation map"
           options={[
             ['given', 'as given'],
             ['cluster', 'clustered (related together)'],
@@ -347,7 +347,7 @@ export function CorrNodeView({ id, data }: NodeProps<CorrNode>) {
         {data.pca && (
           <Select<'corr' | 'cov'>
             value={data.pcaOn ?? 'corr'}
-            title="Of the correlations (every column standardized — different units), or of the covariances (the same units)"
+            title="Of the correlations (every column standardized: different units), or of the covariances (the same units)"
             options={[
               ['corr', 'of the correlations'],
               ['cov', 'of the covariances'],

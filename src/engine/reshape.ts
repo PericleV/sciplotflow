@@ -74,7 +74,7 @@ export function keptBlocks(spec: string | undefined, n: number): Set<number> | s
     const neg = raw.startsWith('!');
     const t = (neg ? raw.slice(1) : raw).trim().toLowerCase().replace(/\bfirst\b/g, '1').replace(/\blast\b/g, 'end');
     const p = parseRows(t, n);
-    if (typeof p === 'string') return `Keep: cannot read “${raw}” — write blocks as 2:end, 1-3, 5, first, last, or !1 (all but block 1).`;
+    if (typeof p === 'string') return `Keep: cannot read “${raw}”; write blocks as 2:end, 1-3, 5, first, last, or !1 (all but block 1).`;
     for (const k of p) (neg ? no : yes).add(k);
     if (!neg) any = true;
   }
@@ -256,7 +256,7 @@ export function unstack(ds: Dataset, s: UnstackSpec): UnstackResult | string {
     if (typeof g === 'string') return g;
     if (g) [rows, values, texts, vName, word, how, blockLabels, parts] = [g.rows, g.values, g.texts, g.name, g.word ?? '', g.how, g.labels, g.parts];
   }
-  if (!rows) return X.values.some(Number.isFinite) ? `No blocks found (no line where ${X.name || 'X'} is not a number, ${fName} never starts again, no column of labels): choose how the blocks are found — Blocks ▸ by a column, every N rows …` : `${X.name || 'X'} has no numbers (labels?): choose a column with numbers as X, and Blocks ▸ by a column (${X.name || 'X'}).`;
+  if (!rows) return X.values.some(Number.isFinite) ? `No blocks found (no line where ${X.name || 'X'} is not a number, ${fName} never starts again, no column of labels): choose how the blocks are found; Blocks ▸ by a column, every N rows …` : `${X.name || 'X'} has no numbers (labels?): choose a column with numbers as X, and Blocks ▸ by a column (${X.name || 'X'}).`;
   const R: number[][] = rows;
   // a column with one value in every block, not the same in all: the swept parameter
   const constantIn = (c: Column): number[] | null => {
@@ -425,7 +425,7 @@ export function unstack(ds: Dataset, s: UnstackSpec): UnstackResult | string {
     }
     if (s.xs !== 'each' && k !== longest) {
       const d = sameX(refX, bx);
-      if (d !== -1) warnings.push(`Block ${k + 1}: its ${X.name || 'X'} differs from block ${longest + 1} (row ${d}: ${fmtNum(bx.values[d - 1])}, block ${longest + 1} ${fmtNum(refX.values[d - 1])}) — X out ▸ “an X before every block” keeps each one.`);
+      if (d !== -1) warnings.push(`Block ${k + 1}: its ${X.name || 'X'} differs from block ${longest + 1} (row ${d}: ${fmtNum(bx.values[d - 1])}, block ${longest + 1} ${fmtNum(refX.values[d - 1])}): X out ▸ “an X before every block” keeps each one.`);
     }
     Ys.forEach((Y) => {
       const nm = own[o++] || autoName(Y, b, k);
@@ -438,7 +438,7 @@ export function unstack(ds: Dataset, s: UnstackSpec): UnstackResult | string {
     });
     blocks.push({ name: out[out.length - Ys.length].name, ...info, kept: true });
   });
-  if (K.length > 500) warnings.push(`${K.length} blocks: ${K.length} columns — a map of them (Contour / heatmap ▸ a matrix, or its X, Y, Z columns directly) draws faster than as many curves.`);
+  if (K.length > 500) warnings.push(`${K.length} blocks: ${K.length} columns: a map of them (Contour / heatmap ▸ a matrix, or its X, Y, Z columns directly) draws faster than as many curves.`);
   if (own.filter(Boolean).length > o) warnings.push(`Names: ${own.filter(Boolean).length} given, ${o} new columns.`);
   const len = maxOf(out.map((c) => c.values.length));
   const unique = uniqueNames(out.map((c) => c.name));
@@ -547,7 +547,7 @@ export function combine(inputs: Dataset[], s: CombineSpec): CombineResult | stri
   else if (s.how === 'before') refs = inputs.map((_, k) => seq(k)).reverse().flat();
   else if (s.how === 'insert') {
     const at = Math.min(lens[0], Math.max(0, Math.floor(s.at || 0)));
-    if (!(s.at >= 0) || s.at > lens[0]) warnings.push(`Insert after row ${s.at}: the first input has ${lens[0]} rows — ${at === 0 ? 'put before it' : 'put after its last row'}.`);
+    if (!(s.at >= 0) || s.at > lens[0]) warnings.push(`Insert after row ${s.at}: the first input has ${lens[0]} rows; ${at === 0 ? 'put before it' : 'put after its last row'}.`);
     const first = seq(0);
     refs = [...first.slice(0, at), ...inputs.slice(1).flatMap((_, j) => seq(j + 1)), ...first.slice(at)];
   } else {

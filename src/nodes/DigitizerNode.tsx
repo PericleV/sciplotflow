@@ -650,7 +650,7 @@ export function DigitizerNodeView({ id, data }: NodeProps<DigitizerNode>) {
         {d.cal === 'grid' && (
           <>
             <div className="row wrap">
-              <button className={btn(placing?.kind === 'grid')} title="Then click on the image, point after point: ticks on the axes, crossings of the grid, the corners — spread over the graph" onClick={() => place({ kind: 'grid' })}>
+              <button className={btn(placing?.kind === 'grid')} title="Then click on the image, point after point: ticks on the axes, crossings of the grid, the corners; spread over the graph" onClick={() => place({ kind: 'grid' })}>
                 + Reference points
               </button>
               <Field label="Map">

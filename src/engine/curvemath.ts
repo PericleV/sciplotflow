@@ -450,14 +450,14 @@ function crossings(A: Curve2, B: Curve2, d: CurveMathData): { dataset: Dataset; 
   const [nc, nt, ne] = [count('cross'), count('touch'), count('endA') + count('endB')];
   report.push(
     found
-      ? `${found} intersection${found > 1 ? 's' : ''}: ${nc} crossing${nc === 1 ? '' : 's'}${nt ? `, ${nt} touch${nt > 1 ? 'es' : ''}` : ''}${ne ? `, ${ne} at the end of a curve` : ''}${kept < found ? ` — ${kept} ${d.touch === false ? 'crossing' : 'intersection'}${kept === 1 ? '' : 's'}${lo > -Infinity || hi < Infinity ? ` in X from ${fmtNum(lo)} to ${fmtNum(hi)}` : ''}` : ''}${use.length < kept ? `; given: the ${d.crossing} along A` : ''}.`
+      ? `${found} intersection${found > 1 ? 's' : ''}: ${nc} crossing${nc === 1 ? '' : 's'}${nt ? `, ${nt} touch${nt > 1 ? 'es' : ''}` : ''}${ne ? `, ${ne} at the end of a curve` : ''}${kept < found ? `: ${kept} ${d.touch === false ? 'crossing' : 'intersection'}${kept === 1 ? '' : 's'}${lo > -Infinity || hi < Infinity ? ` in X from ${fmtNum(lo)} to ${fmtNum(hi)}` : ''}` : ''}${use.length < kept ? `; given: the ${d.crossing} along A` : ''}.`
       : 'A and B do not meet.',
   );
-  use.slice(0, 6).forEach((h, k) => report.push(`${k + 1}. X = ${fmtNum(h.x)}, Y = ${fmtNum(h.y)} — ${label(h)}`));
+  use.slice(0, 6).forEach((h, k) => report.push(`${k + 1}. X = ${fmtNum(h.x)}, Y = ${fmtNum(h.y)}: ${label(h)}`));
   if (use.length > 6) report.push(`… ${use.length - 6} more in the table.`);
   if (overlaps.length) {
     const [o0, o1] = [minOf(overlaps.map((o) => minOf(o))), maxOf(overlaps.map((o) => maxOf(o)))];
-    warnings.push(`A and B lie on top of each other along ${overlaps.length} segment${overlaps.length > 1 ? 's' : ''} (X from ${fmtNum(o0)} to ${fmtNum(o1)}): not intersections — only where they part is counted.`);
+    warnings.push(`A and B lie on top of each other along ${overlaps.length} segment${overlaps.length > 1 ? 's' : ''} (X from ${fmtNum(o0)} to ${fmtNum(o1)}): not intersections, only where they part is counted.`);
   }
   const cols = (f: (h: Hit, k: number) => number) => Float64Array.from(use, f);
   return {

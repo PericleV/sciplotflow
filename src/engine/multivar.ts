@@ -14,7 +14,7 @@ export function pca(cols: number[][], on: 'corr' | 'cov'): Pca | string {
   const rows = Array.from({ length: n }, (_, i) => i).filter((i) => cols.every((c) => Number.isFinite(c[i])));
   const m = rows.length;
   if (p < 2) return 'Principal components: 2 columns or more.';
-  if (m <= p) return `Principal components: ${m} complete rows for ${p} columns — more rows are needed.`;
+  if (m <= p) return `Principal components: ${m} complete rows for ${p} columns; more rows are needed.`;
   const mean = cols.map((c) => rows.reduce((s, i) => s + c[i], 0) / m);
   const sd = cols.map((c, j) => Math.sqrt(rows.reduce((s, i) => s + (c[i] - mean[j]) ** 2, 0) / (m - 1)));
   if (on === 'corr' && sd.some((s) => !(s > 0))) return 'Principal components: a column does not vary.';

@@ -72,7 +72,7 @@ export function readOffice(bytes: Uint8Array, name: string): OfficeDoc | string 
     return `“${name}” is not a Word or PowerPoint document (.docx, .pptx).`;
   }
   const kind: OfficeKind | null = files['word/document.xml'] ? 'docx' : files['ppt/presentation.xml'] ? 'pptx' : null;
-  if (!kind) return `“${name}” is not a Word or PowerPoint document (.docx, .pptx) — an older .doc / .ppt: save it as .docx / .pptx first.`;
+  if (!kind) return `“${name}” is not a Word or PowerPoint document (.docx, .pptx): an older .doc / .ppt: save it as .docx / .pptx first.`;
   const figures: OfficeFigure[] = [];
   let pictures = 0;
   // the project in a media file, read once

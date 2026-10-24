@@ -64,25 +64,25 @@ type Tool = 'select' | 'corner' | 'pen' | 'image' | 'text' | 'line' | 'arrow' | 
 // what each tool draws: its first look (the points come from the drag)
 const TOOLS: { tool: Tool; title: string; key?: string; spec?: Partial<ShapeSpec> }[] = [
   { tool: 'select', title: 'Select and move (V): click an object, Shift / Ctrl + click more, or drag a box around them', key: 'v' },
-  { tool: 'corner', title: 'Corners (K): click a shape, then its corners (Shift: more) and drag one inward to round them — as much as you drag (its radius also typed in the options)', key: 'k' },
+  { tool: 'corner', title: 'Corners (K): click a shape, then its corners (Shift: more) and drag one inward to round them; as much as you drag (its radius also typed in the options)', key: 'k' },
   { tool: 'pen', title: 'Pen (B): click for a corner, drag for a smooth node (its curve); click the first node to close the path, double-click (or Enter) to end it open', key: 'b' },
-  { tool: 'image', title: 'Image (I): a picture from a file (PNG, JPEG, TIFF, SVG …) — also paste one (Ctrl+V) or drop it on the page', key: 'i' },
+  { tool: 'image', title: 'Image (I): a picture from a file (PNG, JPEG, TIFF, SVG …): also paste one (Ctrl+V) or drop it on the page', key: 'i' },
   { tool: 'text', title: 'Text (T): click where it goes', key: 't' },
   { tool: 'line', title: 'Line (L): drag from its start to its end (Shift: by 15°)', key: 'l', spec: { kind: 'line', head2: 'none' } },
   { tool: 'arrow', title: 'Arrow (A): drag from its start to its head (Shift: by 15°)', key: 'a', spec: { kind: 'arrow' } },
   { tool: 'double', title: 'Double-headed arrow: drag from one end to the other', spec: { kind: 'arrow', head1: 'triangle', head2: 'triangle' } },
   { tool: 'curved', title: 'Curved arrow: drag from its start to its head (then its middle handle bends it; + Bend: through more points)', spec: { kind: 'arrow', curve: 0.3 } },
-  { tool: 'elbow', title: 'Elbow arrow (a connector): drag from one shape to another — its ends stay stuck to them when they move', spec: { kind: 'arrow', route: 'hvh' } },
+  { tool: 'elbow', title: 'Elbow arrow (a connector): drag from one shape to another; its ends stay stuck to them when they move', spec: { kind: 'arrow', route: 'hvh' } },
   { tool: 'equilibrium', title: 'Equilibrium arrow: drag from its start to its end (Body: favouring a side; texts above and below it)', spec: { kind: 'arrow', body: 'equilibrium', head1: 'none', head2: 'none', headSize: 4, gap: 2.5 } },
   { tool: 'retro', title: 'Retrosynthetic arrow: drag from its start to its head', spec: { kind: 'arrow', body: 'retro', head1: 'none', head2: 'none', headSize: 5, gap: 3 } },
-  { tool: 'dimension', title: 'Dimension: drag from one point to the other — the length is written on it (mm); its handle in the middle moves it aside', spec: { kind: 'dimension', head1: 'triangle', head2: 'triangle', headSize: 4, width: 0.5, offset: 6, unit: 'mm', dec: 1 } },
+  { tool: 'dimension', title: 'Dimension: drag from one point to the other; the length is written on it (mm); its handle in the middle moves it aside', spec: { kind: 'dimension', head1: 'triangle', head2: 'triangle', headSize: 4, width: 0.5, offset: 6, unit: 'mm', dec: 1 } },
   { tool: 'rect', title: 'Rectangle (R): drag a corner to the other (Shift: a square)', key: 'r', spec: { kind: 'rect' } },
   { tool: 'ellipse', title: 'Ellipse (E): drag its box (Shift: a circle)', key: 'e', spec: { kind: 'ellipse' } },
   { tool: 'polygon', title: 'Polygon (P): click its corners, double-click (or Enter) to close it', key: 'p', spec: { kind: 'polygon', closed: true, fill: '#56B4E9', fillOpacity: 0.3, color: '#0072B2' } },
   { tool: 'polyline', title: 'Polyline: click its points, double-click (or Enter) to end it', spec: { kind: 'polygon', closed: false } },
-  { tool: 'star', title: 'Star or regular polygon: drag its box (Shift: as wide as high) — which of the two, its points or sides: in its options (Variant)', spec: { kind: 'star', n: 5, inner: 0.382, fill: '#E69F00', fillOpacity: 1, width: 0.5 } },
+  { tool: 'star', title: 'Star or regular polygon: drag its box (Shift: as wide as high); which of the two, its points or sides: in its options (Variant)', spec: { kind: 'star', n: 5, inner: 0.382, fill: '#E69F00', fillOpacity: 1, width: 0.5 } },
   { tool: 'arc', title: 'Arc: drag the box of its ellipse (an open line; From, To in its options)', spec: { kind: 'arc', a1: 0, a2: 270 } },
-  { tool: 'pie', title: 'Pie / donut: drag the box of its ellipse (Shift: a circle) — a pie slice or a donut’s: in its options (Kind; the hole, rounded corners)', spec: { kind: 'arc', a1: 0, a2: 90, sector: true, fill: '#009E73', fillOpacity: 0.5, width: 0.5 } },
+  { tool: 'pie', title: 'Pie / donut: drag the box of its ellipse (Shift: a circle), a pie slice or a donut’s: in its options (Kind; the hole, rounded corners)', spec: { kind: 'arc', a1: 0, a2: 90, sector: true, fill: '#009E73', fillOpacity: 0.5, width: 0.5 } },
   { tool: 'bracket', title: 'Bracket: drag from one end to the other', spec: { kind: 'bracket', orient: 'free', bstyle: 'square', headSize: 4, text: '*' } },
   { tool: 'brace', title: 'Curly brace: drag from one end to the other', spec: { kind: 'bracket', orient: 'free', bstyle: 'curly', headSize: 6, text: '' } },
   { tool: 'callout', title: 'Callout: drag from the box of its text to the point it shows', spec: { kind: 'callout', text: 'Note', fill: '#ffffff', fillOpacity: 1, width: 0.5, head2: 'triangle', headSize: 4, pad: 2, radius: 2 } },
@@ -893,10 +893,10 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
 
   const toolbar: ReactNode = (
     <div className="de-toolbar">
-      <span className="de-title" title={`Figure Drawing — ${data.name || 'drawing'}`}>
+      <span className="de-title" title={`Figure Drawing: ${data.name || 'drawing'}`}>
         <DraftingCompass {...ICON} />
         <span>Figure Drawing</span>
-        <span className="muted">— {data.name || 'drawing'}</span>
+        <span className="muted">· {data.name || 'drawing'}</span>
       </span>
       <span className="de-group">
         {TOOLS.map((t) => (
@@ -1039,7 +1039,7 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
       {!selected.length && (
         <>
           <div className="de-head">Page</div>
-          <PageControls page={data} set={(p) => set(p)} fixed={under ? `Size: ${under.width} × ${under.height} ${under.unit} — the figure under the drawing's (${guide ? 'only a guide' : 'drawn with it'}).` : undefined} />
+          <PageControls page={data} set={(p) => set(p)} fixed={under ? `Size: ${under.width} × ${under.height} ${under.unit}; the figure under the drawing's (${guide ? 'only a guide' : 'drawn with it'}).` : undefined} />
           <div className="hint">The grid: in the bar above (shown, snapped, its step). Objects: a tool, then drag on the page.</div>
         </>
       )}
@@ -1357,7 +1357,7 @@ function StickFields({ it, items, set }: { it: AnnotationItem; items: Annotation
   const s = shapeSpec(it.spec as Partial<ShapeSpec>);
   const shapes: [string, string][] = [['', 'free (not stuck)'], ...items.filter((x) => x.id !== it.id && !lineLike(x)).map((x): [string, string] => [x.id, nameOf(x)])];
   const end = (label: string, k: 'from' | 'to', at: 'fromAt' | 'toAt') => (
-    <Field label={label} title="The shape this end is stuck to (it follows the shape), and where on it — also: drop the end's handle on a shape, or draw the line from one shape to another">
+    <Field label={label} title="The shape this end is stuck to (it follows the shape), and where on it: also: drop the end's handle on a shape, or draw the line from one shape to another">
       <span className="row">
         <Select value={s[k] ?? ''} options={shapes} onChange={(v) => set({ [k]: v || undefined })} />
         {s[k] && <Select<StickSide> value={s[at] ?? 'auto'} options={SIDES} onChange={(v) => set({ [at]: v === 'auto' ? undefined : v })} />}

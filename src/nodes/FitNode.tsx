@@ -448,7 +448,7 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
   const dataBlock = names.length > 0 && (
     <details open>
       <summary>Data</summary>
-      <Field label="Fit" title="A curve: Y as a function of X (the models, formulas, equations …); a surface: Z as a function of X and Y; a regression: Y on several predictors — linear least squares, or logistic for a yes / no response">
+      <Field label="Fit" title="A curve: Y as a function of X (the models, formulas, equations …); a surface: Z as a function of X and Y; a regression: Y on several predictors; linear least squares, or logistic for a yes / no response">
         <Select
           value={mode}
           options={[
@@ -534,14 +534,14 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
           {!york && (
             <Check
               label="Errors of X too (effective variance)"
-              title="The ±X column counted for any model: every point weighted by 1/(σy² + (f′(x)·σx)²), the slope of the model at its X — for a straight line the same as York's fit; σy from the weights (none: 1)"
+              title="The ±X column counted for any model: every point weighted by 1/(σy² + (f′(x)·σx)²), the slope of the model at its X: for a straight line the same as York's fit; σy from the weights (none: 1)"
               value={!!data.xerrFit}
               onChange={(xerrFit) => set({ xerrFit: xerrFit || undefined })}
             />
           )}
           <Check
             label="Reconvolution with the instrument's response (IRF)"
-            title="The model — of the time after an instant (a decay: fix its offset at 0) — convolved with the IRF, as measured (fluorescence lifetimes, pump–probe): bg + IRF ⊗ model, the IRF of area 1; its shift fitted or not"
+            title="The model: of the time after an instant (a decay: fix its offset at 0); convolved with the IRF, as measured (fluorescence lifetimes, pump–probe): bg + IRF ⊗ model, the IRF of area 1; its shift fitted or not"
             value={!!data.reconv}
             onChange={(reconv) => set({ reconv: reconv || undefined })}
           />
@@ -563,7 +563,7 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
               <Check label="its shift fitted" title="The IRF moved along X by the parameter “shift” (else as measured)" value={data.irfShift !== false} onChange={(v) => set({ irfShift: v ? undefined : false })} />
             </div>
           )}
-          {!data.ys.some(Boolean) && (info?.yNames.length ?? 0) > 1 && <div className="hint">From the designations: {info!.yNames.length} Y columns, each with its own X — a run each.</div>}
+          {!data.ys.some(Boolean) && (info?.yNames.length ?? 0) > 1 && <div className="hint">From the designations: {info!.yNames.length} Y columns, each with its own X; a run each.</div>}
           {globalOn && <Check label="Global fit: the parameters marked “shared” are common to all runs" value={data.global} onChange={(global) => set({ global })} />}
         </>
       )}
@@ -625,7 +625,7 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
           className="mono"
           value={data.model.cformula ?? ''}
           placeholder="R0 + R1/(1 + j*x*R1*C1)"
-          title="A formula in complex numbers of x (j the imaginary unit; functions of your own before it: par(a, b) = a*b/(a + b); R0 + par(R1, 1/(j*x*C1))) — fitted at once to two Y columns: its real part (Y 1) and its imaginary part (Y 2), every parameter shared"
+          title="A formula in complex numbers of x (j the imaginary unit; functions of your own before it: par(a, b) = a*b/(a + b); R0 + par(R1, 1/(j*x*C1))): fitted at once to two Y columns: its real part (Y 1) and its imaginary part (Y 2), every parameter shared"
           onChange={(cformula) => setModel({ cformula })}
         />
       )}
@@ -634,7 +634,7 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
           className="mono"
           value={data.model.ode ?? ''}
           placeholder="dA/dt = -k1*A; dB/dt = k1*A - k2*B; A(0) = A0; B(0) = 0; y = B"
-          title="Differential equations, separated by ; — dA/dx = … (or d…/dt: the variable after the d), the starting values A(0) = … (all at the same X), and what is measured, y = … (with one equation: that one). Every other name is a parameter; solved numerically (Dormand–Prince, an adaptive step) forward and backward from the start"
+          title="Differential equations, separated by ; dA/dx = … (or d…/dt: the variable after the d), the starting values A(0) = … (all at the same X), and what is measured, y = … (with one equation: that one). Every other name is a parameter; solved numerically (Dormand–Prince, an adaptive step) forward and backward from the start"
           onChange={(ode) => setModel({ ode })}
         />
       )}
@@ -731,7 +731,7 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
   );
   const paramsBlock = params.length > 0 && (
     <details open>
-      <summary>Parameters{several || results.length > 1 ? ` — ${res?.label ?? label}` : ''}</summary>
+      <summary>Parameters{several || results.length > 1 ? `: ${res?.label ?? label}` : ''}</summary>
       {results.length > 1 && (
         <div className="row wrap">
           <span className="muted">Results of</span>
@@ -774,7 +774,7 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
             </span>
           ))}
       </div>
-      <Field label="Constraints" title="Parameters given by the others, not fitted: lines (or ; between them) “name = formula of the other parameters” — w2 = w1 (the same width), xc2 = xc1 + 1.15 (a fixed distance: a spin–orbit doublet), A2 = 0.5*A1 (a ratio). Their errors follow from those of the others">
+      <Field label="Constraints" title="Parameters given by the others, not fitted: lines (or ; between them) “name = formula of the other parameters”: w2 = w1 (the same width), xc2 = xc1 + 1.15 (a fixed distance: a spin–orbit doublet), A2 = 0.5*A1 (a ratio). Their errors follow from those of the others">
         <TextInput className="mono" value={data.links ?? ''} placeholder="w2 = w1; xc2 = xc1 + 1.15" onChange={(links) => set({ links: links || undefined })} />
       </Field>
       <div className="row wrap">
@@ -786,7 +786,7 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
         </button>
       </div>
       {res && crit && (
-        <div className="hint" title="χ²: the weighted sum of squared residuals; AIC = N·ln(χ²/N) + 2K, AICc corrected for few points, BIC = N·ln(χ²/N) + K·ln N, K = the free parameters + 1 — lower is better, between fits of the same data">
+        <div className="hint" title="χ²: the weighted sum of squared residuals; AIC = N·ln(χ²/N) + 2K, AICc corrected for few points, BIC = N·ln(χ²/N) + K·ln N, K = the free parameters + 1: lower is better, between fits of the same data">
           χ² {fmtNum(res.stats.chi2, 5)} · AIC {fmtNum(crit.aic, 5)}
           {Number.isFinite(crit.aicc) ? ` · AICc ${fmtNum(crit.aicc, 5)}` : ''} · BIC {fmtNum(crit.bic, 5)}
         </div>
@@ -804,7 +804,7 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
             <Field label="Y at X" title="The model at these X (a list: 2.5, 10 …), with its 95 % confidence interval (where the curve is) and prediction interval (where a new measurement falls)">
               <TextInput className="mono" value={data.at ?? ''} placeholder="e.g. 2.5, 10" onChange={(at) => set({ at: at || undefined })} />
             </Field>
-            <Field label="X from Y" title="A calibration read backwards: the X where the model reaches each Y (a list), with its 95 % interval — from the scatter of a new measurement (the mean of “×” replicates) and the uncertainty of the curve">
+            <Field label="X from Y" title="A calibration read backwards: the X where the model reaches each Y (a list), with its 95 % interval: from the scatter of a new measurement (the mean of “×” replicates) and the uncertainty of the curve">
               <span className="row">
                 <TextInput className="mono" value={data.inverse ?? ''} placeholder="e.g. 0.42" onChange={(inverse) => set({ inverse: inverse || undefined })} />
                 <span className="muted" title="Replicates: each Y the mean of this many measurements">×</span>
@@ -815,7 +815,7 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
           <Check label="Limits of detection and quantification (LOD = 3.3·s / slope, LOQ = 10·s / slope)" title="s: the residual standard deviation; the slope of the model at X = 0 (or where the data start); in units of X" value={!!data.lod} onChange={(lod) => set({ lod: lod || undefined })} />
         </>
       )}
-      <Field label="Derived" title="Values computed from the parameters, with their errors from the covariance of the fit: lines (or ; between them) “name = formula of the parameters” — area = A*w*1.0645, Ea = -b*8.314e-3, ratio = A2/A1">
+      <Field label="Derived" title="Values computed from the parameters, with their errors from the covariance of the fit: lines (or ; between them) “name = formula of the parameters”: area = A*w*1.0645, Ea = -b*8.314e-3, ratio = A2/A1">
         <TextInput className="mono" value={data.derived ?? ''} placeholder="e.g. area = A*w*1.0645" onChange={(derived) => set({ derived: derived || undefined })} />
       </Field>
       {useRows.length > 0 && (
@@ -972,12 +972,12 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
           document.body,
         )}
       <Messages result={r} />
-      <OutPort label={`fit curves${nFits > 1 ? ` (${nFits})` : ''}`} port="dataset" id="fit" title={surf ? 'X, Y, Z and the fitted Z at every point' : "All the fit curves in one dataset: for every run (Y column) an X and its fit on a fine grid over the points fitted (and its band as ±Y, drawn shaded) — to a Plot's dataset port, together with the data"} />
+      <OutPort label={`fit curves${nFits > 1 ? ` (${nFits})` : ''}`} port="dataset" id="fit" title={surf ? 'X, Y, Z and the fitted Z at every point' : "All the fit curves in one dataset: for every run (Y column) an X and its fit on a fine grid over the points fitted (and its band as ±Y, drawn shaded): to a Plot's dataset port, together with the data"} />
       {useOn && <OutPort label="use of the fit" port="dataset" id="use" title="A row per value asked: what (Y at X, X from Y, LOD, LOQ, a derived value), its name, the value given, the result, its error (±Y), its 95 % interval (and the prediction interval of Y at X)" />}
       <OutPort label="residuals" port="dataset" id="resid" title="Data − model at the points fitted: an X and a residual column for every run" />
       {(data.compare2 || data.sameTest) && !surf && <OutPort label="comparison" port="dataset" id="compare" title="A row per fit compared: the data, the fit, its parameters, N, χ², reduced χ², R², AIC, AICc, BIC, the Akaike weight, F and p (on the row of the fuller fit)" />}
       {regKind && <OutPort label="statistics" port="dataset" id="stats" title="The statistics of the regression: N, R² (McFadden's for a logistic one), F or the likelihood-ratio χ² and their p, AIC, BIC …" />}
-      <OutPort label="parameters" port="dataset" id="params" title="A row per fit: its number, the data it was fitted on (the value of its block, else the Y column — X), its range and the X fitted from / to, every parameter (Y) with its error (±Y), N, R², adjusted R², χ², reduced χ², RMSE — right-click ▸ Plot these columns; one parameter: Extract column (one value when there is one fit)" />
+      <OutPort label="parameters" port="dataset" id="params" title="A row per fit: its number, the data it was fitted on (the value of its block, else the Y column: X), its range and the X fitted from / to, every parameter (Y) with its error (±Y), N, R², adjusted R², χ², reduced χ², RMSE: right-click ▸ Plot these columns; one parameter: Extract column (one value when there is one fit)" />
     </div>
   );
 }

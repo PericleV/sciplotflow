@@ -111,7 +111,7 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
             <li key={name} className={done[k] ? 'done' : ''}>
               <span className="batch-step">{done[k] ? '✓' : k + 1}</span>
               <span>
-                <b>{name}</b> — {text}
+                <b>{name}</b>: {text}
               </span>
             </li>
           ))}
@@ -154,7 +154,7 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
         )}
         <Field label="Names" title="What the file names say, as columns of the table: {Name} takes a number, {Name:text} a word, the rest is written as in the names. Example: sample_{T}C_{t}h reads T = 25 and t = 2 from sample_25C_2h">
           <TextInput value={spec.pattern ?? ''} placeholder="e.g. sample_{T}C_{t}h" onChange={(pattern) => set({ pattern: pattern || undefined })} />
-          <button className="nodrag" disabled={list.length < 2} title="A pattern guessed from the names: the numbers that change from file to file become {V1}, {V2} … — then name them" onClick={guess}>
+          <button className="nodrag" disabled={list.length < 2} title="A pattern guessed from the names: the numbers that change from file to file become {V1}, {V2} …; then name them" onClick={guess}>
             Guess
           </button>
         </Field>
@@ -252,7 +252,7 @@ export function BatchFileBar({
         <button className="nodrag" disabled={shown <= 0} title="The file before" onClick={() => onShow(shown - 1)}>
           <ChevronLeft {...IC} />
         </button>
-        <Select<string> value={String(shown)} title="The file these steps are shown on (they run on every one); ✎ a file with its own settings, ⚠ one with errors" options={files.map((f, k): [string, string] => [String(k), `${k + 1} / ${files.length} — ${f.name}${ownCount(f.name) ? ' ✎' : ''}${f.errors.length ? ' ⚠' : ''}`])} onChange={(v) => onShow(Number(v))} />
+        <Select<string> value={String(shown)} title="The file these steps are shown on (they run on every one); ✎ a file with its own settings, ⚠ one with errors" options={files.map((f, k): [string, string] => [String(k), `${k + 1} / ${files.length}: ${f.name}${ownCount(f.name) ? ' ✎' : ''}${f.errors.length ? ' ⚠' : ''}`])} onChange={(v) => onShow(Number(v))} />
         <button className="nodrag" disabled={shown >= files.length - 1} title="The file after" onClick={() => onShow(shown + 1)}>
           <ChevronRight {...IC} />
         </button>

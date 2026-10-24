@@ -117,7 +117,7 @@ export function ProbPlotNodeView({ id, data: d }: NodeProps<ProbPlotNode>) {
               />
             </>
           )}
-          <span title="Life data: a column with the status of every value — 1 (or F, failed) failed, 0 (or S, suspended, censored) still running when the test stopped">Status</span>
+          <span title="Life data: a column with the status of every value; 1 (or F, failed) failed, 0 (or S, suspended, censored) still running when the test stopped">Status</span>
           <Select value={d.censor ?? ''} options={[['', 'none (all failed)'], ...cols]} onChange={(censor) => set({ censor: censor || undefined })} />
         </div>
       </details>
@@ -160,7 +160,7 @@ export function ProbPlotNodeView({ id, data: d }: NodeProps<ProbPlotNode>) {
               <span className="row wrap">
                 <Select<NonNullable<ProbSpec['method']>>
                   value={d.method ?? 'mle'}
-                  title="The parameters: maximum likelihood (with the suspended values), or rank regression on the probability scale — X on Y (RRX) or Y on X (RRY), the usual Weibull ways"
+                  title="The parameters: maximum likelihood (with the suspended values), or rank regression on the probability scale: X on Y (RRX) or Y on X (RRY), the usual Weibull ways"
                   options={[
                     ['mle', 'maximum likelihood'],
                     ['rrx', 'rank regression X on Y'],
@@ -280,7 +280,7 @@ export function ProbPlotNodeView({ id, data: d }: NodeProps<ProbPlotNode>) {
           <span className="row wrap">
             <Select<ProbSpec['band']>
               value={band}
-              title="Pointwise: Q-Q and probability — the standard error of an order statistic around the line; ECDF — F ± z·√(F(1 − F)/n). Simultaneous: Dvoretzky–Kiefer–Wolfowitz, F ± √(ln(2/α)/(2n))"
+              title="Pointwise: Q-Q and probability; the standard error of an order statistic around the line; ECDF: F ± z·√(F(1 − F)/n). Simultaneous: Dvoretzky–Kiefer–Wolfowitz, F ± √(ln(2/α)/(2n))"
               options={bandOptions}
               onChange={(b) => set({ band: b })}
             />
@@ -323,7 +323,7 @@ export function ProbPlotNodeView({ id, data: d }: NodeProps<ProbPlotNode>) {
         {rows.map((q) => (
           <div key={q.group} className="stat-report prob-result">
             <div>
-              <b>{q.group}</b> — {DIST_NAMES[d.dist]}, n = {q.n}
+              <b>{q.group}</b>: {DIST_NAMES[d.dist]}, n = {q.n}
             </div>
             <div className="mono">{pnames.map((nm, j) => `${nm} = ${fmtNum(q.params[j], 5)}`).join(', ')}</div>
             <div className="muted">

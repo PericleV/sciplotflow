@@ -361,7 +361,7 @@ export function FigureView({ fig, width, maxHeight = 480, page, setPage, layoutT
         />
         <button
           className={`nodrag${reader ? ' on' : ''}`}
-          title="Data reader: a crosshair on the data point nearest the mouse — its curve, X, Y, row; click to keep it, then ← → along the curve, ↑ ↓ to another curve"
+          title="Data reader: a crosshair on the data point nearest the mouse; its curve, X, Y, row; click to keep it, then ← → along the curve, ↑ ↓ to another curve"
           onClick={() => {
             setReader((v) => !v);
             setAdding(false);
@@ -476,13 +476,13 @@ export function FigureView({ fig, width, maxHeight = 480, page, setPage, layoutT
         <button className="nodrag" title={`Vector figure, ${fig.width} × ${fig.height} ${fig.unit}`} onClick={() => svg() && run(async () => exportSvg(svg()!, fig, name, await embedOf()))}>
           SVG
         </button>
-        <button className="nodrag" title="PDF (vector, fonts included): the browser's print window opens at the size of the figure — choose “Save as PDF”" onClick={() => svg() && printPdf(svg()!, fig, name)}>
+        <button className="nodrag" title="PDF (vector, fonts included): the browser's print window opens at the size of the figure: choose “Save as PDF”" onClick={() => svg() && printPdf(svg()!, fig, name)}>
           PDF
         </button>
         <button className="nodrag" disabled={busy} title={`${px.w} × ${px.h} pixels at ${page.dpi} dpi`} onClick={() => svg() && run(async () => exportPng(svg()!, fig, page.dpi, name, await embedOf()))}>
           PNG
         </button>
-        <button className="nodrag" disabled={busy} title={`TIFF (deflate compression), ${px.w} × ${px.h} pixels at ${page.dpi} dpi — what many journals ask for`} onClick={() => svg() && run(() => exportTiff(svg()!, fig, page.dpi, name))}>
+        <button className="nodrag" disabled={busy} title={`TIFF (deflate compression), ${px.w} × ${px.h} pixels at ${page.dpi} dpi: what many journals ask for`} onClick={() => svg() && run(() => exportTiff(svg()!, fig, page.dpi, name))}>
           TIFF
         </button>
         <button className="nodrag" disabled={busy} title="Copy the figure as an image (paste it into a document or a slide; into a Note of this project: the live figure)" onClick={() => svg() && run(async () => {
@@ -508,7 +508,7 @@ export function FigureView({ fig, width, maxHeight = 480, page, setPage, layoutT
         </span>
         {EDITABLE_FIGURES && <Select<'full' | 'nodata' | 'none'>
           value={embedMode}
-          title="An editable figure: the project inside the SVG and PNG files — in Word or PowerPoint insert the SVG (they re-encode a PNG, which loses the project); in a document, “Save as Picture”, then drop the image on SciPlotFlow: the project opens at this figure (and Update document… replaces the figure there). Without the imported data: smaller, the files are opened again. TIFF, PDF and Copy never carry it"
+          title="An editable figure: the project inside the SVG and PNG files; in Word or PowerPoint insert the SVG (they re-encode a PNG, which loses the project); in a document, “Save as Picture”, then drop the image on SciPlotFlow: the project opens at this figure (and Update document… replaces the figure there). Without the imported data: smaller, the files are opened again. TIFF, PDF and Copy never carry it"
           options={[
             ['full', 'project inside'],
             ['nodata', 'project, no imported data'],

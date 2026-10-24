@@ -34,7 +34,7 @@ export function DrawingNodeView({ id, data }: NodeProps<DrawingNode>) {
   const size = fig ?? data;
   return (
     <div className="node node-drawing">
-      <InPort label="figure" port="figure" id="under" title="A figure to annotate (a Plot's or a Merge's “figure” output): drawn under the drawing, its page the drawing's — or only a guide to draw by">
+      <InPort label="figure" port="figure" id="under" title="A figure to annotate (a Plot's or a Merge's “figure” output): drawn under the drawing, its page the drawing's: or only a guide to draw by">
         {under && (
           <Select<'draw' | 'guide'>
             value={data.under ?? 'draw'}
@@ -56,7 +56,7 @@ export function DrawingNodeView({ id, data }: NodeProps<DrawingNode>) {
         </span>
       </div>
       {fig && <FigureView fig={fig} width={600} page={data} setPage={(p) => set(p)} layoutTitle="" noAxes onPick={(node, part) => node === id && setQuick(part.startsWith('ann:') ? part.slice(4) : null)} />}
-      <OutPort label="figure" port="figure" id="figure" title="The drawing as a figure: to a Merge (a panel of its own) or to a Plot's insets — scaled there as a whole" />
+      <OutPort label="figure" port="figure" id="figure" title="The drawing as a figure: to a Merge (a panel of its own) or to a Plot's insets: scaled there as a whole" />
       <NodeOptions>
         {quick && (
           <PageTextContext.Provider value={pageText(data)}>
@@ -68,7 +68,7 @@ export function DrawingNodeView({ id, data }: NodeProps<DrawingNode>) {
             <Pencil {...IC} /> Edit drawing
           </button>
         </div>
-        <PageControls page={data} set={(p) => set(p)} fixed={under && fig ? `Size: ${fig.width} × ${fig.height} ${fig.unit} — the figure under the drawing's.` : undefined} />
+        <PageControls page={data} set={(p) => set(p)} fixed={under && fig ? `Size: ${fig.width} × ${fig.height} ${fig.unit}; the figure under the drawing's.` : undefined} />
         <Field label="Grid" title="The editor's grid: its step, shown, objects snapped to it">
           <span className="row wrap">
             <NumInput className="tiny" min={0.01} step={0.5} value={grid.step} onChange={(v) => set({ grid: { ...grid, step: v > 0 ? v : 1 } })} />

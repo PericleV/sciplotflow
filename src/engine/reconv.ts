@@ -78,7 +78,7 @@ export function reconvolved(model: Model, irf: { x: ArrayLike<number>; y: ArrayL
   const t0 = Math.min(range[0], ix[0]);
   const t1 = Math.max(range[1], ix[ix.length - 1]);
   const G = Math.floor((t1 - t0) / dt) + 2;
-  if (G > 1 << 16) return `IRF: ${G} steps of ${dt} over the data — too many (resample the IRF coarser).`;
+  if (G > 1 << 16) return `IRF: ${G} steps of ${dt} over the data; too many (resample the IRF coarser).`;
   // the IRF of area 1
   let area = 0;
   for (let k = 1; k < ix.length; k++) area += ((iy[k] + iy[k - 1]) / 2) * (ix[k] - ix[k - 1]);

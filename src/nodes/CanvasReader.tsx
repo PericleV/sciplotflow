@@ -22,7 +22,7 @@ export function ReaderButton({ r, set, onOn }: { r: ReaderState; set: (r: Reader
   return (
     <button
       className={`nodrag${r.on ? ' on' : ''}`}
-      title="Data reader: a crosshair on the data point nearest the mouse — its curve, X, Y, row (or free: the coordinates of any place); click to keep it, then ← → along the curve, ↑ ↓ to another curve; Esc lets go"
+      title="Data reader: a crosshair on the data point nearest the mouse; its curve, X, Y, row (or free: the coordinates of any place); click to keep it, then ← → along the curve, ↑ ↓ to another curve; Esc lets go"
       onClick={() => {
         set({ ...r, on: !r.on, reading: '' });
         if (!r.on) onOn?.();

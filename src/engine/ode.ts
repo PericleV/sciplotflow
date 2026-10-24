@@ -177,7 +177,7 @@ export function odeModel(text: string): Model | string {
       .split(/[;\n]/)
       .map((l) => l.trim())
       .filter(Boolean)
-      .join('; ')} — solved from ${indep} = ${x0}`,
+      .join('; ')}: solved from ${indep} = ${x0}`,
     f: (x, p, c) => {
       const s = solution(p, c.run);
       setP(p);

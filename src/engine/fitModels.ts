@@ -163,7 +163,7 @@ function peakGuess(runs: Run[]) {
 type Def = Omit<Model, 'params'> & { label: string; params: [string, ParamKind][]; group: string };
 export const LIBRARY: Record<string, Def> = {
   linear: { group: 'Basic', label: 'Linear', note: 'y = a + b·x', params: [['a', 'offset'], ['b', 'slope']], f: (x, p) => p[0] + p[1] * x, guess: (r) => lineFit(all(r).xs, all(r).ys) },
-  york: { group: 'Basic', label: 'Linear, errors on X and Y (York)', note: 'y = a + b·x with the errors of X (±X) and of Y (±Y) — York 2004 (Deming regression when they are constant); errors scaled by √(reduced χ²)', params: [['a', 'offset'], ['b', 'slope']], f: (x, p) => p[0] + p[1] * x, guess: (r) => lineFit(all(r).xs, all(r).ys) },
+  york: { group: 'Basic', label: 'Linear, errors on X and Y (York)', note: 'y = a + b·x with the errors of X (±X) and of Y (±Y): York 2004 (Deming regression when they are constant); errors scaled by √(reduced χ²)', params: [['a', 'offset'], ['b', 'slope']], f: (x, p) => p[0] + p[1] * x, guess: (r) => lineFit(all(r).xs, all(r).ys) },
   expdec1: {
     group: 'Exponential',
     label: 'Exponential decay',
@@ -289,7 +289,7 @@ export const LIBRARY: Record<string, Def> = {
   voigtexact: {
     group: 'Peaks',
     label: 'Voigt (A = area, wG, wL)',
-    note: 'y = y0 + A·V(x − xc), V the Voigt profile of area 1 — a Gaussian of FWHM wG convolved with a Lorentzian of FWHM wL — from the Faddeeva function: V = Re w(z)/(σ√(2π)), z = (x − xc + i·wL/2)/(σ√2), σ = wG/(2√(2 ln2))',
+    note: 'y = y0 + A·V(x − xc), V the Voigt profile of area 1 (a Gaussian of FWHM wG convolved with a Lorentzian of FWHM wL) from the Faddeeva function: V = Re w(z)/(σ√(2π)), z = (x − xc + i·wL/2)/(σ√2), σ = wG/(2√(2 ln2))',
     params: [['y0', 'offset'], ['A', 'amp'], ['xc', 'x'], ['wG', 'width'], ['wL', 'width']],
     f: (x, p) => {
       const [s, g] = voigtSG(p[3], p[4]);
@@ -855,7 +855,7 @@ function complexModel(src: string): Model | string {
   return {
     joint: true,
     params: names.map((name) => ({ name, kind: 'free' as ParamKind })),
-    note: `Y = ${text.trim()} — Y 1 its real part, Y 2 its imaginary part`,
+    note: `Y = ${text.trim()}: Y 1 its real part, Y 2 its imaginary part`,
     f: (x, p, ctx) => {
       vars.x = x;
       vars.k = ctx.run;

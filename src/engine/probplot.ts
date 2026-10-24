@@ -410,7 +410,7 @@ export function probPlot(groups: ProbGroup[], d: ProbSpec, valueName: string): P
       return;
     }
     if (censored && d.dist === 'uniform') {
-      warnings.push(`${gr.name}: Uniform takes no suspended values — they are left out.`);
+      warnings.push(`${gr.name}: Uniform takes no suspended values; they are left out.`);
       susp.fill(false);
     }
     // the positions of the failures (Johnson's adjusted ranks with suspensions)
@@ -424,7 +424,7 @@ export function probPlot(groups: ProbGroup[], d: ProbSpec, valueName: string): P
     if (d.params === 'given') params = [d.p1, d.p2];
     else if (method !== 'mle' && canRegress(d.dist)) params = fitRR(d.dist, xs, pos, method)!;
     else {
-      if (method !== 'mle') warnings.push(`${DIST_NAMES[d.dist]}: no rank regression (not straight on any axis) — maximum likelihood.`);
+      if (method !== 'mle') warnings.push(`${DIST_NAMES[d.dist]}: no rank regression (not straight on any axis): maximum likelihood.`);
       params = fitMLE(d.dist, xs, ss);
     }
     const bad = badParams(d.dist, params);

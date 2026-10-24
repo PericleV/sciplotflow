@@ -122,7 +122,7 @@ const testRow = (t: H.TestResult, a: number, extra: Row = {}): Row => ({ test: t
 const say = (t: H.TestResult) => `${t.test}: ${t.statName}${t.df !== undefined ? `(${fmtNum(t.df, 4)}${t.df2 !== undefined ? `, ${fmtNum(t.df2, 4)}` : ''})` : ''} = ${f3(t.stat)}, ${fp(t.p)}`;
 const tooFew = (groups: number[][], names: string[], min: number) => {
   const k = groups.findIndex((g) => g.length < min);
-  return k >= 0 ? `${names[k]}: ${groups[k].length} value${groups[k].length === 1 ? '' : 's'} — at least ${min} are needed.` : '';
+  return k >= 0 ? `${names[k]}: ${groups[k].length} value${groups[k].length === 1 ? '' : 's'}: at least ${min} are needed.` : '';
 };
 
 // ---- Normality & outliers ----
@@ -280,7 +280,7 @@ export function anovaNode(ds: Dataset, d: AnovaData): StatOut {
     const v = byName(ds, d.value);
     const fa = byName(ds, d.factor);
     const fb = byName(ds, d.factor2 ?? '');
-    if (!v || !fa || !fb) return { tables: {}, report: [], warnings: [], errors: ['Two-way ANOVA: the data indexed — choose the value column and the two factor columns.'] };
+    if (!v || !fa || !fb) return { tables: {}, report: [], warnings: [], errors: ['Two-way ANOVA: the data indexed; choose the value column and the two factor columns.'] };
     const [an, bn]: [string[], string[]] = [[], []];
     const y: number[] = [];
     const ia: number[] = [];
@@ -300,7 +300,7 @@ export function anovaNode(ds: Dataset, d: AnovaData): StatOut {
     r.rows[0].source = fa.name;
     r.rows[1].source = fb.name;
     r.rows[2].source = `${fa.name} × ${fb.name}`;
-    r.rows.slice(0, 3).forEach((q) => report.push(`${q.source}: F(${q.df}, ${r.dfE}) = ${f3(q.F)}, ${fp(q.p)}, partial η² = ${f3(q.eta2p)} — ${q.p < a ? 'significant' : 'not significant'}.`));
+    r.rows.slice(0, 3).forEach((q) => report.push(`${q.source}: F(${q.df}, ${r.dfE}) = ${f3(q.F)}, ${fp(q.p)}, partial η² = ${f3(q.eta2p)}: ${q.p < a ? 'significant' : 'not significant'}.`));
     // the cells (every combination) as groups
     const names: string[] = [];
     const cells: number[][] = [];
@@ -340,7 +340,7 @@ export function anovaNode(ds: Dataset, d: AnovaData): StatOut {
     { source: 'Within groups (error)', ss: r.ssw, df: r.df2, ms: r.mse, F: NaN, p: NaN, eta2p: NaN },
     { source: 'Total (corrected)', ss: r.ssb + r.ssw, df: r.df1 + r.df2, ms: NaN, F: NaN, p: NaN, eta2p: NaN },
   ];
-  report.push(`One-way ANOVA: F(${r.df1}, ${r.df2}) = ${f3(r.F)}, ${fp(r.p)}, η² = ${f3(r.eta2)}, ω² = ${f3(r.omega2)} — the means ${r.p < a ? 'differ' : 'do not differ'} at α = ${a}.`);
+  report.push(`One-way ANOVA: F(${r.df1}, ${r.df2}) = ${f3(r.F)}, ${fp(r.p)}, η² = ${f3(r.eta2)}, ω² = ${f3(r.omega2)}: the means ${r.p < a ? 'differ' : 'do not differ'} at α = ${a}.`);
   const lv = H.levene(g.groups, 'median');
   const res = g.groups.flatMap((x) => x.map((v) => v - H.mean(x)));
   checks.push(testRow(lv, a), testRow({ ...H.shapiroWilk(res), test: 'Shapiro–Wilk (residuals)' }, a));
@@ -379,7 +379,7 @@ function rmAnova(ds: Dataset, d: AnovaData): StatOut {
   const fb = d.factor2 ? byName(ds, d.factor2) : undefined;
   const sj = byName(ds, d.subject ?? '');
   const mixed = d.design === 'mixed';
-  if (!v || !fa || !sj || (!mixed && !fb)) return fail(mixed ? 'Mixed model: the data indexed — the value, factor A (factor B optional) and the column of the subjects.' : 'Two-way with repeated measures: the data indexed — the value, factor A, factor B and the column of the subjects.');
+  if (!v || !fa || !sj || (!mixed && !fb)) return fail(mixed ? 'Mixed model: the data indexed; the value, factor A (factor B optional) and the column of the subjects.' : 'Two-way with repeated measures: the data indexed; the value, factor A, factor B and the column of the subjects.');
   const [an, bn, sn]: [string[], string[], string[]] = [[], [], []];
   const rows: { y: number; ia: number; ib: number; is: number }[] = [];
   for (let i = 0; i < v.values.length; i++) {
@@ -414,7 +414,7 @@ function rmAnova(ds: Dataset, d: AnovaData): StatOut {
     }
     const fit = mixedModel(rows.map((r) => r.y), rows.map((r) => r.is), terms);
     if (typeof fit === 'string') return fail(`Mixed model: ${fit}.`);
-    fit.tests.forEach((t) => report.push(`${t.source}: F(${t.df1}, ${fmtNum(t.df2, 4)}) = ${f3(t.F)}, ${fp(t.p)} — ${t.p < a ? 'significant' : 'not significant'}.`));
+    fit.tests.forEach((t) => report.push(`${t.source}: F(${t.df1}, ${fmtNum(t.df2, 4)}) = ${f3(t.F)}, ${fp(t.p)}: ${t.p < a ? 'significant' : 'not significant'}.`));
     report.push(`Subjects: σ² = ${f3(fit.sigmaU2)} (ICC ${f3(fit.icc)}), residual σ² = ${f3(fit.sigmaE2)}; ${fit.N} values of ${fit.subjects} subjects (REML; the df by Satterthwaite).`);
     return {
       tables: {
@@ -461,7 +461,7 @@ function rmAnova(ds: Dataset, d: AnovaData): StatOut {
     } else {
       const keys = [...m.keys()];
       const ia = new Set(keys.map((k) => k.split('|')[0]));
-      if (ia.size > 1) return fail(`${A} changes within a subject: it is a factor within the subjects too — choose “both within”.`);
+      if (ia.size > 1) return fail(`${A} changes within a subject: it is a factor within the subjects too; choose “both within”.`);
       const g = Number([...ia][0]);
       const row = bn.map((_, j) => m.get(`${g}|${j}`));
       if (row.some((x) => !x)) {
@@ -520,13 +520,13 @@ export function nonparNode(ds: Dataset, d: NonparData): StatOut {
     if (d.test === 'friedman') {
       if (cols.length < 3 || s.m.length < 2) return { tables: {}, report: [], warnings: [], errors: ['Friedman: 3 conditions (columns) or more and 2 complete subjects or more.'] };
       const r = H.friedman(s.m);
-      report.push(`${say(r)} — the conditions ${r.p < a ? 'differ' : 'do not differ'} at α = ${a}.`);
+      report.push(`${say(r)}: the conditions ${r.p < a ? 'differ' : 'do not differ'} at α = ${a}.`);
       return { tables: { out: table('test', [testRow(r, a)]), groups: medians(s.names, cols) }, report, warnings, errors: [] };
     }
     if (cols.length !== 2) return { tables: {}, report: [], warnings: [], errors: ['Paired: two columns (before, after).'] };
     const diff = s.m.map((r) => r[0] - r[1]);
     const r = d.test === 'sign' ? H.signTest(diff) : H.wilcoxon(diff, d.alt);
-    report.push(`${say(r)} — ${s.names[0]} and ${s.names[1]} ${r.p < a ? 'differ' : 'do not differ'} at α = ${a}${r.note ? ` (${r.note})` : ''}.`);
+    report.push(`${say(r)}: ${s.names[0]} and ${s.names[1]} ${r.p < a ? 'differ' : 'do not differ'} at α = ${a}${r.note ? ` (${r.note})` : ''}.`);
     return { tables: { out: table('test', [testRow(r, a)]), groups: medians(s.names, cols) }, report, warnings, errors: [] };
   }
   const g = groupsOf(ds, d);
@@ -536,18 +536,18 @@ export function nonparNode(ds: Dataset, d: NonparData): StatOut {
     const x = g.groups[0];
     if (!x?.length) return { tables: {}, report: [], warnings: [], errors: ['No values.'] };
     const r = d.test === 'sign' ? H.signTest(x.map((v) => v - d.mu)) : H.wilcoxon(x.map((v) => v - d.mu), d.alt);
-    report.push(`${say(r)} — the median of ${g.names[0]} ${r.p < a ? 'differs' : 'does not differ'} from ${d.mu} at α = ${a}.`);
+    report.push(`${say(r)}: the median of ${g.names[0]} ${r.p < a ? 'differs' : 'does not differ'} from ${d.mu} at α = ${a}.`);
     return { tables: { out: table('test', [testRow(r, a)]), groups: medians(g.names.slice(0, 1), [x]) }, report, warnings, errors: [] };
   }
   if (d.test === 'mw') {
     if (g.groups.length !== 2) return { tables: {}, report: [], warnings: [], errors: [`Mann–Whitney compares 2 groups: ${g.groups.length} found.`] };
     const r = H.mannWhitney(g.groups[0], g.groups[1], d.alt);
-    report.push(`${say(r)} — ${g.names[0]} and ${g.names[1]} ${r.p < a ? 'differ' : 'do not differ'} at α = ${a} (${r.note}).`);
+    report.push(`${say(r)}: ${g.names[0]} and ${g.names[1]} ${r.p < a ? 'differ' : 'do not differ'} at α = ${a} (${r.note}).`);
     return { tables: { out: table('test', [testRow(r, a)]), groups: medians(g.names, g.groups) }, report, warnings, errors: [] };
   }
   if (g.groups.length < 2) return { tables: {}, report: [], warnings: [], errors: ['Kruskal–Wallis: 2 groups or more.'] };
   const r = H.kruskal(g.groups);
-  report.push(`${say(r)} — the groups ${r.p < a ? 'differ' : 'do not differ'} at α = ${a}.`);
+  report.push(`${say(r)}: the groups ${r.p < a ? 'differ' : 'do not differ'} at α = ${a}.`);
   const tables: Record<string, Dataset> = { out: table('test', [testRow(r, a)]), groups: medians(g.names, g.groups, r.meanRanks) };
   if (d.post !== 'none') {
     const pairs = H.dunn(g.groups, d.post);
@@ -581,13 +581,13 @@ export function corrNode(ds: Dataset, d: CorrData): StatOut {
       const c = f(ok.map((q) => cols[i].values[q]), ok.map((q) => cols[j].values[q]));
       mat[i][j] = mat[j][i] = c.r;
       rows.push({ X: cols[i].name, Y: cols[j].name, [name]: c.r, p: c.p, N: c.n, ...(d.method === 'pearson' ? { [`CI ${Math.round((1 - a) * 100)} % low`]: c.lo, [`CI ${Math.round((1 - a) * 100)} % high`]: c.hi } : {}), [`significant (α = ${a})`]: sig(c.p, a) });
-      report.push(`${cols[i].name} — ${cols[j].name}: ${name} = ${f3(c.r)}, ${fp(c.p)}, N = ${c.n}`);
+      report.push(`${cols[i].name}: ${cols[j].name}: ${name} = ${f3(c.r)}, ${fp(c.p)}, N = ${c.n}`);
     }
   // the order of the columns: as given, or by a clustering of 1 − |r| (related ones together)
   const warnings: string[] = [];
   let ord = cols.map((_, i) => i);
   if (d.order === 'cluster') {
-    if (mat.some((r) => r.some((v) => !Number.isFinite(v)))) warnings.push('Clustered order: a pair without enough values — the order as given.');
+    if (mat.some((r) => r.some((v) => !Number.isFinite(v)))) warnings.push('Clustered order: a pair without enough values; the order as given.');
     else ord = clusterOrder(mat.map((r) => r.map((v) => 1 - Math.abs(v))));
   }
   const matrix: Dataset = { name: 'matrix', columns: [{ ...column('column', Float64Array.from(ord, (_, i) => i + 1), ord.map((i) => cols[i].name)), role: 'label' }, ...ord.map((j) => ({ ...column(cols[j].name, Float64Array.from(ord.map((i) => mat[i][j]))), role: 'none' as const }))] };

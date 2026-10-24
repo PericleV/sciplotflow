@@ -104,7 +104,7 @@ export function BaselineFields(p: Props) {
     rows.push(
       row(
         'Smoothness',
-        'log10 λ: how stiff the curve is (higher: smoother, it passes under wider peaks; typical 3 to 8 — more points need more)',
+        'log10 λ: how stiff the curve is (higher: smoother, it passes under wider peaks; typical 3 to 8: more points need more)',
         <>
           <span className="muted">10^</span>
           <NumInput className="tiny" step={0.5} value={o.lambda ?? BASE_OPTION_DEFAULTS.lambda} onChange={(lambda) => Number.isFinite(lambda) && set({ lambda: Math.max(-2, Math.min(14, lambda)) })} />

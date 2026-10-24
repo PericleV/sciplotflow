@@ -62,7 +62,7 @@ export function DocumentPanel(props: { onClose: () => void; current: () => Proje
     setDoc({ name: f.name, doc: d });
     setRows(list);
     setChosen(new Set(list.filter((r) => r.status === 'update' || r.status === 'current').map((r) => r.k)));
-    if (!d.figures.length) setMsg(`No figure with a SciPlotFlow project in “${f.name}” (${d.pictures} picture${d.pictures === 1 ? '' : 's'}): insert the figures exported as SVG with “project inside” (Word and PowerPoint re-encode an inserted PNG, which loses the project; an SVG exported by an earlier version of SciPlotFlow loses it too — export it again).`);
+    if (!d.figures.length) setMsg(`No figure with a SciPlotFlow project in “${f.name}” (${d.pictures} picture${d.pictures === 1 ? '' : 's'}): insert the figures exported as SVG with “project inside” (Word and PowerPoint re-encode an inserted PNG, which loses the project; an SVG exported by an earlier version of SciPlotFlow loses it too: export it again).`);
   };
 
   const update = async () => {
@@ -98,7 +98,7 @@ export function DocumentPanel(props: { onClose: () => void; current: () => Proje
     }
   };
 
-  const STATUS: Record<Row['status'], string> = { update: 'older — will be updated', current: 'as the project now', other: 'another project — left alone', gone: 'its figure is no longer in this project' };
+  const STATUS: Record<Row['status'], string> = { update: 'older, will be updated', current: 'as the project now', other: 'another project, left alone', gone: 'its figure is no longer in this project' };
   return (
     <aside className="library projects-panel">
       <header>
@@ -160,7 +160,7 @@ export function DocumentPanel(props: { onClose: () => void; current: () => Proje
         </>
       )}
       <div className="hint">
-        The figures exported with “project inside” keep the project's identity: those of this project are drawn again from it as it is now — their SVG (and the PNG shown by older programs), their size — and a new document is saved. Nothing else in the document changes.
+        The figures exported with “project inside” keep the project's identity: those of this project are drawn again from it as it is now; their SVG (and the PNG shown by older programs), their size: and a new document is saved. Nothing else in the document changes.
       </div>
     </aside>
   );

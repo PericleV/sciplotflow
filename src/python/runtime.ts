@@ -98,7 +98,7 @@ def _frame_cols(d):
     return [_col_out(c, d[c].to_numpy(), rl.get(c)) for c in d.columns]
 
 def _out(name, v):
-    """The variable as an output: (kind, value) — or None, and its type, when it is none of them."""
+    """The variable as an output: (kind, value): or None, and its type, when it is none of them."""
     if isinstance(v, bool) or isinstance(v, (int, float, np.integer, np.floating)):
         return {'name': name, 'kind': 'value', 'value': float(v)}
     pd = sys.modules.get('pandas')
@@ -306,7 +306,7 @@ def _axes_parts(ax, d, axis, skipped):
                   'ms': float(np.sqrt(np.mean(sizes))) if len(sizes) else 6.0, 'marker': 'circle', 'open': len(fc) == 0,
                   'mec': _hex(ec[0]) if len(ec) else '', 'mew': float(coll.get_linewidths()[0]) if len(coll.get_linewidths()) else 0.0}
             if arr is not None and len(arr) == len(off):
-                skipped.append('colours from values (scatter c=…): drawn in one colour — set Colour map ▸ by a column in the Plot')
+                skipped.append('colours from values (scatter c=…): drawn in one colour; set Colour map ▸ by a column in the Plot')
             if len(sizes) > 1 and np.ptp(sizes) > 0:
                 skipped.append('sizes from values (scatter s=…): drawn at their mean size')
             curves.append(cv)

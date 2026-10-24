@@ -370,7 +370,7 @@ function complexColumn(d: MathColData, formula: string, vals: Record<string, Col
   const used = c.names.filter((x) => x in vals);
   const cols = used.filter((x) => isCol(vals[x])).map((x) => vals[x] as Column);
   const rows = d.output === 'value' ? 1 : cols.length ? maxOf(cols.map((q) => q.values.length)) : 1;
-  if (d.output === 'value' && cols.length) return { errors: [`One value: ${used.filter((x) => isCol(vals[x])).join(', ')} — use a function of the whole column (mean(A) …).`], view };
+  if (d.output === 'value' && cols.length) return { errors: [`One value: ${used.filter((x) => isCol(vals[x])).join(', ')}: use a function of the whole column (mean(A) …).`], view };
   const part = d.part ?? 're';
   const pick = (z: [number, number]) => (part === 're' ? z[0] : part === 'im' ? z[1] : part === 'abs' ? Math.hypot(z[0], z[1]) : part === 'arg' ? Math.atan2(z[1], z[0]) : part === 'deg' ? (Math.atan2(z[1], z[0]) * 180) / Math.PI : 20 * Math.log10(Math.hypot(z[0], z[1])));
   const v: Record<string, number> = { n: rows };
@@ -384,7 +384,7 @@ function complexColumn(d: MathColData, formula: string, vals: Record<string, Col
     out[r] = pick(c.fn(v));
   }
   const tag = { re: 'real part', im: 'imaginary part', abs: 'magnitude', arg: 'phase (rad)', deg: 'phase (°)', db: 'magnitude (dB)' }[part];
-  const name = d.name || `${d.formula.trim()} — ${tag}`;
+  const name = d.name || `${d.formula.trim()}: ${tag}`;
   const warnings = [...(d.errors?.trim() ? ['Errors: not carried in complex numbers.'] : []), ...(d.rules?.length ? ['Rules: not used in complex numbers.'] : [])];
   if (d.output === 'value') return { outputs: { out: { t: 'scalar', v: { name, value: out[0] } } }, warnings, view };
   const mask = maskOf(cols, rows);
@@ -580,7 +580,7 @@ function plot(n: { id: string; data: Plot1DData }, inputs: Inputs): Out {
       // a curve without its own X takes the X of the first curve when it has as many rows
       if (k > 0 && firstX && firstX.values.length === y.values.length) x = firstX;
       else if (k > 0 && firstX) {
-        errors.push(`${name}: Y has ${y.values.length} rows, the X of curve 1 has ${firstX.values.length} — connect its own X.`);
+        errors.push(`${name}: Y has ${y.values.length} rows, the X of curve 1 has ${firstX.values.length}; connect its own X.`);
         continue;
       } else x = rowIndex(y.values.length);
     }
@@ -616,7 +616,7 @@ function plot(n: { id: string; data: Plot1DData }, inputs: Inputs): Out {
     // the repeated X brought to one point each: the mean / median, its spread as ±Y (shaded unless bars are asked for)
     const agg = rows[k].aggregate;
     if (agg?.stat) {
-      if (yErr || xErr || colorCol || sizeCol || labelCol) warnings.push(`${name}: one point at every X — its ±X, ±Y, colour, size and label columns are not used (the spread is its ±Y).`);
+      if (yErr || xErr || colorCol || sizeCol || labelCol) warnings.push(`${name}: one point at every X; its ±X, ±Y, colour, size and label columns are not used (the spread is its ±Y).`);
       const a = aggregateByX(x, yUse, agg);
       [x, yUse, yErr, yErrLo, xErr, colorCol, sizeCol, labelCol] = [a.x, a.y, a.plus, a.minus, undefined, undefined, undefined, undefined];
       if (a.plus) {
@@ -1136,7 +1136,7 @@ function probPlotNode(n: { id: string; data: ProbPlotData }, inputs: Inputs): Ou
     axes = { ...d.axes, [pk]: { ...AXIS_DEFAULTS, ...own, ...probSpec }, ...(r.axis.logData ? { [dk]: { ...AXIS_DEFAULTS, ...d.axes?.[dk], scale: 'log' as const } } : {}) };
   }
   const warnings = [...r.warnings];
-  if (unread) warnings.push(`Status: ${unread} value(s) not read as failed (1, F) or suspended (0, S) — taken as failed.`);
+  if (unread) warnings.push(`Status: ${unread} value(s) not read as failed (1, F) or suspended (0, S): taken as failed.`);
   // the parameters written in a corner of the frame
   const corner = d.paramBox && d.paramBox !== 'none' ? d.paramBox : null;
   const box = corner && r.text.length ? [{ id: 'pp-params', type: 'text' as const, spec: { text: r.text.join('\\\\'), coords: 'percent' as const, x: corner[1] === 'l' ? 3 : 97, y: corner[0] === 't' ? 3 : 97, anchor: corner, box: 'both' as const, boxColor: '#ffffff', borderColor: '#999999', borderWidth: 0.5, padding: 2.5, style: { size: 7 }, numbers: true } }] : [];
@@ -1936,8 +1936,8 @@ function stepResult(d: CurveMathData, ca: Curve2, cb: Curve2 | null): { dataset?
   const f = (v: number) => (Number.isFinite(v) ? fmtNum(v, 5) : '—');
   const report = rows.map((q, i) =>
     q.kind === 'pulse'
-      ? `${curves[i].name}: a pulse from ${f(q.initial)} to ${f(q.final)} — rise ${f(q.rise)}, fall ${f(q.fall)}, width ${f(q.width)}`
-      : `${curves[i].name}: a step ${f(q.initial)} → ${f(q.final)} — ${Number.isFinite(q.rise) ? `rise ${f(q.rise)}` : `fall ${f(q.fall)}`}, overshoot ${f(q.overshoot)} %, settling ${f(q.settling)}`,
+      ? `${curves[i].name}: a pulse from ${f(q.initial)} to ${f(q.final)}: rise ${f(q.rise)}, fall ${f(q.fall)}, width ${f(q.width)}`
+      : `${curves[i].name}: a step ${f(q.initial)} → ${f(q.final)}: ${Number.isFinite(q.rise) ? `rise ${f(q.rise)}` : `fall ${f(q.fall)}`}, overshoot ${f(q.overshoot)} %, settling ${f(q.settling)}`,
   );
   const warnings = rows.some((q) => q.kind === 'step' && !Number.isFinite(q.settling)) ? ['Settling: the curve is still out of the band at its end.'] : [];
   return { dataset: { name: 'step response', columns }, report, warnings, levels: rows.flatMap((q) => [q.initial, q.final]) };
@@ -3252,7 +3252,7 @@ function compareFits(d: FitNodeData, model: Model, specs0: FitParamSpec[], runs:
     // every parameter shared (the fixed ones stay fixed): one set of parameters for all the runs
     const specs: FitParamSpec[] = model.params.map((q) => ({ ...findSpec(specs0, q.name, q.kind), shared: true }));
     const g = runFits(model, specs, runs, { ...opts, global: true }).runs;
-    if (g.length !== sep.length || !g.length) warnings.push('Same parameters for all runs: some runs could not be fitted on their own — no test.');
+    if (g.length !== sep.length || !g.length) warnings.push('Same parameters for all runs: some runs could not be fitted on their own; no test.');
     else {
       const ts = totalStats(sep);
       const tg = totalStats(g);
@@ -3265,7 +3265,7 @@ function compareFits(d: FitNodeData, model: Model, specs0: FitParamSpec[], runs:
       report.push(
         Number.isFinite(f.p)
           ? f.p < 0.05
-            ? `Same parameters for all ${sep.length} runs? No — they differ (F = ${num(f.F)}, p = ${num(f.p)}).`
+            ? `Same parameters for all ${sep.length} runs? No: they differ (F = ${num(f.F)}, p = ${num(f.p)}).`
             : `Same parameters for all ${sep.length} runs? No evidence that they differ (F = ${num(f.F)}, p = ${num(f.p)}): one set fits them all.`
           : 'Same parameters for all runs: no F-test (no degrees of freedom left).',
         c.report[0],
@@ -3473,11 +3473,11 @@ function fitNode(d: FitNodeData, v: Value | undefined, id: string, irfIn?: Value
   if (weight === 'instrumental' && !Es.some(Boolean)) warnings.push('Instrumental weights need a ±Y column: no weights used.');
   // York: a straight line with the errors of X and of Y (both needed)
   const york = d.model.kind === 'library' && d.model.model === 'york';
-  if (york && (weight !== 'instrumental' || !Es.some(Boolean))) return { errors: ['York: the errors of Y are needed — a ±Y column (designated, or chosen), weights 1/σ².'], view: { available } };
-  if (york && !Exs.some(Boolean)) return { errors: ['York: the errors of X are needed — a ±X column (designated after the Y, or chosen).'], view: { available } };
+  if (york && (weight !== 'instrumental' || !Es.some(Boolean))) return { errors: ['York: the errors of Y are needed; a ±Y column (designated, or chosen), weights 1/σ².'], view: { available } };
+  if (york && !Exs.some(Boolean)) return { errors: ['York: the errors of X are needed; a ±X column (designated after the Y, or chosen).'], view: { available } };
   // the errors of X with any model (effective variance)
   const withX = york || (!!d.xerrFit && Exs.some(Boolean));
-  if (d.xerrFit && !york && !Exs.some(Boolean)) warnings.push('Errors of X: no ±X column (designated after the Y, or chosen) — not counted.');
+  if (d.xerrFit && !york && !Exs.some(Boolean)) warnings.push('Errors of X: no ±X column (designated after the Y, or chosen): not counted.');
   const sigma = (y: Column, e: Column | undefined, i: number) => (weight === 'instrumental' && e ? Math.abs(e.values[i]) : weight === 'statistical' ? Math.sqrt(Math.abs(y.values[i])) : 1);
   // the ranges of a run: its own (ranges per run), else the common ones; an empty end: no limit on that side
   const rangesOf = (label: string) => (d.rangesBy === 'run' && d.runRanges?.[label]?.length ? d.runRanges[label] : d.ranges);
@@ -3534,7 +3534,7 @@ function fitNode(d: FitNodeData, v: Value | undefined, id: string, irfIn?: Value
       }),
     );
   } else Ys.forEach((y, k) => addRun(y.name, rk.value(y, k), y, every, k, rangesOf(y.name)));
-  if (model.joint && runs.length !== 2) return { errors: [d.model.kind === 'complex' ? 'A complex model: choose two Y columns — the real part, then the imaginary part.' : 'This model fits two branches together: choose two Y columns (the lower branch, then the upper one).'], view: { available } };
+  if (model.joint && runs.length !== 2) return { errors: [d.model.kind === 'complex' ? 'A complex model: choose two Y columns; the real part, then the imaginary part.' : 'This model fits two branches together: choose two Y columns (the lower branch, then the upper one).'], view: { available } };
   let lo = Infinity;
   let hi = -Infinity;
   for (const r of runs) for (const x of r.xs) [lo, hi] = [Math.min(lo, x), Math.max(hi, x)];
@@ -4366,7 +4366,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
           view: { ...(sh ? { csv: sh.csv, sheet: sh.map } : {}), sheets: d.sheets.map((s) => s.name) },
         };
       }
-      if (!d.text && !hasEdits(d.edits)) return { view: { waiting: 'Open a file (CSV, text, .xlsx, .xls, .ods — several at once make a workbook), drop it on the node, paste a table, or start an empty table.' } };
+      if (!d.text && !hasEdits(d.edits)) return { view: { waiting: 'Open a file (CSV, text, .xlsx, .xls, .ods: several at once make a workbook), drop it on the node, paste a table, or start an empty table.' } };
       const name = d.name || d.fileName.replace(/\.[^.]+$/, '') || 'data';
       const r = d.text ? readTable(d.text, d.csv, name, d.fileName) : null;
       // the worksheet: the changes made by hand, over the table as read
@@ -4846,7 +4846,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
         const g = compile(formula);
         if (typeof g === 'string') return { errors: [g], view };
         const rowWise = g.names.filter((x) => x in vals && isCol(vals[x]));
-        if (rowWise.length) return { errors: [`One value: ${rowWise.join(', ')} ${rowWise.length > 1 ? 'are columns' : 'is a column'} — use a function of the whole column (mean(${rowWise[0]}), max(${rowWise[0]}) …), or give a column out.`], view };
+        if (rowWise.length) return { errors: [`One value: ${rowWise.join(', ')} ${rowWise.length > 1 ? 'are columns' : 'is a column'}: use a function of the whole column (mean(${rowWise[0]}), max(${rowWise[0]}) …), or give a column out.`], view };
         const ev1 = rowEvaluator(formula, vals);
         if (typeof ev1 === 'string') return { errors: [ev1], view };
         const value = ev1(0, 1);
@@ -4879,7 +4879,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       const pe = mathErrors(d.errors, f, vals, rows);
       if (pe) {
         warnings.push(...pe.warnings);
-        if (d.rules?.length) warnings.push('Errors: carried through the formula — the rows the rules changed keep the formula’s error.');
+        if (d.rules?.length) warnings.push('Errors: carried through the formula; the rows the rules changed keep the formula’s error.');
         outputs.err = { t: 'column', v: { ...column(`${resName} error`, pe.err), ...(mask ? { mask } : {}) } };
       }
       return { outputs, warnings, view: { ...view, ...(d.rules?.length ? { changed: ruled.changed } : {}) } };

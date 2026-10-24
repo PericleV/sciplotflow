@@ -510,7 +510,7 @@ const KINDS: [EisElemKind, string][] = [
   ['L', 'L: an inductor'],
   ['Q', 'Q: a constant-phase element (CPE: Y0, n)'],
   ['W', 'W: semi-infinite Warburg (Y0)'],
-  ['Wo', 'Wo: finite Warburg, open (R, T) — a porous electrode'],
+  ['Wo', 'Wo: finite Warburg, open (R, T): a porous electrode'],
   ['Ws', 'Ws: finite Warburg, short (R, T)'],
 ];
 const same = (a: EisPath | null, b: EisPath) => !!a && a.length === b.length && a.every((v, k) => v === b[k]);
@@ -715,7 +715,7 @@ function CircuitEditor({ code, onCode }: { code: string; onCode: (c: string) => 
     <>
       <div className="row wrap">
         {KINDS.map(([k, t]) => (
-          <button key={k} className={`nodrag mono eis-chip${kind === k ? ' on' : ''}`} title={`${t} — drag it onto the drawing (or click: the element of the buttons)`} onPointerDown={(e) => start(k, e)}>
+          <button key={k} className={`nodrag mono eis-chip${kind === k ? ' on' : ''}`} title={`${t}: drag it onto the drawing (or click: the element of the buttons)`} onPointerDown={(e) => start(k, e)}>
             {k}
           </button>
         ))}
@@ -770,7 +770,7 @@ function CircuitEditor({ code, onCode }: { code: string; onCode: (c: string) => 
           </button>
         </div>
       ) : (
-        <div className="hint">Drag an element onto the drawing: on a side of an element — in series (left, right) or in parallel (above, below) with it; on its middle — in its place. Drag one already there to move it, out of the drawing to delete it. ⑂ split and ⑃ join around elements of a line: a parallel branch for them. Chosen: {what}.</div>
+        <div className="hint">Drag an element onto the drawing: on a side of an element; in series (left, right) or in parallel (above, below) with it; on its middle: in its place. Drag one already there to move it, out of the drawing to delete it. ⑂ split and ⑃ join around elements of a line: a parallel branch for them. Chosen: {what}.</div>
       )}
       {markWarn && <div className="msg warn">{markWarn}</div>}
       {board(scale)}
@@ -782,7 +782,7 @@ function CircuitEditor({ code, onCode }: { code: string; onCode: (c: string) => 
     createPortal(
       <div className={`eis-ghost mono${drop && 'del' in drop ? ' del' : ''}`} style={{ left: drag.x + 12, top: drag.y + 10 }}>
         {typeof drag.what === 'string' ? drag.what : 'id' in drag.what ? drag.what.id : drag.what.marker === 'split' ? '⑂ split' : '⑃ join'}
-        {drop && 'del' in drop ? ' — delete' : !shownDrop ? ' — not here' : ''}
+        {drop && 'del' in drop ? ': delete' : !shownDrop ? ': not here' : ''}
       </div>,
       document.body,
     );
@@ -809,7 +809,7 @@ function CircuitEditor({ code, onCode }: { code: string; onCode: (c: string) => 
   );
 }
 
-const roleNote = (by: 'name' | 'place' | 'chosen' | undefined) => (by === 'place' ? <span className="warn-text"> chosen by its place — check</span> : by === 'name' ? <span className="muted"> (from its name)</span> : null);
+const roleNote = (by: 'name' | 'place' | 'chosen' | undefined) => (by === 'place' ? <span className="warn-text"> chosen by its place: check</span> : by === 'name' ? <span className="muted"> (from its name)</span> : null);
 const firstValues = (vals: number[] | undefined) => (vals?.length ? `${vals.map((q) => fmtNum(q, 4)).join(', ')} …` : '');
 
 export function EisNodeView({ id, data }: NodeProps<EisNode>) {
@@ -1009,11 +1009,11 @@ export function EisNodeView({ id, data }: NodeProps<EisNode>) {
   const circuitPage = { ...DRAWING_DEFAULTS, name: 'circuit', ...d.circuitPage, width: 1, height: 1, background: d.circuitBg ?? 'white' };
   return (
     <div className="node node-eis">
-      <InPort label="spectrum" port="dataset" id="in" title="The impedance spectrum: a dataset (or a sheet of a workbook) — the frequency, Z′ and Z″ (or −Z″), or |Z| and the phase; the columns chosen in the options by their role" />
+      <InPort label="spectrum" port="dataset" id="in" title="The impedance spectrum: a dataset (or a sheet of a workbook): the frequency, Z′ and Z″ (or −Z″), or |Z| and the phase; the columns chosen in the options by their role" />
       <NodeOptions>
         <details open>
           <summary>Columns</summary>
-          <div className="hint">What each column holds — guessed from the names; choose another when they say otherwise (or say nothing: A, B, C).</div>
+          <div className="hint">What each column holds: guessed from the names; choose another when they say otherwise (or say nothing: A, B, C).</div>
           <Field label="Data">
             <Select<EisData['form']>
               value={d.form}
@@ -1095,7 +1095,7 @@ export function EisNodeView({ id, data }: NodeProps<EisNode>) {
           <summary>Circuit</summary>
           <div className="row wrap">
             <Select<string> value={EIS_CIRCUITS.some(([c]) => c === d.circuit.replace(/\s+/g, '')) ? d.circuit.replace(/\s+/g, '') : ''} options={[['', 'custom (the code / the drawing)'], ...EIS_CIRCUITS]} onChange={(circuit) => circuit && set({ circuit })} />
-            <Field label="Code" title="Boukamp’s code: elements in series one after another, ( ) a parallel group, [ ] a series group inside it — R(RQ), R(Q[RW]), R(RQ)(RQ); R, C, L, Q (CPE), W, Wo, Ws; numbers keep a name (R1(R3Q1))">
+            <Field label="Code" title="Boukamp’s code: elements in series one after another, ( ) a parallel group, [ ] a series group inside it: R(RQ), R(Q[RW]), R(RQ)(RQ); R, C, L, Q (CPE), W, Wo, Ws; numbers keep a name (R1(R3Q1))">
               <TextInput className="mono" value={d.circuit} placeholder="R(RQ)" onChange={(circuit) => set({ circuit })} />
             </Field>
           </div>
@@ -1117,7 +1117,7 @@ export function EisNodeView({ id, data }: NodeProps<EisNode>) {
                     onChange={(circuitBg) => set({ circuitBg })}
                   />
                 </Field>
-                <Check label="Fitted values" title="The fitted values written under the elements — drag them on the figure to move them" value={!!d.circuitValues} onChange={(circuitValues) => set({ circuitValues })} />
+                <Check label="Fitted values" title="The fitted values written under the elements: drag them on the figure to move them" value={!!d.circuitValues} onChange={(circuitValues) => set({ circuitValues })} />
                 {d.circuitValues && (
                   <button className="nodrag" disabled={!d.annotations?.length} title="The fitted values back under their elements (as they were first drawn)" onClick={() => set({ annotations: undefined })}>
                     <RefreshCw {...IC} /> Values
@@ -1130,7 +1130,7 @@ export function EisNodeView({ id, data }: NodeProps<EisNode>) {
         </details>
         <details open>
           <summary>Fit ranges</summary>
-          <div className="hint">The frequencies fitted: none — every point; or ranges (+ Range on the graph, or typed here). A fit per range: each range fitted on its own, with a circuit of its own (empty: the node’s), to find starts for the whole circuit.</div>
+          <div className="hint">The frequencies fitted: none, every point; or ranges (+ Range on the graph, or typed here). A fit per range: each range fitted on its own, with a circuit of its own (empty: the node’s), to find starts for the whole circuit.</div>
           {ranges.length > 0 && (
             <table className="preview-table eis-params">
               <thead>
@@ -1292,8 +1292,8 @@ export function EisNodeView({ id, data }: NodeProps<EisNode>) {
       <OutPort id="parameters" label="parameters" port="dataset" title="A row per parameter: its value, ± its standard error, the error in %, its unit, fixed; then χ², reduced χ², R² (Z′ and Z″ together, each alone), the points" />
       <OutPort id="fitted" label="fitted" port="dataset" title="A row per point: the frequency, the data and the fit (Z′, −Z″, |Z|, phase), the residuals, used or left out" />
       <OutPort id="curve" label="fit curve" port="dataset" title="The fit drawn smooth: 25 frequencies a decade over the range, with Z′, −Z″, |Z| and the phase of the fit (to a Plot: the line of the fit through the data, Nyquist or Bode)" />
-      <OutPort id="circuit" label="circuit" port="figure" title="The equivalent circuit drawn (its symbols; the fitted values optional), on a white or transparent page — to a Figure Drawing, an inset or a Merge" />
-      <OutPort id="ranges" label="fits per range" port="dataset" title="A fit per range: a row per parameter of each range's fit — the range, its circuit, the value ± its error, its unit, R² of that fit" />
+      <OutPort id="circuit" label="circuit" port="figure" title="The equivalent circuit drawn (its symbols; the fitted values optional), on a white or transparent page: to a Figure Drawing, an inset or a Merge" />
+      <OutPort id="ranges" label="fits per range" port="dataset" title="A fit per range: a row per parameter of each range's fit: the range, its circuit, the value ± its error, its unit, R² of that fit" />
     </div>
   );
 }

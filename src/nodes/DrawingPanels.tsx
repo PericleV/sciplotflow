@@ -294,7 +294,7 @@ export function ObjectOps({ ctx }: { ctx: Ctx }) {
               </span>
             </Field>
           )}
-          <Field label={ctx.nodes.length ? `Corners (${ctx.nodes.length} node${ctx.nodes.length > 1 ? 's' : ''})` : 'Corners'} title="The corners between two straight pieces rounded (fillet, its radius) or cut (chamfer, so far from the corner), in mm — every one, or only the nodes picked (click a node; Shift + click: more)">
+          <Field label={ctx.nodes.length ? `Corners (${ctx.nodes.length} node${ctx.nodes.length > 1 ? 's' : ''})` : 'Corners'} title="The corners between two straight pieces rounded (fillet, its radius) or cut (chamfer, so far from the corner), in mm: every one, or only the nodes picked (click a node; Shift + click: more)">
             <span className="row">
               <NumInput className="tiny" min={0.01} step={0.25} value={corner} onChange={(v) => setCorner(v > 0 ? v : 1)} />
               <span className="muted">mm</span>
@@ -333,7 +333,7 @@ export function ObjectOps({ ctx }: { ctx: Ctx }) {
               <button className="nodrag" disabled={!onePath || ctx.nodes.length !== 1} title="The path broken at the node picked: a closed one opened there, an open one cut in two" onClick={breakPath}>
                 Break at node
               </button>
-              <button className="nodrag" disabled={openOnes.length !== 2} title="Two open paths (or lines) made one: their nearest ends joined — one node where they meet, else a straight piece between them" onClick={join}>
+              <button className="nodrag" disabled={openOnes.length !== 2} title="Two open paths (or lines) made one: their nearest ends joined; one node where they meet, else a straight piece between them" onClick={join}>
                 Join
               </button>
             </div>
@@ -374,7 +374,7 @@ export function ObjectOps({ ctx }: { ctx: Ctx }) {
       {selected.length > 0 && (
         <Section title="Component">
           <div className="row wrap">
-            <button className="nodrag" title="Keep these objects once, as a component: an instance takes their place; insert more from the Components tab — every instance changes with the component" onClick={makeComponent}>
+            <button className="nodrag" title="Keep these objects once, as a component: an instance takes their place; insert more from the Components tab: every instance changes with the component" onClick={makeComponent}>
               Make component
             </button>
             {instances.length > 0 && (
@@ -409,7 +409,7 @@ export function ObjectOps({ ctx }: { ctx: Ctx }) {
             </span>
           </Field>
           {guide && (
-            <Field label="Along a path" title={`So many copies of the other objects selected along “${nameOf(guide)}” (the front one with an outline): evenly from end to end of an open one, round a closed one — turned with it or not; the originals stay`}>
+            <Field label="Along a path" title={`So many copies of the other objects selected along “${nameOf(guide)}” (the front one with an outline): evenly from end to end of an open one, round a closed one; turned with it or not; the originals stay`}>
               <span className="row wrap">
                 <NumInput className="tiny" min={1} step={1} value={along.n} onChange={(v) => setAlong({ ...along, n: Math.max(1, Math.round(v) || 1) })} />
                 <Check label="turned" value={along.turn} onChange={(turn) => setAlong({ ...along, turn })} />

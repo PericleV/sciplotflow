@@ -196,7 +196,7 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
           {data.fileName ? `${data.fileName}${sheets.length ? ` · ${sheets.length} sheet${sheets.length > 1 ? 's' : ''}` : ''}` : data.edits ? 'a table typed in' : 'or drop files here'}
         </span>
         {r?.outputs.out?.t === 'dataset' && (
-          <button className="nodrag btn-run plot-btn" title="Plot these columns: choose X, the Y columns and their errors — a figure made and connected beside this node" onClick={() => window.dispatchEvent(new CustomEvent('graph-flow:plot', { detail: id }))}>
+          <button className="nodrag btn-run plot-btn" title="Plot these columns: choose X, the Y columns and their errors; a figure made and connected beside this node" onClick={() => window.dispatchEvent(new CustomEvent('graph-flow:plot', { detail: id }))}>
             Plot…
           </button>
         )}
@@ -268,7 +268,7 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
             <Check label={csv.touchstone.format === 'RI' ? 'dB and phase' : 'Re and Im'} value={data.csv.touchExtra !== false} onChange={(touchExtra) => setCsv({ touchExtra })} />
           </Field>
         ) : (
-          <Field label="Comment lines" title="Lines that are not data, left out wherever they are: automatic — those starting with ! # % or //; none; or the marks you write (one or more, separated by spaces: “#”, “! %”, “REM”)">
+          <Field label="Comment lines" title="Lines that are not data, left out wherever they are: automatic, those starting with ! # % or //; none; or the marks you write (one or more, separated by spaces: “#”, “! %”, “REM”)">
             <span className="row">
               <Select<'auto' | 'none' | 'custom'>
                 value={data.csv.comment === 'auto' ? 'auto' : data.csv.comment ? 'custom' : 'none'}
@@ -322,7 +322,7 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
       {!csv?.touchstone && !!data.csv.comment && (
         <div className="row wrap">
           <Check label="Comments after the data too" title="A mark after the numbers of a line (1.2  3.4  # note) starts a comment as well" value={!!data.csv.commentEnd} onChange={(commentEnd) => setCsv({ commentEnd: commentEnd || undefined })} />
-          <Check label="Names from the last comment" title="When the data start at once (no line of names), the last comment line before them gives the names — if it has as many as the data has columns (names with spaces are kept whole when two spaces or a tab separate them)" value={!!data.csv.namesFromComment} onChange={(namesFromComment) => setCsv({ namesFromComment })} />
+          <Check label="Names from the last comment" title="When the data start at once (no line of names), the last comment line before them gives the names: if it has as many as the data has columns (names with spaces are kept whole when two spaces or a tab separate them)" value={!!data.csv.namesFromComment} onChange={(namesFromComment) => setCsv({ namesFromComment })} />
           {csv?.commentNames && <span className="hint">the names are from a comment</span>}
         </div>
       )}
@@ -331,7 +331,7 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
           Touchstone: {csv.touchstone.ports} port{csv.touchstone.ports > 1 ? 's' : ''}, {csv.touchstone.param} parameters, {csv.touchstone.format === 'RI' ? 'real / imaginary' : csv.touchstone.format === 'MA' ? 'magnitude / angle' : 'dB / angle'}, frequency in {csv.touchstone.unit}, {csv.touchstone.z0} Ω{csv.touchstone.version > 1 ? `, version ${csv.touchstone.version}` : ''}
         </div>
       )}
-      <Field label="Missing values" title="Cells that mean “no value”, separated by commas — read as empty cells: N/A, -, --, -999">
+      <Field label="Missing values" title="Cells that mean “no value”, separated by commas: read as empty cells: N/A, -, --, -999">
         <TextInput value={data.csv.missing ?? ''} placeholder="e.g. N/A, -, -999" onChange={(missing) => setCsv({ missing: missing || undefined })} />
       </Field>
       <Field label="Encoding" title="How the bytes of a text file are read (automatic: UTF-8, UTF-16 or Western). The file opened in this session is read again; a file of an older session must be opened again.">
@@ -361,7 +361,7 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
           </pre>
         </details>
       )}
-      {size > LARGE && <div className="msg warn">A large file ({(size / 1e6).toFixed(1)} MB): it is kept in the project, and the browser keeps about 5 MB — use Save (a file) to keep it.</div>}
+      {size > LARGE && <div className="msg warn">A large file ({(size / 1e6).toFixed(1)} MB): it is kept in the project, and the browser keeps about 5 MB; use Save (a file) to keep it.</div>}
       {r?.outputs.out?.t === 'dataset' && (
         <ExportTable name={data.name || data.fileName.replace(/\.[^.]+$/, '') || 'data'} shown={r.outputs.out.v} book={r.outputs.book?.t === 'workbook' ? r.outputs.book.v : undefined} value={data.export} onChange={(e) => set({ export: e })} />
       )}
@@ -455,7 +455,7 @@ export function MathColNodeView({ id, data }: NodeProps<MathColNode>) {
       })}
       {/* in the node: the formula and the size of the result; the options in the panel */}
       <div className="node-summary mono ellipsis" title={data.formula ? `${out?.name ?? ''} = ${data.formula}` : 'Click the node: the formula and the options in the panel'}>
-        {data.formula ? `= ${data.formula}` : <span className="muted">no formula yet — click the node</span>}
+        {data.formula ? `= ${data.formula}` : <span className="muted">no formula yet; click the node</span>}
         {!one && (data.rules?.length ?? 0) > 0 && <span className="muted"> · {data.rules!.length} rule{data.rules!.length > 1 ? 's' : ''}</span>}
       </div>
       {out && (
@@ -475,7 +475,7 @@ export function MathColNodeView({ id, data }: NodeProps<MathColNode>) {
         </div>
         <div className="hint">Of a whole column: mean(A), median, sd, sum, min, max, count, first, last (one column in the parentheses; empty and masked values left out). Functions of your own before the formula: f(t) = exp(-t/3); A*f(B).</div>
         <div className="row wrap">
-          <Check label="Complex numbers" title="The formula in complex numbers: j the imaginary unit (i is the row) — A + j*B, abs, arg, re, im, conj, exp, ln, sqrt, sin, cos, polar(r, θ) …; the inputs are real" value={!!data.complex} onChange={(complex) => set({ complex: complex || undefined })} />
+          <Check label="Complex numbers" title="The formula in complex numbers: j the imaginary unit (i is the row): A + j*B, abs, arg, re, im, conj, exp, ln, sqrt, sin, cos, polar(r, θ) …; the inputs are real" value={!!data.complex} onChange={(complex) => set({ complex: complex || undefined })} />
           {data.complex && (
             <Select<NonNullable<MathColData['part']>>
               value={data.part ?? 're'}
@@ -492,7 +492,7 @@ export function MathColNodeView({ id, data }: NodeProps<MathColNode>) {
             />
           )}
         </div>
-        <Field label="Preset" title="A ready formula — conversions of spectroscopy, chemistry, engineering, the data: its formula and name written here (then change them as you like)">
+        <Field label="Preset" title="A ready formula: conversions of spectroscopy, chemistry, engineering, the data: its formula and name written here (then change them as you like)">
           <select
             className="nodrag"
             value=""
@@ -515,7 +515,7 @@ export function MathColNodeView({ id, data }: NodeProps<MathColNode>) {
             ))}
           </select>
         </Field>
-        {preset && <div className="hint">Inputs — {preset.inputs}</div>}
+        {preset && <div className="hint">Inputs: {preset.inputs}</div>}
         <Field label="Output" title="A column (the formula row by row), or one value (a formula of single values and of whole columns: max(A) − min(A))">
           <Select<'column' | 'value'>
             value={data.output ?? 'column'}
@@ -546,7 +546,7 @@ export function MathColNodeView({ id, data }: NodeProps<MathColNode>) {
         <Field label="Name" title="The name of the result, with its unit if it has one: “Absorbance (a.u.)” (empty: the formula, or the name of the input when the formula is one letter)">
           <TextInput value={data.name} placeholder={data.formula || 'result'} onChange={(name) => set({ name })} />
         </Field>
-        <Field label="Errors" title="The errors of the inputs, carried to the result (first order, the inputs independent: σ² = Σ (∂f/∂x · σx)²) and given on the “error” port: lines (or ; between them) — A ± 0.02, B ± 2% (of |B|), A ± C (another input: its value at the row), A ± sqrt(A)">
+        <Field label="Errors" title="The errors of the inputs, carried to the result (first order, the inputs independent: σ² = Σ (∂f/∂x · σx)²) and given on the “error” port: lines (or ; between them): A ± 0.02, B ± 2% (of |B|), A ± C (another input: its value at the row), A ± sqrt(A)">
           <TextInput className="mono" value={data.errors ?? ''} placeholder="A ± 0.02; B ± 2%" onChange={(errors) => set({ errors: errors || undefined })} />
         </Field>
         {out && (
@@ -1018,7 +1018,7 @@ export function ColumnsNodeView({ id, data: nodeData }: NodeProps<ColumnsNode>) 
       {Array.from({ length: portCount }, (_, k) => {
         const inp = byPort.get(k);
         return (
-          <InPort key={k} label={columnLetter(k)} port="column" id={`in-${k}`} title={`Optional: a column from elsewhere — a column of its own (at the end, unless placed or moved), also in a formula {${columnLetter(k)}} or giving the names; or one value (for the formulas)`}>
+          <InPort key={k} label={columnLetter(k)} port="column" id={`in-${k}`} title={`Optional: a column from elsewhere; a column of its own (at the end, unless placed or moved), also in a formula {${columnLetter(k)}} or giving the names; or one value (for the formulas)`}>
             <span className="muted ellipsis">{inp ? (inp.kind === 'scalar' ? `${inp.name} (one value)` : `${titleOf(inp)} · ${inp.rows} rows`) : 'a column (optional)'}</span>
           </InPort>
         );
@@ -1062,7 +1062,7 @@ export function ColumnsNodeView({ id, data: nodeData }: NodeProps<ColumnsNode>) 
               <span className="col-letter" title={`Its letter in the formulas: ${lineLetter(k)}`}>
                 {lineLetter(k)}
               </span>
-              <input className="nodrag" type="checkbox" checked={L.keep} title="Kept (untick: left out — a formula may still use it)" onChange={(e) => setItem(L.from, { keep: e.target.checked ? undefined : false })} />
+              <input className="nodrag" type="checkbox" checked={L.keep} title="Kept (untick: left out, a formula may still use it)" onChange={(e) => setItem(L.from, { keep: e.target.checked ? undefined : false })} />
               {picking && (L.computed ? <span /> : <input className="nodrag pick" type="checkbox" checked={picked.includes(L.from)} title="Renamed with the others ticked (Rename columns)" onChange={(e) => setPick(L.from, e.target.checked)} />)}
               {L.computed ? (
                 <TextInput value={computed.find((c) => `=${c.id}` === L.from)?.name ?? L.name} placeholder={L.name} title="The name of the column added (its settings below)" onChange={(name) => setComputed(L.from.slice(1), { name })} />
@@ -1088,7 +1088,7 @@ export function ColumnsNodeView({ id, data: nodeData }: NodeProps<ColumnsNode>) 
       <div className="row">
         <Select<ComputedKind | ''>
           value=""
-          title="A column added: a formula of the columns; a column of an input (A, B …) or a copy of a column; generated values (evenly spaced, by a step, of the row i, random — as many rows as the data); one value in every row"
+          title="A column added: a formula of the columns; a column of an input (A, B …) or a copy of a column; generated values (evenly spaced, by a step, of the row i, random: as many rows as the data); one value in every row"
           options={[['', '+ Column…'], ...ADD_KINDS]}
           onChange={(k) => k && lines.length > 0 && addComputed(k)}
         />

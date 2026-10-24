@@ -50,7 +50,7 @@ function Section({ node, pinned, onPin }: { node: AppNode; pinned: boolean; onPi
         <button className="palette-group" style={{ color }} aria-expanded={open} title={open ? 'Fold' : 'Unfold'} onClick={() => setOpen((o) => !o)}>
           <span className="chev">{open ? <ChevronDown {...IC} /> : <ChevronRight {...IC} />}</span> <span className="ellipsis">{nodeDisplayName(node)}</span>
         </button>
-        <button className={`palette-toggle inspector-pin${pinned ? ' on' : ''}`} title={pinned ? 'Pinned: stays while other nodes are clicked — click to unpin' : 'Pin: keep these options while other nodes are clicked'} onClick={() => onPin(!pinned)}>
+        <button className={`palette-toggle inspector-pin${pinned ? ' on' : ''}`} title={pinned ? 'Pinned: stays while other nodes are clicked; click to unpin' : 'Pin: keep these options while other nodes are clicked'} onClick={() => onPin(!pinned)}>
           <PinIcon />
         </button>
       </div>

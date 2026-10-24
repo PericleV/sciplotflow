@@ -18,7 +18,7 @@ export const PORT_COLORS: Record<PortType, string> = {
   any: '#8a93a6',
 };
 export const PORT_LABELS: Record<PortType, string> = {
-  workbook: 'workbook (several sheets, each a table — Extract column, Auto-extract or a Workbook take one)',
+  workbook: 'workbook (several sheets, each a table: Extract column, Auto-extract or a Workbook take one)',
   dataset: 'dataset (one table: several columns)',
   column: 'column',
   scalar: 'single value',

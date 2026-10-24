@@ -21,11 +21,11 @@ const KINDS: [PickKind, string][] = [
   ['where', 'rows where'],
 ];
 const HINT: Record<PickKind, string> = {
-  x: 'One or more X: 0.5 · 0.2, 0.5 · 0:0.1:0.8 (start:step:end) — Y and the other columns read there (at every crossing)',
+  x: 'One or more X: 0.5 · 0.2, 0.5 · 0:0.1:0.8 (start:step:end): Y and the other columns read there (at every crossing)',
   y: 'One or more Y: the X where the curve crosses it (every crossing)',
   max: 'The highest point (between the limits on X, empty: all), refined between the points by a parabola',
   min: 'The lowest point (between the limits on X, empty: all), refined between the points by a parabola',
-  where: 'A condition: x, y, i (the row), n, the columns A, B, C … — e.g. x > 0.4 and y < 0',
+  where: 'A condition: x, y, i (the row), n, the columns A, B, C …: e.g. x > 0.4 and y < 0',
 };
 
 export function PickNodeView({ id, data }: NodeProps<PickNode>) {
@@ -50,7 +50,7 @@ export function PickNodeView({ id, data }: NodeProps<PickNode>) {
           <Field label="X">
             <Select value={data.x || '-auto'} options={[['-auto', xAutoLabel(r?.view.available)], ['-', 'row number'], ...names.map((nm): [string, string] => [nm, nm])]} onChange={(x) => set({ x: x === '-auto' ? '' : x })} />
           </Field>
-          <Field label="Y" title="The columns: 2, B-D (letters), names, A* (a pattern); empty: the Y columns (their designation) — each a curve">
+          <Field label="Y" title="The columns: 2, B-D (letters), names, A* (a pattern); empty: the Y columns (their designation): each a curve">
             <ColumnsPicker value={data.ys} names={names} auto={Y_AUTO} onChange={(ys) => set({ ys })} />
           </Field>
         </div>
@@ -116,7 +116,7 @@ export function PickNodeView({ id, data }: NodeProps<PickNode>) {
             onChange={(outside) => set({ outside })}
           />
         </Field>
-        <Field label="Also read" title="The other columns of the dataset read at every point (one Y column): none, all of them, or a list — 2, B-D (letters), names, A* (a pattern)">
+        <Field label="Also read" title="The other columns of the dataset read at every point (one Y column): none, all of them, or a list; 2, B-D (letters), names, A* (a pattern)">
           <span className="row wrap">
             <Select<string>
               value={others === 'none' || others === 'all' ? others : 'list'}

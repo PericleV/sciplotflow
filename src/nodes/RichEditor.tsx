@@ -327,7 +327,7 @@ function Toolbar({ editor, onLarge, large, figures, onExport, onMath }: { editor
         <span className="rt-label">
           <FileDown {...IC} /> Export
         </span>
-        <button className="nodrag" title="A document (.docx — Word, LibreOffice, Google Docs): its styles, lists, tables; the figures drawn now at 300 dpi and numbered; the formulas as equations" onMouseDown={(e) => e.preventDefault()} onClick={() => onExport('docx')}>
+        <button className="nodrag" title="A document (.docx: Word, LibreOffice, Google Docs): its styles, lists, tables; the figures drawn now at 300 dpi and numbered; the formulas as equations" onMouseDown={(e) => e.preventDefault()} onClick={() => onExport('docx')}>
           DOC
         </button>
         <button className="nodrag" title="Print it, or save it as PDF (the browser's Save as PDF: text and figures stay vector)" onMouseDown={(e) => e.preventDefault()} onClick={() => onExport('pdf')}>
@@ -336,7 +336,7 @@ function Toolbar({ editor, onLarge, large, figures, onExport, onMath }: { editor
         <button className="nodrag" title="An HTML page" onMouseDown={(e) => e.preventDefault()} onClick={() => onExport('html')}>
           HTML
         </button>
-        <button className="nodrag" title="Markdown (.md; with its figures and pictures: a .zip of the text and their PNG files) — formulas as $…$" onMouseDown={(e) => e.preventDefault()} onClick={() => onExport('md')}>
+        <button className="nodrag" title="Markdown (.md; with its figures and pictures: a .zip of the text and their PNG files); formulas as $…$" onMouseDown={(e) => e.preventDefault()} onClick={() => onExport('md')}>
           MD
         </button>
       </span>

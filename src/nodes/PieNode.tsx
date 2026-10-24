@@ -36,7 +36,7 @@ export function PieNodeView({ id, data: d }: NodeProps<PieNode>) {
   const KINDS: [PieKind, string, string][] = [
     ['pie', '● Pie', 'Slices of a disc: one value column'],
     ['doughnut', '◎ Doughnut', 'A pie with a hole (its size: Hole %); a total or a text can go in the middle'],
-    ['rings', '⊚ Nested rings', raw ? 'A ring for every value column — with “categories and their values” (Data, above)' : 'A ring for every value column (Values, above; the first outside)'],
+    ['rings', '⊚ Nested rings', raw ? 'A ring for every value column: with “categories and their values” (Data, above)' : 'A ring for every value column (Values, above; the first outside)'],
   ];
   return (
     <div className="node node-plot1d node-pie">

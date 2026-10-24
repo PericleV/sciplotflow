@@ -376,7 +376,7 @@ export function cleanData(ds: Dataset, d: CleanData): { dataset: Dataset; change
           v[i] = w;
         }
       }
-      report.push(`${c.name}: ${miss.length} missing value${miss.length > 1 ? 's' : ''} ${d.missing === 'remove' ? '— their rows removed' : `filled (${d.missing})`}.`);
+      report.push(`${c.name}: ${miss.length} missing value${miss.length > 1 ? 's' : ''} ${d.missing === 'remove' ? 'removed with their rows' : `filled (${d.missing})`}.`);
     }
     // outliers
     if (d.outliers !== 'none') {
@@ -400,7 +400,7 @@ export function cleanData(ds: Dataset, d: CleanData): { dataset: Dataset; change
         }
         if (d.action === 'mask') masks.set(c.name, mask);
       }
-      report.push(`${c.name}: ${idx.length} outlier${idx.length === 1 ? '' : 's'} (${d.outliers})${idx.length ? ` — ${d.action === 'mask' ? 'masked' : d.action === 'remove' ? 'their rows removed' : d.action === 'clip' ? 'clipped to the bounds' : `replaced (${d.action === 'linear' ? 'interpolated' : 'the median around'})`}: row${idx.length > 1 ? 's' : ''} ${idx.slice(0, 12).map((i) => i + 1).join(', ')}${idx.length > 12 ? ' …' : ''}` : ''}.`);
+      report.push(`${c.name}: ${idx.length} outlier${idx.length === 1 ? '' : 's'} (${d.outliers})${idx.length ? `: ${d.action === 'mask' ? 'masked' : d.action === 'remove' ? 'their rows removed' : d.action === 'clip' ? 'clipped to the bounds' : `replaced (${d.action === 'linear' ? 'interpolated' : 'the median around'})`}: row${idx.length > 1 ? 's' : ''} ${idx.slice(0, 12).map((i) => i + 1).join(', ')}${idx.length > 12 ? ' …' : ''}` : ''}.`);
     }
     newVals.set(c.name, Float64Array.from(v));
   }

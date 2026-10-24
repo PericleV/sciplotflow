@@ -156,9 +156,9 @@ export function Plot3DNodeView({ id, data: d }: NodeProps<Plot3DNode>) {
     : undefined;
   return (
     <div className="node node-plot1d node-plot3d">
-      <InPort label={layered ? 'A' : 'dataset'} port="dataset" id="dataset" title={layered ? 'A layer: X, Y and a value (Qx, Qz, intensity …) — or the column below that names the layers' : 'Z on a grid (X, Y, Z columns or a matrix), X, Y, Z points (and groups), or X and the Y columns of a sweep'} />
+      <InPort label={layered ? 'A' : 'dataset'} port="dataset" id="dataset" title={layered ? 'A layer: X, Y and a value (Qx, Qz, intensity …): or the column below that names the layers' : 'Z on a grid (X, Y, Z columns or a matrix), X, Y, Z points (and groups), or X and the Y columns of a sweep'} />
       {Array.from({ length: Math.max(0, layerPorts) }, (_, j) => (
-        <InPort key={j} label={columnLetter(j + 1)} port="dataset" id={`layer-${j + 1}`} title="Another layer: X, Y and a value — a new port appears when the last one is used" />
+        <InPort key={j} label={columnLetter(j + 1)} port="dataset" id={`layer-${j + 1}`} title="Another layer: X, Y and a value; a new port appears when the last one is used" />
       ))}
       <NodeOptions>
       <details open>
@@ -203,7 +203,7 @@ export function Plot3DNodeView({ id, data: d }: NodeProps<Plot3DNode>) {
           )}
           {layered && (
             <>
-              <span title="Found by the node: a layer for every dataset on A, B, C …, or for every label of a column (S1, S2 …). My list: every layer chosen — its input, its rows, its columns">Layers</span>
+              <span title="Found by the node: a layer for every dataset on A, B, C …, or for every label of a column (S1, S2 …). My list: every layer chosen; its input, its rows, its columns">Layers</span>
               <span className="row wrap">
                 <Select<NonNullable<Plot3DSpec['layerList']>>
                   value={own ? 'own' : 'auto'}
@@ -222,7 +222,7 @@ export function Plot3DNodeView({ id, data: d }: NodeProps<Plot3DNode>) {
                   />
                 )}
               </span>
-              <span title="Bins: the points of every layer averaged on a grid over X and Y (an empty bin is not drawn — the map of scattered points, an RSM). Grid: the data's own grid, or Z interpolated to one as the Contour does">Map</span>
+              <span title="Bins: the points of every layer averaged on a grid over X and Y (an empty bin is not drawn: the map of scattered points, an RSM). Grid: the data's own grid, or Z interpolated to one as the Contour does">Map</span>
               <span className="row wrap">
                 <Select<NonNullable<Plot3DSpec['layerDraw']>>
                   value={d.layerDraw ?? 'bins'}
@@ -420,7 +420,7 @@ export function Plot3DNodeView({ id, data: d }: NodeProps<Plot3DNode>) {
       <details open>
         <summary>Look</summary>
         <div className="col-form">
-          <span title={layered ? 'The value of every cell on a colour map — one scale for all the layers (in a Merge: Layout ▸ one colour scale for all the panels)' : undefined}>Colours</span>
+          <span title={layered ? 'The value of every cell on a colour map: one scale for all the layers (in a Merge: Layout ▸ one colour scale for all the panels)' : undefined}>Colours</span>
           <span className="row wrap">
             {!layered && (
               <Select<Plot3DSpec['colorBy']>
@@ -513,7 +513,7 @@ export function Plot3DNodeView({ id, data: d }: NodeProps<Plot3DNode>) {
           )}
           {d.kind === 'surface' && (
             <>
-              <span title="The surface's own fill: shown, or hidden — only its mesh and its projections (floor, ceiling, walls) remain">Surface</span>
+              <span title="The surface's own fill: shown, or hidden; only its mesh and its projections (floor, ceiling, walls) remain">Surface</span>
               <span className="row wrap">
                 <Select<'shown' | 'none'> value={d.surfaceFill ?? 'shown'} options={[['shown', 'filled'], ['none', 'hidden (mesh, projections)']]} onChange={(v) => set({ surfaceFill: v === 'shown' ? undefined : v })} />
                 <Field label="Bands" title="The colours in so many bands (filled levels on the surface; 0: smooth)">
@@ -802,10 +802,10 @@ export function Plot3DNodeView({ id, data: d }: NodeProps<Plot3DNode>) {
         </div>
       </details>
       <details open={marks.length > 0 || drawing !== null}>
-        <summary title="Lines, arrows, rectangles and points in the box, in the data's units (a missing height: the box's bottom or top) — drawn with the mouse on the figure, or typed">Marks: lines, rectangles, points ({marks.length})</summary>
+        <summary title="Lines, arrows, rectangles and points in the box, in the data's units (a missing height: the box's bottom or top), drawn with the mouse on the figure, or typed">Marks: lines, rectangles, points ({marks.length})</summary>
         <div className="mark-box">
           <span className="row wrap">
-            <Field label="Draw on" title="Where the clicks fall: free (a data point near the mouse, else the surface, else the floor), or on a plane — exactly under the mouse (a rectangle lies in it). The X wall: the back wall across Y and Z; the Y wall: across X and Z">
+            <Field label="Draw on" title="Where the clicks fall: free (a data point near the mouse, else the surface, else the floor), or on a plane: exactly under the mouse (a rectangle lies in it). The X wall: the back wall across Y and Z; the Y wall: across X and Z">
               <Select<DrawOn>
                 value={drawOn}
                 options={[
@@ -842,7 +842,7 @@ export function Plot3DNodeView({ id, data: d }: NodeProps<Plot3DNode>) {
           </span>
           <span className="row wrap">
             {MARK_KINDS.map(([type, label, title]) => (
-              <button key={type} className="nodrag" title={`${title} — then click on the figure (on the plane chosen in Draw on)`} onClick={() => addMark(type)}>
+              <button key={type} className="nodrag" title={`${title}: then click on the figure (on the plane chosen in Draw on)`} onClick={() => addMark(type)}>
                 + {label}
               </button>
             ))}

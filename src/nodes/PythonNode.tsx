@@ -170,7 +170,7 @@ export function PythonNodeView({ id, data }: NodeProps<PythonNode>) {
         const letter = columnLetter(k);
         const v = byLetter.get(letter);
         return (
-          <InPort key={k} label={letter} port="any" id={`in-${k}`} title={`Optional: a column, a value, a dataset, a matrix or a workbook — in the code the variable ${data.vars?.[letter] || letter}`}>
+          <InPort key={k} label={letter} port="any" id={`in-${k}`} title={`Optional: a column, a value, a dataset, a matrix or a workbook; in the code the variable ${data.vars?.[letter] || letter}`}>
             <span className={`ellipsis${v ? '' : ' muted'}`}>{v ? `${v.name} · ${KIND_TEXT[v.kind] ?? v.kind} (${v.size})` : 'connect anything (optional)'}</span>
           </InPort>
         );

@@ -6,7 +6,7 @@ export function AggregateControls({ value, onChange }: { value: AggSpec | undefi
   const a = value;
   return (
     <div className="trend-controls">
-      <Field label="One point per X" title="Several Y at the same X (repeated measurements in long form): one point each — their mean or median, the spread as ±Y (shaded; Errors ▸ Y error as: bars)">
+      <Field label="One point per X" title="Several Y at the same X (repeated measurements in long form): one point each; their mean or median, the spread as ±Y (shaded; Errors ▸ Y error as: bars)">
         <span className="row wrap">
           <Select<AggStat | ''>
             value={a?.stat ?? ''}

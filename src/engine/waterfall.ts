@@ -100,7 +100,7 @@ export function waterfallShifts(runs: WaterfallRun[], ys: Float64Array[], zs: nu
       const t = zs.map((z) => (z - z0) / (z1 - z0));
       offX = t.map((q) => q * (N - 1) * stepX);
       offY = t.map((q) => q * (N - 1) * stepY);
-    } else if (N > 1) warnings.push('Spacing by Z: the curves have no Z (or the front and back ones the same) — even steps.');
+    } else if (N > 1) warnings.push('Spacing by Z: the curves have no Z (or the front and back ones the same): even steps.');
   } else if (spacing === 'list') {
     const pct = d.units === 'percent';
     const list = (s: string | undefined, range: number, step: number) => {

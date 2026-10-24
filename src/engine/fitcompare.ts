@@ -144,7 +144,7 @@ export function compare(pair: [Scored, Scored], nested: boolean): { rows: (Score
   const report = [`${pair[0].group}: ${pair[win].fit} preferred by ${by === 'aicc' ? 'AICc' : 'AIC'} (Δ = ${fmt(Math.abs(cr[1][by] - cr[0][by]), 3)}, weight ${fmt(w[win], 3)}); BIC: ${cr[0].bic <= cr[1].bic ? pair[0].fit : pair[1].fit}.`];
   if (f) {
     const [simple, full] = pair[0].k <= pair[1].k ? pair : [pair[1], pair[0]];
-    report.push(f.F > 0 ? `  F(${f.d1}, ${f.d2}) = ${fmt(f.F)}, p = ${fmtP(f.p)}: ${f.p < 0.05 ? `${full.fit} is significantly better (p < 0.05)` : `${full.fit} is not significantly better — keep ${simple.fit}`}.` : `  ${full.fit}, with more parameters, fits worse: not nested, or not converged (try other start values).`);
+    report.push(f.F > 0 ? `  F(${f.d1}, ${f.d2}) = ${fmt(f.F)}, p = ${fmtP(f.p)}: ${f.p < 0.05 ? `${full.fit} is significantly better (p < 0.05)` : `${full.fit} is not significantly better; keep ${simple.fit}`}.` : `  ${full.fit}, with more parameters, fits worse: not nested, or not converged (try other start values).`);
   } else if (nested && pair[0].k === pair[1].k) report.push('  The same number of parameters: no F-test (AIC only).');
   return { rows, report };
 }

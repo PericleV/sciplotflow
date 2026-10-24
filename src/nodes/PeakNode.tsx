@@ -409,11 +409,11 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
     <>
     <div className="row wrap">
       {manual && (
-        <button className={`nodrag${mode === 'region' ? ' on' : ''}`} title="Then drag across a peak on the graph: its region — the peak is taken at the maximum (or the minimum) of the data there, and stays in it in the fit; drag the edges of a region to change it" onClick={() => setMode(mode === 'region' ? 'none' : 'region')}>
+        <button className={`nodrag${mode === 'region' ? ' on' : ''}`} title="Then drag across a peak on the graph: its region, the peak is taken at the maximum (or the minimum) of the data there, and stays in it in the fit; drag the edges of a region to change it" onClick={() => setMode(mode === 'region' ? 'none' : 'region')}>
           + Region
         </button>
       )}
-      <button className={`nodrag${mode === 'peak' ? ' on' : ''}`} title={manual ? 'Then click on the graph: a peak at that place (e.g. in a shoulder), added to the list' : 'Then click on the graph: a peak there — the peaks found become a list of your own, with this one'} onClick={() => setMode(mode === 'peak' ? 'none' : 'peak')}>
+      <button className={`nodrag${mode === 'peak' ? ' on' : ''}`} title={manual ? 'Then click on the graph: a peak at that place (e.g. in a shoulder), added to the list' : 'Then click on the graph: a peak there; the peaks found become a list of your own, with this one'} onClick={() => setMode(mode === 'peak' ? 'none' : 'peak')}>
         + Point
       </button>
       {data.baseline === 'points' && (
@@ -453,7 +453,7 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
   );
   return (
     <div className="node node-peaks">
-      <InPort label="dataset" port="dataset" id="in" title="A dataset: X and the Y columns from the designations, or chosen below — every Y column analysed on its own" />
+      <InPort label="dataset" port="dataset" id="in" title="A dataset: X and the Y columns from the designations, or chosen below; every Y column analysed on its own" />
       <NodeOptions>
       {names.length > 0 && (
         <details open>
@@ -462,7 +462,7 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
             <span>X</span>
             <Select value={data.x || ''} options={[['', xAutoLabel(r?.view.available)], ['-', 'row number'], ...names.map((nm): [string, string] => [nm, nm])]} onChange={(x) => set({ x })} />
             <span>Y</span>
-            <ColumnsPicker value={data.ys} names={names} auto={Y_AUTO} title="The Y columns: one, or several (a list: 2, B-D, names, A*); auto: the designated ones — each analysed on its own" onChange={(ys) => set({ ys })} />
+            <ColumnsPicker value={data.ys} names={names} auto={Y_AUTO} title="The Y columns: one, or several (a list: 2, B-D, names, A*); auto: the designated ones; each analysed on its own" onChange={(ys) => set({ ys })} />
             <span>Range</span>
             <span className="row">
               <NumInput className="short" value={data.from ?? NaN} placeholder="from" onChange={(from) => set({ from })} />
@@ -507,7 +507,7 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
       <details open>
         <summary>3 · Peaks</summary>
         <div className="row wrap">
-          <Field label="The peaks" title="Found automatically in every run (all of one shape), or chosen by hand — a region dragged across each on the graph (+ Region), or a point (+ Point), each its own shape">
+          <Field label="The peaks" title="Found automatically in every run (all of one shape), or chosen by hand: a region dragged across each on the graph (+ Region), or a point (+ Point), each its own shape">
             <Select<'auto' | 'manual'>
               value={manual ? 'manual' : 'auto'}
               options={[
@@ -519,7 +519,7 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
           </Field>
         </div>
         <div className="row wrap">
-          <Field label="Find" title="Maxima, minima (dips) or both — also what a region takes: its maximum for peaks, its minimum for dips">
+          <Field label="Find" title="Maxima, minima (dips) or both: also what a region takes: its maximum for peaks, its minimum for dips">
             <Select
               value={find.sign}
               options={[
@@ -586,7 +586,7 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
                   )}
                   <button
                     className={`nodrag ts-btn${q.doublet ? ' on' : ''}`}
-                    title="A doublet (spin–orbit): a second peak of the same shape and width at a fixed distance ΔX, its area a fixed part of this one's (2p: 0.5, 3d: 0.667, 4f: 0.75) — linked to it in the fit"
+                    title="A doublet (spin–orbit): a second peak of the same shape and width at a fixed distance ΔX, its area a fixed part of this one's (2p: 0.5, 3d: 0.667, 4f: 0.75): linked to it in the fit"
                     onClick={() => setPeak(j, { doublet: q.doublet ? undefined : { dx: 1, ratio: 0.5 } })}
                   >
                     2×
@@ -626,14 +626,14 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
       </details>
       <details open>
         <summary>4 · Fit</summary>
-        <Check label="Fit the peaks — all together, as a sum (peak deconvolution: overlapping peaks separated); else measured on the data" value={data.fit} onChange={(fit) => set({ fit })} />
+        <Check label="Fit the peaks: all together, as a sum (peak deconvolution: overlapping peaks separated); else measured on the data" value={data.fit} onChange={(fit) => set({ fit })} />
         {data.fit && (
           <div className="row wrap">
             <button className="nodrag btn-run" title="Fit the peaks with these settings (the fit is made only here; a setting changed asks for a new Run)" onClick={runIt}>
               Run analysis
             </button>
             <span className={`muted${runState === 'changed' ? ' warn-text' : ''}`}>
-              {!data.needRun ? 'fitted at every change (an older node): Run analysis fits only when pressed' : runState === 'fitted' ? `fitted${Number.isFinite(run?.r2) ? ` · R² ${fmtNum(run!.r2, 6)}` : ''}` : runState === 'changed' ? 'settings changed — Run again' : 'not run yet: the peaks are measured on the data'}
+              {!data.needRun ? 'fitted at every change (an older node): Run analysis fits only when pressed' : runState === 'fitted' ? `fitted${Number.isFinite(run?.r2) ? ` · R² ${fmtNum(run!.r2, 6)}` : ''}` : runState === 'changed' ? 'settings changed: Run again' : 'not run yet: the peaks are measured on the data'}
             </span>
           </div>
         )}
@@ -698,7 +698,7 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
         </>
       )}
       <Messages result={r} />
-      <OutPort label="data" port="dataset" id="out" title="X, Y (or Y − baseline), the baseline, every peak and the envelope (their sum) — a run after another; Plot these columns draws the peaks separated" />
+      <OutPort label="data" port="dataset" id="out" title="X, Y (or Y − baseline), the baseline, every peak and the envelope (their sum): a run after another; Plot these columns draws the peaks separated" />
       <OutPort label="peaks" port="dataset" id="table" title="A row per peak: center, height, FWHM, area, area % (and the errors and R² of the fit, or the centroid and limits)" />
       <OutPort label="baseline" port="dataset" id="base" title="X and the baseline of every run" />
       <OutPort label="residuals" port="dataset" id="resid" title="X and data − (baseline + peaks) of every run (with a fit)" />

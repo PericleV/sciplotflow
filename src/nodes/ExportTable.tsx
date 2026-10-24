@@ -74,11 +74,11 @@ export function ExportTable({ name, shown, book, value, onChange }: { name: stri
         </Field>
         {!xlsx && (
           <>
-            <Field label="Delimiter" title="Between the values, as in Import: comma, semicolon, tab, spaces, bar, or other — one or more characters of your own (\t: a tab)">
+            <Field label="Delimiter" title="Between the values, as in Import: comma, semicolon, tab, spaces, bar, or other; one or more characters of your own (\t: a tab)">
               <Select<ExportDelimiter> value={o.delimiter} options={DELIMS} onChange={(delimiter) => set({ delimiter })} />
               {o.delimiter === 'custom' && <TextInput className="delim-chars mono" value={o.custom ?? ''} placeholder="e.g. ::" title="The delimiter: one or more characters (\t: a tab)" onChange={(custom) => set({ custom })} />}
             </Field>
-            <Field label="Decimal" title={o.decimal === ',' && delimiterOf(o).includes(',') ? 'A decimal comma with a comma between the values: the numbers are written in quotes (“2,5”) — a semicolon is the usual delimiter then' : 'The decimal separator: 2.5 or 2,5'}>
+            <Field label="Decimal" title={o.decimal === ',' && delimiterOf(o).includes(',') ? 'A decimal comma with a comma between the values: the numbers are written in quotes (“2,5”): a semicolon is the usual delimiter then' : 'The decimal separator: 2.5 or 2,5'}>
               <Select<'.' | ','>
                 value={o.decimal}
                 options={[

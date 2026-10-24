@@ -76,7 +76,7 @@ export function WaterfallNodeView({ id, data: d }: NodeProps<WaterfallNode>) {
       <details open>
         <summary>Waterfall</summary>
         <div className="col-form">
-          <span title="How the curves are spaced: even steps; in proportion to their Z (real thicknesses, temperatures …); a shift written for every curve; automatic — each one just above all those in front of it, plus a gap; or a part of the height of the curve in front">Spacing</span>
+          <span title="How the curves are spaced: even steps; in proportion to their Z (real thicknesses, temperatures …); a shift written for every curve; automatic: each one just above all those in front of it, plus a gap; or a part of the height of the curve in front">Spacing</span>
           <Select<NonNullable<WaterfallSpec['spacing']>>
             value={spacing}
             options={[

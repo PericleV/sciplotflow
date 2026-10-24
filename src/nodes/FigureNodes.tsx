@@ -325,7 +325,7 @@ export function Plot1DNodeView({ id, data }: NodeProps<Plot1DNode>) {
               {(st.colorBy === 'column' || connected(rowHandle('color', k))) && <InPort label="colour" port="column" id={rowHandle('color', k)} title="The column that colours the points" />}
               {(st.sizeBy === 'column' || st.widthBy === 'column' || connected(rowHandle('size', k))) && <InPort label="size" port="column" id={rowHandle('size', k)} title="The column that sizes the symbols (or sets the line's width)" />}
               {(st.labels === 'column' || connected(rowHandle('label', k))) && <InPort label="labels" port="column" id={rowHandle('label', k)} title="The column with the labels of the points" />}
-              <InPort label="data" port="dataset" id={rowHandle('series', k)} title="Optional: a dataset for this curve — its X, Y, ±Y, ±X chosen in the panel (else its first designated curve); a column connected to a port replaces that part" />
+              <InPort label="data" port="dataset" id={rowHandle('series', k)} title="Optional: a dataset for this curve; its X, Y, ±Y, ±X chosen in the panel (else its first designated curve); a column connected to a port replaces that part" />
               <OutPort label={`data ${k + 1}`} port="dataset" id={rowHandle('series', k)} title="The data of this curve as a dataset (X, Y, ±Y, ±X designated), for analysis nodes" />
             </div>
           </div>
@@ -333,7 +333,7 @@ export function Plot1DNodeView({ id, data }: NodeProps<Plot1DNode>) {
       })}
       <NodeOptions>
         <div className="row">
-          <Field label="Colours" title="Each curve its own colour (its style), or all the curves coloured by a colour map — by the value of the block each came from (Split into columns: the cavity thickness, the cycle …), else by their order; the legend can then show them as one entry with the colour scale">
+          <Field label="Colours" title="Each curve its own colour (its style), or all the curves coloured by a colour map: by the value of the block each came from (Split into columns: the cavity thickness, the cycle …), else by their order; the legend can then show them as one entry with the colour scale">
             <Select<'own' | ColorMapName>
               value={data.curveColors?.map ?? 'own'}
               options={[['own', 'each curve its own'], ...CMAP_OPTIONS.filter(([k]) => k !== 'custom').map(([k, l]): ['own' | ColorMapName, string] => [k, `colour map: ${l}`])]}
@@ -357,7 +357,7 @@ export function Plot1DNodeView({ id, data }: NodeProps<Plot1DNode>) {
         </div>
         {count > 1 && (
           <div className="row wrap">
-            <Field label="Curves" title="Each as it is; stacked — each on the ones before it, on the X of the first (stacked areas: each filled down to the one under it unless it has a fill of its own); or as % of their sum at every X">
+            <Field label="Curves" title="Each as it is; stacked: each on the ones before it, on the X of the first (stacked areas: each filled down to the one under it unless it has a fill of its own); or as % of their sum at every X">
               <Select<NonNullable<Plot1DData['stack']>>
                 value={data.stack ?? 'none'}
                 options={[
@@ -415,7 +415,7 @@ export function Plot1DNodeView({ id, data }: NodeProps<Plot1DNode>) {
                 <button className="nodrag ts-btn" title={pfolded ? 'Show its columns (and its style when opened)' : 'Fold it to this line (its columns, fits and style hidden)'} onClick={() => setPfold({ ...pfold, [k]: !pfolded })}>
                   {pfolded ? '⊞' : '⊟'}
                 </button>
-                <input className="nodrag" type="checkbox" checked={st.show} title="Show this curve (hidden: not drawn, not in the legend nor the limits of the axes — still a line another curve can be filled to)" onChange={(e) => setStyle({ show: e.target.checked })} />
+                <input className="nodrag" type="checkbox" checked={st.show} title="Show this curve (hidden: not drawn, not in the legend nor the limits of the axes; still a line another curve can be filled to)" onChange={(e) => setStyle({ show: e.target.checked })} />
                 <span className="swatch" style={{ background: st.color, opacity: st.show ? 1 : 0.3 }} />
                 <b>{k + 1}</b>
                 <span className="grow">
@@ -822,7 +822,7 @@ export function CanvasNodeView({ id, data }: NodeProps<CanvasNode>) {
       )}
       {tab === 'page' && (
         <>
-          <PageControls page={page} set={(p) => set(p)} fixed={keep && fig ? `Size: ${fig.width} × ${fig.height} ${fig.unit} — from the Plots (Grid ▸ Size of the Plots: keep their sizes).` : undefined} />
+          <PageControls page={page} set={(p) => set(p)} fixed={keep && fig ? `Size: ${fig.width} × ${fig.height} ${fig.unit}; from the Plots (Grid ▸ Size of the Plots: keep their sizes).` : undefined} />
           {keep && (
             <Field label="Unit" title="Of the gaps, the margin and the size shown">
               <Select

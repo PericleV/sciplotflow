@@ -48,7 +48,7 @@ export function ContourNodeView({ id, data: d }: NodeProps<ContourNode>) {
           <InPort label="matrix" port="matrix" id="matrix" title="Or a matrix (Matrix, or a result of Matrix computation): drawn as its cells">
             <span className="muted">{mat ? sizeText(mat) : 'or connect a matrix'}</span>
           </InPort>
-          <InPort label="overlay" port="dataset" id="overlay" title="Optional: curves drawn over the map — every Y of a dataset with its X (a path, measured points …) as lines and symbols" />
+          <InPort label="overlay" port="dataset" id="overlay" title="Optional: curves drawn over the map; every Y of a dataset with its X (a path, measured points …) as lines and symbols" />
         </>
       }
       data={

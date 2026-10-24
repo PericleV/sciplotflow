@@ -153,7 +153,7 @@ export function ProjectsPanel(props: { onClose: () => void; currentId: string; k
         })}
       </div>
       <div className="hint">
-        {use ? `The browser's room used: ${sizeText(use.used)} of ${sizeText(use.quota)}. ` : ''}The projects stay only in this browser: clearing the site data removes them — Back up all, or Save, keeps them in a file.
+        {use ? `The browser's room used: ${sizeText(use.used)} of ${sizeText(use.quota)}. ` : ''}The projects stay only in this browser: clearing the site data removes them; Back up all, or Save, keeps them in a file.
       </div>
     </aside>
   );

@@ -210,7 +210,7 @@ export function CalculusNodeView({ id, data }: NodeProps<CalculusNode>) {
           <Field label="X">
             <Select value={data.x || '-auto'} options={[['-auto', xAutoLabel(r?.view.available)], ['-', 'row number'], ...names.map((nm): [string, string] => [nm, nm])]} onChange={(x) => set({ x: x === '-auto' ? '' : x })} />
           </Field>
-          <Field label="Y" title="The columns: 2, B-D (letters), names, A* (a pattern); empty: the Y columns (their designation) — each gets its own result">
+          <Field label="Y" title="The columns: 2, B-D (letters), names, A* (a pattern); empty: the Y columns (their designation): each gets its own result">
             <ColumnsPicker value={data.ys} names={names} auto={Y_AUTO} onChange={(ys) => set({ ys })} />
           </Field>
         </div>
@@ -227,7 +227,7 @@ export function CalculusNodeView({ id, data }: NodeProps<CalculusNode>) {
               onChange={(order) => set({ order })}
             />
           </Field>
-          <Field label="Method" title="Central: the mean of the slopes to the two neighbours (one slope at the ends). Savitzky–Golay: a polynomial fitted over a window of points around each one — smooths noisy data">
+          <Field label="Method" title="Central: the mean of the slopes to the two neighbours (one slope at the ends). Savitzky–Golay: a polynomial fitted over a window of points around each one; smooths noisy data">
             <Select<DiffMethod>
               value={data.method}
               options={[
@@ -276,7 +276,7 @@ export function CalculusNodeView({ id, data }: NodeProps<CalculusNode>) {
               <>
                 <Select
                   value={data.baseFrom === 'port' ? 'port' : 'column'}
-                  title="Another column of the data (with its own X when it has one — e.g. the return of a scan cut by Split into columns ▸ where X changes direction: the area between the two), or the curve connected to the “baseline” port"
+                  title="Another column of the data (with its own X when it has one: e.g. the return of a scan cut by Split into columns ▸ where X changes direction: the area between the two), or the curve connected to the “baseline” port"
                   options={[
                     ['column', 'a column'],
                     ['port', 'the baseline input'],

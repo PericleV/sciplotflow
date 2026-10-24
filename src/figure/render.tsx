@@ -182,7 +182,7 @@ export function RichText({ x, y, text: raw, st, anchor = 'start', valign = 'base
           textDecoration={r.underline ? 'underline' : undefined}
           wordSpacing={spacing(li)}
         >
-          {/* an overline (Miller indices: 11\overline{2}4) as a combining overline after every character — browsers do
+          {/* an overline (Miller indices: 11\overline{2}4) as a combining overline after every character; browsers do
               not draw text-decoration on a tspan */}
           {r.overline ? [...r.t].map((ch) => (ch.trim() ? `${ch}̅` : ch)).join('') : r.t}
         </tspan>,

@@ -75,7 +75,7 @@ export function RowSelectControls({ value, onChange, hasX, result }: { value: Ro
         </>
       )}
       {v.mode === 'list' && (
-        <Field label="Rows" title="Rows: 3, 7-12, 1:2:100 (every 2nd), 50-end — rows count from 1">
+        <Field label="Rows" title="Rows: 3, 7-12, 1:2:100 (every 2nd), 50-end: rows count from 1">
           <TextInput value={v.list ?? ''} placeholder="3, 7-12, 50-end" onChange={(list) => onChange({ ...v, list })} />
         </Field>
       )}
@@ -207,7 +207,7 @@ export function StatsNodeView({ id, data }: NodeProps<StatsNode>) {
             </Field>
           </div>
           </NodeOptions>
-          <OutPort label="dataset" port="dataset" id="out" title="X, Mean (Y), SD or SE (±Y) and the other statistics — right-click ▸ Plot these columns" />
+          <OutPort label="dataset" port="dataset" id="out" title="X, Mean (Y), SD or SE (±Y) and the other statistics: right-click ▸ Plot these columns" />
         </>
       ) : (
         <>
@@ -223,7 +223,7 @@ export function StatsNodeView({ id, data }: NodeProps<StatsNode>) {
               </div>
             )}
             {statList.map((st) => (
-              <OutPort key={st.key} id={st.key} label="" port={ofDataset ? 'column' : 'scalar'} title={`${st.label}: ${st.help}${ofDataset ? ' — a column: a value per column' : ''}`}>
+              <OutPort key={st.key} id={st.key} label="" port={ofDataset ? 'column' : 'scalar'} title={`${st.label}: ${st.help}${ofDataset ? ': a column: a value per column' : ''}`}>
                 <span className="stat-name">{st.label}</span>
                 {ofDataset ? (
                   shown.map((x) => (
@@ -240,7 +240,7 @@ export function StatsNodeView({ id, data }: NodeProps<StatsNode>) {
           {ofDataset && cols.length > shown.length && <div className="hint">+ {cols.length - shown.length} more columns in the table</div>}
           <NodeOptions>
             <div className="row wrap">
-              <Field label="Control chart" title="Of the (first) column, its values in their order: individuals and moving ranges (I–MR), or the means and ranges of subgroups (X̄–R) — the centre line and the 3σ limits (σ from the ranges), the points out of control by the Western Electric rules (1: beyond 3σ; 2: 2 of 3 beyond 2σ; 3: 4 of 5 beyond 1σ; 4: 8 on one side)">
+              <Field label="Control chart" title="Of the (first) column, its values in their order: individuals and moving ranges (I–MR), or the means and ranges of subgroups (X̄–R): the centre line and the 3σ limits (σ from the ranges), the points out of control by the Western Electric rules (1: beyond 3σ; 2: 2 of 3 beyond 2σ; 3: 4 of 5 beyond 1σ; 4: 8 on one side)">
                 <Select<'none' | 'imr' | 'xbar'>
                   value={data.control ?? 'none'}
                   options={[
@@ -265,7 +265,7 @@ export function StatsNodeView({ id, data }: NodeProps<StatsNode>) {
               </div>
             )}
           </NodeOptions>
-          <OutPort label="table" port="dataset" id="table" title="A row per column (named by it), every statistic a column; Mean designated Y and SD ±Y — right-click ▸ Plot these columns" />
+          <OutPort label="table" port="dataset" id="table" title="A row per column (named by it), every statistic a column; Mean designated Y and SD ±Y: right-click ▸ Plot these columns" />
           {data.control && <OutPort label="control chart" port="dataset" id="control" title="Every point (or subgroup): its value, the centre line CL and the limits UCL, LCL (designated Y: a Plot draws them), the ranges and their limits, the rules broken" />}
         </>
       )}

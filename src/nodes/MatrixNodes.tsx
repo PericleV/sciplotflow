@@ -298,7 +298,7 @@ export function MatrixNodeView({ id, data: d }: NodeProps<MatrixNode>) {
       )}
       <Messages result={r} />
       <OutPort label="matrix" port="matrix" title="The matrix: to Matrix computation, Contour / heatmap" />
-      <OutPort label="dataset" port="dataset" id="dataset" title="The matrix as a table: the rows' Y (designated X), then a column a matrix column (named by its X) — for a Workbook, 1D plot, Contour" />
+      <OutPort label="dataset" port="dataset" id="dataset" title="The matrix as a table: the rows' Y (designated X), then a column a matrix column (named by its X): for a Workbook, 1D plot, Contour" />
     </div>
   );
 }

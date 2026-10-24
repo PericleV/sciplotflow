@@ -70,7 +70,7 @@ function linkPlan(sp: FitParamSpec[], warnings: string[]): { j: number; fn: (p: 
       if (!s.link?.trim()) return null;
       const c = compile(s.link);
       if (typeof c === 'string' || c.names.some((v) => !names.includes(v))) {
-        warnings.push(`${s.name} = ${s.link}: ${typeof c === 'string' ? c : 'not a formula of the parameters'} — left free.`);
+        warnings.push(`${s.name} = ${s.link}: ${typeof c === 'string' ? c : 'not a formula of the parameters'}: left free.`);
         return null;
       }
       const vars: Record<string, number> = {};
