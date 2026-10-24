@@ -92,6 +92,7 @@ import { curveFormulas } from '../src/engine/curvemath.ts';
 import { condsFormula, selectRows, type RowOp } from '../src/engine/rowsel.ts';
 import { rowHandle, sourcePort, targetAccepts } from '../src/engine/ports.ts';
 import { checkImage } from './check-image.ts';
+import { APP_VERSION } from '../src/version.ts';
 import { callSite, writeValidation, type CheckRecord } from './validation.ts';
 import { checkStat2 } from './check-stat2.ts';
 import { checkStat3 } from './check-stat3.ts';
@@ -6467,6 +6468,9 @@ checkPhase(ok);
   const leaks = ['llms.txt', 'api/nodes.json', 'api/project.schema.json', 'api/recipes.json', 'api/check.mjs'].filter((f) => privateHits(readFileSync(join(dir, f), 'utf8')).length);
   ok(leaks.length === 0 && privateHits('C:\\Users\\someone\\x').length > 0 && privateHits('mail me: someone@gmail.com').length > 0, `catalog: nothing private in the published files${leaks.length ? ` (${leaks.join(', ')})` : ''}`);
 }
+
+// the version shown in the app is package.json's
+ok(APP_VERSION === (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version, `the app's version (${APP_VERSION}) as package.json's`);
 
 console.log(`${passed} passed, ${failed} failed`);
 if (report) {

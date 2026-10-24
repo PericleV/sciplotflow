@@ -1,19 +1,19 @@
 # SciPlotFlow
 
-**Version 0.1.0-alpha, public test**
+**Version 1.0**
 
 SciPlotFlow is a free app for scientific data analysis and publication-quality graphs, built from nodes. You import a
 file, clean it, compute, fit and test, then draw the figure. Every step is a node on a canvas, so the whole analysis
 stays visible, and changing anything updates everything after it. It runs in your browser, and your data never leaves
 your computer.
 
-## This is an alpha version
+## Version 1.0
 
-This first public version is here to be tried and tested. Please keep in mind:
+SciPlotFlow 1.0 is the first complete version: data, statistics, signals, fitting, image analysis and figures for
+publication, each computation checked against established libraries ([VALIDATION.md](VALIDATION.md)).
 
-- Things can still change, and some parts may not work as expected.
-- Save your projects often (**Save** at the top, or **Projects** to keep them in the browser).
 - Projects saved now will keep opening in later versions.
+- Save your projects often (**Save** at the top, or **Projects** to keep them in the browser).
 - If something goes wrong, please tell me (see [Reporting a problem](#reporting-a-problem)).
 
 ## Try it

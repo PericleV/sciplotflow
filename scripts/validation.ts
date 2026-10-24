@@ -1,5 +1,5 @@
 // The validation report (npm run validation → VALIDATION.md): every check of npm run check, grouped by what its result
-// is compared with — the reference values of a script of scripts/fixtures (computed with SciPy, statsmodels …; the
+// is compared with: the reference values of a script of scripts/fixtures (computed with SciPy, statsmodels …; the
 // script is the one whose values the check's block reads), a library or program named in the check, or else exact
 // values, definitions and properties.
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -33,7 +33,25 @@ const PY: Record<string, string> = { scipy: 'SciPy', numpy: 'NumPy', statsmodels
 const OTHER = 'Exact values, definitions and properties';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const esc = (s: string) => s.replace(/\|/g, '\\|').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+// (the em dashes of a check's text: a pair inside a sentence in parentheses, a single one a colon, or a semicolon when
+// its clause has a colon already)
+function noDash(t: string): string {
+  let s = t;
+  for (let prev = ''; prev !== s; ) {
+    prev = s;
+    s = s.replace(/ — ([^—.;:!?()]{1,220}?) —(,?)( ?)/, (_, inner: string, comma: string, sp: string) => ` (${inner})${comma}${sp}`);
+  }
+  return s.replace(/\s*—\s*([,;]?)/g, (_, p: string, at: number, all: string) => {
+    if (p) return p;
+    const clause = all.slice(0, at).split(/[.;(]/).pop() ?? '';
+    return clause.includes(':') ? '; ' : ': ';
+  });
+}
+const esc = (s: string) =>
+  noDash(s)
+    .replace(/\|/g, '\\|')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 
 // a reference script: what it computes (its header comment) and the Python libraries it imports
 function fixtures(): Map<string, { about: string; libs: string[] }> {

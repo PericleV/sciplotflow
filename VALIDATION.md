@@ -1,12 +1,12 @@
 # Validation
 
-SciPlotFlow 0.1.0-alpha, 2026-10-24: **1435 of 1435 checks pass**.
+SciPlotFlow 1.0.0, 2026-10-24: **1436 of 1436 checks pass**.
 
 Every computation of SciPlotFlow is checked by `npm run check`:
 
 - **293 checks** compare a result with reference values computed in Python by established libraries (NumPy, SciPy, matplotlib, pandas, pingouin, statsmodels, contourpy, PyWavelets, scikit-learn, scikit-image, reliability, lifelines, pycwt, ruptures, pybaselines, differint, astropy). The scripts that compute them are in [`scripts/fixtures`](scripts/fixtures); their values are stored next to them as JSON, so the checks run without Python.
 - **29 checks** compare with the conventions of a library or program they name (ImageJ, Origin, SciPy, NumPy, matplotlib, scikit-image), without stored values.
-- **1113 checks** compare with exact values: a known answer, a formula, an identity (a transform and its inverse, the energy kept), a property (a test that must not change when the data are shifted), or the behaviour of the interface (a file read, a figure laid out, a project opened). Methods that no library does (or none does right) are written from their publications, cited in the code.
+- **1114 checks** compare with exact values: a known answer, a formula, an identity (a transform and its inverse, the energy kept), a property (a test that must not change when the data are shifted), or the behaviour of the interface (a file read, a figure laid out, a project opened). Methods that no library does (or none does right) are written from their publications, cited in the code.
 
 Each check states what it compares and how close the result is; one check often compares many values (the statistical tests against SciPy: one check, 267 values). This file is made by `npm run validation`, which runs every check and writes it.
 
@@ -27,7 +27,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 |---|---:|---|---|
 | [`ba-ref.py`](scripts/fixtures/ba-ref.py) | 6 / 6 | Bland–Altman node (numpy / scipy, written out from the papers). | NumPy, SciPy |
 | [`bar-ref.py`](scripts/fixtures/bar-ref.py) | 7 / 7 | Bar chart node (numpy / scipy / matplotlib). | NumPy, SciPy, matplotlib |
-| [`baseline-ref.py`](scripts/fixtures/baseline-ref.py) | 16 / 16 | Baselines (NumPy, SciPy's sparse solver): the iterative polynomial, asymmetric least squares, airPLS, SNIP (log-log-square-root), Shirley, Tougaard — on a spectrum of three peaks over a curved background, a little noise. | NumPy, SciPy |
+| [`baseline-ref.py`](scripts/fixtures/baseline-ref.py) | 16 / 16 | Baselines (NumPy, SciPy's sparse solver): the iterative polynomial, asymmetric least squares, airPLS, SNIP (log-log-square-root), Shirley, Tougaard: on a spectrum of three peaks over a curved background, a little noise. | NumPy, SciPy |
 | [`biostat-ref.py`](scripts/fixtures/biostat-ref.py) | 7 / 7 | Dunnett (scipy.stats.dunnett), two-way ANOVA with a factor between and one within the subjects (pingouin.mixed_anova), two-way with both factors within (statsmodels AnovaRM; pingouin.rm_anova for ε), the linear mixed model with a random intercept, REML (statsmodels MixedLM) on data with missing values. Made with SciPy 1.18, statsmodels 0.15, pingouin 0.7, pandas 3.0 (a virtual environment: pip install scipy statsmodels pingouin). | NumPy, pandas, SciPy, pingouin, statsmodels |
 | [`box-ref.py`](scripts/fixtures/box-ref.py) | 10 / 10 | Box & violin node (matplotlib / scipy). | NumPy, SciPy, matplotlib |
 | [`contour-ref.py`](scripts/fixtures/contour-ref.py) | 14 / 14 | Contour / heatmap node: contour lines (contourpy's serial algorithm, as matplotlib's; engine: the vertices of the lines of a level) and scattered points interpolated to a grid (scipy griddata, linear) | NumPy, contourpy, SciPy |
@@ -35,7 +35,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 | [`hist-ref.py`](scripts/fixtures/hist-ref.py) | 18 / 18 | Histogram node (numpy / scipy / sklearn). | NumPy, SciPy, scikit-learn |
 | [`image-ref.py`](scripts/fixtures/image-ref.py) | 18 / 18 | Image analysis node (scikit-image 0.25, scipy, numpy): Small synthetic images whose values are exact in float32 (multiples of 1/8), so the differences are the algorithms'. | NumPy, SciPy, scikit-image |
 | [`kk-ref.py`](scripts/fixtures/kk-ref.py) | 1 / 1 | Lin-KK test of the Kramers–Kronig node (numpy; Schönleber et al. 2014, as impedance.py's linKK builds its model): A Randles circuit with 0.3 % noise; the fit of R0, M RC elements (time constants spread evenly in log over the frequencies), an inductance, every row divided by \|Z\|; of M = 1 … 50, the best fit with μ ≥ 0.85. | NumPy |
-| [`matrix-ref.py`](scripts/fixtures/matrix-ref.py) | 42 / 42 | Matrix nodes: numpy.linalg and scipy.linalg on a few matrices — general, symmetric positive definite, rectangular, rank-deficient, with real eigenvalues, Hilbert. | NumPy, SciPy |
+| [`matrix-ref.py`](scripts/fixtures/matrix-ref.py) | 42 / 42 | Matrix nodes: numpy.linalg and scipy.linalg on a few matrices: general, symmetric positive definite, rectangular, rank-deficient, with real eigenvalues, Hilbert. | NumPy, SciPy |
 | [`nr-ref.py`](scripts/fixtures/nr-ref.py) | 4 / 4 | Incomplete beta and gamma functions (scipy.special betainc, gammainc and their complements) and the eigenvalues of non-symmetric matrices (numpy.linalg.eigvals), for src/engine/dist.ts and src/engine/matrix.ts. | NumPy, SciPy |
 | [`peakshape-ref.py`](scripts/fixtures/peakshape-ref.py) | 11 / 11 | Peak shapes (SciPy): the Faddeeva function w(z) over the upper half plane, the Voigt profile, and a Doniach–Šunjić line computed from its formula. | NumPy, SciPy |
 | [`pie-ref.py`](scripts/fixtures/pie-ref.py) | 3 / 3 | Pie chart node (matplotlib pie: the wedges' angles). | matplotlib |
@@ -43,7 +43,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 | [`quickfit-ref.py`](scripts/fixtures/quickfit-ref.py) | 8 / 8 | Quick fit: scipy.optimize.curve_fit (two Gaussians on a constant, the covariance scaled by the residual variance) and scipy.stats.linregress (a line on a range, its standard errors). | NumPy, SciPy |
 | [`rdist-ref.py`](scripts/fixtures/rdist-ref.py) | 4 / 4 | Studentized range, the noncentral t and Shapiro–Wilk: scipy.stats | SciPy, NumPy |
 | [`reliability-ref.py`](scripts/fixtures/reliability-ref.py) | 17 / 17 | Life data: the Python package `reliability` (Fitters: maximum likelihood with right censoring, rank regression, 3-parameter Weibull, Fisher bounds, plotting positions with Johnson's adjusted ranks) and `lifelines` (Kaplan–Meier with the exponential Greenwood interval). Run in an environment with both: python reliability-ref.py &gt; reliability-ref.json | matplotlib, NumPy, reliability, lifelines, SciPy |
-| [`roi-ref.py`](scripts/fixtures/roi-ref.py) | 1 / 1 | Selections of the Image analysis node (scikit-image regionprops, scipy, numpy, matplotlib for the pixels inside a polygon — their centres, as ImageJ): The gray image G of image-ref.json (20 × 24) measured under a few shapes. | NumPy, matplotlib, SciPy, scikit-image |
+| [`roi-ref.py`](scripts/fixtures/roi-ref.py) | 1 / 1 | Selections of the Image analysis node (scikit-image regionprops, scipy, numpy, matplotlib for the pixels inside a polygon: their centres, as ImageJ): The gray image G of image-ref.json (20 × 24) measured under a few shapes. | NumPy, matplotlib, SciPy, scikit-image |
 | [`sig-ref.py`](scripts/fixtures/sig-ref.py) | 5 / 5 | Significance brackets (scipy): Welch t + Holm, Mann–Whitney, Tukey HSD | NumPy, SciPy |
 | [`signal-ref.py`](scripts/fixtures/signal-ref.py) | 1 / 1 | Signal processing (scipy / numpy). | NumPy, SciPy |
 | [`sigpack-ref.py`](scripts/fixtures/sigpack-ref.py) | 14 / 14 | Signal package: the arPLS baseline (pybaselines), the change points (ruptures: Pelt and Binseg, jump 1), the continuous wavelet transform with its significance and the wavelet coherence (pycwt), the multiresolution analysis (PyWavelets' mra, the stationary transform), the peaks of a Ricker transform (SciPy's find_peaks_cwt), the fractional derivatives (differint, and the exact ones of powers), the fast fractional Fourier transform (fracF of Ozaktas et al. 1996, written out here), the Lomb–Scargle periodogram (astropy's LombScargle and scipy.signal.lombscargle), the Bessel filter and the notch (scipy.signal.bessel, iirnotch). It also writes src/engine/waveletFilters.ts (the filters of PyWavelets). Made with SciPy 1.18, PyWavelets 1.9, pycwt 0.5, pybaselines 1.2, ruptures 1.1, differint, astropy 8.0 (a virtual environment: pip install scipy PyWavelets pycwt pybaselines ruptures differint astropy). | NumPy, SciPy, PyWavelets, pycwt, ruptures, pybaselines, differint, astropy |
@@ -53,7 +53,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 | [`tests2-ref.py`](scripts/fixtures/tests2-ref.py) | 5 / 5 | P-values adjusted (statsmodels multipletests), contingency tables (scipy.stats: chi2_contingency, fisher_exact, odds_ratio, relative_risk, association; statsmodels mcnemar), ROC (scikit-learn roc_auc_score, roc_curve; DeLong's variance from its definition, Sun & Xu 2014), survival (lifelines KaplanMeierFitter, logrank_test, multivariate_logrank_test with its weightings), the linear model (statsmodels OLS / WLS with formulas, anova_lm Type II, variance_inflation_factor, het_breuschpagan, durbin_watson, OLSInfluence). Made with SciPy 1.18, statsmodels 0.15, lifelines 0.30, scikit-learn 1.9 (a virtual environment: pip install scipy statsmodels lifelines scikit-learn pandas). | NumPy, pandas, SciPy, statsmodels, scikit-learn, lifelines |
 | [`tests3-ref.py`](scripts/fixtures/tests3-ref.py) | 6 / 6 | Power and sample size (statsmodels TTestPower, TTestIndPower, FTestAnovaPower, NormalIndPower, GofChisquarePower), the bootstrap and permutation tests (scipy.stats.bootstrap, permutation_test), distributions fitted by maximum likelihood (scipy.stats *.fit, kstest), agreement (statsmodels cohens_kappa, fleiss_kappa; pingouin intraclass_corr, cronbach_alpha), the logistic regression (statsmodels Logit). Lin's concordance, Passing–Bablok, Deming and Hosmer–Lemeshow written here from their papers (Lin 1989; Passing and Bablok 1983; Linnet 1993; Hosmer and Lemeshow, as R's ResourceSelection), as no library at hand does them right. Made with SciPy 1.18, statsmodels 0.15, pingouin 0.7 (a virtual environment: pip install scipy statsmodels pingouin). | NumPy, pandas, SciPy, statsmodels, pingouin |
 | [`trend-ref.py`](scripts/fixtures/trend-ref.py) | 8 / 8 | The trend lines of a Plot: numpy's least squares (polyfit; the exponential and the power on ln y, as spreadsheets fit them), the band of the mean t·s·√(x₀ᵀ(XᵀX)⁻¹x₀) with the inverse taken directly, a centred moving average. python trend-ref.py &gt; trend-ref.json | NumPy, SciPy |
-| [`wavelet-ref.py`](scripts/fixtures/wavelet-ref.py) | 3 / 3 | Wavelets (PyWavelets): the decomposition filters of Haar, Daubechies 2 and 4, Symlet 4; the multilevel transform (periodization) and its inverse; the denoising — the signal extended symmetrically to a multiple of 2^level, wavedec, the universal threshold from the MAD of the finest details, soft and hard, waverec, cut back. | NumPy, PyWavelets |
+| [`wavelet-ref.py`](scripts/fixtures/wavelet-ref.py) | 3 / 3 | Wavelets (PyWavelets): the decomposition filters of Haar, Daubechies 2 and 4, Symlet 4; the multilevel transform (periodization) and its inverse; the denoising: the signal extended symmetrically to a multiple of 2^level, wavedec, the universal threshold from the MAD of the finest details, soft and hard, waverec, cut back. | NumPy, PyWavelets |
 
 ## Conventions of a named library or program
 
@@ -83,7 +83,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 
 - ✓ Bar chart, raw values: mean / median / sum / count with SD, SE, 95 % CI (t), min – max, Q1 – Q3 as numpy / scipy
 - ✓ Bar chart: grouped bars as matplotlib bar (centred offsets, width 0.8 / 3)
-- ✓ Bar chart: stacked — the positive values up, the negative ones down
+- ✓ Bar chart: stacked; the positive values up, the negative ones down
 - ✓ Bar chart: 100 % stacked of the absolute totals
 - ✓ Bar chart: horizontal bars as matplotlib barh
 - ✓ Bar chart: values written with 1 decimal, those under 20 % of the total hidden (\|\|2.0\|-2.0)
@@ -100,7 +100,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ baseline shirley: as NumPy / SciPy (3.6e-14)
 - ✓ baseline tougaard: as NumPy / SciPy (2.5e-14)
 - ✓ baselines: asymmetric least squares, airPLS, the polynomial find the background under the peaks
-- ✓ baselines: over the dips — the same as under the peaks, mirrored
+- ✓ baselines: over the dips; the same as under the peaks, mirrored
 - ✓ baseline Shirley: from one level to the other through the peak (20.00 at the centre)
 - ✓ baseline Tougaard: from the start level to the far end; the losses toward a lower X: the same, mirrored
 - ✓ Integrate: the line between the ends as before; the ends averaged when asked
@@ -134,7 +134,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Violin (outliers): 100 points from min to max, the density as gaussian_kde (Scott, Silverman)
 - ✓ Violins: groups and subgroups of raw values, every violin as wide
 - ✓ Violins: one scale for all (the widest at full width)
-- ✓ Violins: split — two subgroups, a half each at the same place
+- ✓ Violins: split; two subgroups, a half each at the same place
 - ✓ Box: a gradient on one group, the others plain
 
 </details>
@@ -152,9 +152,9 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Levels: nice values, decades on a log Z
 - ✓ Contour: filled levels with black lines, a value on each
 - ✓ Contour: the values written left out of the map, a threshold a cut when drawn, both out of the range; the outputs keep them
-- ✓ Contour: outside the colour range hidden — a cut at its ends (else none: the end colours)
+- ✓ Contour: outside the colour range hidden; a cut at its ends (else none: the end colours)
 - ✓ Contour: the lines drawn on the values not hidden
-- ✓ Contour: every value hidden — said
+- ✓ Contour: every value hidden; said
 
 </details>
 
@@ -222,28 +222,28 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Matrix: det, trace as numpy (-0.2420502408961773)
 - ✓ Matrix: the inverse as numpy inv
 - ✓ Matrix: solve A·x = B as numpy solve
-- ✓ Matrix: LU (P, L, U) as scipy.linalg.lu — the same pivots
+- ✓ Matrix: LU (P, L, U) as scipy.linalg.lu: the same pivots
 - ✓ Matrix: QR as numpy qr (the same signs)
 - ✓ Matrix: QR of a 5 × 3 (reduced) as numpy qr
 - ✓ Matrix: the complex eigenvalues of a general matrix as numpy eigvals (-0.5119,0.0000,0.0708,0.9121,0.0708,-0.9121,0.5651,0.0000)
 - ✓ Matrix: the singular values as numpy svd
-- ✓ Matrix: SVD — U·Σ·Vᵀ = A, UᵀU = I
+- ✓ Matrix: SVD; U·Σ·Vᵀ = A, UᵀU = I
 - ✓ Matrix: the pseudo-inverse and the rank as numpy
 - ✓ Matrix: the norms (Frobenius, 1, ∞, 2) and the condition number as numpy
 - ✓ Matrix: Aⁿ (3, −2) as numpy matrix_power; a fraction refused
 - ✓ Matrix: the Kronecker product as numpy kron
-- ✓ Matrix: a symmetric matrix — eigenvalues ascending and vectors as numpy eigh
+- ✓ Matrix: a symmetric matrix; eigenvalues ascending and vectors as numpy eigh
 - ✓ Matrix: Cholesky as numpy cholesky; a non-symmetric matrix refused
-- ✓ Matrix: a 5 × 3 — least squares as numpy lstsq, pinv, rank, σ
-- ✓ Matrix: a 3 × 5 — σ and pinv as numpy
-- ✓ Matrix: a rank-deficient matrix — rank 2, pinv as numpy
-- ✓ Matrix: a singular matrix — no inverse, said
-- ✓ Matrix: a general matrix with real eigenvalues — values and vectors as numpy eig
-- ✓ Matrix: Hilbert 5 — cond and inverse as numpy
+- ✓ Matrix: a 5 × 3; least squares as numpy lstsq, pinv, rank, σ
+- ✓ Matrix: a 3 × 5; σ and pinv as numpy
+- ✓ Matrix: a rank-deficient matrix; rank 2, pinv as numpy
+- ✓ Matrix: a singular matrix; no inverse, said
+- ✓ Matrix: a general matrix with real eigenvalues; values and vectors as numpy eig
+- ✓ Matrix: Hilbert 5; cond and inverse as numpy
 - ✓ Matrix: Vandermonde and Hilbert as numpy vander / scipy hilbert
 - ✓ Matrix: a formula of i, j; identity; rotation
 - ✓ Matrix: typed cells (a decimal comma, an empty cell)
-- ✓ Matrix: a row just added (empty) is kept — of 2 columns and of 1; no value at all: no matrix
+- ✓ Matrix: a row just added (empty) is kept: of 2 columns and of 1; no value at all: no matrix
 - ✓ Matrix from a dataset: the rows’ Y from X, the columns’ X from their names
 - ✓ Matrix ▸ dataset: read back as a matrix by the Contour
 - ✓ Matrix: rot90 and flips as numpy
@@ -253,14 +253,14 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Matrix: [A; B], dot and cross products
 - ✓ Matrix computation: A⁻¹ then R1 × A = I
 - ✓ Matrix computation: the pieces of LU used by a step below; det a value
-- ✓ Matrix computation: a formula of a, b, i, j; a product of sizes that do not fit — said
-- ✓ Matrix computation: an empty cell — no inverse (said), element by element it stays empty; a step on a failed one said
+- ✓ Matrix computation: a formula of a, b, i, j; a product of sizes that do not fit: said
+- ✓ Matrix computation: an empty cell; no inverse (said), element by element it stays empty; a step on a failed one said
 - ✓ Workbook: rows of an input sheet left out and moved (4,1,3; input)
 - ✓ Workbook: a matrix on an input, its names as asked (Row, C1, C2, C3 · C1, C2, C3)
 - ✓ Matrix computation in a graph: a port a result ()
 - ✓ Matrix ports: the types of the results, what the inputs take
-- ✓ Contour of a matrix: the figure, a value in every cell, row 1 at the top, square cells — a new Contour's defaults ()
-- ✓ Contour: a dataset and a matrix at once — said
+- ✓ Contour of a matrix: the figure, a value in every cell, row 1 at the top, square cells; a new Contour's defaults ()
+- ✓ Contour: a dataset and a matrix at once; said
 
 </details>
 
@@ -283,9 +283,9 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Voigt peak: its area and FWHM (4.09990 vs 4.09761)
 - ✓ constraints: xc2 = xc1 + 3, w2 = w1, A2 = 0.5·A1 kept, 3 free parameters (4.0000,8.0000,2.0000)
 - ✓ constraints: the errors of the linked parameters propagated, the band drawn
-- ✓ constraints: lines that do not read — said (4)
+- ✓ constraints: lines that do not read; said (4)
 - ✓ constraints in a circle: left free, said
-- ✓ Peak analyzer: a doublet fitted — its partner at ΔX, half the area, the same width (284.000,285.500)
+- ✓ Peak analyzer: a doublet fitted; its partner at ΔX, half the area, the same width (284.000,285.500)
 
 </details>
 
@@ -360,10 +360,10 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Weibull: the 95 % Fisher-matrix intervals of β and η as reliability
 - ✓ Weibull: B10 and B1 with their intervals as reliability (B10 279.75 [179.14, 436.87])
 - ✓ Weibull: rank regression X on Y and Y on X (with suspensions) as reliability
-- ✓ maximum likelihood with suspensions — Lognormal, Normal, Exponential, Gamma (reliability), Logistic, Gumbel (scipy): 6e-7, 3e-6, 5e-9, 7e-7, 4e-7, 5e-7
+- ✓ maximum likelihood with suspensions: Lognormal, Normal, Exponential, Gamma (reliability), Logistic, Gumbel (scipy): 6e-7, 3e-6, 5e-9, 7e-7, 4e-7, 5e-7
 - ✓ 3-parameter Weibull, maximum likelihood: γ, β, η as reliability (γ 359.949)
 - ✓ Kaplan–Meier with ties and suspensions, Greenwood’s interval (log–log) as lifelines (5.6e-16)
-- ✓ life data: the status read — S / 0 suspended, F / 1 failed, anything else not read
+- ✓ life data: the status read; S / 0 suspended, F / 1 failed, anything else not read
 - ✓ Probability plot with a status column: failures and suspensions, the fit, B10 and its interval in the statistics
 - ✓ Probability plot: the parameters written in a corner, the 63.2 % line, the Fisher bounds of the fit
 - ✓ ECDF with suspensions: Kaplan–Meier, the suspensions marked
@@ -421,7 +421,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Welch PSD as SciPy (density, Hann; spectrum, Hamming, linear detrend: 2.2e-15)
 - ✓ coherence and spectrogram as SciPy
 - ✓ the analytic signal (Hilbert, odd length) as SciPy
-- ✓ IIR design: Butterworth low / high pass, Chebyshev I band pass / stop — their responses as SciPy's (1.3e-15)
+- ✓ IIR design: Butterworth low / high pass, Chebyshev I band pass / stop; their responses as SciPy's (1.3e-15)
 - ✓ IIR filtering: causal and forward–backward (SciPy's padding) as sosfilt / sosfiltfilt (7.0e-15)
 - ✓ the overlapping Allan deviation of a rate as its formula (NumPy)
 - ✓ Allan deviation of white noise: σ(τ0) = σ, slope −½ (-0.511)
@@ -552,7 +552,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 
 <details><summary><b>matplotlib</b>: 1 checks</summary>
 
-- ✓ Python script: a matplotlib figure made into Plots — columns, look, fill_between, twin axis, legend, subplots in a Merge
+- ✓ Python script: a matplotlib figure made into Plots; columns, look, fill_between, twin axis, legend, subplots in a Merge
 
 </details>
 
@@ -565,7 +565,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 
 </details>
 
-<details><summary><b>Exact values, definitions and properties</b>: 1113 checks</summary>
+<details><summary><b>Exact values, definitions and properties</b>: 1114 checks</summary>
 
 - ✓ box handles: a side moves alone (across, or up), the other ways ignored
 - ✓ box handles: a corner moves two sides; Ctrl: about the centre
@@ -610,8 +610,8 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ nice range 400–800
 - ✓ linear ticks
 - ✓ linear labels
-- ✓ log labels: one way for the whole axis — powers when a decade is past 0.01 … 1000 (10^{−3} 10^{−2} 10^{−1} 10^{0} 10^{1})
-- ✓ log labels: plain numbers from 0.01 to 1000, else all powers (not 10, 100, 10³) — 0.1 1 10 100 1000 \| 10^{1} 10^{2} 10^{3} 10^{4}
+- ✓ log labels: one way for the whole axis; powers when a decade is past 0.01 … 1000 (10^{−3} 10^{−2} 10^{−1} 10^{0} 10^{1})
+- ✓ log labels: plain numbers from 0.01 to 1000, else all powers (not 10, 100, 10³): 0.1 1 10 100 1000 \| 10^{1} 10^{2} 10^{3} 10^{4}
 - ✓ small numbers as ×10ⁿ (0 1×10^{−6} 2×10^{−6})
 - ✓ common factor ×10³
 - ✓ percent labels
@@ -685,22 +685,22 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Columns: moved, renamed, designated, left out; find / replace and a prefix on the others; the names as a column
 - ✓ Columns: the names from a row (taken out of the data)
 - ✓ Columns: names kept different, a column not in the data said, a names row past the data
-- ✓ Columns: several names at once on the columns listed / ticked / Y — a list of names in order, a suffix, a name by hand first
-- ✓ Columns: a column on a port A — a column of its own at the end, placed, renamed, left out; not twice when copied
-- ✓ Columns: a workbook on its input — the sheet it names
-- ✓ Columns: every sheet of a workbook — the same settings for all, or each its own (S1:Signal \| S2:Signal,F \| S3:Signal; S1:Signal,A \| S2:Third,B \| S3:Signal,A)
+- ✓ Columns: several names at once on the columns listed / ticked / Y; a list of names in order, a suffix, a name by hand first
+- ✓ Columns: a column on a port A; a column of its own at the end, placed, renamed, left out; not twice when copied
+- ✓ Columns: a workbook on its input; the sheet it names
+- ✓ Columns: every sheet of a workbook; the same settings for all, or each its own (S1:Signal \| S2:Signal,F \| S3:Signal; S1:Signal,A \| S2:Third,B \| S3:Signal,A)
 - ✓ Columns: the names from a column (all the others; the column itself left out)
 - ✓ Columns: the names from a column for a list of columns (more names than columns said), for the Y columns
-- ✓ Columns: columns added — a formula of the columns, one of a column added above (and i), at the end
-- ✓ Columns: a column renamed by hand or with a prefix — the formula still right, shown with the new names; typed with them, stored by the names in
-- ✓ Columns: a formula by the letters of the list — kept by the column when it moves, mean(B) of a whole column, a [ being typed left alone
+- ✓ Columns: columns added; a formula of the columns, one of a column added above (and i), at the end
+- ✓ Columns: a column renamed by hand or with a prefix; the formula still right, shown with the new names; typed with them, stored by the names in
+- ✓ Columns: a formula by the letters of the list; kept by the column when it moves, mean(B) of a whole column, a [ being typed left alone
 - ✓ Columns: a letter not in the list said, the letters of the columns still right
-- ✓ Columns: the names from a column — a formula of the columns renamed still right
+- ✓ Columns: the names from a column; a formula of the columns renamed still right
 - ✓ Columns: an input {A} (one value) in a formula, mean([c]) of a whole column; one value in every row; a copy of an input column {B}
 - ✓ Columns: a formula of columns left out of the data
-- ✓ Columns: a formula of a missing column, of a bare name, unfinished — said, the column empty, the others go on
+- ✓ Columns: a formula of a missing column, of a bare name, unfinished; said, the column empty, the others go on
 - ✓ Columns: a column added in place of another (that one left out), marked as added
-- ✓ Columns: generated columns (evenly spaced, of i, random) — as many rows as the data, the same numbers as Generate column with the same seed
+- ✓ Columns: generated columns (evenly spaced, of i, random): as many rows as the data, the same numbers as Generate column with the same seed
 - ✓ Columns: a column of an input (its own name), a copy of a column renamed
 - ✓ tick labels: wrapped after N characters at the spaces (one long word kept; markup left alone)
 - ✓ a turned text: its extent across a horizontal and a vertical axis
@@ -718,7 +718,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Auto-extract: a quick plot from its designations
 - ✓ Auto-extract: names kept different
 - ✓ Auto-extract simple: the sheets ticked, every column with its designation (one not taken)
-- ✓ Auto-extract simple: no sheet ticked — said
+- ✓ Auto-extract simple: no sheet ticked; said
 - ✓ manip: masked, unmasked, moved, scaled, deleted
 - ✓ manip: the state of every input row
 - ✓ manip: restore makes deleted or masked points normal again
@@ -751,7 +751,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ fit: a formula of one’s own
 - ✓ fit: fixed, a range of X, the band as ±Y
 - ✓ fit: two peaks, numbered from the left
-- ✓ fit: every run; a row per fit — its number, its block value (named as the blocks), range, X from / to, the parameters, the statistics
+- ✓ fit: every run; a row per fit: its number, its block value (named as the blocks), range, X from / to, the parameters, the statistics
 - ✓ fit: the curves of all runs as a dataset (an X, a fit and a band column each, with its run), no port per parameter (x (y · run = 1), fit (y · run = 1), confidence band (y · run = 1), x (y · run = 2), fit (y · run = 2), confidence band (y · run = 2), x (y · run = 3), fit (y · run = 3), confidence band (y · run = 3))
 - ✓ fit: global, shared parameters common to the runs
 - ✓ Extract column: a parameter as a column or one value (a row)
@@ -781,8 +781,8 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Math column: rules in order, the input's name kept (1, 204, 3, 208, 210, 6, 7, 8, 18, 20)
 - ✓ Math column: max(A) of the whole column, max(A, 2) still row by row
 - ✓ Math column: one value of whole columns (32.5)
-- ✓ Math column: one value from a column row by row — said
-- ✓ Math column: one value — a value port
+- ✓ Math column: one value from a column row by row; said
+- ✓ Math column: one value; a value port
 - ✓ Import: missing values empty (N/A, -999), 1.234,5 with a thousands point, a footer of 2 lines left out
 - ✓ Import: a quoted 1,234.5 with a thousands comma
 - ✓ format 10 → 11: the three nodes converted, the ports of Add column moved to A, B
@@ -1036,7 +1036,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ split: auto by a column of labels beside X
 - ✓ labels in runs: each label in one run, two labels or more, no numbers
 - ✓ split: only X → a message
-- ✓ split: workbook input — reads from chosen sheet
+- ✓ split: workbook input; reads from chosen sheet
 - ✓ workbook: a sheet of the input taken out, listed to show it again (Sheet2)
 - ✓ split: an older node's names kept (a,b,b_2); a block named in the node (a,first run,b · 2)
 - ✓ split ▸ cycles from where the scan started: 0 → 1 → −1 → 0, twice, both whole (1-41 41-81)
@@ -1103,12 +1103,12 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ pick: the values, a list or start:step:end
 - ✓ pick: at X (linear), beyond: nothing / extrapolated / the end
 - ✓ pick: at Y = 1 → x = 0.5
-- ✓ pick: which crossing — all (2), first (0.5), last (1.5)
+- ✓ pick: which crossing; all (2), first (0.5), last (1.5)
 - ✓ pick: spline at X, the maximum refined by a parabola
 - ✓ pick: rows where a condition holds; the maximum between limits
 - ✓ pick: at E = 0.5 on every segment, a row per point against the segment (segment,pick,at,row,X,Y; )
 - ✓ pick: a row per Y column, a column per point (segment,Y @ x = 0.5)
-- ✓ pick: the other columns — none, all, a list (run,pick,at,row,x,y \| run,pick,at,row,x,y,z,w \| run,pick,at,row,x,y,w)
+- ✓ pick: the other columns; none, all, a list (run,pick,at,row,x,y \| run,pick,at,row,x,y,z,w \| run,pick,at,row,x,y,w)
 - ✓ pick, extract: a workbook, the sheet chosen (0.5/1 \| 5/10)
 - ✓ pick: rules at X and at Y produce separate sheets in workbook
 - ✓ pick: default out emits active sheet (at X)
@@ -1138,19 +1138,19 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ worksheet: a row and a column inserted between (C=NaN NaN NaN; a=1 9 2; b=3 NaN 4)
 - ✓ format 11 → 12: a Workbook's inputs keep their sheet “inputs” (Sheet1,inputs,more)
 - ✓ peaks: fitted only after Run analysis, again after a change (never, fitted, changed)
-- ✓ peaks: placed by regions — at their maxima, kept in them (30.017266945004074, 56.921705870836675)
+- ✓ peaks: placed by regions; at their maxima, kept in them (30.017266945004074, 56.921705870836675)
 - ✓ regionPeak: the extremum, refined; none outside
 - ✓ peaks: the maxima found (a bump that hardly stands out left to “shoulders”) (30,55.25)
 - ✓ peaks: the shoulder found from the second derivative (30,55.25,61.75)
-- ✓ peaks: fitted together — the overlapping ones separated (30,55,61)
+- ✓ peaks: fitted together; the overlapping ones separated (30,55,61)
 - ✓ peaks: the areas (a Lorentzian: A·π·w/2) and their %
-- ✓ peaks: out — the data, the baseline, every peak, the envelope (x,y,baseline,peak 1,peak 2,peak 3,envelope)
-- ✓ peaks: subtracted — every peak from 0
+- ✓ peaks: out; the data, the baseline, every peak, the envelope (x,y,baseline,peak 1,peak 2,peak 3,envelope)
+- ✓ peaks: subtracted; every peak from 0
 - ✓ peaks: measured on the data (no fit), over a fixed baseline (8.777395817095854)
 - ✓ example: overlapping peaks separated (1350.0,1580.3,1625.3)
 - ✓ format 9 → 10: Group → – ()
 - ✓ Peak fit style: data dots, baseline dashed, peaks filled down to the baseline, the envelope black
-- ✓ Plot: a hidden curve — out of the legend, still there to fill to
+- ✓ Plot: a hidden curve; out of the legend, still there to fill to
 - ✓ import: comment lines left out wherever they are, the names from the last one (Freq, GHz\|Re (S11)\|Im (S11) · x\|y)
 - ✓ import: comments after the data; an older project (no comment options) read as before
 - ✓ import: names with spaces kept whole (Time (s)\|Signal (mV))
@@ -1181,8 +1181,8 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ a line through bends: through every one, its ends moved in along its tangents; the bends as text
 - ✓ scaledSize: linear, area, log, reversed, clipped
 - ✓ Plot: size from y over a range set (a key of three sizes in the legend), width from x (y:4 0:2 20:5 40:8)
-- ✓ ANOVA: the groups as columns or indexed — the same F; the post-hoc pairs
-- ✓ example: the drug study — every layout read, every test run ()
+- ✓ ANOVA: the groups as columns or indexed; the same F; the post-hoc pairs
+- ✓ example: the drug study; every layout read, every test run ()
 - ✓ Curve math: ΔX at Y = 0.5, every crossing (2.9999396475677873,3.0000603524322127)
 - ✓ Curve math: ΔX at a range of Y (the last crossing, absolute)
 - ✓ Curve math: ΔY at X
@@ -1225,7 +1225,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Filter rows: the rows empty in every column removed, a row with one value kept (0/1/2/3)
 - ✓ Filter rows: whole rows reversed (the text with them)
 - ✓ Filter rows: a sort rule on a missing column said
-- ✓ Filter rows: a workbook in — one sheet (a dataset), or every sheet sorted (a workbook)
+- ✓ Filter rows: a workbook in; one sheet (a dataset), or every sheet sorted (a workbook)
 - ✓ Clean data: missing values filled (lines, previous, next)
 - ✓ Clean data: the rows of missing values removed (every column)
 - ✓ Clean data: an outlier (3 scaled MAD) masked, one change
@@ -1234,9 +1234,9 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Clean data: GESD finds 3 outliers in the NIST example (51,52,53)
 - ✓ Clean data: Grubbs repeated stops at the first test (R1 = 3.118 &lt; 3.158)
 - ✓ Clean data: a spike on a slope found by the moving median
-- ✓ Intersections: sin and 0 — 3 crossings at π, 2π, 3π, B above, below, above (3.141592855803835,6.283184876066685,9.424777977418923)
+- ✓ Intersections: sin and 0; 3 crossings at π, 2π, 3π, B above, below, above (3.141592855803835,6.283184876066685,9.424777977418923)
 - ✓ Intersections: the first, the last, in a range of X (3.141592855803835 9.424777977418923 6.283184876066685)
-- ✓ Intersections: a circle and a line (a loop, X going back) — 2 crossings (0.8660254037844388,-0.8660254037844388)
+- ✓ Intersections: a circle and a line (a loop, X going back): 2 crossings (0.8660254037844388,-0.8660254037844388)
 - ✓ Intersections: a touch (row 3 of A, 1.5 of B), left out when only crossings
 - ✓ Intersections: an overlap warned, where the curves meet and part counted (1,2)
 - ✓ Average curves: every X where all three exist, mean, SD, SE, N (18 rows, 0.5–9)
@@ -1248,15 +1248,15 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Import: a custom delimiter (::)
 - ✓ Import: a custom delimiter (#, 	 written)
 - ✓ Columns: a name with a comma chosen whole; a list still a list
-- ✓ Digitizer: 2 points on each axis — a turned, sheared image read back exactly
+- ✓ Digitizer: 2 points on each axis; a turned, sheared image read back exactly
 - ✓ Digitizer: a logarithmic X axis
 - ✓ Digitizer: parallel axes refused
-- ✓ Digitizer: points placed without their values — said, not read as empty points (Write the value of X₂, Y₂ (the number on the axis where they were placed).)
-- ✓ Digitizer: the 4 corners — the perspective of a photographed page corrected
-- ✓ Digitizer: a curved page — spline 0.267 %, polynomial 0.334 % of the range, straight axes 1.41 %
+- ✓ Digitizer: points placed without their values; said, not read as empty points (Write the value of X₂, Y₂ (the number on the axis where they were placed).)
+- ✓ Digitizer: the 4 corners; the perspective of a photographed page corrected
+- ✓ Digitizer: a curved page; spline 0.267 %, polynomial 0.334 % of the range, straight axes 1.41 %
 - ✓ Digitizer: a reference point typed wrong shows the largest error
 - ✓ Digitizer: a curved page needs six points at least
-- ✓ Digitizer: the dataset — a set each (X, Y, ±Y from the bar), in the order of X
+- ✓ Digitizer: the dataset; a set each (X, Y, ±Y from the bar), in the order of X
 - ✓ Digitizer: a curve found by its colour, a point every 10 px (30 points)
 - ✓ Digitizer: markers found, their centres exact
 - ✓ Digitizer: only in the area, not in the part left out
@@ -1293,11 +1293,11 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Waterfall spacing: even, by Z, a list, automatic with a gap, by height (0,0.1,1.7)
 - ✓ Waterfall spacing by Z without Z: even steps, said
 - ✓ Waterfall node: a split sweep, Z the blocks’ value, a colour bar titled by it, the shifted curves out ()
-- ✓ 3D: a surface — a colour a cell by Z, the box the data’s range, contour lines on the floor, the titles
+- ✓ 3D: a surface; a colour a cell by Z, the box the data’s range, contour lines on the floor, the titles
 - ✓ 3D: a wireframe (no fill, every line), drawn on at most N cells a side
 - ✓ 3D: bars from 0, their width a fraction of the step, the box around them
 - ✓ 3D: symbols of two groups (a legend each), coloured by Z point by point, lines to the floor
-- ✓ 3D: a waterfall — every curve at its depth, in its plane, with its wall; coloured by the depth
+- ✓ 3D: a waterfall; every curve at its depth, in its plane, with its wall; coloured by the depth
 - ✓ 3D waterfall: walls on the chosen curves, their colours; the depth labels typed (#00ff00,-,#0000ff; thin,250)
 - ✓ 3D waterfall: every wall (all), the depth labelled with the curves’ names
 - ✓ 3D marks: a rectangle’s corners in its plane
@@ -1305,41 +1305,41 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ 3D: the surface hidden, the mesh by Z along X, contours on it, the ceiling, the walls, the curtain, the underside, the shine
 - ✓ 3D marks: an arrow (its head, projections, label), an upright rectangle filled, a point
 - ✓ 3D: a place on the floor found from the screen (2.5,1.5,0)
-- ✓ 3D: the plane drawn on — the floor, a back wall, a value
+- ✓ 3D: the plane drawn on; the floor, a back wall, a value
 - ✓ Hide values: below a threshold, equal to the values written, NaN; nothing set: no test
 - ✓ 3D stacked maps: the points in bins over the range of all layers (a mean each, empty: NaN), hidden values left out, a layer’s opacity
 - ✓ 3D stacked maps: the colour range of the values drawn, half a step of room below and above, the names on Z (no Z title)
 - ✓ 3D marks: a vertical line from the bottom to the top cut at the layers’ heights; a rectangle on the floor
 - ✓ 3D stacked maps: a log colour scale (the positive values; a range end ≤ 0 ignored), no numbers on Z
-- ✓ 3D stacked maps: every value hidden — said
+- ✓ 3D stacked maps: every value hidden; said
 - ✓ 3D stacked maps: the layers found by a column of labels
-- ✓ 3D stacked maps: my list — a layer by a label, one by rows, an input not connected kept empty
+- ✓ 3D stacked maps: my list; a layer by a label, one by rows, an input not connected kept empty
 - ✓ 3D stacked maps: my list drawn at its heights
 - ✓ Peak width: a Gaussian peak and dip, FWHM = 2.3548σ (2.35482, 2.35482)
 - ✓ the minimum between the points, refined by a parabola (5.0706)
-- ✓ Peak width: a side that does not reach half the height — empty, said
+- ✓ Peak width: a side that does not reach half the height; empty, said
 - ✓ measures: X at a level, Y at X, the area, the centroid
 - ✓ Curve math formula: the sensitivity of a dip, its width (600.000,612.000,1000.000,18.840)
-- ✓ Curve math formula: a result named as a curve, an unknown function — said
-- ✓ Peak width: a row per run and region — FWHM, min and max (11.78,14.13,11.78,NaN)
+- ✓ Curve math formula: a result named as a curve, an unknown function; said
+- ✓ Peak width: a row per run and region; FWHM, min and max (11.78,14.13,11.78,NaN)
 - ✓ Peak width: the points in every region and their % of the curve
 - ✓ Math column presets: all read ()
 - ✓ Math column: the errors of A and B carried to A·B (1.0198,2.1541,3.4986)
-- ✓ Math column: an error of an input the formula does not use (only its mean) — said
+- ✓ Math column: an error of an input the formula does not use (only its mean): said
 - ✓ use the fit: Y at X with its confidence and prediction intervals (± 0.01581 / 0.01581)
 - ✓ use the fit: X from Y (3 replicates) as the calibration formula (4.67188 ± 0.03577 / 0.03577)
 - ✓ use the fit: LOD = 3.3·s/b, LOQ = 10·s/b
 - ✓ use the fit: a derived value and its error from the covariance (3.2560e-2 / 3.2560e-2)
-- ✓ use the fit: a Y the model does not reach — said
+- ✓ use the fit: a Y the model does not reach; said
 - ✓ the new library models fitted to their own data from their own guess (20): all found
 - ✓ errors of X: a straight line by effective variance as York's (Pearson's data: b = -0.48053, York -0.48053)
 - ✓ equations: A → B → C solved (1.1e-9) and fitted (k1 0.7003, k2 0.2000, A0 1.9997)
-- ✓ equations: a missing start, what is measured with two — said; a start elsewhere than 0
+- ✓ equations: a missing start, what is measured with two; said; a start elsewhere than 0
 - ✓ reconvolution: Gaussian IRF ⊗ exponential as the analytic one (9.1e-4); τ 0.7990, shift 0.0502, bg 5.00
 - ✓ the Fit node with equations (k1 0.7003)
-- ✓ the Fit node: a surface — a rotated 2-D Gaussian found (xc 3.400, θ 30.07°, wx/wy 1.670)
-- ✓ formulas: functions of one's own before the formula — called, nested, using the formula's parameters
-- ✓ formulas: a call with the wrong arguments, two formulas — said; a comparison stays a comparison
+- ✓ the Fit node: a surface; a rotated 2-D Gaussian found (xc 3.400, θ 30.07°, wx/wy 1.670)
+- ✓ formulas: functions of one's own before the formula; called, nested, using the formula's parameters
+- ✓ formulas: a call with the wrong arguments, two formulas; said; a comparison stays a comparison
 - ✓ complex numbers: arithmetic, exp, sqrt, functions of one's own, polar, conj, abs (50,-50)
 - ✓ Math column in complex numbers: \|Z\| and its phase of R + 1/(jωC) (1001.25,111.80,50.99,50.01)
 - ✓ Fit, complex: a Randles circuit fitted to Re Z and Im Z at once (R0 10.0000, R1 100.0000, C1 2.0000e-6)
@@ -1357,11 +1357,11 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ editable figure: an SVG of the first exports (&lt;metadata&gt;) still read; written again in groups
 - ✓ editable figure: a project of 37 kB in 5 groups of 8000 characters, read back whole
 - ✓ editable figure: the project read from an SVG inserted in Word (the file Word keeps, scripts/fixtures/word-inserted.svg)
-- ✓ editable figure: the revision — the same project the same; its name or id do not change it; a node changed does
-- ✓ editable figure: without the imported data — the Import nodes kept, their text empty (3.8 kB → 2.8 kB)
+- ✓ editable figure: the revision; the same project the same; its name or id do not change it; a node changed does
+- ✓ editable figure: without the imported data; the Import nodes kept, their text empty (3.8 kB → 2.8 kB)
 - ✓ editable figure: the project in a PNG (an iTXt chunk before IEND, its CRC right; once, when written again): IHDR,IDAT,iTXt,IEND
 - ✓ Word document: 3 pictures, the 2 figures with a project found (SVG with its PNG; PNG), their size (word/media/image2.svg, word/media/image3.png)
-- ✓ Word document: a file that is not one — said
+- ✓ Word document: a file that is not one; said
 - ✓ Word document updated: the SVG and PNG of the first figure, the PNG of the second replaced; the other picture left alone
 - ✓ Word document updated: the first figure at its physical size (wp:extent and a:ext, EMU); the others as they were
 - ✓ Word document updated: the same parts in the same order, the others unchanged
@@ -1372,7 +1372,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ axis range: out to the major ticks; data crossing 0 by a little only, out to the nearest minor tick past 0 (-1,12 · 0,10 · -0.4,12 · 80,200)
 - ✓ a legend outside the frame (right): past the numbers and title of that side, inside the page (156.5, 7.8, 79.5 × 38.0 in 241 × 184 pt)
 - ✓ a legend outside the frame (below): past the numbers and title of that side, inside the page (38.7, 162.1, 190.7 × 17.2 in 241 × 184 pt)
-- ✓ error columns by their names: SD, SE, σ, ± — not Base, Response, Phase (--E-E--E-E)
+- ✓ error columns by their names: SD, SE, σ, ±; not Base, Response, Phase (--E-E--E-E)
 - ✓ error columns: the Y named in them (in any order), else the Y on their left
 - ✓ Bland–Altman: the values on the lines with one number of decimals, the name over the value (Mean −3.43 \| +1.96 SD 10.94 \| −1.96 SD −17.81)
 - ✓ end labels: outside the frame at the right, inside the page, apart from each other
@@ -1388,16 +1388,16 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Bar chart: sorted by the first series (missing last) or by the stacked total, the errors following
 - ✓ Bar chart: numeric categories keep their places when sorted
 - ✓ Box: n written under every box, below its whisker, out of the legend
-- ✓ Ternary: coloured by a column — the map over its range, a missing value grey
+- ✓ Ternary: coloured by a column; the map over its range, a missing value grey
 - ✓ Ternary: without a colour column, the groups’ colours
 - ✓ 3D: symbols coloured by a 4th column, its range and name on the colour bar
 - ✓ 3D: coloured by Z as before
 - ✓ One point per X: X of texts in the order met, no spread asked → no ±Y
 - ✓ Histogram: a rug of the values at the bottom
-- ✓ Plot: a quick fit on a range — its curve, the range a band of its look (dragged), the results box, the “fits” table
-- ✓ Plot: a workbook on its dataset port — every curve from its sheet (its X and Y), named with it; none: the first sheet; a sheet missing said
+- ✓ Plot: a quick fit on a range; its curve, the range a band of its look (dragged), the results box, the “fits” table
+- ✓ Plot: a workbook on its dataset port; every curve from its sheet (its X and Y), named with it; none: the first sheet; a sheet missing said
 - ✓ Plot these columns: pairs from two sheets in one Plot; a Plot per sheet in a Merge; curves added to a Plot; a bar chart of one sheet of the workbook
-- ✓ Plot these columns ▸ Y axes: one left, the others right — each its own axis, coloured and titled as its curve (left,right,y3)
+- ✓ Plot these columns ▸ Y axes: one left, the others right; each its own axis, coloured and titled as its curve (left,right,y3)
 - ✓ multi-axes layouts: double Y, all on the left (moved out in turn), left and right in turn, X at the bottom and top
 - ✓ a new Y on the right: the right axis itself when it only mirrors; past a converting right axis, a third Y
 - ✓ axes added, one taken away, one added: in the free place (offsets 40,80 → 40,80), none over another
@@ -1471,9 +1471,9 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Gradient: by default across the whole box at its angle
 - ✓ Gradient: start and end in % of the box, reflected beyond them
 - ✓ Gradient: radial, its radii across and down ({"gradientUnits":"userSpaceOnUse","cx":30,"cy":30,"r":10,"gradientTransform":"translate(30 30) scale(1 0.50000) translate(-30 -30)"})
-- ✓ curvemath: a sheet of a workbook, two operations — each its output and what it computes (-1, 1; )
+- ✓ curvemath: a sheet of a workbook, two operations; each its output and what it computes (-1, 1; )
 - ✓ curvemath: curves from columns, A − B (-1,-1)
-- ✓ plot: a workbook — its sheets, their columns, a curve from the second sheet (["S1","S2"]; E,c,d; )
+- ✓ plot: a workbook; its sheets, their columns, a curve from the second sheet (["S1","S2"]; E,c,d; )
 - ✓ convert: cells read as numbers (300 K \| 1.5 \| 1200.5 \| 1200.5 \| 1200.5 \| 25 % \| 1.23±0.05 \| 1.23±0.05 eV \| 1.234±0.012 \| empty \| 0.005 \| 0.0003 \| 0.0003 \| empty \| null \| 300 \| null \| -2500 \| 0.25)
 - ✓ convert: nothing until columns are chosen; then units into the names, ± as an error column, a cell not read listed (T: 1 cell not read as numbers (left empty): row 4 “x”.)
 - ✓ convert: numbers written as text (-0,50 V\|0,25 V\|1,00 V)
@@ -1488,7 +1488,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Export: decimal comma (semicolons), 3 digits, NaN, masked rows left out ("400;0,25;a\n406;NaN;\"b;c\"\n")
 - ✓ Export: the first form of the settings read; the extension from the delimiter
 - ✓ Export: text with a tab, the designations line, a masked value left empty ("Wavelength (nm)\t\"R, a \"\"label\"\"\"\tSample\nX\tY\tLabel\n400\t0.25\ta\n405.5\t\tb;c\n410\t\t\n")
-- ✓ example “Cleaning a sensor log”: the rows merged and sorted, 3 gaps filled, exactly the 3 spikes found, 2 points masked (Temperature (°C): 3 missing values filled (linear). Temperature (°C): 3 outliers (movmedian) — replaced (interpolated): rows 35, 80, 103.)
+- ✓ example “Cleaning a sensor log”: the rows merged and sorted, 3 gaps filled, exactly the 3 spikes found, 2 points masked (Temperature (°C): 3 missing values filled (linear). Temperature (°C): 3 outliers (movmedian): replaced (interpolated): rows 35, 80, 103.)
 - ✓ example “Replicate scans”: the mean of the 3 scans on 146 points, all 372 points pooled
 - ✓ example “Difference spectrum”: sample − reference peaks at the band only the sample has (654 nm)
 - ✓ example “Digitizer”: the 21 points read lie on the curve drawn (largest gap 0.0032 mV)
@@ -1509,27 +1509,27 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Help: a short text for every node, none too long ()
 - ✓ collaboration: every example into a shared document and back, unchanged ()
 - ✓ collaboration: a peer joining gets the project
-- ✓ collaboration: two fields of one node changed at the same time — both kept, on both peers
+- ✓ collaboration: two fields of one node changed at the same time; both kept, on both peers
 - ✓ collaboration: a node nobody changed stays the same object (no recomputing, no redrawing)
-- ✓ collaboration: one field changed by both at once — one value, the same everywhere
-- ✓ collaboration: a node removed while another peer connects to it — no broken connection
+- ✓ collaboration: one field changed by both at once; one value, the same everywhere
+- ✓ collaboration: a node removed while another peer connects to it; no broken connection
 - ✓ collaboration: the broken connection taken out of the document at the next change
 - ✓ collaboration: nothing changed, nothing sent
 - ✓ collaboration: NaN and ±Infinity kept
-- ✓ collaboration: three peers, 12 × 150 random changes synchronised in random pairs — the same whole project everywhere 
-- ✓ collaboration: peers that show the others' changes late and write on what they show — no change lost or written back over 
+- ✓ collaboration: three peers, 12 × 150 random changes synchronised in random pairs; the same whole project everywhere 
+- ✓ collaboration: peers that show the others' changes late and write on what they show; no change lost or written back over 
 - ✓ collaboration: guests joining a host get the project (and their names)
 - ✓ collaboration: a 300 kB file from one guest reaches the other through the host, in chunks
 - ✓ collaboration: a node removed by a guest is gone everywhere
 - ✓ collaboration: a lost link leaves the session on both sides
 - ✓ collaboration: nothing passes while the link is lost
-- ✓ collaboration: joined again — what both did while cut off is merged, everywhere
+- ✓ collaboration: joined again; what both did while cut off is merged, everywhere
 - ✓ collaboration: a peer that leaves says so (not shown as a lost connection)
-- ✓ collaboration: presence — a guest’s mouse and selection reach the other guest through the host
-- ✓ collaboration: presence — only those at the level shown
-- ✓ collaboration: presence — someone who leaves goes at once
-- ✓ collaboration: presence — someone not heard for a while is no longer shown
-- ✓ collaboration: presence — a link gone takes with it whoever was heard through it
+- ✓ collaboration: presence; a guest’s mouse and selection reach the other guest through the host
+- ✓ collaboration: presence; only those at the level shown
+- ✓ collaboration: presence; someone who leaves goes at once
+- ✓ collaboration: presence; someone not heard for a while is no longer shown
+- ✓ collaboration: presence; a link gone takes with it whoever was heard through it
 - ✓ collaboration: a long message between computers goes compressed and arrives whole (0.98 MB → 0.37 MB on the wire)
 - ✓ collaboration: chunks put back together in any order
 - ✓ collaboration: the kinds of addresses in a code, none shown (host (hidden .local name)/udp×1, host (hidden .local name)/tcp×1, srflx/udp×1, host (address)/udp×1)
@@ -1551,18 +1551,18 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Batch: a file with its own settings of a step (sample_30C read at X = 40; the others their maximum: 30, 40, 70)
 - ✓ Batch: own settings tidied (no empty step or file), laid over the common ones (the others kept)
 - ✓ Batch: a pattern guessed from the names (PL_{V}K_run1; sample_{V1}C_{V2}h)
-- ✓ Batch: an empty one from the Nodes panel — its files counted, no steps, nothing kept yet
+- ✓ Batch: an empty one from the Nodes panel; its files counted, no steps, nothing kept yet
 - ✓ Batch over columns: every Y column a run (its maximum at 30, 50, 70), the thickness read from the names (150, 200, 250; )
-- ✓ Batch over columns: the columns listed (C, E), with another X (t = 2 x: maxima at 60, 100 — 60, 100; )
+- ✓ Batch over columns: the columns listed (C, E), with another X (t = 2 x: maxima at 60, 100; 60, 100; )
 - ✓ Batch over columns: the X on the left of each (pairs; the ±Y with its column), the row number, a column not found said
 - ✓ tours: tour 2 done step by step by Show me
 - ✓ tours: tour 2 leaves no node in error
-- ✓ tours: tour 2 — Clean data fills the gaps and replaces the spike, every row kept
-- ✓ tours: tour 2 — the first 3 s of every run left out (3 × 38 rows)
-- ✓ tours: tour 2 — the runs side by side, named (Time (s), Run 1, Run 2, Run 3)
-- ✓ tours: tour 2 — the offset taken away (run 1 starts near the model)
-- ✓ tours: tour 2 — Time, Run 2 and the model side by side (Time (s):38, Run 2:38, Model (mV):38)
-- ✓ tours: tour 2 — both days of the calibration in one table (Day 1: Concentration (mM), Day 1, Day 2: Concentration (mM), Day 2)
+- ✓ tours: tour 2; Clean data fills the gaps and replaces the spike, every row kept
+- ✓ tours: tour 2; the first 3 s of every run left out (3 × 38 rows)
+- ✓ tours: tour 2; the runs side by side, named (Time (s), Run 1, Run 2, Run 3)
+- ✓ tours: tour 2; the offset taken away (run 1 starts near the model)
+- ✓ tours: tour 2; Time, Run 2 and the model side by side (Time (s):38, Run 2:38, Model (mV):38)
+- ✓ tours: tour 2; both days of the calibration in one table (Day 1: Concentration (mM), Day 1, Day 2: Concentration (mM), Day 2)
 - ✓ interface colours: the dark shade of a listed colour is its own, of another one lighter; the accent follows the selection
 - ✓ collaboration: an address typed is IPv4 or IPv6
 - ✓ collaboration: the answer carries when both sides start
@@ -1575,7 +1575,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ scale bar: round lengths; 10 µm of a 50 µm wide image on 80 mm is 16 mm, “10 µm” (10 µm)
 - ✓ Image node: thresholded (Otsu) → a 0 / 1 matrix with X in µm; a figure of its proportions with the image and a scale bar (2 µm)
 - ✓ Image node: a step that cannot run said with its number; no image yet: waiting
-- ✓ Image node: a crop — only that part analysed (14 × 12 of 24 × 20)
+- ✓ Image node: a crop; only that part analysed (14 × 12 of 24 × 20)
 - ✓ Image node: a selection measured on the part cropped (48 px = 12 µm², its mean), out as a workbook with the mask's coverage; its outline on the figure, locked; evaluated again when its pixels come back (1 selection · coverage 50.0 %)
 - ✓ Image: the data bar under an SEM image found (14 rows of 14), none on an image without one; cut off by a crop
 - ✓ Curves: the default leaves the image as it is; R inverted alone (G, B kept)
@@ -1625,16 +1625,16 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Phase digitizer: a eutectic diagram, six regions (6)
 - ✓ Phase digitizer: Draw regions labels every face once; the regions follow a line moved
 - ✓ Phase digitizer: the border from the calibration, the pixel of a value (the inverse map)
-- ✓ Phase digitizer: the lever rule — the tie line to the solidus and the liquidus, their phases, the amounts (α 28.20 50.00 %, L 71.80 50.00 %)
+- ✓ Phase digitizer: the lever rule; the tie line to the solidus and the liquidus, their phases, the amounts (α 28.20 50.00 %, L 71.80 50.00 %)
 - ✓ Phase digitizer: a point in a region named without “+” is one phase
-- ✓ Phase digitizer: the phases of a region — from its name (automatic names: two), or chosen
+- ✓ Phase digitizer: the phases of a region; from its name (automatic names: two), or chosen
 - ✓ Phase digitizer: the tie line to the frontier of its region (a loose line inside it ignored)
 - ✓ Phase digitizer: the lever rule table, a sheet per boundary
-- ✓ Phase digitizer: any X axis — no other component, no unit
+- ✓ Phase digitizer: any X axis; no other component, no unit
 - ✓ Phase digitizer: the other component, the rest to the total given
 - ✓ Phase digitizer: waits for an image
 - ✓ Phase digitizer: the data of an older node still open (a point as u, v; a region label, labelPos)
-- ✓ Phase digitizer example: the lever rule at 45 wt% Ni, 1250 °C — L 35.06, α 56.86 wt% Ni (read 35.0616, 56.866)
+- ✓ Phase digitizer example: the lever rule at 45 wt% Ni, 1250 °C; L 35.06, α 56.86 wt% Ni (read 35.0616, 56.866)
 - ✓ Phase digitizer: the total from the unit (100 for %, 1 for a fraction, else asked)
 - ✓ Pb-Sn at 40 wt% Sn, 150 °C: α 12.30, β 98.52 wt% Sn, the arms a and b in their colours (read 12.34, 98.52)
 - ✓ Pb-Sn cooled at 40 wt% Sn: liquidus 225.2 °C, eutectic 183 °C; primary α 50.23 %, then α 72.70 % (read 50.20, 49.80; 72.70, 27.30)
@@ -1659,13 +1659,13 @@ n 0.87 W1 W 0.00401 S·s^½); Nyquist and Bode drawn by Plots from them
 - ✓ format 12 → 13: the Nyquist and Bode outputs of an EIS node become Plots of its data, connected to the Merge (eis-node-nyquist, eis-node-bode)
 - ✓ format 13 → 14: a Report becomes a note with its texts ({"text":"Run 1\n\nBefore.\n\nFit\nThe dip moved."})
 - ✓ EIS: ω (2πf) told from f by its values; columns without telling names taken by their places (and said so)
-- ✓ EIS: the circuit drawn — every element on the page, none over another (55.099 × 31.434 mm)
+- ✓ EIS: the circuit drawn; every element on the page, none over another (55.099 × 31.434 mm)
 - ✓ EIS: elements dropped on the drawing (R([RW]Q), R([WR]Q), (RC)(RQ), R(LRQ), R(RQ)W, R(RC), Q; moved ([R2R1]Q1), swapped Q1(R2R1))
-- ✓ EIS: split and join — the branch between them (R([RQ]C)W, RR(QC)W, moved R1([R2Q1]W1), ([RRQW]L)); not across two branches
+- ✓ EIS: split and join; the branch between them (R([RQ]C)W, RR(QC)W, moved R1([R2Q1]W1), ([RRQW]L)); not across two branches
 - ✓ EIS: columns without names chosen by their places (#0, #1, #2), shown by their letters; ω read as rad/s (“C” taken as −Z″ (mostly positive))
-- ✓ EIS: a frequency range — the points outside it not fitted (49 of 69)
+- ✓ EIS: a frequency range; the points outside it not fitted (49 of 69)
 - ✓ EIS: a fit per range, the arc alone with R(RQ) (R1 15.28, R2 263.7, R² 0.99714)
-- ✓ EIS: the fit on demand — not fitted before Start fit; after it, a change of the circuit only marked outdated (the last fit kept)
+- ✓ EIS: the fit on demand; not fitted before Start fit; after it, a change of the circuit only marked outdated (the last fit kept)
 - ✓ catalog: every node type in nodes.json
 - ✓ catalog: a node’s ports (types, what they are), options (type, meaning) and defaults
 - ✓ catalog: the numbered ports of a Plot’s curves (y, y-&lt;k&gt; …)
@@ -1681,5 +1681,6 @@ n 0.87 W1 W 0.00401 S·s^½); Nyquist and Bode drawn by Plots from them
 - ✓ catalog: llms.txt with the rules, the format version and the nodes
 - ✓ catalog: check.mjs runs alone (ok)
 - ✓ catalog: nothing private in the published files
+- ✓ the app's version (1.0.0) as package.json's
 
 </details>

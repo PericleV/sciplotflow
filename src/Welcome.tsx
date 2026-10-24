@@ -9,15 +9,16 @@ import { IC } from './nodes/iconProps.ts';
 import { ACCEPT, pickDataFiles } from './readFiles.ts';
 import { setWelcomeAtStart, welcomeAtStart } from './theme.ts';
 import { loadTourProgress, SHOW_TOURS, stepsOf, TOURS } from './tour/tours.ts';
+import { versionShown } from './version.ts';
 
 const INSTAGRAM = 'https://www.instagram.com/pericle_v/';
 
-// Who made it, and the photography (the welcome window and Help ▸ About).
+// The version, who made it, and the photography (the welcome window and Help ▸ About).
 export function MadeBy() {
   return (
     <div className="made-by">
       <div>
-        Made by <b>Pericle Vărășteanu</b> · IMT Bucharest
+        SciPlotFlow {versionShown} · Made by <b>Pericle Vărășteanu</b> · IMT Bucharest
       </div>
       <div>
         If you find this app useful, please support my photography endeavour and follow my Instagram{' '}

@@ -1,5 +1,5 @@
 // The licences of the packages built into the app (package-lock.json: those not only for development), with their full
-// texts, written to public/THIRD_PARTY_LICENSES.txt — shipped with the app, as the MIT, BSD, ISC and Apache licences ask.
+// texts, written to public/THIRD_PARTY_LICENSES.txt, shipped with the app, as the MIT, BSD, ISC and Apache licences ask.
 // Run: npm run licenses (after adding or updating a dependency). What is loaded only when a Python script runs (Pyodide
 // and its packages, from jsDelivr) and the palettes and data used are listed in THIRD_PARTY_NOTICES.md.
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -24,7 +24,7 @@ for (const k of names) {
   const file = readdirSync(dir).find((f) => /^(licen[cs]e|copying|notice)(\.|$)/i.test(f));
   const text = file ? readFileSync(join(dir, file), 'utf8').trim() : '(no licence file in the package: its licence is the one named above)';
   const repo = typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url;
-  items.push(`${'='.repeat(78)}\n${pkg.name} ${pkg.version} — ${lic}\n${pkg.homepage ?? repo ?? p.resolved ?? ''}\n${'-'.repeat(78)}\n${text}\n`);
+  items.push(`${'='.repeat(78)}\n${pkg.name} ${pkg.version} (${lic})\n${pkg.homepage ?? repo ?? p.resolved ?? ''}\n${'-'.repeat(78)}\n${text}\n`);
 }
 // the libraries whose code ours follows closely in places (written in TypeScript to give the same results): their
 // notices, as their BSD and MIT licences ask (scripts/licenses/*.txt, copied from the installed packages)
@@ -38,7 +38,7 @@ const FOLLOWED: [string, string, string][] = [
 ];
 for (const [file, name, what] of FOLLOWED) {
   const text = readFileSync(join(root, 'scripts', 'licenses', file), 'utf8').trim();
-  items.push(`${'='.repeat(78)}\n${name} — code followed closely in places: ${what}\n${'-'.repeat(78)}\n${text}\n`);
+  items.push(`${'='.repeat(78)}\n${name}: code followed closely in places: ${what}\n${'-'.repeat(78)}\n${text}\n`);
 }
 const head = `Third-party software in ${own.name}\n\nThe app is built with the open-source packages below; each is under its own licence, whose full text follows. At\nthe end: the Python libraries whose code parts of the app follow closely, with their notices.\nWhat is loaded only when a Python script runs (Pyodide, numpy, scipy, pandas, matplotlib …), the colour palettes\nand the example data are listed in THIRD_PARTY_NOTICES.md (in the project's sources).\n\n`;
 writeFileSync(join(root, 'public', 'THIRD_PARTY_LICENSES.txt'), head + items.join('\n'));
