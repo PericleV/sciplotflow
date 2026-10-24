@@ -1799,3 +1799,9 @@ input[type='checkbox']:disabled, input[type='radio']:disabled { cursor: default;
 }
 /* the names of the fields of a two-column form, in the options panel: as the newer panels write them (muted, smaller) */
 .inspector-options .col-form > span:not([class]) { color: var(--muted); font-size: var(--fs-small); }
+
+/* the app's own tooltip (ui/quickTip.ts): its head, then the rest smaller */
+.quick-tip { position: fixed; z-index: 5000; max-width: 320px; padding: 6px 9px; border-radius: 6px; background: color-mix(in srgb, var(--text) 92%, var(--panel)); color: var(--panel); font-size: var(--fs-small); line-height: 1.4; box-shadow: 0 4px 14px rgb(0 0 0 / 0.25); pointer-events: none; opacity: 0; transform: translateY(-2px); transition: opacity 0.12s ease, transform 0.12s ease; white-space: normal; }
+.quick-tip.on { opacity: 1; transform: none; }
+.quick-tip-head { font-weight: 500; }
+.quick-tip-more { margin-top: 4px; font-size: var(--fs-tiny); opacity: 0.82; }

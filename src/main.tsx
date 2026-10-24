@@ -6,6 +6,10 @@ import { AppCrash, ErrorBoundary } from './ErrorBoundary.tsx'
 import { UiProvider } from './ui/Provider.tsx'
 import { notify } from './ui/dialogStore.ts'
 import { STALE_TEXT } from './staleChunk.ts'
+import { installQuickTips } from './ui/quickTip.ts'
+
+// the hints (titles) in the app's own tooltip
+installQuickTips()
 
 // a part of the app that could not be loaded after a new version was published: said once (the nodes that need it say
 // it too, with a button to reload)

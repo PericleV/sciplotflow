@@ -1,12 +1,12 @@
 # Validation
 
-SciPlotFlow 1.0.0, 2026-10-24: **1439 of 1439 checks pass**.
+SciPlotFlow 1.0.0, 2026-10-24: **1440 of 1440 checks pass**.
 
 Every computation of SciPlotFlow is checked by `npm run check`:
 
 - **293 checks** compare a result with reference values computed in Python by established libraries (NumPy, SciPy, matplotlib, pandas, pingouin, statsmodels, contourpy, PyWavelets, scikit-learn, scikit-image, reliability, lifelines, pycwt, ruptures, pybaselines, differint, astropy). The scripts that compute them are in [`scripts/fixtures`](scripts/fixtures); their values are stored next to them as JSON, so the checks run without Python.
 - **29 checks** compare with the conventions of a library or program they name (ImageJ, Origin, SciPy, NumPy, matplotlib, scikit-image), without stored values.
-- **1117 checks** compare with exact values: a known answer, a formula, an identity (a transform and its inverse, the energy kept), a property (a test that must not change when the data are shifted), or the behaviour of the interface (a file read, a figure laid out, a project opened). Methods that no library does (or none does right) are written from their publications, cited in the code.
+- **1118 checks** compare with exact values: a known answer, a formula, an identity (a transform and its inverse, the energy kept), a property (a test that must not change when the data are shifted), or the behaviour of the interface (a file read, a figure laid out, a project opened). Methods that no library does (or none does right) are written from their publications, cited in the code.
 
 Each check states what it compares and how close the result is; one check often compares many values (the statistical tests against SciPy: one check, 267 values). This file is made by `npm run validation`, which runs every check and writes it.
 
@@ -565,7 +565,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 
 </details>
 
-<details><summary><b>Exact values, definitions and properties</b>: 1117 checks</summary>
+<details><summary><b>Exact values, definitions and properties</b>: 1118 checks</summary>
 
 - ✓ box handles: a side moves alone (across, or up), the other ways ignored
 - ✓ box handles: a corner moves two sides; Ctrl: about the centre
@@ -1558,6 +1558,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Batch over columns: every Y column a run (its maximum at 30, 50, 70), the thickness read from the names (150, 200, 250; )
 - ✓ Batch over columns: the columns listed (C, E), with another X (t = 2 x: maxima at 60, 100; 60, 100; )
 - ✓ Batch over columns: the X on the left of each (pairs; the ±Y with its column), the row number, a column not found said
+- ✓ tours: the tutorial first, done step by step by Show me (a Smooth connected, its window 31)
 - ✓ tours: tour 2 done step by step by Show me
 - ✓ tours: tour 2 leaves no node in error
 - ✓ tours: tour 2; Clean data fills the gaps and replaces the spike, every row kept
