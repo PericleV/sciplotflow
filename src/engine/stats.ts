@@ -1,4 +1,5 @@
 // Descriptive statistics of a column (the missing values — NaN, text — left out).
+import { tInv } from './dist.ts';
 export type StatKey = 'n' | 'missing' | 'mean' | 'sd' | 'se' | 'min' | 'q1' | 'median' | 'q3' | 'max' | 'range' | 'sum' | 'cv';
 export const STATS: { key: StatKey; label: string; help: string; unitless?: boolean }[] = [
   { key: 'n', label: 'N', help: 'number of values (missing ones left out)', unitless: true },
@@ -15,6 +16,33 @@ export const STATS: { key: StatKey; label: string; help: string; unitless?: bool
   { key: 'sum', label: 'Sum', help: 'sum of the values' },
   { key: 'cv', label: 'CV', help: 'coefficient of variation, SD / mean', unitless: true },
 ];
+
+// The statistics asked besides the usual ones: percentiles (pcts: “10, 50, 90”: P10, P50, P90, as D10, D50, D90 of a
+// size distribution) and the confidence interval of the mean (ci: its level in %, absent: none), from t with N − 1
+// degrees of freedom
+export type ExtraStat = { key: string; label: string; help: string };
+export function extraStats(pcts: string | undefined, ci: number | undefined): ExtraStat[] {
+  const ps = [...new Set((pcts ?? '').split(/[\s,;]+/).map(Number).filter((p) => p > 0 && p < 100))];
+  const out: ExtraStat[] = ps.map((p) => ({ key: `p${String(p).replace('.', '_')}`, label: `P${p}`, help: `the ${p}th percentile (${p} % of the values below it)` }));
+  if (ci && ci > 0 && ci < 100)
+    out.push({ key: 'cilo', label: `CI${ci} low`, help: `the low end of the ${ci} % confidence interval of the mean (t, N − 1)` }, { key: 'cihi', label: `CI${ci} high`, help: `the high end of the ${ci} % confidence interval of the mean` });
+  return out;
+}
+// every statistic of the values (the usual ones and those asked)
+export function describeAll(values: ArrayLike<number>, extra: ExtraStat[], ci?: number): Record<string, number> {
+  const d: Record<string, number> = describe(values);
+  if (!extra.length) return d;
+  const v: number[] = [];
+  for (let i = 0; i < values.length; i++) if (Number.isFinite(values[i])) v.push(values[i]);
+  const sorted = Float64Array.from(v).sort();
+  for (const e of extra) {
+    if (e.key === 'cilo' || e.key === 'cihi') {
+      const t = d.n > 1 && ci ? tInv(1 - (1 - ci / 100) / 2, d.n - 1) : NaN;
+      d[e.key] = d.mean + (e.key === 'cilo' ? -1 : 1) * t * d.se;
+    } else d[e.key] = percentile(sorted, Number(e.key.slice(1).replace('_', '.')) / 100);
+  }
+  return d;
+}
 
 // Percentile p (0 … 1) of sorted values: linear between the order statistics (the usual definition).
 export function percentile(sorted: ArrayLike<number>, p: number): number {

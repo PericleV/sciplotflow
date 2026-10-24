@@ -282,7 +282,7 @@ export function alignment(turns: number[], n: number): { mean: number; order: nu
 // ---- distances ----
 
 // the least distance between two outlines (every vertex of one to the edges of the other; at most 64 of each)
-function outlineDistance(a: Pt[], b: Pt[]): number {
+export function outlineDistance(a: Pt[], b: Pt[]): number {
   const thin = (p: Pt[]) => (p.length > 64 ? p.filter((_, i) => i % Math.ceil(p.length / 64) === 0) : p);
   const [A, B] = [thin(a), thin(b)];
   const toEdges = (P: Pt[], Q: Pt[]) => {

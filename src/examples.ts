@@ -14,7 +14,7 @@ import { FRAME_COLORS } from './nodeColors.ts';
 import { packPixels, type Raster } from './image/raster.ts';
 import { eisPlotData, eisPlotEdges } from './eisPlots.ts';
 import type { Roi } from './image/roi.ts';
-import { clustersImage, cubesImage, porousImage, shapesImage, textureImage, type TestImage } from './image/testImages.ts';
+import { clustersImage, cubesImage, monolayerImage, porousImage, shapesImage, textureImage, type TestImage } from './image/testImages.ts';
 import { findLike, fitBox, MATCH_DEFAULTS } from './image/match.ts';
 import { applySteps, newStep, type ImgStep } from './image/steps.ts';
 import { findParticles, PARTICLE_DEFAULTS, SHAPE_COLORS, shapeFeatures, shapeName, tracedPerimeter } from './image/particles.ts';
@@ -2329,6 +2329,39 @@ function foundParticles(t: TestImage, steps: ImgStep[], rois: Roi[], separate: b
   });
 }
 const otsuStep = (light: boolean): ImgStep => ({ ...newStep('threshold', 'st-otsu'), p: { ...newStep('threshold', 'st-otsu').p, method: 'otsu', light } });
+// A nanoparticle monolayer: the particles found (a threshold, clusters cut apart), how they lie (Arrangement: their
+// neighbours, the Voronoi cells, Clark–Evans R, ψ6, g(r)); then the other nodes: the size distribution with a
+// log-normal fit (Histogram), D10, D50, D90 and the confidence interval (Descriptive statistics), g(r) in a Plot
+function monolayerExample(): Project {
+  const b = builder();
+  const t = monolayerImage();
+  const steps = [otsuStep(false), newStep('fillholes', 'st-fill')];
+  const im = add(b, 'image', 'ml-image', 0, 0, {
+    ...IMAGE_DEFAULTS,
+    name: 'nanoparticle_monolayer.png',
+    pixels: packPixels(t.w, t.h, 1, 8, t.px),
+    pixelsId: 'example-monolayer',
+    steps,
+    cal: { size: 0.5, unit: 'nm' },
+    rois: foundParticles(t, steps, [], true, false, 40),
+    particles: { separate: true },
+    measure: { keys: ['area', 'centroid', 'eqdiam', 'shape', 'nnd'] },
+    arrange: { on: true, show: 'voronoi' },
+    tab: 'objects',
+    figure: { width: 110, rois: 'outlines' },
+  });
+  const hd = { ...HISTOGRAM_DEFAULTS, ys: 'Eq. diameter (nm)', sheet: 'Selections', opacity: 0.6, fits: [{ kind: 'lognormal' as const, method: 'data' as const, color: '#D55E00', width: 1.6 }], page: { ...PLOT_PAGE_DEFAULTS, name: 'particle_sizes' } };
+  const hi = add(b, 'histogram', 'ml-hist', 700, 0, hd);
+  link(b, im, hi, 'dataset', 'workbook');
+  const ex = add(b, 'extract', 'ml-diam', 700, 760, { ...EXTRACT_DEFAULTS, sheet: 'Selections', column: 'Eq. diameter (nm)' });
+  link(b, im, ex, 'in', 'workbook');
+  const st = add(b, 'stats', 'ml-stats', 1200, 760, { pcts: '10, 50, 90', ci: 95 });
+  link(b, ex, st, 'in');
+  const gr = add(b, 'plot1d', 'ml-gr', 1200, 0, plot({ label: 'g(r)', style: curve(0, { mode: 'line', lineWidth: 1.2 }), cols: { x: 'r (nm)', y: 'g(r)' }, sheet: 'g(r)' }, { page: { name: 'pair_correlation' } }));
+  link(b, im, gr, 'dataset', 'workbook');
+  return project(b, 'Nanoparticle monolayer: neighbours, order and sizes');
+}
+
 // Nanoporous gold: a median filter, a threshold, and Structure on: its skeleton's ligaments (length, thickness), the
 // junctions, the pores, in the workbook; the ligament lengths in a histogram
 function porousExample(): Project {
@@ -2985,6 +3018,10 @@ const ABOUT: Record<string, About> = {
     what: 'Nanocubes touching side to side, as an electron microscope shows them: found like one of them (template matching, any turn, the edges fitted) or by cutting the mask along the dark lines between them; each cube’s side, orientation and the alignment of all of them in a Workbook and a Plot.',
     try: ['Analyze (top): pick the green model, change Similarity or Sizes in Particles, then Find like this.', 'Draw a rectangle around another cube, turn it with its handle to fit, pick it, Find like this.', 'Analyze (below): change the Line width of Split along dark lines, then Find particles.'],
   },
+  'Nanoparticle monolayer: neighbours, order and sizes': {
+    what: 'How particles lie and how big they are: Image analysis gives the data (sheets Selections, Neighbours, Arrangement, g(r)), the other nodes analyse them.',
+    try: ['Open the editor, Objects tab, Arrangement: switch Show between nearest, Delaunay and Voronoi.', 'Look at the Arrangement sheet in the workbook: R near 2 and ψ6 near 1 mean an ordered layer.', 'In Descriptive statistics, change the percentiles (5, 50, 95).'],
+  },
   'Nanoporous gold: ligaments from the skeleton': {
     what: 'The skeleton analysis used for nanoporous metals: the ligament length between junctions and the ligament thickness, measured on every ligament, with the junctions and the pores.',
     try: ['Open the editor (Edit) and the Structure tab: click a ligament to see its path, its circles and how its length is made.', 'Delete a few spurs, keep a short branch, then Learn from my edits.', 'Set Length to surface to surface and compare the medians in the Network sheet.'],
@@ -3223,6 +3260,7 @@ const LIST: { group: string; name: string; desc: string; make: () => Project }[]
   { group: 'Data preparation', name: 'Replicate scans: mean ± SD on a common X', desc: 'Three scans on different wavelength grids: Average curves gives their mean ± SD on a common grid (a band in the Plot); Combine columns puts every point of the three scans in one table, in the order of the wavelength.', make: scansExample },
   { group: 'Data preparation', name: 'Difference spectrum: sample minus reference', desc: 'A sample measured 2 nm off: Translate moves it back, Curve math gives sample − reference and sample / reference on a common grid; the difference on its own axis shows the band the sample has more.', make: differenceExample },
   { group: 'Images', name: 'Nanocubes: found like one, their side and orientation', desc: 'Image analysis of nanocubes touching side to side: Find like this (template matching at any turn, the edges fitted) and Split along dark lines; each cube’s side and orientation, the alignment, in a Workbook and a Plot.', make: nanocubesExample },
+  { group: 'Images', name: 'Nanoparticle monolayer: neighbours, order and sizes', desc: 'A nanoparticle monolayer (made here): its particles found, then Arrangement: every particle’s nearest, its Delaunay neighbours and Voronoi cell (drawn, coloured by their neighbours), Clark–Evans R, the hexatic order ψ6, the clusters, g(r) and Ripley’s L; the data analysed by the other nodes: the size distribution with a log-normal fit, D10, D50, D90 and the 95 % confidence interval, g(r) in a Plot.', make: monolayerExample },
   { group: 'Images', name: 'Nanoporous gold: ligaments from the skeleton', desc: 'A nanoporous gold image (made here): a median filter and a threshold make the mask; Structure thins it to its skeleton and measures every ligament between two junctions (its length, its thickness from the inscribed circles), the junctions and the pores, in the workbook; the ligament lengths in a histogram. Open the editor: the Structure tab draws the network, a click on a ligament shows how it was measured.', make: porousExample },
   { group: 'Images', name: 'Particles: clusters cut apart, shapes named, their sizes', desc: 'Image analysis: the particles of a mask as selections (touching ones cut apart), named by their shape (circle, triangle, square …), measured (area, perimeter, Feret, ellipse, circularity, corners, nearest neighbours), in a Workbook and a Plot.', make: particlesExample },
   { group: 'Images', name: 'Trainable classifier: textured particles a threshold misses', desc: 'Image analysis: a random forest taught by a few lines drawn on particles and on the ground (as ImageJ’s Trainable Weka Segmentation) finds grainy particles a threshold cannot; their length and width in a Plot.', make: classifierExample },

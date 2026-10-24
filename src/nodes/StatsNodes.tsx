@@ -129,11 +129,13 @@ export function StatsNodeView({ id, data }: NodeProps<StatsNode>) {
   // another mode: the connections from outputs it does not have are removed
   const setOn = (on: 'columns' | 'rows') => {
     if (on === (data.on ?? 'columns')) return;
-    const keep = new Set<string>([...STATS.map((s) => s.key), ...(on === 'rows' ? ['x', 'out'] : ['table'])]);
+    const keep = new Set<string>([...STATS.map((s) => s.key), ...(r?.view.statExtra ?? []).map((s) => s.key), ...(on === 'rows' ? ['x', 'out'] : ['table'])]);
     setEdges((es) => es.filter((e) => e.source !== id || keep.has(e.sourceHandle ?? '')));
     set({ on });
   };
   const ofDataset = !!r?.view.available;
+  // (the usual statistics, then the percentiles and the confidence interval asked)
+  const statList = [...STATS, ...(r?.view.statExtra ?? [])];
   const cols = r?.view.statCols ?? [];
   const shown = cols.slice(0, 3);
   const c = r?.view.statsOf;
@@ -158,6 +160,23 @@ export function StatsNodeView({ id, data }: NodeProps<StatsNode>) {
       <NodeOptions>
       {(onRows || ofDataset) && <ColumnChoice cols={data.cols ?? ''} x={data.x ?? ''} onCols={(v) => set({ cols: v })} onX={(v) => set({ x: v })} result={r} />}
       <RowSelectControls value={data.rows} onChange={(rows) => set({ rows })} hasX={(onRows || ofDataset) && data.x !== '-'} result={r} />
+      <div className="row wrap">
+        <Field label="Percentiles" title="More statistics: these percentiles (10, 50, 90: P10, P50, P90, as D10, D50, D90 of a size distribution), each an output">
+          <TextInput value={data.pcts ?? ''} placeholder="e.g. 10, 50, 90" onChange={(pcts) => set({ pcts: pcts.trim() ? pcts : undefined })} />
+        </Field>
+        <Field label="CI of mean" title="The confidence interval of the mean (from t, N − 1): its low and high ends, two outputs">
+          <Select<number>
+            value={data.ci ?? 0}
+            options={[
+              [0, 'none'],
+              [90, '90 %'],
+              [95, '95 %'],
+              [99, '99 %'],
+            ]}
+            onChange={(ci) => set({ ci: ci || undefined })}
+          />
+        </Field>
+      </div>
       </NodeOptions>
       <Messages result={r} />
       {onRows ? (
@@ -167,7 +186,7 @@ export function StatsNodeView({ id, data }: NodeProps<StatsNode>) {
               <span className="stat-name">X</span>
               <span className="val stat-val ellipsis">{r?.outputs.x?.t === 'column' ? `${r.outputs.x.v.name}: ${preview(r.outputs.x.v.values)}` : '—'}</span>
             </OutPort>
-            {STATS.map((st) => (
+            {statList.map((st) => (
               <OutPort key={st.key} id={st.key} label="" port="column" title={`${st.label} of every row: ${st.help}`}>
                 <span className="stat-name">{st.label}</span>
                 <span className="val stat-val ellipsis">{out ? preview(out[st.key]) : '—'}</span>
@@ -203,7 +222,7 @@ export function StatsNodeView({ id, data }: NodeProps<StatsNode>) {
                 ))}
               </div>
             )}
-            {STATS.map((st) => (
+            {statList.map((st) => (
               <OutPort key={st.key} id={st.key} label="" port={ofDataset ? 'column' : 'scalar'} title={`${st.label}: ${st.help}${ofDataset ? ' — a column: a value per column' : ''}`}>
                 <span className="stat-name">{st.label}</span>
                 {ofDataset ? (

@@ -5,12 +5,13 @@
 import { cropBox, cropRaster, map1, packPixels, unpackPixels, type Crop, type ImgPixels, type Raster } from './raster.ts';
 import { applySteps, type ImgStep } from './steps.ts';
 import { measureInputs, measureRois, measureSpec, type MeasureResult, type MeasureSpec } from './measure.ts';
-import type { Roi } from './roi.ts';
 import { trainingExamples } from './classify.ts';
 import type { ParticleOpts } from './particles.ts';
 import type { MatchOpts, MatchModelSpec } from './match.ts';
 import type { RegularShape } from './refine.ts';
 import { analyzeNetwork, NETWORK_DEFAULTS, type NetworkResult, type NetworkSpec } from './network.ts';
+import { arrange, ARRANGE_DEFAULTS, type ArrangeResult, type ArrangeSpec } from './arrangement.ts';
+import { isArea, roiCentre, roiOutline, type Pt, type Roi } from './roi.ts';
 import { column, type Column, type Dataset } from '../engine/table.ts';
 import { pngDataUrl, toRGBA, type Lut } from './render.ts';
 import type { Matrix } from '../engine/matrix.ts';
@@ -44,6 +45,8 @@ export type ImageAnalysisData = {
   match?: Partial<MatchOpts> & { fit?: boolean; models?: MatchModelSpec[] };
   // Structure: the network of the mask (its skeleton's ligaments, junctions, pores) and the changes by hand
   network?: NetworkSpec;
+  // Arrangement: how the particles lie (their neighbours, Delaunay, Voronoi, clusters, g(r), Ripley's L)
+  arrange?: ArrangeSpec;
   tab?: 'image' | 'objects' | 'structure' | 'results'; // the editor's panel shown last
 };
 export const BAR_DEFAULTS: ScaleBar = { show: true, length: NaN, at: 'br', color: '#ffffff', thickness: 3, label: true, size: 8 };
@@ -208,6 +211,105 @@ export function networkSheets(r: NetworkResult, d: ImageAnalysisData): Dataset[]
   ];
   const network: Dataset = { name: 'Network', columns: [txt('Quantity', rows.map((q) => q[0])), num('Value', rows.map((q) => q[1])), txt('Unit', rows.map((q) => q[2]))] };
   return [network, ligaments, junctions, pores];
+}
+
+// Arrangement: of the particles (every selection of an area, not of background, not an example; of the group asked),
+// kept while the selections and the settings are the same; null: fewer than 3
+const arrangements = new WeakMap<Processed, { key: string; res: ArrangeResult; names: string[]; groups: string[] }>();
+export function imageArrangement(d: ImageAnalysisData, p: Processed): { res: ArrangeResult; names: string[]; groups: string[] } | null {
+  const full = d.pixels ? { w: d.pixels.w, h: d.pixels.h } : { w: p.base.w, h: p.base.h };
+  const c = cropBox(d.crop, full.w, full.h);
+  const [ox, oy] = [c?.[0] ?? 0, c?.[1] ?? 0];
+  const group = d.arrange?.group ?? '';
+  const parts = (d.rois ?? []).filter((r) => isArea(r) && !r.train && r.role !== 'background' && !r.hidden && (!group || (r.group ?? '') === group));
+  if (parts.length < 3) return null;
+  const key = JSON.stringify([d.arrange ?? {}, d.crop ?? null, parts.map((r) => [r.id, r.kind, r.box, r.pts?.length, r.pts?.[0], r.angle])]);
+  const hit = arrangements.get(p);
+  if (hit && hit.key === key) return hit;
+  const res = arrange(
+    parts.map((r) => {
+      const [cx, cy] = roiCentre(r);
+      return { name: r.name, group: r.group, c: [cx - ox, cy - oy] as Pt, poly: roiOutline(r).map(([x, y]): Pt => [x - ox, y - oy]) };
+    }),
+    p.base.w,
+    p.base.h,
+    d.arrange ?? {},
+  );
+  const out = { key, res, names: parts.map((r) => r.name), groups: parts.map((r) => r.group ?? '') };
+  arrangements.set(p, out);
+  return out;
+}
+// its tables: every particle's neighbours, the numbers of all of them, g(r), Ripley's L(r) − r with the band at random,
+// the nearest-neighbour distances against those at random (in the calibrated unit)
+export function arrangementSheets(a: { res: ArrangeResult; names: string[]; groups: string[] }, d: ImageAnalysisData): Dataset[] {
+  const { res } = a;
+  const s = { ...ARRANGE_DEFAULTS, ...d.arrange };
+  const k = d.cal && d.cal.size > 0 ? d.cal.size : 1;
+  const u = d.cal && d.cal.size > 0 ? unitText(d.cal.unit) : 'px';
+  const num = (name: string, v: number[]) => column(name, Float64Array.from(v));
+  const txt = (name: string, v: string[]): Column => column(name, new Float64Array(v.length).fill(NaN), v);
+  const R = res.rows;
+  const full = d.pixels ? { w: d.pixels.w, h: d.pixels.h } : null;
+  const c = full ? cropBox(d.crop, full.w, full.h) : null;
+  const [ox, oy] = [c?.[0] ?? 0, c?.[1] ?? 0];
+  const parts = (d.rois ?? []).filter((r) => isArea(r) && !r.train && r.role !== 'background' && !r.hidden && (!d.arrange?.group || (r.group ?? '') === d.arrange.group));
+  const xy = parts.map((r) => roiCentre(r));
+  const neighbours: Dataset = {
+    name: 'Neighbours',
+    columns: [
+      txt('Name', a.names),
+      txt('Group', a.groups),
+      num(`X (${u})`, xy.map((q) => (q[0] - ox) * k)),
+      num(`Y (${u})`, xy.map((q) => (q[1] - oy) * k)),
+      txt('Nearest', R.map((r) => a.names[r.nearest] ?? '')),
+      num(`NND (${u})`, R.map((r) => r.nnd * k)),
+      num(`NND edge (${u})`, R.map((r) => r.edge * k)),
+      num(`Mean of ${s.k} nearest (${u})`, R.map((r) => r.knn * k)),
+      num('Neighbours (Delaunay)', R.map((r) => r.coord)),
+      num(`Voronoi area (${u}²)`, R.map((r) => r.cell * k * k)),
+      num('ψ6', R.map((r) => r.psi6)),
+      num('Cluster', R.map((r) => r.cluster)),
+      num('Cluster size', R.map((r) => r.clusterSize)),
+      txt('Edge', R.map((r) => (r.onEdge ? 'yes' : ''))),
+    ],
+  };
+  const m = res.summary;
+  const how = !Number.isFinite(m.R) ? '' : m.p >= 0.05 ? 'random (no difference)' : m.R < 1 ? 'clustered' : 'regular';
+  const rows: [string, number, string][] = [
+    ['Particles', m.n, ''],
+    ['Density', m.density / (k * k), `${u}⁻²`],
+    ['NND, mean', m.nnd * k, u],
+    ['NND, SD', m.nndSd * k, u],
+    ['NND, CV', (100 * m.nndSd) / m.nnd, '%'],
+    ['NND edge to edge, mean', m.edge * k, u],
+    ['Clark–Evans R', m.R, ''],
+    ['Clark–Evans z', m.z, ''],
+    ['Clark–Evans p', m.p, ''],
+    ['Neighbours (Delaunay), mean', m.coord, ''],
+    ['Voronoi area CV', m.cellCv, ''],
+    ['ψ6, mean', m.psi6, ''],
+    ['Clusters', m.clusters, ''],
+    ['Isolated particles', m.isolated, ''],
+    ['Cluster size, mean', m.meanCluster, ''],
+    ['Largest cluster', m.largest, ''],
+    ['g(r) first peak', m.peak * k, u],
+  ];
+  const summary: Dataset = { name: 'Arrangement', columns: [txt('Quantity', [...rows.map((q) => q[0]), 'Pattern']), num('Value', [...rows.map((q) => q[1]), NaN]), txt('Unit', [...rows.map((q) => q[2]), how])] };
+  const g: Dataset = { name: 'g(r)', columns: [{ ...num(`r (${u})`, res.g.r.map((v) => v * k)), role: 'x' }, { ...num('g(r)', res.g.g), role: 'y' }] };
+  const L: Dataset = {
+    name: 'Ripley L',
+    columns: [
+      { ...num(`r (${u})`, res.L.r.map((v) => v * k)), role: 'x' },
+      { ...num(`L(r) − r (${u})`, res.L.L.map((v) => v * k)), role: 'y' },
+      { ...num(`At random, low (${u})`, res.L.lo.map((v) => v * k)), role: 'y' },
+      { ...num(`At random, high (${u})`, res.L.hi.map((v) => v * k)), role: 'y' },
+    ],
+  };
+  const h: Dataset = {
+    name: 'NND distribution',
+    columns: [{ ...num(`NND (${u})`, res.nndHist.r.map((v) => v * k)), role: 'x' }, { ...num('Count', res.nndHist.count), role: 'y' }, { ...num('At random', res.nndHist.csr), role: 'y' }],
+  };
+  return [summary, neighbours, g, L, h];
 }
 
 // the result as a matrix: gray (RGB: its luminance), X and Y of every column and row in the calibrated unit

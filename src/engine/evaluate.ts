@@ -34,7 +34,7 @@ import { kkNode, KK_DEFAULTS } from './kk.ts';
 import { controlChart } from './multivar.ts';
 import { linearRegression, logisticRegression, type Coef } from './regression.ts';
 import { surfaceModel } from './surface.ts';
-import { describe, STATS, type StatKey } from './stats.ts';
+import { describeAll, extraStats, STATS, type ExtraStat } from './stats.ts';
 import { combineNode, combineSettings, labelRuns, sideBySide, unstack, type BlockInfo, type CombineInput, type CombineSettings, type SplitGraph } from './reshape.ts';
 import { pickPoints, type PickGraph, type PickKind, type Picked } from './pick.ts';
 import { CURVE_OP_LABELS, curveFormulas, curveMath, curveOf, curveOpPort, curveOps, translate, type Curve2, type TranslateCurve, type CurveMathData, type CurveOpView, type CurvePlotLine, stepInfo, type StepInfo } from './curvemath.ts';
@@ -76,8 +76,9 @@ import { compare, compareTable, modelName, yorkRuns, type Scored } from './fitco
 import { parseRowHandle, rowHandle } from './ports.ts';
 import { hasGrad, type GradFill, AXIS_DEFAULTS, COLORBAR_DEFAULTS, SIDE_DEFAULTS, curveStyle, axesStyle, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, toPt, type Annotation, type AxesFig, type AxesStyle, type AxisSpec, type Curve, type CurveStyle, type Figure, type FigureBox, type LegendEntry, type LegendSpec, type LengthUnit, type Placement, type ShapeSpec, type TextDefaults, resolveText, type Side, INSET_DEFAULTS, insetBackground, scaledSize } from '../figure/spec.ts';
 import { CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, DRAWING_DEFAULTS, MATRIX_PLOT_DEFAULTS, PLOT_PAGE_DEFAULTS } from '../defaults.ts';
-import { figurePng, imageFigure, imageMatrix, imageMeasurements, imageNetwork, networkSheets, processImage, scaleBarPlace, type ImageAnalysisData } from '../image/node.ts';
+import { figurePng, imageFigure, imageMatrix, imageMeasurements, imageNetwork, networkSheets, imageArrangement, arrangementSheets, processImage, scaleBarPlace, type ImageAnalysisData } from '../image/node.ts';
 import type { NetworkResult } from '../image/network.ts';
+import type { ArrangeResult } from '../image/arrangement.ts';
 import { isArea, roiCentre, roiOutline, ROI_COLOR } from '../image/roi.ts';
 import { cropBox } from '../image/raster.ts';
 import { STEP_DEFS } from '../image/steps.ts';
@@ -161,12 +162,13 @@ export type NodeView = {
   combine?: { port: number; letter: string; kind: 'column' | 'dataset' | 'workbook'; name: string; rows: number; cols: number; columns: string[]; sheets?: string[] }[]; // Combine columns: its inputs
   combineSettings?: CombineSettings; // Combine columns: its settings as it works with them (an older node's translated)
   changed?: number; // Math column: how many rows the rules changed
-  stats?: Record<StatKey, number>;
+  stats?: Record<string, number>;
+  statExtra?: ExtraStat[]; // Statistics: the percentiles and confidence interval asked
   statsOf?: Column;
   // Statistics on columns / rows: the columns used, their statistics (on columns), the rows chosen of how many
-  statCols?: { name: string; stats?: Record<StatKey, number> }[];
+  statCols?: { name: string; stats?: Record<string, number> }[];
   statRows?: { used: number; of: number; text: string };
-  statOut?: Record<StatKey, Float64Array>; // Statistics on rows: every statistic, a value per row chosen
+  statOut?: Record<string, Float64Array>; // Statistics on rows: every statistic, a value per row chosen
   curves?: Curve[]; // Plot: its curves
   rowAvail?: Record<number, ColInfo[]>; // Plot: the columns of a curve's own dataset (its data port)
   sheetCols?: Record<string, ColInfo[]>; // Plot: a workbook on its dataset port — the columns of every sheet
@@ -190,6 +192,7 @@ export type NodeView = {
   figure?: Figure;
   cooling?: Figure; // Phase diagram: the amounts of the phases of the alloy cooled
   network?: NetworkResult; // Image analysis, Structure: the network found (drawn over the image, a ligament explained)
+  arrange?: ArrangeResult; // Image analysis, Arrangement: the particles' neighbours, cells, links (drawn over the image)
   image?: { w: number; h: number; ch: number; kind: string; notes: Record<string, string>; errors: Record<string, string>; summary?: string }; // Image analysis: the result's size, every step's note and error, what the measurements found
   under?: Figure; // Figure Drawing: the figure connected under it
   pinShift?: Record<string, [number, number]>; // … and how far its objects pinned to that figure's data are moved (mm)
@@ -2352,11 +2355,15 @@ function imageNodeOut(id: string, d: ImageAnalysisData): Out {
   const net = d.network?.on ? imageNetwork(d, p) : null;
   if (typeof net === 'string') warnings.push(net);
   const netSheets = net && typeof net !== 'string' ? networkSheets(net, d) : [];
-  const book = m || netSheets.length ? { name: m?.book.name ?? (d.name.replace(/\.[a-z0-9]+$/i, '') || 'image'), sheets: [...(m?.book.sheets ?? []), ...netSheets] } : null;
+  // (Arrangement: its sheets after those)
+  const arr = d.arrange?.on ? imageArrangement(d, p) : null;
+  if (d.arrange?.on && !arr) warnings.push('Arrangement: find 3 particles or more first (Objects ▸ Particles).');
+  const arrSheets = arr ? arrangementSheets(arr, d) : [];
+  const book = m || netSheets.length || arrSheets.length ? { name: m?.book.name ?? (d.name.replace(/\.[a-z0-9]+$/i, '') || 'image'), sheets: [...(m?.book.sheets ?? []), ...netSheets, ...arrSheets] } : null;
   return {
     outputs: { matrix: { t: 'matrix', v: imageMatrix(p.out, d.name || 'image', d.cal) }, figure: { t: 'figure', v: figure }, ...(book ? { workbook: { t: 'workbook' as const, v: book } } : {}) },
     warnings,
-    view: { figure, image: { w: p.out.w, h: p.out.h, ch: p.base.ch.length, kind: p.out.kind, notes: p.notes, errors: p.errors, ...(m?.summary ? { summary: m.summary } : {}) }, ...(net && typeof net !== 'string' ? { network: net } : {}) },
+    view: { figure, image: { w: p.out.w, h: p.out.h, ch: p.base.ch.length, kind: p.out.kind, notes: p.notes, errors: p.errors, ...(m?.summary ? { summary: m.summary } : {}) }, ...(net && typeof net !== 'string' ? { network: net } : {}), ...(arr ? { arrange: arr.res } : {}) },
   };
 }
 
@@ -3071,6 +3078,8 @@ function statsColumns(d: StatsData, v: Value | undefined): Out {
   const sel = selectRows(d.rows, n, X, letters);
   if (typeof sel === 'string') return { errors: [`Rows: ${sel}`], view: { available } };
   let masked = 0;
+  const extra = extraStats(d.pcts, d.ci);
+  const list = [...STATS, ...extra];
   const per = cols.map((c) => {
     const vals: number[] = [];
     for (const i of sel.rows) {
@@ -3078,12 +3087,12 @@ function statsColumns(d: StatsData, v: Value | undefined): Out {
       if (c.mask?.[i]) masked++;
       else vals.push(c.values[i]);
     }
-    return describe(vals);
+    return describeAll(vals, extra, d.ci);
   });
   if (masked) warnings.push(`${masked} masked value${masked > 1 ? 's' : ''} left out.`);
   if (!sel.rows.length) warnings.push('No row chosen.');
   const outputs: Record<string, Value> = {};
-  for (const st of STATS) {
+  for (const st of list) {
     outputs[st.key] =
       v.t === 'column'
         ? { t: 'scalar', v: { name: `${st.label} of ${cols[0].name}${sel.text ? ` (${sel.text})` : ''}`, value: per[0][st.key] } }
@@ -3091,7 +3100,7 @@ function statsColumns(d: StatsData, v: Value | undefined): Out {
   }
   // the table: a row per column (named by it), every statistic a column; mean ± SD designated for a quick plot
   const table: Column[] = [{ ...column('Column', Float64Array.from(cols, (_, k) => k + 1), cols.map((c) => c.name)), role: 'x' }];
-  for (const st of STATS) table.push({ ...column(st.label, Float64Array.from(per, (s) => s[st.key])), role: st.key === 'mean' ? 'y' : st.key === 'sd' ? 'yerr' : 'none' });
+  for (const st of list) table.push({ ...column(st.label, Float64Array.from(per, (s) => s[st.key])), role: st.key === 'mean' ? 'y' : st.key === 'sd' ? 'yerr' : 'none' });
   outputs.table = { t: 'dataset', v: { name: 'statistics', columns: table } };
   // a control chart of the first column, on the rows chosen in their order
   let control: string[] | undefined;
@@ -3133,13 +3142,13 @@ function statsColumns(d: StatsData, v: Value | undefined): Out {
   return {
     outputs,
     warnings,
-    view: { stats: per[0], statsOf: cols[0], available, statCols: cols.map((c, k) => ({ name: c.name, stats: per[k] })), statRows: { used: sel.rows.length, of: n, text: sel.text }, ...(control ? { report: control } : {}) },
+    view: { stats: per[0], statsOf: cols[0], available, ...(extra.length ? { statExtra: extra } : {}), statCols: cols.map((c, k) => ({ name: c.name, stats: per[k] })), statRows: { used: sel.rows.length, of: n, text: sel.text }, ...(control ? { report: control } : {}) },
   };
 }
 
 // Statistics on rows: for every row chosen, the statistics of the values of the columns chosen (replicates → mean ± SD);
 // each statistic a column, and a dataset with X, the mean (Y) and its error (±Y) ready for a plot.
-function statsRows(d: { cols: string; x: string; rows?: StatsData['rows']; err: 'sd' | 'se' }, v: Value | undefined): Out {
+function statsRows(d: { cols: string; x: string; rows?: StatsData['rows']; err: 'sd' | 'se'; pcts?: string; ci?: number }, v: Value | undefined): Out {
   if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset (Import, Auto-extract …), then choose its columns.' } };
   const available = v.v.columns.map(colInfo);
   const { X, cols, warnings } = statColumns(v.v, d.cols, d.x);
@@ -3149,7 +3158,9 @@ function statsRows(d: { cols: string; x: string; rows?: StatsData['rows']; err: 
   const sel = selectRows(d.rows, n, X, v.v.columns);
   if (typeof sel === 'string') return { errors: [`Rows: ${sel}`], view: { available } };
   const m = sel.rows.length;
-  const out = Object.fromEntries(STATS.map((s) => [s.key, new Float64Array(m)])) as Record<StatKey, Float64Array>;
+  const extra = extraStats(d.pcts, d.ci);
+  const list = [...STATS, ...extra];
+  const out = Object.fromEntries(list.map((s) => [s.key, new Float64Array(m)])) as Record<string, Float64Array>;
   const vals: number[] = [];
   let masked = 0;
   sel.rows.forEach((i, r) => {
@@ -3159,23 +3170,23 @@ function statsRows(d: { cols: string; x: string; rows?: StatsData['rows']; err: 
       if (c.mask?.[i]) masked++;
       else vals.push(c.values[i]);
     }
-    const s = describe(vals);
-    for (const st of STATS) out[st.key][r] = s[st.key];
+    const s = describeAll(vals, extra, d.ci);
+    for (const st of list) out[st.key][r] = s[st.key];
   });
   if (masked) warnings.push(`${masked} masked value${masked > 1 ? 's' : ''} left out.`);
   if (!m) warnings.push('No row chosen.');
-  const statCol = (key: StatKey) => {
-    const st = STATS.find((s) => s.key === key)!;
+  const statCol = (key: string) => {
+    const st = list.find((s) => s.key === key)!;
     return column(st.label, out[key]);
   };
   const outputs: Record<string, Value> = {};
-  for (const st of STATS) outputs[st.key] = { t: 'column', v: statCol(st.key) };
+  for (const st of list) outputs[st.key] = { t: 'column', v: statCol(st.key) };
   const xOut: Column = X ? { ...takeRows(X, sel.rows), role: 'x' } : { ...column('Row', Float64Array.from(sel.rows, (i) => i + 1)), role: 'x' };
   outputs.x = { t: 'column', v: xOut };
   const err = d.err === 'se' ? 'se' : 'sd';
-  const rest: Column[] = STATS.filter((s) => s.key !== 'mean' && s.key !== err).map((s) => ({ ...statCol(s.key), role: 'none' }));
+  const rest: Column[] = list.filter((s) => s.key !== 'mean' && s.key !== err).map((s) => ({ ...statCol(s.key), role: 'none' }));
   outputs.out = { t: 'dataset', v: { name: v.v.name, columns: [xOut, { ...statCol('mean'), role: 'y' }, { ...statCol(err), role: 'yerr' }, ...rest] } };
-  return { outputs, warnings, view: { available, statCols: cols.map((c) => ({ name: c.name })), statRows: { used: m, of: n, text: sel.text }, statOut: out } };
+  return { outputs, warnings, view: { available, ...(extra.length ? { statExtra: extra } : {}), statCols: cols.map((c) => ({ name: c.name })), statRows: { used: m, of: n, text: sel.text }, statOut: out } };
 }
 
 // ---- Fit ----
@@ -4772,7 +4783,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       return { outputs: { out: { t: 'dataset', v: r.dataset }, names: { t: 'column', v: r.names } }, warnings: r.warnings, view: { available: r.dataset.columns.map(colInfo), columnLines: r.lines, inputs: ins, columnsHead } };
     }
     case 'stats':
-      return n.data.on === 'rows' ? statsRows({ cols: n.data.cols ?? '', x: n.data.x ?? '', rows: n.data.rows, err: n.data.err ?? 'sd' }, one('in')) : statsColumns(n.data, one('in'));
+      return n.data.on === 'rows' ? statsRows({ cols: n.data.cols ?? '', x: n.data.x ?? '', rows: n.data.rows, err: n.data.err ?? 'sd', pcts: n.data.pcts, ci: n.data.ci }, one('in')) : statsColumns(n.data, one('in'));
     case 'plot1d':
       return plot(n, inputs);
     case 'histogram':

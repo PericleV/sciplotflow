@@ -31,7 +31,7 @@ import * as Hy from '../src/engine/hypo.ts';
 import * as Di from '../src/engine/dist.ts';
 import { parseCsv, CSV_DEFAULTS, plainNumber } from '../src/engine/csv.ts';
 import { compile } from '../src/engine/expr.ts';
-import { describe } from '../src/engine/stats.ts';
+import { describe, describeAll, extraStats } from '../src/engine/stats.ts';
 import { axisRange, formatLabels, inBreak, parseBreaks, ticks } from '../src/figure/ticks.ts';
 import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, axesStyle, CURVE_STYLE_DEFAULTS, SIDE_DEFAULTS, curveStyle, toPt, type AxesStyle, type Curve, type Figure, LEGEND_STYLE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, FONTS, type Annotation, COLORBAR_DEFAULTS, type ColorbarSpec, legendBox, legendBoxPatch, type LegendSpec } from '../src/figure/spec.ts';
 import { BUILTIN_STYLES, styledData } from '../src/nodes/styles.ts';
@@ -929,6 +929,10 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
     return typeof r === 'string' ? r : r.rows.join(',');
   };
   ok(sg('empty') === '1,4' && sg('filled') === '0,2,3,5', 'rows: is empty / is not empty (a 0 is a value)');
+  // more statistics asked: percentiles (D10, D90 of a distribution) and the 95 % confidence interval of the mean
+  const ex = extraStats('10, 90', 95);
+  const dd = describeAll(Array.from({ length: 10 }, (_, i) => i + 1), ex, 95);
+  ok(ex.map((e) => e.key).join() === 'p10,p90,cilo,cihi' && near(dd.p10, 1.9, 1e-12) && near(dd.p90, 9.1, 1e-12) && near(dd.cilo, 3.3341, 1e-3) && near(dd.cihi, 7.6659, 1e-3), `statistics: percentiles and the confidence interval of the mean (${dd.p10}, ${dd.p90}, ${dd.cilo.toFixed(4)} … ${dd.cihi.toFixed(4)})`);
   // the odd or even rows of those chosen; a formula on top of any choice; the row number in a condition; % in formulas
   const m = compile('(-1) % 2 + 7 % 3');
   ok(

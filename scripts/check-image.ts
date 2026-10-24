@@ -23,6 +23,7 @@ import { niceBar, scaleBarPlace, BAR_DEFAULTS } from '../src/image/node.ts';
 import { unzlibSync } from 'fflate';
 import { evaluateGraph, logicalData } from '../src/engine/evaluate.ts';
 import { analyzeNetwork, learnRatio, type NetworkResult } from '../src/image/network.ts';
+import { arrange } from '../src/image/arrangement.ts';
 import type { AppNode } from '../src/types.ts';
 
 type Ok = (cond: boolean, what: string) => void;
@@ -591,6 +592,35 @@ export function checkImage(ok: Ok) {
     const sheet = (n: string) => book?.sheets.find((q) => q.name === n);
     const val = (q: string) => sheet('Network')?.columns[1].values[sheet('Network')!.columns[0].text!.indexOf(q)];
     ok(!!sheet('Ligaments') && sheet('Ligaments')!.columns[4].name === 'Length (nm)' && val('Ligaments counted') === 40 && Math.abs(val('Ligament length, median')! - 80) < 1 && Math.abs(val('Ligament diameter, median')! - 14) < 1.2 && val('Junctions') === 25 && sheet('Pores')!.columns[0].values.length === 36 && !!out.view.network, `structure in the node: its sheets, in nm (median ${val('Ligament length, median')} nm long, ${val('Ligament diameter, median')} nm thick)`);
+  }
+  // Arrangement: a hexagonal lattice (20 px apart) is regular — R near 2.15, ψ6 1, six neighbours, g(r)'s first peak at
+  // 20 —; points at random are random (R near 1, p > 0.05, L(r) − r inside the band); clusters of 10 are clustered
+  {
+    const sq = (c: Pt, r = 2): Pt[] => [[c[0] - r, c[1] - r], [c[0] + r, c[1] - r], [c[0] + r, c[1] + r], [c[0] - r, c[1] + r]];
+    const [W, H] = [400, 300];
+    const hex: Pt[] = [];
+    for (let j = 0; (j * 20 * Math.sqrt(3)) / 2 < H - 10; j++) for (let i = 0; i * 20 < W - 10; i++) hex.push([10 + i * 20 + (j % 2) * 10, 10 + (j * 20 * Math.sqrt(3)) / 2]);
+    let seed = 7;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const ran: Pt[] = Array.from({ length: 300 }, () => [rnd() * W, rnd() * H]);
+    const clu: Pt[] = [];
+    for (let c = 0; c < 30; c++) {
+      const [cx, cy] = [rnd() * W, rnd() * H];
+      for (let q = 0; q < 10; q++) clu.push([cx + (rnd() - 0.5) * 16, cy + (rnd() - 0.5) * 16]);
+    }
+    const go = (pts: Pt[]) => arrange(pts.map((c, i) => ({ name: `P${i}`, c, poly: sq(c) })), W, H, {});
+    const [h, r, c] = [go(hex), go(ran), go(clu)];
+    const inBand = r.L.L.every((v, b) => v >= r.L.lo[b] && v <= r.L.hi[b]);
+    ok(h.summary.R > 1.9 && h.summary.p < 1e-6 && Math.abs(h.summary.psi6 - 1) < 0.01 && Math.abs(h.summary.coord - 6) < 0.01 && Math.abs(h.summary.peak - 20) < 1 && Math.abs(r.summary.R - 1) < 0.1 && r.summary.p > 0.05 && inBand && c.summary.R < 0.5 && c.summary.clusters < 120 && c.L.L.every((v, b) => v > r.L.hi[b] || b < 2), `arrangement: hexagonal R ${h.summary.R.toFixed(2)} ψ6 ${h.summary.psi6.toFixed(2)} peak ${h.summary.peak.toFixed(1)}; random R ${r.summary.R.toFixed(2)} (p ${r.summary.p.toFixed(2)}, L in the band ${inBand}); clustered R ${c.summary.R.toFixed(2)} in ${c.summary.clusters} clusters`);
+    // in the node: the selections of the lattice (1 px = 0.5 nm) give the sheets Arrangement, Neighbours, g(r), Ripley L
+    const img = packPixels(W, H, 1, 8, new Array(W * H).fill(30));
+    const rois = hex.map((cc, i) => ({ id: `h${i}`, name: `P${i + 1}`, kind: 'rect', box: [cc[0], cc[1], 4, 4], angle: 0 }));
+    const nd = { id: 'im', type: 'image', position: { x: 0, y: 0 }, data: { name: 'lattice.png', pixels: img, pixelsId: 'lat', steps: [], cal: { size: 0.5, unit: 'nm' }, rois, arrange: { on: true } } } as AppNode;
+    const out = evaluateGraph([nd], []).get('im')!;
+    const book = out.outputs.workbook?.t === 'workbook' ? out.outputs.workbook.v : undefined;
+    const sh = (n: string) => book?.sheets.find((q) => q.name === n);
+    const val = (q: string) => sh('Arrangement')?.columns[1].values[sh('Arrangement')!.columns[0].text!.indexOf(q)];
+    ok(!!sh('Neighbours') && sh('Neighbours')!.columns[5].name === 'NND (nm)' && Math.abs(val('NND, mean')! - 10) < 0.05 && Math.abs(val('g(r) first peak')! - 10) < 0.6 && !!sh('g(r)') && !!sh('Ripley L') && !!sh('NND distribution') && !!out.view.arrange, `arrangement in the node: its sheets, in nm (NND ${val('NND, mean')} nm)`);
   }
   // layers: a square drawn over two others (brighter, their corners cut by it) is on top, they under it; one alone on top
   {

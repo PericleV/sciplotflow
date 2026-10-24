@@ -349,3 +349,33 @@ export function porousImage(): TestImage {
     }
   return { name: 'nanoporous gold', w, h, px, truth: [] };
 }
+
+// A monolayer of nanoparticles as an electron microscope shows it: discs on a hexagonal lattice (22 px apart), a little
+// off their places, some places empty, their sizes log-normal (median radius 8 px, σ 0.12); bright on a dark ground
+export function monolayerImage(): TestImage {
+  const [w, h] = [400, 300];
+  const rnd = rng(41);
+  const gauss = () => Math.sqrt(-2 * Math.log(1 - rnd())) * Math.cos(2 * Math.PI * rnd());
+  const shapes: Pt[][] = [];
+  const truth: TestShape[] = [];
+  const a = 22;
+  for (let j = 0; (j * a * Math.sqrt(3)) / 2 < h - 12; j++)
+    for (let i = 0; i * a < w - 12; i++) {
+      if (rnd() < 0.08) continue;
+      const cx = 14 + i * a + (j % 2) * (a / 2) + 1.5 * gauss();
+      const cy = 14 + (j * a * Math.sqrt(3)) / 2 + 1.5 * gauss();
+      const r = 8 * Math.exp(0.12 * gauss());
+      shapes.push(regular(cx, cy, r, 48, 0));
+      truth.push({ shape: 'circle', cx, cy });
+    }
+  const px = render(
+    w,
+    h,
+    shapes,
+    () => 35,
+    () => 190,
+    9,
+    12,
+  );
+  return { name: 'nanoparticle monolayer', w, h, px, truth };
+}

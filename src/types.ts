@@ -296,7 +296,8 @@ export type RowRule = { mode: 'rows' | 'condition' | 'all'; rows: string; formul
 // x: the X column for ranges by X and the rule (empty: the designated one, '-': none); rows: the rows used.
 // control: a control chart of the (first) column — individuals and moving ranges, or the means and ranges of subgroups
 // of `subgroup` values
-export type StatsData = { on?: 'columns' | 'rows'; cols?: string; x?: string; rows?: RowSelect; err?: 'sd' | 'se'; control?: 'imr' | 'xbar'; subgroup?: number };
+// pcts: percentiles asked besides (“10, 50, 90”); ci: the level (%) of the confidence interval of the mean (absent: none)
+export type StatsData = { on?: 'columns' | 'rows'; cols?: string; x?: string; rows?: RowSelect; err?: 'sd' | 'se'; control?: 'imr' | 'xbar'; subgroup?: number; pcts?: string; ci?: number };
 
 // ---- Figure ----
 // One curve of a Plot: its legend text and its style (partial in older projects: merged with the defaults).

@@ -30,6 +30,7 @@ import { measureSpec, roiPerimeter, type MeasureSpec } from '../image/measure.ts
 import type { Workbook } from '../engine/table.ts';
 import { MeasurePanel, ParticlesPanel, RoiOverlay, RoiPanel } from './RoiManager.tsx';
 import { NetworkOverlay, NetworkPanel, type NetTool } from './NetworkPanel.tsx';
+import { ArrangeOverlay, ArrangePanel } from './ArrangePanel.tsx';
 import { branchAt, midOf, type HandKind, type NetBranch, type NetworkHand, type NetworkSpec } from '../image/network.ts';
 import { useNodeResult } from '../engine/engine.ts';
 import { ask } from '../ui/dialogStore.ts';
@@ -129,11 +130,48 @@ const SIDE_TABS: [SideTab, string, string][] = [
   ['structure', 'Structure', 'The network of the mask: ligaments, junctions, pores (skeleton analysis), changed by hand'],
   ['results', 'Results', 'What is measured and the tables'],
 ];
+// the widths of the steps (left) and of the panels (right), dragged by the bars between them and the image: kept in
+// this browser for every image
+const PANELS: [number, number] = [300, 280];
+const PANELS_KEY = 'graph-flow:image-editor-panels';
+const savedPanels = (): [number, number] => {
+  try {
+    const v = JSON.parse(localStorage.getItem(PANELS_KEY) ?? 'null') as unknown;
+    return Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === 'number' && x > 0) ? (v as [number, number]) : PANELS;
+  } catch {
+    return PANELS;
+  }
+};
 let stepSeq = 0;
 let roiSeq = 0;
 export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnalysisData; onClose: () => void }) {
   const { updateNodeData } = useReactFlow<AppNode>();
   const set = (p: Partial<ImageAnalysisData>) => updateNodeData(id, p);
+  const [panels, setPanels] = useState<[number, number]>(savedPanels);
+  const clampPanel = (w: number) => Math.round(Math.max(220, Math.min(window.innerWidth * 0.45, w)));
+  const setPanelWidth = (k: 0 | 1, w: number) =>
+    setPanels((cur) => {
+      const next: [number, number] = k === 0 ? [clampPanel(w), cur[1]] : [cur[0], clampPanel(w)];
+      try {
+        localStorage.setItem(PANELS_KEY, JSON.stringify(next));
+      } catch {
+        // (the widths not kept: the browser's storage refused)
+      }
+      return next;
+    });
+  // (a bar dragged: the left panel grows to the right, the right one to the left)
+  const dragPanel = (e: React.PointerEvent, k: 0 | 1) => {
+    e.preventDefault();
+    const x0 = e.clientX;
+    const w0 = panels[k];
+    const move = (m: PointerEvent) => setPanelWidth(k, w0 + (k === 0 ? m.clientX - x0 : x0 - m.clientX));
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
   // the panel shown (kept in the node); Structure: the network found (the node's result), its tools, the branch picked
   const tab: SideTab = data.tab ?? 'image';
   const setTab = (t: SideTab) => {
@@ -1073,6 +1111,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       net && !onOriginal && data.network?.on && <NetworkOverlay net={net} spec={data.network} k={k} ox={ox} oy={oy} W={W} H={H} tool={netTool} sel={netSel} eraseR={eraseR} onSelect={setNetSel} onEdit={addEdit} />
     ) : (
       <>
+        {tab === 'objects' && data.arrange?.on && (data.arrange.show ?? 'nearest') !== 'off' && nodeRes?.view.arrange && !onOriginal && <ArrangeOverlay res={nodeRes.view.arrange} spec={data.arrange} k={k} W={W} H={H} />}
         {roiLayer}
         {contextLayer}
         {rejectedLayer}
@@ -1157,7 +1196,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
           <X {...IC} />
         </button>
       </div>
-      <div className="ie-body">
+      <div className="ie-body" style={{ gridTemplateColumns: `${panels[0]}px 5px minmax(0, 1fr) 5px ${panels[1]}px` }}>
         <div className="ie-steps">
           <button className={`nodrag ie-step-head ie-original${upToIndex === 0 ? ' shown' : ''}`} title="Show the original image (the part analysed)" onClick={() => setUpTo(upTo === '__none' ? null : '__none')}>
             Original image
@@ -1229,6 +1268,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
           })}
           {!steps.length && <div className="hint">Adjust: add steps to prepare the image (tone and colour, noise, background, edges, texture), then a threshold or a trainable classifier (a mask) and its morphology. Each works on what the steps above give.</div>}
         </div>
+        <div className="ie-split-bar nodrag" title="Drag: the width of the steps (double-click: as it was)" onPointerDown={(e) => dragPanel(e, 0)} onDoubleClick={() => setPanelWidth(0, PANELS[0])} />
         <div
           className={`ie-view${tool !== 'pan' ? ' scale' : ''}${side ? ' side' : ''}`}
           ref={view}
@@ -1273,6 +1313,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
           {onOriginal && hover && <canvas ref={loupe} className="ie-loupe" width={144} height={144} style={{ left: hover.sx + 18, top: hover.sy + 18 }} />}
           {readout && <div className="ie-readout">{readout}</div>}
         </div>
+        <div className="ie-split-bar nodrag" title="Drag: the width of the panels on the right (double-click: as it was)" onPointerDown={(e) => dragPanel(e, 1)} onDoubleClick={() => setPanelWidth(1, PANELS[1])} />
         <div className="ie-side">
           <div className="hint ellipsis ie-cal-line" title="The size of a pixel (Image ▸ Calibration)">{data.cal && data.cal.size > 0 ? `1 px = ${fmt(data.cal.size)} ${unitText(data.cal.unit)}` : 'not calibrated: the results in pixels'}</div>
           <div className="ie-tabs">
@@ -1399,6 +1440,15 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
               setPart({ layers: on || undefined });
               if (on) layersFor(rois.filter((r) => r.auto));
             }}
+          />
+          <ArrangePanel
+            spec={data.arrange ?? {}}
+            set={(a) => set({ arrange: { ...data.arrange, ...a } })}
+            res={nodeRes?.view.arrange}
+            error={data.arrange?.on ? nodeRes?.warnings.find((w) => w.startsWith('Arrangement:')) : undefined}
+            groups={[...new Set(rois.filter((r) => isArea(r) && !r.train && r.role !== 'background').map((r) => r.group ?? '').filter(Boolean))]}
+            k={calK}
+            u={calU}
           />
             </>
           )}
