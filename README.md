@@ -18,7 +18,7 @@ publication, each computation checked against established libraries ([VALIDATION
 
 ## Try it
 
-**Online:** [periclev.github.io/sciplotflow](https://periclev.github.io/sciplotflow/). Nothing to install.
+**Online:** [periclev.github.io/sciplotflow](https://periclev.github.io/sciplotflow/). Nothing to install. New to it? Start the tutorial in the Welcome window: a few minutes, step by step, with **Show me** when you are stuck.
 
 **On your computer:** you need [Node.js](https://nodejs.org) 22.18 or newer (24 recommended).
 

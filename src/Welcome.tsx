@@ -3,7 +3,7 @@
 // examples in one menu, by their groups; the guided tours (one left half-way: taken up again); the projects kept in
 // this browser last worked on; who made it.
 import { useEffect, useRef, useState } from 'react';
-import { FileUp, FolderOpen, FilePlus2, ArrowRight, Camera, X } from 'lucide-react';
+import { FileUp, FolderOpen, FilePlus2, ArrowRight, Camera, GraduationCap, X } from 'lucide-react';
 import { libList, type LibEntry } from './library.ts';
 import { IC } from './nodes/iconProps.ts';
 import { ACCEPT, pickDataFiles } from './readFiles.ts';
@@ -101,9 +101,24 @@ export function Welcome(props: {
           }}
         />
         {SHOW_TOURS && <div className="welcome-gallery">
+          {(() => {
+            // the tutorial first, as one large button (where it was left, if it was)
+            const how = TOURS.find((t) => t.id === 'how-it-works');
+            if (!how) return null;
+            const left = progress?.tour === how.id && progress.step > 0 ? progress.step : 0;
+            return (
+              <button className="welcome-tutorial" title={`${how.desc}\n\nOpens in a new project. The one you have open now stays in Projects.`} onClick={() => props.onTour(how.id)}>
+                <GraduationCap {...IC} />
+                <span>
+                  <b>{left ? 'Continue the tutorial' : 'New here? Start the tutorial'}</b>
+                  <span className="tour-meta">{left ? `${how.title} · step ${left + 1} of ${stepsOf(how).length}` : `${how.title} · about ${how.minutes} min · step by step, Show me when stuck`}</span>
+                </span>
+              </button>
+            );
+          })()}
           <h4>Tours · learn it step by step</h4>
           <div className="welcome-cards">
-            {TOURS.map((t) => {
+            {TOURS.filter((t) => t.id !== 'how-it-works').map((t) => {
               const left = progress?.tour === t.id && progress.step > 0 ? progress.step : 0;
               return (
                 <button key={t.id} className="welcome-card" title={`${t.desc}\n\n${left ? 'Pick up where you left off.' : 'Opens in a new project. The one you have open now stays in Projects.'}`} onClick={() => props.onTour(t.id)}>

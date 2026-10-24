@@ -5831,7 +5831,7 @@ for (const ex of EXAMPLES) {
     const plt = { id: 'p', type: 'plot1d', position: { x: 0, y: 0 }, data: plotData } as AppNode;
     const edge = { id: 'e', source: 'i', sourceHandle: 'out', target: 'p', targetHandle: 'dataset' };
     const st = (nodes: AppNode[], start = nodes, downloads: string[] = []): TourState => ({ nodes, edges: nodes.length > 1 ? [edge] : [], start, downloads });
-    const steps = stepsOf(TOURS[0]);
+    const steps = stepsOf(TOURS.find((t) => t.id === 'first-graph')!);
     const recolored = { ...plt, data: { ...plotData, style: { ...plotData.style, color: '#c0392b' } } } as AppNode;
     const titled = { ...plt, data: { ...plotData, axes: { sides: { left: { title: 'A' } } } } } as unknown as AppNode;
     ok(
@@ -5946,6 +5946,23 @@ for (const ex of EXAMPLES) {
     const runsOf = columnRuns({ name: 'p', columns: [{ ...column('x1', [1, 2]), role: 'x' }, { ...column('a', [5, 6]), role: 'y' }, { ...column('x2', [3, 4]), role: 'x' }, { ...column('b', [7, 8]), role: 'y' }, { ...column('db', [1, 1]), role: 'yerr' }] }, { xFrom: 'left' });
     const rowRuns = columnRuns({ name: 'p', columns: [{ ...column('a', [5, 6, 7]), role: 'y' }, { ...column('b', [1, 2, 3]), role: 'y' }] }, { xFrom: 'row', cols: 'a, b' });
     ok(typeof runsOf !== 'string' && runsOf.map((d) => d.columns.map((c) => c.name).join('+')).join(' | ') === 'x1+a | x2+b+db' && typeof rowRuns !== 'string' && rowRuns[1].columns[0].name === 'Row' && Array.from(rowRuns[1].columns[0].values).join() === '1,2,3' && columnRuns({ name: 'p', columns: [] }, { cols: 'Z' }) === 'Columns: not found: Z.', 'Batch over columns: the X on the left of each (pairs; the ±Y with its column), the row number, a column not found said');
+  }
+  {
+    // the tutorial done by Show me alone (the example file by its button): every step done, no node in error
+    const how = TOURS.find((t) => t.id === 'how-it-works')!;
+    let g: { nodes: AppNode[]; edges: Edge[] } = { nodes: [], edges: [] };
+    const stateOf = (gr: { nodes: AppNode[]; edges: Edge[] }, start = gr.nodes): TourState => ({ nodes: gr.nodes, edges: gr.edges, start, downloads: [] });
+    const notDone: string[] = [];
+    stepsOf(how).forEach((st, k) => {
+      const before = stateOf(g);
+      st.action?.run({ importText: (name: string, text: string) => (g = { ...g, nodes: [...g.nodes, { id: `how-imp`, type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, fileName: name, text, textId: 'how' } } as AppNode] }) } as never, before);
+      g = doStep(st, g, before, (type) => `how-${k}-${type}`);
+      if (st.done && !st.done(stateOf(g, before.nodes))) notDone.push(st.title);
+    });
+    const res = evaluateGraph(g.nodes, g.edges);
+    const errs = g.nodes.flatMap((n) => (res.get(n.id)?.errors ?? []).map((e) => `${n.type}: ${e}`));
+    const sm = g.nodes.find((n) => n.type === 'smooth');
+    ok(TOURS[0].id === 'how-it-works' && notDone.length === 0 && errs.length === 0 && !!sm && (sm.data as { points: number }).points === 31 && res.get(sm.id)?.outputs.out?.t === 'dataset', `tours: the tutorial first, done step by step by Show me (a Smooth connected, its window 31)${notDone.length ? ` (not done: ${notDone.join(', ')})` : ''}${errs.length ? ` (${errs.join('; ')})` : ''}`);
   }
   {
     // tour 2 done by Show me alone: every step done, no node in error, the data as the steps say

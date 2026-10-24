@@ -1,5 +1,6 @@
 // The look of the Mantine components, from the app's own colours (index.css): the same panel, text, border and accent
-// (the one chosen in the top bar), in the light and the dark theme; compact sizes, as the rest of the app.
+// (the one chosen in the top bar), in the light and the dark theme; compact sizes, as the rest of the app: the text of
+// the controls 12 px, their corners 6 px, their height 26 px (App.css), as the app's own controls.
 import { createTheme, type CSSVariablesResolver, type MantineColorsTuple } from '@mantine/core';
 import { useSyncExternalStore } from 'react';
 
@@ -14,8 +15,8 @@ export const theme = createTheme({
   colors: { accent },
   fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
   fontFamilyMonospace: "ui-monospace, Consolas, 'Cascadia Mono', monospace",
-  fontSizes: { xs: '11px', sm: '12px', md: '13px', lg: '14px', xl: '15px' },
-  radius: { xs: '3px', sm: '5px', md: '6px', lg: '8px', xl: '12px' },
+  fontSizes: { xs: '12px', sm: '12px', md: '13px', lg: '14px', xl: '15px' },
+  radius: { xs: '4px', sm: '6px', md: '6px', lg: '8px', xl: '12px' },
   defaultRadius: 'sm',
   focusRing: 'auto',
   cursorType: 'pointer',

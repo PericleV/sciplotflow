@@ -1611,6 +1611,8 @@ input[type='checkbox'], input[type='radio'] { box-shadow: none; }
 /* a narrow window: the top bar's buttons as their icons only (their names in their hints), on one line where it fits */
 @media (max-width: 1180px) {
   .toolbar .tb-label { display: none; }
+  /* (Find node and Inspect keep their names: their icons alone do not say what they do) */
+  .toolbar .tb-label.keep { display: inline; }
   .toolbar .project-name { width: 160px; }
   .toolbar select.examples-menu { max-width: 9em; }
 }
@@ -1743,3 +1745,57 @@ input[type='checkbox'], input[type='radio'] { box-shadow: none; }
 .sheet-scroll th.col-letter .sheet-lock { margin-right: 2px; color: var(--muted); }
 .sheet-scroll th.col-letter .sheet-lock svg { width: 10px; height: 10px; vertical-align: -1px; }
 .sheet-lock-note { margin-top: 4px; }
+
+/* Welcome: the tutorial, one large button above the tours */
+.welcome-tutorial { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 14px; margin-bottom: 8px; text-align: left; border: 1px solid color-mix(in srgb, var(--accent) 60%, var(--border)); background: color-mix(in srgb, var(--accent) 14%, var(--panel)); border-radius: 8px; }
+.welcome-tutorial:hover { background: color-mix(in srgb, var(--accent) 22%, var(--panel)); }
+.welcome-tutorial > svg { width: 24px; height: 24px; color: var(--accent); flex: none; }
+.welcome-tutorial > span { display: flex; flex-direction: column; gap: 2px; }
+
+/* ---- one look for the controls: the app's own (select, input, checkbox, button) and the Mantine ones of the newer
+   panels: the same corners (6 px), height (26 px), text, border and accent ---- */
+:root .mantine-Input-wrapper { --input-height-xs: 26px; }
+:root .mantine-Button-root { --button-height-xs: 26px; }
+:root .mantine-SegmentedControl-root { --sc-padding-xs: 2px 8px; }
+/* a select: its arrow drawn as the Mantine ones (a chevron in the text's colour) */
+select:not([multiple]):not([size]) {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 20px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%236b7385' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  background-size: 10px 10px;
+}
+/* a checkbox, a radio: drawn as the Mantine ones (a box of the input's colour, the accent with a tick when on) */
+input[type='checkbox'], input[type='radio'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  padding: 0;
+  margin: 0 4px 0 0;
+  vertical-align: -2px;
+  border: 1px solid color-mix(in srgb, var(--muted) 60%, var(--border));
+  border-radius: 4px;
+  background: var(--input) no-repeat center / 10px 10px;
+  cursor: pointer;
+}
+input[type='radio'] { border-radius: 50%; }
+input[type='checkbox']:checked, input[type='radio']:checked { background-color: var(--accent); border-color: var(--accent); }
+input[type='checkbox']:checked { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E"); }
+input[type='radio']:checked { background-image: radial-gradient(circle, white 0 3px, transparent 3.5px); background-size: auto; }
+input[type='checkbox']:indeterminate { background-color: var(--accent); border-color: var(--accent); background-image: linear-gradient(white, white); background-size: 8px 2px; }
+input[type='checkbox']:hover:not(:disabled), input[type='radio']:hover:not(:disabled) { border-color: var(--accent); }
+input[type='checkbox']:disabled, input[type='radio']:disabled { cursor: default; }
+:root[data-theme='dark'] select:not([multiple]):not([size]) {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23a3abbd' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) select:not([multiple]):not([size]) {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23a3abbd' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  }
+}
+/* the names of the fields of a two-column form, in the options panel: as the newer panels write them (muted, smaller) */
+.inspector-options .col-form > span:not([class]) { color: var(--muted); font-size: var(--fs-small); }

@@ -928,6 +928,8 @@ function Flow() {
   const portCtx: PortContext = useMemo(() => ({ node: (id) => nodeById.get(id), edges, groupInputs: currentGroup?.inputs }), [nodeById, edges, currentGroup]);
   // the connections of the node under the mouse stand out (thicker)
   const [hovered, setHovered] = useState<string | null>(null);
+  // the nodes selected: their connections show the data moving (the others stay still)
+  const selectedSet = useMemo(() => new Set(nodes.filter((n) => n.selected).map((n) => n.id)), [nodes]);
   const styledEdges = useMemo(
     () =>
       edges.map((e) => {
@@ -939,9 +941,11 @@ function Flow() {
         const lit = hovered !== null && (e.source === hovered || e.target === hovered);
         // (the connection a node dragged over it would go into)
         const into = dropEdge?.edge === e.id;
-        return { ...e, type: 'flow', className: into ? 'edge-drop' : lit ? 'edge-lit' : undefined, style: { stroke: color, strokeWidth: e.selected || lit || into ? 4.5 : 3 }, data: { arrow: prefs.arrows, shape: prefs.shape } };
+        // (still lines; moving only those of the node under the mouse or of the nodes selected, the line selected solid)
+        const moving = !e.selected && (lit || selectedSet.has(e.source) || selectedSet.has(e.target));
+        return { ...e, type: 'flow', animated: moving, className: into ? 'edge-drop' : lit ? 'edge-lit' : undefined, style: { stroke: color, strokeWidth: e.selected || lit || into ? 4.5 : 3 }, data: { arrow: prefs.arrows, shape: prefs.shape } };
       }),
-    [edges, nodeById, portCtx, prefs.arrows, prefs.shape, hovered, dropEdge],
+    [edges, nodeById, portCtx, prefs.arrows, prefs.shape, hovered, dropEdge, selectedSet],
   );
 
   // Deleting a frame keeps its nodes (they leave the frame) unless “remove the group and its nodes” was chosen.
@@ -1582,10 +1586,10 @@ function Flow() {
         </span>
         <span className="tb-group" role="group" aria-label="Edit">
         <button className={finding ? 'active' : ''} onClick={() => setFinding(true)} title="Find a node on the canvas by its name or type (Ctrl+F)">
-          <Search {...IC} /> <span className="tb-label">Find node</span>
+          <Search {...IC} /> <span className="tb-label keep">Find node</span>
         </button>
         <button className={inspecting ? 'active' : ''} onClick={() => setInspecting((v) => !v)} title={inspecting ? 'Inspect: on, click a node or a connection to see its data in the options panel; click here to stop' : 'Inspect: see the data a node gives or a connection carries (a table, in the options panel), without making a workbook'}>
-          <TableProperties {...IC} /> <span className="tb-label">Inspect</span>
+          <TableProperties {...IC} /> <span className="tb-label keep">Inspect</span>
         </button>
         <span className="undo-redo">
           <button onClick={history.undo} disabled={!history.canUndo} title="Undo (Ctrl+Z)" aria-label="Undo"><Undo2 {...IC} /></button>
@@ -1661,7 +1665,6 @@ function Flow() {
               onConnectEnd={onConnectEnd}
               isValidConnection={isValidConnection}
               nodeTypes={nodeTypes}
-              defaultEdgeOptions={{ animated: true }}
               minZoom={0.1}
               zoomOnDoubleClick={false}
               multiSelectionKeyCode={MULTI_KEYS}

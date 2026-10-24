@@ -22,7 +22,7 @@ export function HelpPanel({ onClose, examples, focus, onWelcome }: { onClose: ()
       <header>
         <strong>Help: SciPlotFlow</strong>
         {onWelcome && (
-          <button onClick={onWelcome} title="The welcome window: import your data, open a project, the examples">
+          <button onClick={onWelcome} title="The welcome window: the tutorial and the tours, import your data, open a project, the examples">
             <House {...IC} /> Welcome
           </button>
         )}

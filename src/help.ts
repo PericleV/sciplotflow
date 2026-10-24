@@ -173,6 +173,7 @@ export const NODE_SHORT: Record<NodeType, string> = {
 };
 
 export const GETTING_STARTED = [
+  'New here? The tutorial, How SciPlotFlow works (about 3 min), shows nodes, ports and connections step by step; Show me does a step for you when you are stuck. It starts from the Welcome window (Help ▸ Welcome), with two more tours: Your first graph and Prepare your data.',
   'Drag a node from the Nodes panel on the left onto the canvas, or right-click on the canvas and type its name.',
   'Connect an output port (right side of a node) to an input port of the same colour (left side). Square ports accept several connections.',
   'A typical figure: drop a data file on the canvas (or add an Import) → Plot… on the node (or right-click ▸ Plot these columns: X, the Y columns, their ±Y found by name (SD, SE, err, σ …), lines or symbols) → a 1D plot: the whole figure (curves, axes, legend, annotations, page), exported from the Plot. Several Plots on one page: their “figure” outputs into a Merge.',
