@@ -6,18 +6,22 @@ import { anisotropic, bilateral, entropyFilter, frangi, gabor, gradient, hessian
 import { autoContrast, balance, brightness, clahe, contrast, curves, equalize, hueSaturation, invert, levels, logTone, minMax, pickChannel, weightedGray, type ChannelPick } from './tone.ts';
 import { closing, dilate, distanceMap, erode, fillHoles, opening, separate, skeleton, topHat } from './morph.ts';
 import { canny } from './canny.ts';
+import { bandpass, spotMask } from './fft2d.ts';
+import { levelSurface } from './surface.ts';
 import { GLOBAL_METHODS, LOCAL_METHODS, globalThreshold, localThreshold, type GlobalMethod, type LocalMethod } from './threshold.ts';
 import { classifyPixels, edgeClassOf, splitByEdges, uncertainty, type TrainExample } from './classify.ts';
 
-export type StepGroup = 'Tone' | 'Colour' | 'Noise' | 'Background' | 'Edges' | 'Texture' | 'Morphology' | 'Threshold';
-export const STEP_GROUPS: StepGroup[] = ['Tone', 'Colour', 'Noise', 'Background', 'Edges', 'Texture', 'Morphology', 'Threshold'];
+export type StepGroup = 'Tone' | 'Colour' | 'Noise' | 'Background' | 'Frequency' | 'Edges' | 'Texture' | 'Morphology' | 'Threshold';
+export const STEP_GROUPS: StepGroup[] = ['Tone', 'Colour', 'Noise', 'Background', 'Frequency', 'Edges', 'Texture', 'Morphology', 'Threshold'];
 
 // A parameter: a number (in pixels, % or the image's values — NaN: automatic), a choice, a tick, or a curve's points
 export type Param =
   | { key: string; label: string; type: 'num'; def: number; min?: number; max?: number; step?: number; unit?: string; auto?: string; title?: string }
   | { key: string; label: string; type: 'choice'; def: string; options: [string, string][]; title?: string }
   | { key: string; label: string; type: 'bool'; def: boolean; title?: string }
-  | { key: string; label: string; type: 'curve'; def: [number, number][]; title?: string };
+  | { key: string; label: string; type: 'curve'; def: [number, number][]; title?: string }
+  // spots of the spectrum (fx, fy: cycles per pixel), picked in the Lattice tab
+  | { key: string; label: string; type: 'spots'; def: [number, number][]; title?: string };
 export type StepDef = { group: StepGroup; label: string; title: string; params: Param[] };
 
 const num = (key: string, label: string, def: number, o: Partial<Extract<Param, { type: 'num' }>> = {}): Param => ({ key, label, type: 'num', def, ...o });
@@ -100,7 +104,54 @@ export const STEP_DEFS = {
   },
   outliers: { group: 'Noise', label: 'Remove outliers', title: 'Pixels brighter (darker) than the median around them by more than the threshold take the median', params: [radius(2), num('threshold', 'Threshold', NaN, { unit: 'value', auto: '20 % of the range' }), choice('which', 'Which', 'bright', [['bright', 'bright'], ['dark', 'dark'], ['both', 'both']])] },
   scanlines: { group: 'Noise', label: 'Scan lines', title: 'The offset of every line removed (the bands of a scanned image: SEM, AFM)', params: [choice('along', 'Lines', 'rows', [['rows', 'rows'], ['cols', 'columns']]), choice('how', 'Level', 'median', [['median', 'median'], ['mean', 'mean']])] },
+  // frequency (the image's Fourier transform)
+  bandpass: {
+    group: 'Frequency',
+    label: 'Band-pass',
+    title: 'Structures larger and smaller than two sizes taken out in the spectrum (as ImageJ’s Bandpass filter): an uneven background and the finest noise; stripes along a direction too',
+    params: [
+      num('large', 'Larger than', 40, { min: 2, step: 1, unit: 'px', title: 'Structures larger than this taken out (the background)' }),
+      num('small', 'Smaller than', 3, { min: 0, step: 0.5, unit: 'px', title: 'Structures smaller than this taken out (the noise; 0: none)' }),
+      choice('stripes', 'Stripes', 'none', [
+        ['none', 'kept'],
+        ['h', 'horizontal out'],
+        ['v', 'vertical out'],
+      ]),
+      num('tol', 'Of direction', 5, { min: 0.5, max: 50, step: 0.5, unit: '%', title: 'How near the direction of the stripes (in %)' }),
+    ],
+  },
+  fftmask: {
+    group: 'Frequency',
+    label: 'Spectrum mask',
+    title: 'Spots of the spectrum (picked in the Lattice tab) taken out (a periodic noise, a moiré) or the only ones kept (a Bragg filter: the lattice alone, its fringes clean)',
+    params: [
+      choice('mode', 'The spots', 'keep', [
+        ['keep', 'kept (Bragg filter)'],
+        ['remove', 'taken out'],
+      ]),
+      { key: 'spots', label: 'Spots', type: 'spots', def: [], title: 'Picked in the Lattice tab (with their mirror spots)' },
+      num('area', 'Averaged over', 32, { min: 4, step: 1, unit: 'px', title: 'The size of the region the lattice is averaged over: larger, the spots narrower (a cleaner lattice, less of its local changes)' }),
+    ],
+  },
   // background
+  level: {
+    group: 'Background',
+    label: 'Level',
+    title: 'The form of a surface taken off (AFM): a plane or a polynomial fitted by least squares and subtracted; the highest part left out of the fit (particles on a substrate: the substrate levelled)',
+    params: [
+      choice('order', 'Fit', '1', [
+        ['1', 'a plane'],
+        ['2', 'a polynomial of order 2'],
+        ['3', 'a polynomial of order 3'],
+      ]),
+      num('exclude', 'Leave out the highest', 0, { min: 0, max: 90, step: 1, unit: '%', title: 'The highest % of the surface (after a first fit) left out of the fit: what stands on the substrate' }),
+      choice('zero', 'Zero at', 'mean', [
+        ['mean', 'the mean'],
+        ['min', 'the lowest point'],
+        ['keep', 'the mean as it was'],
+      ]),
+    ],
+  },
   rollingball: { group: 'Background', label: 'Rolling ball', title: 'The background under the image (a ball rolled under it) subtracted, or shown', params: [num('radius', 'Radius', 25, { min: 1, step: 1, unit: 'px', title: 'Larger than the largest object' }), bool('light', 'Light background', false), choice('output', 'Result', 'subtract', [['subtract', 'image − background'], ['background', 'the background']])] },
   paraboloid: { group: 'Background', label: 'Sliding paraboloid', title: 'As the rolling ball, with a paraboloid slid along the lines', params: [num('radius', 'Radius', 25, { min: 1, step: 1, unit: 'px' }), bool('light', 'Light background', false), choice('output', 'Result', 'subtract', [['subtract', 'image − background'], ['background', 'the background']])] },
   subgauss: { group: 'Background', label: 'Subtract Gaussian', title: 'A very smoothed copy subtracted (slow variations removed)', params: [num('sigma', 'σ', 20, { min: 1, step: 1, unit: 'px' })] },
@@ -326,6 +377,14 @@ export function applyStep(r: Raster, s: ImgStep, scale = 1, ctx: StepCtx = {}): 
       return each((c) => anisotropic(c, w, h, Math.max(1, Math.round(P<number>('iterations'))), or(P<number>('kappa'), 0.05 * sp), P<number>('stepSize'), P<string>('option') === '2' ? 2 : 1));
     case 'outliers':
       return each((c) => removeOutliers(c, w, h, P<number>('radius'), or(P<number>('threshold'), 0.2 * sp), P<'bright' | 'dark' | 'both'>('which')));
+    case 'bandpass':
+      return each((c) => bandpass(c, w, h, P<number>('large'), P<number>('small'), P<'none' | 'h' | 'v'>('stripes'), P<number>('tol')));
+    case 'fftmask': {
+      // (spots in cycles per pixel of the original; a preview shrunk by scale: more cycles per pixel)
+      const spots = (P<[number, number][] | undefined>('spots') ?? []).map(([fx, fy]): [number, number] => [fx / scale, fy / scale]);
+      if (!spots.length) return 'pick the spots in the Lattice tab first';
+      return each((c) => spotMask(c, w, h, spots, 1 / Math.max(2, P<number>('area')), P<string>('mode') === 'keep'));
+    }
     case 'scanlines':
       return each((c) => scanLines(c, w, h, P<'rows' | 'cols'>('along'), P<'median' | 'mean'>('how')));
     case 'rollingball':
@@ -340,6 +399,17 @@ export function applyStep(r: Raster, s: ImgStep, scale = 1, ctx: StepCtx = {}): 
         const d = map1(u, (v, i) => v - bg[i] + r.lo);
         return light ? map1(d, (v) => r.lo + r.hi - v) : d;
       });
+    }
+    case 'level': {
+      const out = g.ch.map((c) => levelSurface(c, w, h, Number(P<string>('order')) || 1, P<number>('exclude'), P<'mean' | 'min' | 'keep'>('zero')));
+      let [lo, hi] = [Infinity, -Infinity];
+      for (const c of out)
+        for (let i = 0; i < c.length; i++) {
+          const v = c[i];
+          if (v < lo) lo = v;
+          if (v > hi) hi = v;
+        }
+      return { r: { ...g, ch: out, kind: g.kind === 'mask' ? 'gray' : g.kind, lo: Number.isFinite(lo) ? lo : 0, hi: hi > lo ? hi : lo + 1 } };
     }
     case 'subgauss':
       return each((c) => {

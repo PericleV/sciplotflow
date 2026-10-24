@@ -24,6 +24,12 @@ import { unzlibSync } from 'fflate';
 import { evaluateGraph, logicalData } from '../src/engine/evaluate.ts';
 import { analyzeNetwork, learnRatio, type NetworkResult } from '../src/image/network.ts';
 import { arrange } from '../src/image/arrangement.ts';
+import { radialSpectrum, spectrum } from '../src/image/fft2d.ts';
+import { matchRings, patternCentre, profilePeriod, radialProfile, reflections, refineSpot, ringsOf, spotOf } from '../src/image/lattice.ts';
+import { arealParams, autocorrelation, heightHistogram, levelSurface, profileParams, radialPSD } from '../src/image/surface.ts';
+import { readGwy, readHeightText } from '../src/image/heights.ts';
+import { astmG, boxCounting, intercepts, orientation } from '../src/image/texture.ts';
+import { findScaleBar, labelBox, parseScale } from '../src/image/scalebar.ts';
 import type { AppNode } from '../src/types.ts';
 
 type Ok = (cond: boolean, what: string) => void;
@@ -621,6 +627,310 @@ export function checkImage(ok: Ok) {
     const sh = (n: string) => book?.sheets.find((q) => q.name === n);
     const val = (q: string) => sh('Arrangement')?.columns[1].values[sh('Arrangement')!.columns[0].text!.indexOf(q)];
     ok(!!sh('Neighbours') && sh('Neighbours')!.columns[5].name === 'NND (nm)' && Math.abs(val('NND, mean')! - 10) < 0.05 && Math.abs(val('g(r) first peak')! - 10) < 0.6 && !!sh('g(r)') && !!sh('Ripley L') && !!sh('NND distribution') && !!out.view.arrange, `arrangement in the node: its sheets, in nm (NND ${val('NND, mean')} nm)`);
+  }
+  // Frequency: a lattice of two waves 8 px apart (60° between them) on a ramp, with noise — the spectrum's spot at N/8
+  // from its middle, the radial spectrum's peak at d = 8; Band-pass takes the ramp out; the Bragg filter (the lattice's
+  // spots kept) gives the lattice back with less than the noise; in the node, the sheet Radial spectrum
+  {
+    const [w, h] = [200, 150];
+    let seed = 3;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const wave = (x: number, y: number) => 20 * Math.cos((2 * Math.PI * x) / 8) + 20 * Math.cos((2 * Math.PI * (x * 0.5 + y * 0.866)) / 8);
+    const c = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) c[y * w + x] = 100 + wave(x, y) + 0.3 * x + 30 * (rnd() - 0.5);
+    const sp = spectrum(c, w, h, { log: true, hann: true });
+    const half = sp.N / 2;
+    let [best, at] = [0, 0];
+    sp.mag.forEach((v, i) => {
+      const [u, q] = [(i % sp.N) - half, Math.floor(i / sp.N) - half];
+      if (u * u + q * q > 16 && v > best) [best, at] = [v, i];
+    });
+    const dSpot = sp.N / Math.hypot((at % sp.N) - half, Math.floor(at / sp.N) - half);
+    const rs = radialSpectrum(c, w, h);
+    const colMean = (img: Float32Array, x: number) => Array.from({ length: h }, (_, y) => img[y * w + x]).reduce((a, b) => a + b, 0) / h;
+    const r: Raster = { w, h, ch: [c], kind: 'gray', lo: 0, hi: 255 };
+    const bp = applyStep(r, { ...newStep('bandpass', 'b'), p: { ...newStep('bandpass', 'b').p, large: 40, small: 3 } });
+    const bpc = typeof bp === 'string' ? c : bp.r.ch[0];
+    const mean = c.reduce((a, b) => a + b, 0) / c.length;
+    const fm = applyStep(r, { ...newStep('fftmask', 'f'), p: { ...newStep('fftmask', 'f').p, spots: [[1 / 8, 0], [0.5 / 8, 0.866 / 8]] } });
+    const fmc = typeof fm === 'string' ? c : fm.r.ch[0];
+    let e = 0;
+    for (let y = 10; y < h - 10; y++) for (let x = 10; x < w - 10; x++) e += (fmc[y * w + x] - mean - wave(x, y)) ** 2;
+    const rms = Math.sqrt(e / ((w - 20) * (h - 20)));
+    const none = applyStep(r, newStep('fftmask', 'g'));
+    const nd = { id: 'im', type: 'image', position: { x: 0, y: 0 }, data: { name: 'lattice.png', pixels: packPixels(w, h, 1, 8, Array.from(c, (v) => Math.max(0, Math.min(255, Math.round(v))))), pixelsId: 'lat2', steps: [], cal: { size: 0.1, unit: 'nm' }, fft: { radial: true } } } as AppNode;
+    const out = evaluateGraph([nd], []).get('im')!;
+    const rsh = out.outputs.workbook?.t === 'workbook' ? out.outputs.workbook.v.sheets.find((q) => q.name === 'Radial spectrum') : undefined;
+    ok(Math.abs(dSpot - 8) < 0.01 && Math.abs(rs.peakD - 8) < 0.2 && colMean(c, 190) - colMean(c, 10) > 50 && Math.abs(colMean(bpc, 190) - colMean(bpc, 10)) < 10 && rms < 6 && typeof none === 'string' && rsh?.columns[0].name === 'k (1/nm)' && Math.abs(rsh.columns[3].values[0] - 0.8) < 0.02, `frequency: the spot at d = ${dSpot.toFixed(2)} px, the radial peak at ${rs.peakD.toFixed(2)} px; band-pass: the ramp ${(colMean(bpc, 190) - colMean(bpc, 10)).toFixed(1)}; Bragg: ${rms.toFixed(2)} from the lattice (noise 8.7); the sheet (${rsh?.columns[3].values[0]} nm)`);
+  }
+  // Lattice: fringes of 7.3 px read along a profile; a lattice of planes 9.5 px apart turned 23°, its spot clicked 2 px
+  // off and moved onto it; a gold diffraction pattern drawn (1 px = 0.07 1/nm): its centre found, its four rings, each
+  // matched with gold (111, 200, 220, 311) within 0.3 %; in the node, the sheets FFT spots, Fringes and Rings
+  {
+    const prof = Array.from({ length: 120 }, (_, i) => 50 + 20 * Math.sin((2 * Math.PI * i) / 7.3) + 5 * Math.sin(i * 1.7));
+    const per = profilePeriod(prof);
+    const [w, h] = [256, 256];
+    const lat = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) lat[y * w + x] = 100 + 50 * Math.cos((2 * Math.PI * (x * Math.cos(0.4) + y * Math.sin(0.4))) / 9.5);
+    const sp = spectrum(lat, w, h, { log: false, hann: true });
+    const [fx, fy] = refineSpot(sp.mag, sp.N, (Math.cos(0.4) / 9.5) * sp.N + 2, (Math.sin(0.4) / 9.5) * sp.N - 1);
+    const s1 = spotOf(fx, fy);
+    const recip = 0.07;
+    const [cx, cy] = [130.3, 121.7];
+    const refl = reflections('Au', 6);
+    let seed = 5;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const pat = new Float32Array(260 * 250);
+    for (let y = 0; y < 250; y++)
+      for (let x = 0; x < 260; x++) {
+        const r = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
+        let v = 200 * Math.exp(-r / 15);
+        for (const q of refl) v += 60 * Math.exp(-((r - 1 / q.d / recip) ** 2) / 2);
+        pat[y * 260 + x] = v + 5 * rnd();
+      }
+    const cen = patternCentre(pat, 260, 250);
+    const rings = ringsOf(radialProfile(pat, 260, 250, cen[0], cen[1]));
+    const m = matchRings(rings.map((R) => 1 / (R * recip)), ['Au', 'Si'], []);
+    ok(
+      Math.abs(per - 7.3) < 0.02 &&
+        Math.abs(s1.d - 9.5) < 0.05 &&
+        Math.abs(s1.angle - (180 - (0.4 * 180) / Math.PI)) < 0.5 &&
+        Math.abs(refl[0].d - 0.23546) < 1e-4 &&
+        Math.hypot(cen[0] - cx, cen[1] - cy) < 1.2 &&
+        m.map((q) => `${q.phase} ${q.hkl}`).join() === 'Au 111,Au 200,Au 220,Au 311' &&
+        m.every((q) => Math.abs(q.err) < 0.3),
+      `lattice: fringes ${per.toFixed(3)} px; the spot d ${s1.d.toFixed(3)} at ${s1.angle.toFixed(1)}°; the pattern's centre ${cen.map((v) => v.toFixed(1)).join(', ')}; rings ${m.map((q) => `${q.phase} ${q.hkl} ${q.err.toFixed(2)} %`).join(', ')}`,
+    );
+    const img = (px: Float32Array, W: number, H: number) => packPixels(W, H, 1, 8, Array.from(px, (v) => Math.max(0, Math.min(255, Math.round(v)))));
+    const latNode = { id: 'la', type: 'image', position: { x: 0, y: 0 }, data: { name: 'lattice.png', pixels: img(lat, w, h), pixelsId: 'lat3', steps: [], cal: { size: 0.02, unit: 'nm' }, rois: [{ id: 'l1', name: 'L1', kind: 'line', pts: [[20, 128], [236, 128 + 216 * Math.tan(0.4)]] }], lattice: { spots: [[fx, fy]], fringes: true } } } as AppNode;
+    const patNode = { id: 'pa', type: 'image', position: { x: 0, y: 0 }, data: { name: 'saed.png', pixels: img(pat, 260, 250), pixelsId: 'saed1', steps: [], cal: { size: 1, unit: 'nm' }, lattice: { saed: true, recip, phases: ['Au'] } } } as AppNode;
+    const res = evaluateGraph([latNode, patNode], []);
+    const sheet = (id: string, n: string) => {
+      const o = res.get(id)!.outputs.workbook;
+      return o?.t === 'workbook' ? o.v.sheets.find((q) => q.name === n) : undefined;
+    };
+    const fr = sheet('la', 'Fringes');
+    const rg = sheet('pa', 'Rings');
+    ok(Math.abs(sheet('la', 'FFT spots')!.columns[3].values[0] - 0.19) < 0.002 && Math.abs(fr!.columns[2].values[0] - 0.19) < 0.003 && rg!.columns[5].text!.join() === 'Au,Au,Au,Au' && rg!.columns[6].text!.join() === '111,200,220,311', `lattice in the node: d ${sheet('la', 'FFT spots')!.columns[3].values[0].toFixed(4)} nm, fringes ${fr!.columns[2].values[0].toFixed(4)} nm, rings ${rg!.columns[6].text!.join(' ')}`);
+  }
+  // Surface: Level takes a tilted plane (and a bowl) off a substrate with particles on it (the highest 10 % left out);
+  // a sine of amplitude A: Sa 2A/π, Sq A/√2, Sz 2A, Ssk 0, Sku 1.5, Sdq A·2π/λ/√2; a profile's roughness with its
+  // waviness taken off by λc; the material ratio from 100 to 0 %; the PSD's integral Sq²; the autocorrelation of
+  // smoothed noise (σ): 1/e at 2σ, Sal at 2σ√ln5, Str near 1, a surface of grooves near 0
+  {
+    const [w, h] = [128, 96];
+    const sub = new Float32Array(w * h);
+    const bowl = new Float32Array(w * h);
+    const isBump = (x: number, y: number) => (x % 32) - 16 > -5 && (x % 32) - 16 < 5 && (y % 32) - 16 > -5 && (y % 32) - 16 < 5;
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        sub[y * w + x] = 0.3 * x - 0.2 * y + 5 + (isBump(x, y) ? 20 : 0);
+        bowl[y * w + x] = 0.002 * (x - 50) ** 2 + 0.003 * (y - 40) ** 2 + 0.01 * x * y * 0.01;
+      }
+    const lev = levelSurface(sub, w, h, 1, 10, 'min');
+    let flatErr = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (!isBump(x, y)) flatErr = Math.max(flatErr, Math.abs(lev[y * w + x]));
+    const lb = levelSurface(bowl, w, h, 2, 0, 'mean');
+    const bowlErr = Math.max(...Array.from(lb, Math.abs));
+    const [A, lam] = [3, 32];
+    const sine = Float32Array.from({ length: 256 * 64 }, (_, i) => A * Math.sin((2 * Math.PI * (i % 256)) / lam));
+    const ar = arealParams(sine, 256, 64, null, 1);
+    // (the mean of |sin| over the samples of a period: a little under 2/π)
+    const meanAbs = (A_: number, L: number) => Array.from({ length: L }, (_, i) => Math.abs(A_ * Math.sin((2 * Math.PI * i) / L))).reduce((a, b) => a + b, 0) / L;
+    const sdq = ((A * 2 * Math.PI) / lam / Math.SQRT2) * (Math.sin((2 * Math.PI) / lam) / ((2 * Math.PI) / lam));
+    const prof = Float64Array.from({ length: 2000 }, (_, i) => A * Math.sin((2 * Math.PI * i) / 12) + 2 * A * Math.sin((2 * Math.PI * i) / 400) + 0.01 * i);
+    const pr = profileParams(prof, 1, 80);
+    const straight = profileParams(Float64Array.from({ length: 1992 }, (_, i) => A * Math.sin((2 * Math.PI * i) / 12) + 0.01 * i), 1);
+    const hg = heightHistogram(sine, 50);
+    // (smoothed noise: σ 4 px, 1 px = 0.5 nm)
+    let seed = 7;
+    const rnd = () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296 - 0.5;
+    };
+    const noise = gaussian(Float32Array.from({ length: 256 * 256 }, rnd), 256, 256, 4);
+    // (the PSD of noise smoothed little: its power over many rings)
+    const fine = gaussian(Float32Array.from({ length: 256 * 256 }, rnd), 256, 256, 1);
+    const ps = radialPSD(fine, 256, 256, 0.5);
+    const dk = ps.k[1] - ps.k[0];
+    const integral = ps.psd.reduce((s, p, i) => s + p * 2 * Math.PI * ps.k[i] * dk, 0);
+    const sq2 = arealParams(fine, 256, 256, null, NaN).Sq ** 2;
+    const ac = autocorrelation(noise, 256, 256, 0.5);
+    const grooves = autocorrelation(Float32Array.from({ length: 128 * 128 }, (_, i) => Math.sin((2 * Math.PI * (i % 128)) / 16) + 0.05 * rnd()), 128, 128, 1);
+    ok(
+      flatErr < 1e-3 &&
+        bowlErr < 1e-3 &&
+        Math.abs(ar.Sa - meanAbs(A, lam)) < 1e-4 &&
+        Math.abs(meanAbs(A, lam) - (2 * A) / Math.PI) < 0.01 &&
+        Math.abs(ar.Sq - A / Math.SQRT2) < 1e-3 &&
+        Math.abs(ar.Sz - 2 * A) < 1e-3 &&
+        Math.abs(ar.Ssk) < 1e-3 &&
+        Math.abs(ar.Sku - 1.5) < 1e-3 &&
+        Math.abs(ar.Sdq / sdq - 1) < 0.01 &&
+        Math.abs(pr.Rq / (A / Math.SQRT2) - 1) < 0.03 &&
+        Math.abs(straight.Ra - meanAbs(A, 12)) < 0.01 &&
+        Math.abs(straight.Rz - 2 * A) < 0.01 &&
+        hg.ratio[0] > 90 &&
+        hg.ratio[hg.ratio.length - 1] < 10 &&
+        hg.ratio.every((r, i) => !i || r <= hg.ratio[i - 1]) &&
+        hg.count.reduce((a, b) => a + b, 0) === 256 * 64 &&
+        Math.abs(integral / sq2 - 1) < 0.05 &&
+        Math.abs(ac.lcorr / (2 * 4 * 0.5) - 1) < 0.1 &&
+        Math.abs(ac.Sal / (2 * 4 * Math.sqrt(Math.log(5)) * 0.5) - 1) < 0.12 &&
+        ac.Str > 0.7 &&
+        grooves.Str < 0.2,
+      `surface: levelled within ${flatErr.toExponential(1)} (a bowl ${bowlErr.toExponential(1)}); a sine Sa ${ar.Sa.toFixed(4)} Sq ${ar.Sq.toFixed(4)} Sku ${ar.Sku.toFixed(3)} Sdq ${(ar.Sdq / sdq).toFixed(4)} of it; a profile Rq ${(pr.Rq / (A / Math.SQRT2)).toFixed(3)} of it with λc, Ra ${straight.Ra.toFixed(3)}; PSD ∫ ${(integral / sq2).toFixed(3)} Sq²; ACF 1/e at ${ac.lcorr.toFixed(2)} (4), Sal ${ac.Sal.toFixed(2)} (5.07), Str ${ac.Str.toFixed(2)}, grooves ${grooves.Str.toFixed(2)}`,
+    );
+  }
+  // height files: a Gwyddion file written by hand (a container, its channel 4 × 3 of 4 µm × 3 µm, heights in m);
+  // Gwyddion's text export (# Width, # Value units); X Y Z lines on a grid
+  {
+    const bytes: number[] = [];
+    const str = (s: string) => bytes.push(...new TextEncoder().encode(s), 0);
+    const u32 = (n: number) => bytes.push(n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >>> 24) & 255);
+    const f64 = (v: number) => bytes.push(...new Uint8Array(Float64Array.of(v).buffer));
+    const i32 = (n: number) => bytes.push(...new Uint8Array(Int32Array.of(n).buffer));
+    // (an object: its name, the size of its components, them)
+    const obj = (name: string, body: () => void) => {
+      str(name);
+      const at = bytes.length;
+      u32(0);
+      body();
+      const size = bytes.length - at - 4;
+      bytes.splice(at, 4, size & 255, (size >> 8) & 255, (size >> 16) & 255, (size >>> 24) & 255);
+    };
+    const unit = (name: string, u: string) => {
+      str(name);
+      bytes.push('o'.charCodeAt(0));
+      obj('GwySIUnit', () => {
+        str('unitstr');
+        bytes.push('s'.charCodeAt(0));
+        str(u);
+      });
+    };
+    bytes.push(...new TextEncoder().encode('GWYP'));
+    obj('GwyContainer', () => {
+      str('/0/data/title');
+      bytes.push('s'.charCodeAt(0));
+      str('Height');
+      str('/0/data');
+      bytes.push('o'.charCodeAt(0));
+      obj('GwyDataField', () => {
+        str('xres');
+        bytes.push('i'.charCodeAt(0));
+        i32(4);
+        str('yres');
+        bytes.push('i'.charCodeAt(0));
+        i32(3);
+        str('xreal');
+        bytes.push('d'.charCodeAt(0));
+        f64(4e-6);
+        str('yreal');
+        bytes.push('d'.charCodeAt(0));
+        f64(3e-6);
+        unit('si_unit_xy', 'm');
+        unit('si_unit_z', 'm');
+        str('data');
+        bytes.push('D'.charCodeAt(0));
+        u32(12);
+        for (let i = 0; i < 12; i++) f64(i * 1e-9);
+      });
+    });
+    const g = readGwy(Uint8Array.from(bytes).buffer);
+    const t = readHeightText('# Channel: Height\n# Width: 2.000 µm\n# Height: 1.000 µm\n# Value units: m\n1e-9\t2e-9\t3e-9\t4e-9\n5e-9\t6e-9\t7e-9\t8e-9\n');
+    const xyz = readHeightText(['x y z', ...Array.from({ length: 12 }, (_, i) => `${(i % 4) * 0.5} ${Math.floor(i / 4) * 0.5} ${i}`)].join('\n'));
+    ok(
+      g.w === 4 && g.h === 3 && g.px?.unit === 'µm' && Math.abs(g.px.size - 1) < 1e-9 && g.zUnit === 'nm' && Math.abs(g.z[11] - 11) < 1e-9 && g.title === 'Height' && t.w === 4 && t.h === 2 && t.px?.unit === 'nm' && Math.abs(t.px.size - 500) < 1e-6 && t.zUnit === 'nm' && Math.abs(t.z[7] - 8) < 1e-9 && xyz.w === 4 && xyz.h === 3 && xyz.z[6] === 6,
+      `height files: Gwyddion ${g.w} × ${g.h}, 1 px = ${g.px?.size} ${g.px?.unit}, z ${g.z[11]} ${g.zUnit}; text ${t.w} × ${t.h}, 1 px = ${t.px?.size} ${t.px?.unit}; X Y Z ${xyz.w} × ${xyz.h}`,
+    );
+  }
+  // Surface in the node: a sine of 3 nm on a tilt, levelled (1 px = 10 nm): the sheet Roughness (Sa near 3 × 0.6346
+  // nm, a little less as the plane fitted takes some of the sine; its Sdq); a step of 10 nm between two selections; the
+  // matrix of heights named with their unit
+  {
+    const [w, h] = [256, 64];
+    const sineZ = Float32Array.from({ length: w * h }, (_, i) => 3 * Math.sin((2 * Math.PI * (i % w)) / 32) + 0.02 * (i % w) + 0.01 * Math.floor(i / w));
+    const stepZ = Float32Array.from({ length: w * h }, (_, i) => (i % w >= 128 ? 10 : 0));
+    const sNode = { id: 'su', type: 'image', position: { x: 0, y: 0 }, data: { name: 'afm.gwy', pixels: packPixels(w, h, 1, 32, sineZ), pixelsId: 'afm1', steps: [newStep('level', 'lv')], cal: { size: 10, unit: 'nm' }, surface: { zUnit: 'nm', areal: true, hist: true, psd: true, acf: true } } } as AppNode;
+    const tNode = { id: 'st', type: 'image', position: { x: 0, y: 0 }, data: { name: 'step.gwy', pixels: packPixels(w, h, 1, 32, stepZ), pixelsId: 'afm2', steps: [], cal: { size: 10, unit: 'nm' }, rois: [{ id: 'a', name: 'Top', kind: 'rect', box: [190, 32, 80, 40] }, { id: 'b', name: 'Base', kind: 'rect', box: [60, 32, 80, 40] }], surface: { zUnit: 'nm', step: ['a', 'b'] } } } as AppNode;
+    const res = evaluateGraph([sNode, tNode], []);
+    const sheet = (id: string, n: string) => {
+      const o = res.get(id)!.outputs.workbook;
+      return o?.t === 'workbook' ? o.v.sheets.find((q) => q.name === n) : undefined;
+    };
+    const rough = sheet('su', 'Roughness');
+    const sa = rough?.columns.find((c) => c.name === 'Sa (nm)')?.values[0] ?? NaN;
+    const sdq = rough?.columns.find((c) => c.name === 'Sdq')?.values[0] ?? NaN;
+    const stp = sheet('st', 'Step height');
+    const mat = res.get('su')!.outputs.matrix;
+    ok(
+      Math.abs(sa - 3 * 0.634573) < 0.02 && Math.abs(sdq / (((3 * 2 * Math.PI) / 32 / Math.SQRT2 / 10) * 0.9936) - 1) < 0.01 && !!sheet('su', 'Height histogram') && !!sheet('su', 'PSD') && !!sheet('su', 'ACF') && Math.abs((stp?.columns[1].values[2] ?? NaN) - 10) < 1e-6 && mat?.t === 'matrix' && mat.v.name === 'afm.gwy (nm)',
+      `surface in the node: Sa ${sa.toFixed(4)} nm (1.9037), Sdq ${sdq.toFixed(5)}; the step ${stp?.columns[1].values[2]} nm; the matrix ${mat?.t === 'matrix' ? mat.v.name : '?'}`,
+    );
+  }
+  // Structure ▸ grain size: boundaries every 20 px across and every 30 px down: horizontal lines read ℓ = 20, vertical
+  // ones 30; a square grid of 20 px under three circles ℓ = 20π/4 (the mean of every direction); ASTM: ℓ 0.032 mm is
+  // G 6.64. Orientation: stripes at 30° (and at −60°) found so, coherent. Fractal: a filled square D 2, its outline 1
+  // (a little over: the largest boxes all touch it), a Sierpinski triangle log 3 / log 2; in the node, the sheets Grain
+  // size, Orientation and Fractal
+  {
+    const [w, h] = [200, 180];
+    const bnd = Float32Array.from({ length: w * h }, (_, i) => ((i % w) % 20 === 10 || Math.floor(i / w) % 30 === 15 ? 1 : 0));
+    const g = intercepts(bnd, w, h, 'boundaries', 'grid', 5);
+    const lh = g.sets[0].length / g.sets[0].hits;
+    const lv = g.sets[1].length / g.sets[1].hits;
+    const sq = Float32Array.from({ length: 240 * 240 }, (_, i) => ((i % 240) % 20 === 10 || Math.floor(i / 240) % 20 === 10 ? 1 : 0));
+    const ci = intercepts(sq, 240, 240, 'boundaries', 'circles', 0);
+    const lc = ci.sets[0].length / ci.sets[0].hits;
+    const stripes = (deg: number) => {
+      const a = (deg * Math.PI) / 180;
+      return Float32Array.from({ length: 128 * 128 }, (_, i) => 100 + 50 * Math.sin((2 * Math.PI * ((i % 128) * Math.sin(a) + Math.floor(i / 128) * Math.cos(a))) / 9));
+    };
+    const o1 = orientation(stripes(30), 128, 128, 3);
+    const o2 = orientation(stripes(-60), 128, 128, 3);
+    const peak = o1.hist.indexOf(Math.max(...o1.hist)) - 89.5;
+    const fill = Float32Array.from({ length: 256 * 256 }, (_, i) => (i % 256 >= 64 && i % 256 < 192 && Math.floor(i / 256) >= 64 && Math.floor(i / 256) < 192 ? 1 : 0));
+    const dm = boxCounting(fill, 256, 256, 'mask');
+    const de = boxCounting(fill, 256, 256, 'edges');
+    const sier = boxCounting(Float32Array.from({ length: 256 * 256 }, (_, i) => ((i % 256) & Math.floor(i / 256) ? 0 : 1)), 256, 256, 'mask');
+    const nd = { id: 'gs', type: 'image', position: { x: 0, y: 0 }, data: { name: 'grains.png', pixels: packPixels(w, h, 1, 8, Array.from(bnd, (v) => (v ? 0 : 200))), pixelsId: 'grains1', steps: [{ ...newStep('threshold', 't'), p: { ...newStep('threshold', 't').p, method: 'manual', low: 0, high: 100 } }], cal: { size: 0.5, unit: 'µm' }, texture: { grains: { on: true }, orient: { on: true }, fractal: { on: true } } } } as AppNode;
+    const res = evaluateGraph([nd], []);
+    const wb = res.get('gs')!.outputs.workbook;
+    const sh = (n: string) => (wb?.t === 'workbook' ? wb.v.sheets.find((q) => q.name === n) : undefined);
+    const gs = sh('Grain size');
+    const allL = gs?.columns[3].values[2] ?? NaN;
+    ok(
+      Math.abs(lh - 20) < 0.01 && Math.abs(lv - 30) < 0.01 && Math.abs(lc / ((20 * Math.PI) / 4) - 1) < 0.05 && Math.abs(astmG(0.032) - 6.644) < 0.01 && Math.abs(o1.dominant - 30) < 1 && o1.coherency > 0.9 && Math.abs(peak - 30) < 1.5 && Math.abs(o2.dominant + 60) < 1 && Math.abs(dm.D - 2) < 0.05 && Math.abs(de.D - 1) < 0.15 && Math.abs(sier.D - Math.log(3) / Math.log(2)) < 0.03 && Math.abs(allL - (0.5 * 1900) / (50 + 30)) < 0.01 && !!sh('Orientation') && !!sh('Fractal'),
+      `texture: ℓ ${lh.toFixed(2)} across, ${lv.toFixed(2)} down, ${lc.toFixed(2)} on circles (15.71); G(0.032 mm) ${astmG(0.032).toFixed(3)}; stripes at ${o1.dominant.toFixed(2)}° (coherency ${o1.coherency.toFixed(3)}), ${o2.dominant.toFixed(2)}°; D ${dm.D.toFixed(3)} filled, ${de.D.toFixed(3)} outline, ${sier.D.toFixed(3)} Sierpinski; the node ℓ ${allL.toFixed(3)} µm`,
+    );
+  }
+  // the scale bar read: a white bar 120 px long, 4 thick, in a black data band under an image (its label's letters
+  // under it, a frame along the whole band) found with its ends; a black bar on a light image; the labels' texts read
+  // (the microscope's other lengths passed over)
+  {
+    const [w, h] = [400, 300];
+    let s = 3;
+    const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+    const img = Float32Array.from({ length: w * h }, () => 60 + 120 * rnd());
+    const put = (x0: number, y0: number, bw: number, bh: number, v: number) => {
+      for (let y = y0; y < y0 + bh; y++) for (let x = x0; x < x0 + bw; x++) img[y * w + x] = v;
+    };
+    put(0, 255, w, 45, 0);
+    put(0, 256, w, 1, 255);
+    put(250, 275, 120, 4, 255);
+    for (let k = 0; k < 5; k++) put(280 + 12 * k, 283, 7, 10, 255);
+    const b1 = findScaleBar(img, w, h, 0, 255);
+    const box = b1 ? labelBox(b1, w, h) : [0, 0, 0, 0];
+    const light = Float32Array.from({ length: 300 * 200 }, () => 170 + 60 * rnd());
+    for (let y = 180; y < 183; y++) for (let x = 20; x < 80; x++) light[y * 300 + x] = 0;
+    const b2 = findScaleBar(light, 300, 200, 0, 255);
+    const p = ['500 nm', '2 µm', '1.5um', '200 μm', '10 Å', 'HV 5.00 kV  WD = 5.1 mm  200 nm', '5OO nm'].map(parseScale);
+    ok(
+      b1?.x0 === 250 && b1.x1 === 369 && b1.y0 === 275 && b1.y1 === 278 && b1.bright && box[1] + box[3] >= 293 && b2?.x0 === 20 && b2.x1 === 79 && !b2.bright && p[0]?.value === 500 && p[0].unit === 'nm' && p[1]?.unit === 'µm' && p[2]?.value === 1.5 && p[2].unit === 'µm' && p[3]?.value === 200 && p[3].unit === 'µm' && p[4]?.unit === 'Å' && p[5]?.value === 200 && p[5].unit === 'nm' && parseScale('Mag 50 kX') === null,
+      `scale bar: found at x ${b1?.x0}–${b1?.x1}, y ${b1?.y0}–${b1?.y1}; a black one at ${b2?.x0}–${b2?.x1}; labels ${p.map((q) => (q ? `${q.value} ${q.unit}` : '–')).join(', ')}`,
+    );
   }
   // layers: a square drawn over two others (brighter, their corners cut by it) is on top, they under it; one alone on top
   {

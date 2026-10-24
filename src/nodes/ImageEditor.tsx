@@ -15,7 +15,7 @@ import type { AppNode, ImageAnalysisData } from '../types.ts';
 import { STEP_DEFS, STEP_GROUPS, newStep, stepClasses, type ImgStep, type StepDef, type StepKind } from '../image/steps.ts';
 import { cropBox, cropRaster, dataBarRows, luminance, unpackPixels, type Crop } from '../image/raster.ts';
 import { unitText } from '../image/node.ts';
-import type { CentreReply, ImgReply, ImgRequest, MatchReply, MatchRequest, MeasureReply, MeasureRequest, ParticlesReply, ParticlesRequest, RaysReply, RefineReply, RefineRequest, ValueReply, WandReply } from '../image/imageWorker.ts';
+import type { CentreReply, ImgReply, ImgRequest, MatchReply, MatchRequest, MeasureReply, MeasureRequest, ParticlesReply, ParticlesRequest, RaysReply, RefineReply, RefineRequest, SpectrumReply, SpectrumRequest, SpotReply, SpotRequest, ValueReply, WandReply } from '../image/imageWorker.ts';
 import { MATCH_DEFAULTS, placeLike, type MatchOpts } from '../image/match.ts';
 import { trainingExamples } from '../image/classify.ts';
 import { groupLikeExamples, PARTICLE_DEFAULTS, SHAPE_COLORS, shapeFeatures, shapeName, type ParticleOpts } from '../image/particles.ts';
@@ -31,6 +31,13 @@ import type { Workbook } from '../engine/table.ts';
 import { MeasurePanel, ParticlesPanel, RoiOverlay, RoiPanel } from './RoiManager.tsx';
 import { NetworkOverlay, NetworkPanel, type NetTool } from './NetworkPanel.tsx';
 import { ArrangeOverlay, ArrangePanel } from './ArrangePanel.tsx';
+import { LatticePanel, RingsOverlay, SpotsOverlay } from './LatticePanel.tsx';
+import { SurfacePanel } from './SurfacePanel.tsx';
+import { TextureOverlay, TexturePanel } from './TexturePanel.tsx';
+import { findScaleBar, parseScale, type FoundBar } from '../image/scalebar.ts';
+import type { TextureSpec } from '../image/texture.ts';
+import type { SurfaceSpec } from '../image/surface.ts';
+import type { LatticeSpec } from '../image/lattice.ts';
 import { branchAt, midOf, type HandKind, type NetBranch, type NetworkHand, type NetworkSpec } from '../image/network.ts';
 import { useNodeResult } from '../engine/engine.ts';
 import { ask } from '../ui/dialogStore.ts';
@@ -127,7 +134,9 @@ type SideTab = NonNullable<ImageAnalysisData['tab']>;
 const SIDE_TABS: [SideTab, string, string][] = [
   ['image', 'Image', 'The histogram, the view, the crop, the calibration'],
   ['objects', 'Objects', 'Selections, particles found, Find like this, Refine, layers'],
-  ['structure', 'Structure', 'The network of the mask: ligaments, junctions, pores (skeleton analysis), changed by hand'],
+  ['structure', 'Structure', 'The network of the mask: ligaments, junctions, pores (skeleton analysis), changed by hand; the grain size (ASTM E112), the orientation, the fractal dimension'],
+  ['lattice', 'Lattice', 'TEM: the spots of the spectrum (d, angles; a Bragg filter), the fringes along a line, the rings of a diffraction pattern'],
+  ['surface', 'Surface', 'AFM: the image as heights; their roughness (ISO 25178, ISO 4287), histogram, PSD, autocorrelation, a step height'],
   ['results', 'Results', 'What is measured and the tables'],
 ];
 // the widths of the steps (left) and of the panels (right), dragged by the bars between them and the image: kept in
@@ -251,6 +260,8 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const [zoom, setZoom] = useState(0);
   const [pan, setPan] = useState<[number, number]>([0, 0]);
   const [reply, setReply] = useState<ImgReply | null>(null);
+  // the spectrum shown instead of the image (Image ▸ View): asked of the worker after every result
+  const [spectrumImg, setSpectrumImg] = useState<SpectrumReply | null>(null);
   const [busy, setBusy] = useState(false);
   // the values under the mouse (asked of the worker, a pixel at a time)
   const [vals, setVals] = useState<ValueReply | null>(null);
@@ -298,6 +309,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const canvas = useRef<HTMLCanvasElement>(null);
   const canvasB = useRef<HTMLCanvasElement>(null);
   const canvasO = useRef<HTMLCanvasElement>(null);
+  const canvasS = useRef<HTMLCanvasElement>(null);
   const loupe = useRef<HTMLCanvasElement>(null);
   const root = useRef<HTMLDivElement>(null);
   const mode: Cmp = held ? 'original' : cmp;
@@ -311,11 +323,11 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   // the full-size images answered (the measurements asked again after each)
   const [fullSeq, setFullSeq] = useState(0);
   // the answers that need this render's state (a wand's outline, a stamp centred, the measurements)
-  const onAnswer = useRef<(m: MeasureReply | WandReply | RaysReply | CentreReply | ParticlesReply | MatchReply | RefineReply) => void>(() => {});
+  const onAnswer = useRef<(m: MeasureReply | WandReply | RaysReply | SpectrumReply | SpotReply | CentreReply | ParticlesReply | MatchReply | RefineReply) => void>(() => {});
   useEffect(() => {
     const w = new Worker(new URL('../image/imageWorker.ts', import.meta.url), { type: 'module' });
     worker.current = w;
-    w.onmessage = (e: MessageEvent<ImgReply | ValueReply | MeasureReply | WandReply | RaysReply | CentreReply | ParticlesReply | MatchReply | RefineReply>) => {
+    w.onmessage = (e: MessageEvent<ImgReply | ValueReply | MeasureReply | WandReply | RaysReply | SpectrumReply | SpotReply | CentreReply | ParticlesReply | MatchReply | RefineReply>) => {
       if (e.data.type === 'value') return setVals(e.data);
       if (e.data.type !== 'image') return onAnswer.current(e.data);
       if (e.data.seq !== seq.current) return;
@@ -383,8 +395,22 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     c.getContext('2d')!.putImageData(new ImageData(toRGBA(full, { lut: 'gray' }) as Uint8ClampedArray<ArrayBuffer>, full.w, full.h), 0, 0);
   }, [full, onOriginal]);
 
+  // the spectrum: asked after every result (and when its settings change), shown instead of the image
+  const fft = data.fft ?? {};
+  const specOn = !!fft.show && !onOriginal;
+  useEffect(() => {
+    if (!specOn || !reply || reply.scale !== 1) return;
+    worker.current?.postMessage({ type: 'spectrum', log: fft.log ?? true, hann: fft.hann ?? true, of: fft.of ?? 'result' } satisfies SpectrumRequest);
+  }, [specOn, reply, fft.log, fft.hann, fft.of]);
+  useEffect(() => {
+    const c = canvasS.current;
+    if (!c || !spectrumImg || !specOn) return;
+    c.width = spectrumImg.N;
+    c.height = spectrumImg.N;
+    c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(spectrumImg.rgba), spectrumImg.N, spectrumImg.N), 0, 0);
+  }, [spectrumImg, specOn]);
   // the zoom that fits the view (zoom 0: fit) — side by side: half of it — measured when the view or the image changes
-  const shown = onOriginal ? full : base;
+  const shown = specOn && spectrumImg ? { w: spectrumImg.N, h: spectrumImg.N } : onOriginal ? full : base;
   const [box, setBox] = useState<[number, number]>([1, 1]);
   useEffect(() => {
     const v = view.current;
@@ -473,6 +499,10 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   onAnswer.current = (m) => {
     if (m.type === 'measure') {
       if (m.mseq === mseq.current) setBook(m.book);
+    } else if (m.type === 'spectrum') {
+      setSpectrumImg(m);
+    } else if (m.type === 'spot') {
+      setLattice({ spots: [...(data.lattice?.spots ?? []), [m.fx, m.fy]] });
     } else if (m.type === 'wand') {
       if (m.pts && m.pts.length > 2) commit(newRoi('traced', { pts: m.pts.map(toOrig) }));
     } else if (m.type === 'rays') {
@@ -807,6 +837,11 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const onDown = (e: RPointerEvent) => {
     if (e.button !== 0 && e.button !== 1) return;
     (e.target as Element).setPointerCapture?.(e.pointerId);
+    // (the spectrum shown: the mouse moves it only; its spots are picked over it, in the Lattice tab)
+    if (specOn) {
+      drag.current = { x: e.clientX, y: e.clientY, pan, kind: 'pan' };
+      return;
+    }
     const p = imgAt(e);
     if ((e.target as Element).closest('.ie-split-handle')) {
       drag.current = { x: e.clientX, y: e.clientY, pan, kind: 'split' };
@@ -921,6 +956,49 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       setCropDraft(null);
     }
   };
+  // Calibration ▸ read the scale bar: the bar found in the original, its label read (OCR, loaded on demand), a proposal
+  // the user accepts (the calibration set) or rejects; asked once for every image
+  type BarProposal = { bar: FoundBar; value: number; unit: string; busy: boolean; text?: string; err?: string };
+  const [barProp, setBarProp] = useState<BarProposal | 'none' | null>(null);
+  const barAsk = !!data.barRead?.on && data.barRead.done !== (data.pixelsId ?? 'image');
+  useEffect(() => {
+    if (!barAsk || !full || !fullGray) {
+      setBarProp(null);
+      return;
+    }
+    const bar = findScaleBar(fullGray, full.w, full.h, full.lo, full.hi);
+    if (!bar) {
+      setBarProp('none');
+      return;
+    }
+    const yc = (bar.y0 + bar.y1 + 1) / 2;
+    setLine([bar.x0, yc, bar.x1 + 1, yc]);
+    setSnapped(true);
+    setBarProp({ bar, value: NaN, unit, busy: true });
+    let live = true;
+    import('../image/ocr.ts')
+      .then((m) => m.readBarLabel(fullGray, full.w, full.h, full.lo, full.hi, bar))
+      .then(
+        (text) => {
+          if (!live) return;
+          const s = parseScale(text);
+          setBarProp({ bar, value: s?.value ?? NaN, unit: s?.unit ?? unit, busy: false, text: text.replace(/\s+/g, ' ').trim() });
+        },
+        (e) => live && setBarProp({ bar, value: NaN, unit, busy: false, err: (e as Error).message }),
+      );
+    return () => {
+      live = false;
+    };
+  }, [barAsk, full, fullGray]); // eslint-disable-line react-hooks/exhaustive-deps
+  const barDone = () => set({ barRead: { ...data.barRead, done: data.pixelsId ?? 'image' } });
+  const acceptBar = () => {
+    if (!barProp || barProp === 'none' || !(barProp.value > 0)) return;
+    const b = barProp.bar;
+    const yc = (b.y0 + b.y1 + 1) / 2;
+    set({ cal: { size: barProp.value / (b.x1 - b.x0 + 1), unit: barProp.unit, line: [b.x0, yc, b.x1 + 1, yc], length: barProp.value }, barRead: { ...data.barRead, done: data.pixelsId ?? 'image' } });
+    setKnown(barProp.value);
+    setUnit(barProp.unit);
+  };
   const lineLen = line ? Math.hypot(line[2] - line[0], line[3] - line[1]) : 0;
   const applyScale = () => {
     if (!(lineLen > 0) || !(known > 0)) return;
@@ -975,6 +1053,28 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     // added after the step shown (else at the end), and shown
     const at = upTo && upTo !== '__none' ? steps.findIndex((q) => q.id === upTo) + 1 : steps.length;
     setSteps([...steps.slice(0, at), s, ...steps.slice(at)]);
+    setUpTo(null);
+  };
+  // Lattice ▸ Bragg filter: the spots picked into a Spectrum mask step (kept, or taken out): the one there, else a new
+  // one at the end, shown
+  const setLattice = (p: Partial<LatticeSpec>) => set({ lattice: { ...data.lattice, ...p } });
+  const bragg = (mode: 'keep' | 'remove') => {
+    const spots = data.lattice?.spots ?? [];
+    const had = steps.find((q) => q.kind === 'fftmask');
+    if (had) setSteps(steps.map((q) => (q.id === had.id ? { ...q, on: true, p: { ...q.p, spots, mode } } : q)));
+    else {
+      const s = newStep('fftmask', `s${Date.now().toString(36)}${(stepSeq++).toString(36)}`);
+      setSteps([...steps, { ...s, p: { ...s.p, spots, mode } }]);
+    }
+    setUpTo(null);
+    set({ fft: { ...data.fft, show: undefined }, lattice: data.lattice });
+  };
+  // Surface ▸ Level: a Level step (a plane) at the start of the steps, shown
+  const setSurface = (p: Partial<SurfaceSpec>) => set({ surface: { ...data.surface, ...p } });
+  const levelIt = () => {
+    const had = steps.find((q) => q.kind === 'level');
+    if (had) setSteps(steps.map((q) => (q.id === had.id ? { ...q, on: true } : q)));
+    else setSteps([newStep('level', `s${Date.now().toString(36)}${(stepSeq++).toString(36)}`), ...steps]);
     setUpTo(null);
   };
   const move = (k: number, d: -1 | 1) => {
@@ -1105,12 +1205,17 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       })}
     </svg>
   );
-  // (Structure: the network over the image, instead of the selections)
+  // (Structure: the network over the image, instead of the selections; the grain size's lines, the orientation)
+  const texView = nodeRes?.view.texture;
   const layers =
     tab === 'structure' ? (
-      net && !onOriginal && data.network?.on && <NetworkOverlay net={net} spec={data.network} k={k} ox={ox} oy={oy} W={W} H={H} tool={netTool} sel={netSel} eraseR={eraseR} onSelect={setNetSel} onEdit={addEdit} />
+      <>
+        {texView && !onOriginal && nodeRes && <TextureOverlay view={texView} spec={data.texture ?? {}} k={k} ox={ox} oy={oy} W={W} H={H} w={nodeRes.view.image?.w ?? 0} h={nodeRes.view.image?.h ?? 0} />}
+        {net && !onOriginal && data.network?.on && <NetworkOverlay net={net} spec={data.network} k={k} ox={ox} oy={oy} W={W} H={H} tool={netTool} sel={netSel} eraseR={eraseR} onSelect={setNetSel} onEdit={addEdit} />}
+      </>
     ) : (
       <>
+        {tab === 'lattice' && nodeRes?.view.lattice?.centre && nodeRes.view.lattice.rings && !onOriginal && <RingsOverlay centre={nodeRes.view.lattice.centre} rings={nodeRes.view.lattice.rings} labels={nodeRes.view.lattice.labels ?? []} k={k} ox={ox} oy={oy} W={W} H={H} />}
         {tab === 'objects' && data.arrange?.on && (data.arrange.show ?? 'nearest') !== 'off' && nodeRes?.view.arrange && !onOriginal && <ArrangeOverlay res={nodeRes.view.arrange} spec={data.arrange} k={k} W={W} H={H} />}
         {roiLayer}
         {contextLayer}
@@ -1279,7 +1384,17 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
           onDoubleClick={onDouble}
           onPointerLeave={() => setHover(null)}
         >
-          {onOriginal ? (
+          {specOn ? (
+            <>
+              {stage(
+                canvasS,
+                spectrumImg ? `spectrum${(fft.log ?? true) ? ' (log)' : ''}, ${spectrumImg.N} × ${spectrumImg.N}` : 'spectrum: computing …',
+                spectrumImg && tab === 'lattice' && <SpotsOverlay spots={data.lattice?.spots ?? []} N={spectrumImg.N} k={k} pick onClick={(u, v) => worker.current?.postMessage({ type: 'spot', u, v } satisfies SpotRequest)} />,
+              )}
+              <canvas ref={canvas} hidden />
+              <canvas ref={canvasB} hidden />
+            </>
+          ) : onOriginal ? (
             <>
               {stage(canvasO, tool === 'crop' ? 'original: drag the part to analyse' : 'original: draw along the scale bar', tool === 'crop' ? cropRect : scaleLine)}
               <canvas ref={canvas} hidden />
@@ -1332,6 +1447,33 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
             <Select<Lut> value={lut} options={LUTS} title="The colour table of a gray image (the view; the figure has its own in the options)" onChange={setLut} />
             {reply?.kind === 'mask' && <Check label="mask over the image" title="A mask shown in a colour over the original, else white on black" value={overlay} onChange={setOverlay} />}
           </div>
+          <div className="row wrap">
+            <Select<'image' | 'spectrum'>
+              value={fft.show ? 'spectrum' : 'image'}
+              title="What is shown: the image, or its spectrum (its 2D Fourier transform: the zero frequency in the middle, a periodic pattern a spot at 1 / its period from it)"
+              options={[
+                ['image', 'the image'],
+                ['spectrum', 'its FFT spectrum'],
+              ]}
+              onChange={(v) => set({ fft: { ...data.fft, show: v === 'spectrum' || undefined } })}
+            />
+            {fft.show && (
+              <>
+                <Check label="log" title="The magnitude on a log scale (the weak spots seen beside the strong ones), else linear" value={fft.log ?? true} onChange={(log) => set({ fft: { ...data.fft, log: log ? undefined : false } })} />
+                <Check label="Hann window" title="The image's edges faded first: no cross through the middle from them" value={fft.hann ?? true} onChange={(hann) => set({ fft: { ...data.fft, hann: hann ? undefined : false } })} />
+                <Select<'result' | 'original'>
+                  value={fft.of ?? 'result'}
+                  title="The spectrum of the result of the steps, or of the original"
+                  options={[
+                    ['result', 'of the result'],
+                    ['original', 'of the original'],
+                  ]}
+                  onChange={(of) => set({ fft: { ...data.fft, of: of === 'result' ? undefined : of } })}
+                />
+              </>
+            )}
+          </div>
+          <Check label="radial spectrum in the workbook" title="The spectrum's power averaged in rings, against the spatial frequency k and the distance d = 1/k (a sheet Radial spectrum), with the distance of its strongest peak: the period the image repeats most" value={!!fft.radial} onChange={(radial) => set({ fft: { ...data.fft, radial: radial || undefined } })} />
           <div className="ie-section">Crop</div>
           <div className="hint">{crop ? `The part analysed: x ${crop[0]}, y ${crop[1]}, ${crop[2]} × ${crop[3]} px of ${full?.w} × ${full?.h}.` : 'The whole image is analysed.'}</div>
           <div className="row wrap">
@@ -1361,6 +1503,46 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
             </button>
           </div>
           <Check label="Find the bar's ends" title="When the line is let go, its ends moved to the ends of the bar under it (its pixels like those under its middle); else the line as drawn" value={snap} onChange={setSnap} />
+          <Check label="Read the scale bar" title="The scale bar found in the image and its label read (OCR: its engine downloaded once, about 5 MB; the image stays here), as a proposal: nothing changes until you accept it" value={!!data.barRead?.on} onChange={(on) => set({ barRead: on ? { on: true } : undefined })} />
+          {data.barRead?.on && !barAsk && (
+            <div className="row wrap">
+              <span className="hint grow">The scale bar of this image: answered.</span>
+              <button className="nodrag" onClick={() => set({ barRead: { on: true } })}>
+                Read again
+              </button>
+            </div>
+          )}
+          {barAsk && barProp === 'none' && <div className="hint">No scale bar found: draw a line on it (Scale).</div>}
+          {barAsk && barProp && barProp !== 'none' && (
+            <div className="ie-bar-proposal">
+              <div className="hint">
+                A {barProp.bar.bright ? 'white' : 'black'} bar of <b>{barProp.bar.x1 - barProp.bar.x0 + 1} px</b> at x {barProp.bar.x0}, y {barProp.bar.y0}
+                {barProp.busy ? ': reading its label …' : barProp.text ? `, its label read: “${barProp.text.slice(0, 60)}”` : ': no label read, give its length'}
+                {barProp.err ? ` (the reader could not start: ${barProp.err})` : ''}
+              </div>
+              <div className="row wrap">
+                <span className="muted">{barProp.bar.x1 - barProp.bar.x0 + 1} px =</span>
+                <NumInput className="short" min={0} value={barProp.value} placeholder="length" onChange={(value) => setBarProp({ ...barProp, value })} />
+                <Select<string> value={barProp.unit} options={UNITS.some(([u]) => u === barProp.unit) ? UNITS : [...UNITS, [barProp.unit, barProp.unit]]} onChange={(u) => setBarProp({ ...barProp, unit: u })} />
+              </div>
+              {barProp.value > 0 && (
+                <div className="hint">
+                  1 px = {fmt(barProp.value / (barProp.bar.x1 - barProp.bar.x0 + 1))} {barProp.unit}
+                </div>
+              )}
+              <div className="row wrap">
+                <button className="nodrag btn-run" disabled={!(barProp.value > 0)} title="The calibration set from the bar and its length" onClick={acceptBar}>
+                  Accept
+                </button>
+                <button className="nodrag" title="Nothing changed" onClick={barDone}>
+                  Reject
+                </button>
+                <button className="nodrag" title="The original shown with the bar's line (the Scale tool)" onClick={() => setTool('scale')}>
+                  Show it
+                </button>
+              </div>
+            </div>
+          )}
           <div className="hint">Or the size of a pixel, known:</div>
           <div className="row wrap">
             <span className="muted">1 px =</span>
@@ -1469,6 +1651,32 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
               onEdit={addEdit}
               toggle={toggleEdit}
               undo={undoEdit}
+            />
+          )}
+          {tab === 'structure' && <TexturePanel spec={data.texture ?? {}} set={(p: Partial<TextureSpec>) => set({ texture: { ...data.texture, ...p } })} view={nodeRes?.view.texture} u={calU} />}
+          {tab === 'lattice' && (
+            <LatticePanel
+              spec={data.lattice ?? {}}
+              set={setLattice}
+              k={calK}
+              u={calU}
+              showing={!!fft.show}
+              showSpectrum={(on) => set({ fft: { ...data.fft, show: on || undefined } })}
+              bragg={bragg}
+              fringes={nodeRes?.view.lattice?.fringes}
+              ringRows={nodeRes?.view.lattice?.ringRows}
+              centre={nodeRes?.view.lattice?.centre}
+            />
+          )}
+          {tab === 'surface' && (
+            <SurfacePanel
+              spec={data.surface ?? {}}
+              set={setSurface}
+              u={calU}
+              areas={rois.filter((r) => isArea(r) && !r.hidden && !r.train).map((r) => ({ id: r.id, name: r.name }))}
+              view={nodeRes?.view.surface}
+              levelled={steps.some((q) => q.kind === 'level' && q.on)}
+              level={levelIt}
             />
           )}
           {tab === 'results' && <MeasurePanel spec={spec} set={setSpec} steps={steps} rgb={(base?.ch.length ?? 1) === 3} rois={rois} book={book} sheet={sheet} setSheet={setSheet} pick={(name) => setSel(rois.find((r) => r.name === name)?.id ?? sel)} />}

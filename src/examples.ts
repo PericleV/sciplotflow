@@ -14,7 +14,7 @@ import { FRAME_COLORS } from './nodeColors.ts';
 import { packPixels, type Raster } from './image/raster.ts';
 import { eisPlotData, eisPlotEdges } from './eisPlots.ts';
 import type { Roi } from './image/roi.ts';
-import { clustersImage, cubesImage, monolayerImage, porousImage, shapesImage, textureImage, type TestImage } from './image/testImages.ts';
+import { afmImage, clustersImage, cubesImage, hrtemImage, monolayerImage, porousImage, saedImage, shapesImage, textureImage, type TestImage } from './image/testImages.ts';
 import { findLike, fitBox, MATCH_DEFAULTS } from './image/match.ts';
 import { applySteps, newStep, type ImgStep } from './image/steps.ts';
 import { findParticles, PARTICLE_DEFAULTS, SHAPE_COLORS, shapeFeatures, shapeName, tracedPerimeter } from './image/particles.ts';
@@ -2329,6 +2329,77 @@ function foundParticles(t: TestImage, steps: ImgStep[], rois: Roi[], separate: b
   });
 }
 const otsuStep = (light: boolean): ImgStep => ({ ...newStep('threshold', 'st-otsu'), p: { ...newStep('threshold', 'st-otsu').p, method: 'otsu', light } });
+// Gold by TEM: a high-resolution image (its spectrum's two {111} spots: d and the angle between the planes; a Bragg
+// filter of them; the fringes along a line) and a diffraction pattern (its centre, its rings matched with gold)
+function goldTemExample(): Project {
+  const b = builder();
+  const t = hrtemImage();
+  add(b, 'image', 'tem-hr', 0, 0, {
+    ...IMAGE_DEFAULTS,
+    name: 'gold_hrtem.png',
+    pixels: packPixels(t.w, t.h, 1, 8, t.px),
+    pixelsId: 'example-gold-hrtem',
+    steps: [{ ...newStep('fftmask', 'st-bragg'), on: false, p: { ...newStep('fftmask', 'st-bragg').p, spots: t.spots, mode: 'keep' } }],
+    cal: { size: 0.02, unit: 'nm' },
+    rois: [{ id: 'fr1', name: 'L1', kind: 'line', pts: [[100, 128 - 60 * Math.tan(0.35)], [220, 128 + 60 * Math.tan(0.35)]] }],
+    lattice: { spots: t.spots, fringes: true },
+    tab: 'lattice',
+    figure: { width: 90 },
+  });
+  const sa = saedImage();
+  add(b, 'image', 'tem-saed', 0, 900, {
+    ...IMAGE_DEFAULTS,
+    name: 'gold_saed.png',
+    pixels: packPixels(sa.w, sa.h, 1, 8, sa.px),
+    pixelsId: 'example-gold-saed',
+    steps: [],
+    cal: { size: 1, unit: 'nm' },
+    lattice: { saed: true, recip: 0.07, phases: ['Au', 'Ag'] },
+    tab: 'lattice',
+    figure: { width: 90 },
+  });
+  const wb = add(b, 'book', 'tem-book', 700, 0, { ...WORKBOOK_DEFAULTS, name: 'lattice', sheets: [], into: [] });
+  link(b, 'tem-hr', wb, 'in-0', 'workbook');
+  link(b, 'tem-saed', wb, 'in-1', 'workbook');
+  const pr = add(b, 'plot1d', 'tem-profile', 700, 900, plot({ label: 'radial profile', style: curve(0, { mode: 'line', lineWidth: 1 }), cols: { x: 'r (px)', y: 'Mean' }, sheet: 'Radial profile' }, { page: { name: 'saed_profile' } }));
+  link(b, 'tem-saed', pr, 'dataset', 'workbook');
+  return project(b, 'Gold by TEM: lattice spacing, Bragg filter, diffraction rings');
+}
+
+// An AFM scan: the scan lines' offsets and the tilt taken off (Scan lines, Level with the particles left out of the
+// fit), the roughness (ISO 25178) of the image and of a selection, a profile's roughness (λc), the height histogram,
+// the PSD and the autocorrelation, the depth of a trench (a step between two selections); the heights in 3D
+function afmExample(): Project {
+  const b = builder();
+  const t = afmImage();
+  const lv = newStep('level', 'st-level');
+  const im = add(b, 'image', 'afm-image', 0, 0, {
+    ...IMAGE_DEFAULTS,
+    name: 'gold_on_substrate.gwy',
+    pixels: packPixels(t.w, t.h, 1, 32, t.z),
+    pixelsId: 'example-afm',
+    steps: [newStep('scanlines', 'st-lines'), { ...lv, p: { ...lv.p, exclude: 15, zero: 'min' } }],
+    cal: { size: 7.8125, unit: 'nm' },
+    rois: [
+      { id: 'top', name: 'Terrace', kind: 'rect', box: t.boxes.top },
+      { id: 'base', name: 'Trench', kind: 'rect', box: t.boxes.base },
+      { id: 'pl', name: 'L1', kind: 'line', pts: [[40, 20], [96, 20]] },
+    ],
+    surface: { zUnit: 'nm', areal: true, profile: true, lc: 150, hist: true, psd: true, acf: true, step: ['top', 'base'] },
+    tab: 'surface',
+    figure: { width: 90, lut: 'inferno' },
+  });
+  const wb = add(b, 'book', 'afm-book', 700, 0, { ...WORKBOOK_DEFAULTS, name: 'surface', sheets: [], into: [] });
+  link(b, im, wb, 'in-0', 'workbook');
+  const s3 = add(b, 'plot3d', 'afm-3d', 700, 700, { ...PLOT3D_DEFAULTS, kind: 'surface', cmap: 'inferno', mesh: 0, aspectZ: 0.35, azim: -60, elev: 35, page: { ...PLOT_PAGE_DEFAULTS, width: 85, height: 70, name: 'afm_3d' } });
+  link(b, im, s3, 'dataset', 'matrix');
+  const hi = add(b, 'plot1d', 'afm-hist', 1300, 0, plot({ label: 'heights', style: curve(0, { mode: 'line', lineWidth: 1.2 }), cols: { x: 'Height (nm)', y: 'Count' }, sheet: 'Height histogram' }, { page: { name: 'height_histogram' } }));
+  link(b, im, hi, 'dataset', 'workbook');
+  const ps = add(b, 'plot1d', 'afm-psd', 1300, 700, plot({ label: 'PSD', style: curve(1, { mode: 'line', lineWidth: 1.2 }), cols: { x: 'k (1/nm)', y: 'PSD (nm²·nm²)' }, sheet: 'PSD' }, { axes: { x: { ...AXES_STYLE_DEFAULTS.x, scale: 'log' }, y: { ...AXES_STYLE_DEFAULTS.y, scale: 'log' } }, page: { name: 'psd' } }));
+  link(b, im, ps, 'dataset', 'workbook');
+  return project(b, 'AFM: levelling, roughness, PSD and a step height');
+}
+
 // A nanoparticle monolayer: the particles found (a threshold, clusters cut apart), how they lie (Arrangement: their
 // neighbours, the Voronoi cells, Clark–Evans R, ψ6, g(r)); then the other nodes: the size distribution with a
 // log-normal fit (Histogram), D10, D50, D90 and the confidence interval (Descriptive statistics), g(r) in a Plot
@@ -3018,6 +3089,14 @@ const ABOUT: Record<string, About> = {
     what: 'Nanocubes touching side to side, as an electron microscope shows them: found like one of them (template matching, any turn, the edges fitted) or by cutting the mask along the dark lines between them; each cube’s side, orientation and the alignment of all of them in a Workbook and a Plot.',
     try: ['Analyze (top): pick the green model, change Similarity or Sizes in Particles, then Find like this.', 'Draw a rectangle around another cube, turn it with its handle to fit, pick it, Find like this.', 'Analyze (below): change the Line width of Split along dark lines, then Find particles.'],
   },
+  'Gold by TEM: lattice spacing, Bragg filter, diffraction rings': {
+    what: 'The lattice of a crystal measured from its image: the spots of the spectrum, a Bragg filter, the fringes, and a diffraction pattern indexed with known phases.',
+    try: ['Open the first image (Edit), Lattice tab: tick show the spectrum, click another spot.', 'Tick the Spectrum mask step on the left: the lattice alone, its fringes clean.', 'In the second image, tick Ag too: gold and silver are almost alike (their a differ by 0.2 %).'],
+  },
+  'AFM: levelling, roughness, PSD and a step height': {
+    what: 'A height map analysed as Gwyddion would: the form taken off, the roughness by ISO 25178 and ISO 4287, the distributions of the heights, and the depth of a trench.',
+    try: ['Open the editor (Edit), Surface tab: compare Sa of the image and of the Terrace (the particles raise it).', 'Turn the Level step off: the tilt adds to every roughness parameter.', 'Move the selections of the step: the depth of the trench stays near 3 nm.'],
+  },
   'Nanoparticle monolayer: neighbours, order and sizes': {
     what: 'How particles lie and how big they are: Image analysis gives the data (sheets Selections, Neighbours, Arrangement, g(r)), the other nodes analyse them.',
     try: ['Open the editor, Objects tab, Arrangement: switch Show between nearest, Delaunay and Voronoi.', 'Look at the Arrangement sheet in the workbook: R near 2 and ψ6 near 1 mean an ordered layer.', 'In Descriptive statistics, change the percentiles (5, 50, 95).'],
@@ -3260,6 +3339,8 @@ const LIST: { group: string; name: string; desc: string; make: () => Project }[]
   { group: 'Data preparation', name: 'Replicate scans: mean ± SD on a common X', desc: 'Three scans on different wavelength grids: Average curves gives their mean ± SD on a common grid (a band in the Plot); Combine columns puts every point of the three scans in one table, in the order of the wavelength.', make: scansExample },
   { group: 'Data preparation', name: 'Difference spectrum: sample minus reference', desc: 'A sample measured 2 nm off: Translate moves it back, Curve math gives sample − reference and sample / reference on a common grid; the difference on its own axis shows the band the sample has more.', make: differenceExample },
   { group: 'Images', name: 'Nanocubes: found like one, their side and orientation', desc: 'Image analysis of nanocubes touching side to side: Find like this (template matching at any turn, the edges fitted) and Split along dark lines; each cube’s side and orientation, the alignment, in a Workbook and a Plot.', make: nanocubesExample },
+  { group: 'Images', name: 'AFM: levelling, roughness, PSD and a step height', desc: 'An AFM scan made here (2 µm, heights in nm): Scan lines and Level (the particles left out of the fit) take off the offsets and the tilt; the Surface tab gives the roughness (Sa, Sq, Sz, Ssk, Sku, Sdq, Sdr) of the image and of a selection, Ra and Rz along a line, the height histogram, the PSD, the autocorrelation (Sal, Str) and the depth of the trench between two selections. The heights in 3D (the matrix to a Plot 3D).', make: afmExample },
+  { group: 'Images', name: 'Gold by TEM: lattice spacing, Bragg filter, diffraction rings', desc: 'Two images made here. A high-resolution TEM image of a gold particle: its spectrum’s two {111} spots (d = 0.235 nm, 70.5° between the planes), a Bragg filter of them (a step, off: tick it), the period of the fringes along a line. A diffraction pattern of gold: its centre found, its rings, each matched with the reflections of gold (111, 200, 220, 311, 222). Open the editor, Lattice tab.', make: goldTemExample },
   { group: 'Images', name: 'Nanoparticle monolayer: neighbours, order and sizes', desc: 'A nanoparticle monolayer (made here): its particles found, then Arrangement: every particle’s nearest, its Delaunay neighbours and Voronoi cell (drawn, coloured by their neighbours), Clark–Evans R, the hexatic order ψ6, the clusters, g(r) and Ripley’s L; the data analysed by the other nodes: the size distribution with a log-normal fit, D10, D50, D90 and the 95 % confidence interval, g(r) in a Plot.', make: monolayerExample },
   { group: 'Images', name: 'Nanoporous gold: ligaments from the skeleton', desc: 'A nanoporous gold image (made here): a median filter and a threshold make the mask; Structure thins it to its skeleton and measures every ligament between two junctions (its length, its thickness from the inscribed circles), the junctions and the pores, in the workbook; the ligament lengths in a histogram. Open the editor: the Structure tab draws the network, a click on a ligament shows how it was measured.', make: porousExample },
   { group: 'Images', name: 'Particles: clusters cut apart, shapes named, their sizes', desc: 'Image analysis: the particles of a mask as selections (touching ones cut apart), named by their shape (circle, triangle, square …), measured (area, perimeter, Feret, ellipse, circularity, corners, nearest neighbours), in a Workbook and a Plot.', make: particlesExample },

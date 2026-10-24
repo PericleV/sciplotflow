@@ -1,8 +1,9 @@
 // An image file read for the Image analysis node, in the browser: a TIFF with its own values (8 or 16 bit, float; gray,
 // RGB, a palette; its scale when ImageJ or the microscope wrote one) by UTIF, other images (PNG, JPEG …) through a
-// canvas (8 bit; gray when its three channels are equal everywhere).
+// canvas (8 bit; gray when its three channels are equal everywhere), height maps (Gwyddion .gwy, text) as float.
 import { packPixels, type ImgPixels } from './raster.ts';
 import { isTiff } from '../imageFile.ts';
+import { HEIGHT_FILES, readGwy, readHeightText } from './heights.ts';
 
 type Ifd = Record<string, unknown> & { width: number; height: number; data: Uint8Array; isLE?: boolean };
 type Utif = { decode: (b: ArrayBuffer) => Ifd[]; decodeImage: (b: ArrayBuffer, i: Ifd) => void; toRGBA8: (i: Ifd) => Uint8Array };
@@ -140,8 +141,15 @@ async function readOther(file: Blob): Promise<ImgPixels> {
 
 // The pixels of an image file, or why not
 export async function readImagePixels(file: Blob): Promise<ImgPixels> {
+  if (isHeightFile(file)) {
+    const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+    const hm = String.fromCharCode(...head) === 'GWYP' ? readGwy(await file.arrayBuffer()) : readHeightText(await file.text());
+    return { ...packPixels(hm.w, hm.h, 1, 32, hm.z, hm.px), ...(hm.zUnit ? { zUnit: hm.zUnit } : {}) };
+  }
   return (await isTiff(file)) ? readTiff(file) : readOther(file);
 }
+// a file of heights (by its name)
+export const isHeightFile = (file: Blob) => HEIGHT_FILES.test((file as File).name ?? '');
 // The same, read in a worker of its own (a large TIFF decoded and packed without stopping the page); on the page when
 // a worker cannot be made
 export function readImagePixelsAsync(file: Blob): Promise<ImgPixels> {

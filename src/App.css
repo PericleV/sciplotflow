@@ -1712,3 +1712,13 @@ input[type='checkbox'], input[type='radio'] { box-shadow: none; }
 .ie-arrange polygon { fill-opacity: 0.28; stroke-width: 0.8; stroke-opacity: 0.8; }
 .ie-arrange polygon.cut { fill-opacity: 0.1; stroke-dasharray: 3 2; }
 .ie-arrange .label { fill: #ffffff; font-size: 9px; text-anchor: middle; paint-order: stroke; stroke: #000000; stroke-width: 2px; }
+/* Lattice: the spots picked on the spectrum, a diffraction pattern's rings */
+.image-editor .ie-spots.picking { pointer-events: all; cursor: crosshair; }
+.ie-spots circle { fill: none; stroke: #ffd60a; stroke-width: 1.5; }
+.ie-spots text, .ie-rings text { fill: #ffd60a; font-size: 10px; paint-order: stroke; stroke: #000000; stroke-width: 2px; }
+.ie-rings circle { fill: none; stroke: #30d158; stroke-width: 1; stroke-dasharray: 4 3; }
+.ie-rings .centre { stroke: #ff453a; stroke-width: 1.5; }
+/* Structure: the grain size's test lines and their crossings, the image coloured by its orientation */
+.ie-texture .test { fill: none; stroke: #64d2ff; stroke-width: 1; }
+.ie-texture .hit { fill: #ff453a; stroke: #ffffff; stroke-width: 0.75; }
+.ie-texture .orient { opacity: 0.85; image-rendering: pixelated; }

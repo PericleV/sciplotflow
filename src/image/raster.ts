@@ -5,8 +5,9 @@ import { deflateSync, inflateSync } from 'fflate';
 
 // The pixels as kept in the node: w × h, 1 (gray) or 3 (RGB) channels interleaved, of 8 or 16 bit (unsigned) or 32 bit
 // (float), little-endian, deflated and in base64. scale: the size of a pixel read from the file (TIFF), when it has one.
-// dataRef: in the projects kept in the browser, the data stored apart (textStore) under this key
-export type ImgPixels = { w: number; h: number; ch: 1 | 3; depth: 8 | 16 | 32; data: string; dataRef?: string; scale?: { size: number; unit: string } };
+// dataRef: in the projects kept in the browser, the data stored apart (textStore) under this key. zUnit: the values
+// are heights in this unit (a height map read: AFM)
+export type ImgPixels = { w: number; h: number; ch: 1 | 3; depth: 8 | 16 | 32; data: string; dataRef?: string; scale?: { size: number; unit: string }; zUnit?: string };
 
 // A raster: one Float32Array per channel (row after row); its kind (gray, RGB, a mask of 0 / 1) and its nominal range
 // (0–255, 0–65535; float: the data's), used by the steps that work on the range (levels, curves, invert …)

@@ -64,6 +64,22 @@ export function ParamField({ q, value, set, hist }: { q: Param; value: unknown; 
         <Select<string> value={String(value ?? q.def)} options={q.options} title={q.title} onChange={(x) => set(x)} />
       </>
     );
+  if (q.type === 'spots') {
+    const n = Array.isArray(value) ? value.length : 0;
+    return (
+      <>
+        {label}
+        <span className="row">
+          <span className="muted">{n ? `${n} spot${n === 1 ? '' : 's'} (and their mirrors)` : 'none yet: pick them in the Lattice tab'}</span>
+          {n > 0 && (
+            <button className="nodrag" title="The spots forgotten" onClick={() => set([])}>
+              Clear
+            </button>
+          )}
+        </span>
+      </>
+    );
+  }
   if (q.type === 'bool')
     return (
       <>

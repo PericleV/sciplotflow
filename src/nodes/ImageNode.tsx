@@ -8,7 +8,7 @@ import { useNodeResult } from '../engine/engine.ts';
 import { DRAWING_DEFAULTS } from '../defaults.ts';
 import type { AppNode, ImageAnalysisData, ImageNode, PageData } from '../types.ts';
 import { imageFigure, unitText, type ImageFigure } from '../image/node.ts';
-import { readImagePixelsAsync, newPixelsId } from '../image/load.ts';
+import { isHeightFile, readImagePixelsAsync, newPixelsId } from '../image/load.ts';
 import { IMAGE_ACCEPT, isTiff } from '../imageFile.ts';
 import { COLOR_MAPS } from '../figure/colors.ts';
 import type { Lut } from '../image/render.ts';
@@ -45,7 +45,7 @@ export function ImageNodeView({ id, data }: NodeProps<ImageNode>) {
   // a file opened, pasted or dropped: read (a TIFF with its own values and scale), kept in the node
   const load = async (fl: File | Blob | undefined, name: string) => {
     if (!fl) return;
-    if (!fl.type.startsWith('image/') && !(await isTiff(fl))) return;
+    if (!fl.type.startsWith('image/') && !isHeightFile(fl) && !(await isTiff(fl))) return;
     setBusy(`Reading ${name}…`);
     try {
       const pixels = await readImagePixelsAsync(fl);
@@ -54,7 +54,9 @@ export function ImageNodeView({ id, data }: NodeProps<ImageNode>) {
         return;
       }
       const cal = pixels.scale ? { size: pixels.scale.size, unit: pixels.scale.unit } : data.cal;
-      set({ name, pixels, pixelsId: newPixelsId(), ...(cal ? { cal } : {}) });
+      // (a height map: the unit of its heights)
+      const surface = pixels.zUnit ? { ...data.surface, zUnit: pixels.zUnit, zScale: undefined } : data.surface;
+      set({ name, pixels, pixelsId: newPixelsId(), ...(cal ? { cal } : {}), ...(surface ? { surface } : {}) });
     } catch (e) {
       notify(`${name}: ${(e as Error).message}`);
     }
@@ -74,7 +76,7 @@ export function ImageNodeView({ id, data }: NodeProps<ImageNode>) {
   const px = data.pixels;
   const calText = data.cal && data.cal.size > 0 ? `1 px = ${+data.cal.size.toPrecision(4)} ${unitText(data.cal.unit)}` : 'not calibrated';
   const openButton = (
-    <button className="nodrag" title="An image: PNG, JPEG, TIFF (8 or 16 bit, float; its scale read when it has one)" onClick={() => file.current?.click()}>
+    <button className="nodrag" title="An image: PNG, JPEG, TIFF (8 or 16 bit, float; its scale read when it has one); a height map (AFM): Gwyddion .gwy, a text of a matrix or of X Y Z" onClick={() => file.current?.click()}>
       <FolderOpen {...IC} /> Open image
     </button>
   );
@@ -102,7 +104,7 @@ export function ImageNodeView({ id, data }: NodeProps<ImageNode>) {
         ref={file}
         type="file"
         hidden
-        accept={IMAGE_ACCEPT}
+        accept={`${IMAGE_ACCEPT},.gwy,.xyz,.asc,.txt,.csv,.dat`}
         onChange={(e) => {
           const fl = e.target.files?.[0];
           e.target.value = '';

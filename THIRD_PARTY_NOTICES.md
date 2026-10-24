@@ -22,6 +22,7 @@ The full licence texts of these packages (and of the packages they use) are ship
 | Lucide (`lucide-react`) | ISC | the icons of the buttons (the Figure Drawing editor: a few more drawn in its style) |
 | Paper.js (`paper`, its core without PaperScript) and paperjs-offset | MIT | Figure Drawing: paths combined (union, subtract, intersect, exclude, divide), offset, stroke to path — loaded only when one of these is used |
 | Yjs (`yjs`) and lib0 | MIT | working together (Collaborate): the project as a shared document kept in step between browsers — loaded only when a session starts |
+| tesseract.js (and wasm-feature-detect, idb-keyval: Apache-2.0; regenerator-runtime, bmp-js, is-url, zlibjs: MIT) | Apache-2.0, MIT | Image analysis: the label of a scale bar read (OCR) — loaded only when Read the scale bar is ticked |
 
 ## 2. Loaded only when a Python script runs
 
@@ -42,6 +43,16 @@ browser.
 | sympy | BSD-3-Clause |
 | patsy | BSD-2-Clause |
 | micropip | MPL-2.0 |
+
+## 2b. Loaded only when a scale bar is read
+
+Downloaded by the browser from the jsDelivr CDN the first time Read the scale bar is ticked (Image analysis ▸
+Calibration), then kept in the browser's cache. The image is read in the browser and is not sent anywhere.
+
+| Software | Licence |
+|---|---|
+| tesseract.js worker and tesseract.js-core (Tesseract OCR compiled to WebAssembly) | Apache-2.0 |
+| Tesseract's English language data (`@tesseract.js-data/eng`) | Apache-2.0 |
 
 ## 3. Colour palettes
 

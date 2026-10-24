@@ -11,7 +11,12 @@ import type { MatchOpts, MatchModelSpec } from './match.ts';
 import type { RegularShape } from './refine.ts';
 import { analyzeNetwork, NETWORK_DEFAULTS, type NetworkResult, type NetworkSpec } from './network.ts';
 import { arrange, ARRANGE_DEFAULTS, type ArrangeResult, type ArrangeSpec } from './arrangement.ts';
-import { isArea, roiCentre, roiOutline, type Pt, type Roi } from './roi.ts';
+import { radialSpectrum } from './fft2d.ts';
+import { matchRings, patternCentre, planeAngle, profilePeriod, radialProfile, ringsOf, spotOf, type LatticeSpec } from './lattice.ts';
+import { lineProfile } from './measure.ts';
+import { arealParams, autocorrelation, heightHistogram, LENGTH_NM, profileParams, radialPSD, regionHeight, type Areal, type ProfileR, type SurfaceSpec } from './surface.ts';
+import { isArea, isLine, roiCentre, roiMask, roiOutline, type Pt, type Roi } from './roi.ts';
+import { astmG, boxCounting, grainsPerMm2, intercepts, orientation, orientationColours, type Orientation, type TextureSpec } from './texture.ts';
 import { column, type Column, type Dataset } from '../engine/table.ts';
 import { pngDataUrl, toRGBA, type Lut } from './render.ts';
 import type { Matrix } from '../engine/matrix.ts';
@@ -47,7 +52,19 @@ export type ImageAnalysisData = {
   network?: NetworkSpec;
   // Arrangement: how the particles lie (their neighbours, Delaunay, Voronoi, clusters, g(r), Ripley's L)
   arrange?: ArrangeSpec;
-  tab?: 'image' | 'objects' | 'structure' | 'results'; // the editor's panel shown last
+  tab?: 'image' | 'objects' | 'structure' | 'lattice' | 'surface' | 'results'; // the editor's panel shown last
+  // Frequency: the spectrum shown instead of the image (log or linear, a Hann window, of the result or the original);
+  // radial: its radial average in the workbook
+  fft?: { show?: boolean; log?: boolean; hann?: boolean; of?: 'result' | 'original'; radial?: boolean };
+  // Lattice: the spots picked in the spectrum, the fringes, a diffraction pattern's rings and phases
+  lattice?: LatticeSpec;
+  // Surface: the image as heights (their unit), its roughness, the distributions, a step
+  surface?: SurfaceSpec;
+  // Structure ▸ grain size (ASTM E112), orientation, fractal dimension
+  texture?: TextureSpec;
+  // Calibration ▸ the scale bar read from the image (proposed, never applied without Accept); done: the image (its
+  // pixelsId) whose proposal was accepted or rejected
+  barRead?: { on?: boolean; done?: string };
 };
 export const BAR_DEFAULTS: ScaleBar = { show: true, length: NaN, at: 'br', color: '#ffffff', thickness: 3, label: true, size: 8 };
 export const IMAGE_FIGURE_DEFAULTS: ImageFigure = { width: 80, show: 'result', lut: 'gray', lo: NaN, hi: NaN, overlay: '#ff3b30', alpha: 0.45, bar: BAR_DEFAULTS, rois: 'outlines' };
@@ -312,13 +329,287 @@ export function arrangementSheets(a: { res: ArrangeResult; names: string[]; grou
   return [summary, neighbours, g, L, h];
 }
 
-// the result as a matrix: gray (RGB: its luminance), X and Y of every column and row in the calibrated unit
-export function imageMatrix(r: Raster, name: string, cal?: ImageCal): Matrix {
-  const c = r.ch.length === 1 ? r.ch[0] : map1(r.ch[0], (v, i) => 0.299 * v + 0.587 * r.ch[1][i] + 0.114 * r.ch[2][i]);
+// The radial spectrum of the result (Image ▸ View): k, its power and d = 1/k (in the calibrated unit), the strongest
+// peak's distance
+export function radialSheet(d: ImageAnalysisData, p: Processed): Dataset {
+  const r = p.out;
+  const g = r.ch.length === 1 ? r.ch[0] : map1(r.ch[0], (v, i) => 0.299 * v + 0.587 * r.ch[1][i] + 0.114 * r.ch[2][i]);
+  const rs = radialSpectrum(g, r.w, r.h, d.fft?.hann ?? true);
+  const k = d.cal && d.cal.size > 0 ? d.cal.size : 1;
+  const u = d.cal && d.cal.size > 0 ? unitText(d.cal.unit) : 'px';
+  return {
+    name: 'Radial spectrum',
+    columns: [
+      { ...column(`k (1/${u})`, Float64Array.from(rs.k, (x) => x / k)), role: 'x' },
+      { ...column('Power', Float64Array.from(rs.power)), role: 'y' },
+      { ...column(`d (${u})`, Float64Array.from(rs.k, (x) => k / x)), role: 'none' },
+      { ...column(`Peak d (${u})`, Float64Array.from(rs.k, (_, i) => (i ? NaN : rs.peakD * k))), role: 'none' },
+    ],
+  };
+}
+
+// Lattice: what the node's settings ask of the result — the spots' distances and directions (and the angles between
+// them), the period of the fringes along every line selection, a diffraction pattern's rings matched with phases —
+// as sheets, and what is drawn over the image (the pattern's centre and its rings)
+const NM: Record<string, number> = { nm: 1, Å: 0.1, A: 0.1, pm: 0.001, µm: 1000, um: 1000, mm: 1e6 };
+export type LatticeView = { centre?: Pt; rings?: number[]; labels?: string[]; ringRows?: { d: number; phase: string; hkl: string; err: number }[]; fringes?: { name: string; period: number; count: number }[] };
+export function latticeSheets(d: ImageAnalysisData, p: Processed): { sheets: Dataset[]; view: LatticeView; warnings: string[] } {
+  const L = d.lattice ?? {};
+  const k = d.cal && d.cal.size > 0 ? d.cal.size : 1;
+  const u = d.cal && d.cal.size > 0 ? unitText(d.cal.unit) : 'px';
+  const num = (name: string, v: number[]) => column(name, Float64Array.from(v));
+  const txt = (name: string, v: string[]): Column => column(name, new Float64Array(v.length).fill(NaN), v);
+  const sheets: Dataset[] = [];
+  const view: LatticeView = {};
+  const warnings: string[] = [];
+  const r = p.out;
+  const g = r.ch.length === 1 ? r.ch[0] : map1(r.ch[0], (v, i) => 0.299 * v + 0.587 * r.ch[1][i] + 0.114 * r.ch[2][i]);
+  const full = d.pixels ? { w: d.pixels.w, h: d.pixels.h } : { w: r.w, h: r.h };
+  const crop = cropBox(d.crop, full.w, full.h);
+  const [ox, oy] = [crop?.[0] ?? 0, crop?.[1] ?? 0];
+  // (the spots: their d in the calibrated unit, their directions; the angles between every two)
+  const spots = (L.spots ?? []).map(([fx, fy]) => spotOf(fx, fy));
+  if (spots.length) {
+    sheets.push({
+      name: 'FFT spots',
+      columns: [
+        txt('Spot', spots.map((_, i) => `S${i + 1}`)),
+        num(`fx (1/${u})`, spots.map((s) => s.fx / k)),
+        num(`fy (1/${u})`, spots.map((s) => -s.fy / k)),
+        num(`d (${u})`, spots.map((s) => s.d * k)),
+        num('Direction (°)', spots.map((s) => s.angle)),
+      ],
+    });
+    if (spots.length > 1) {
+      const pairs: [number, number][] = [];
+      spots.forEach((_, i) => spots.forEach((__, j) => j > i && pairs.push([i, j])));
+      sheets.push({ name: 'Spot angles', columns: [txt('Spots', pairs.map(([i, j]) => `S${i + 1}–S${j + 1}`)), num('Angle (°)', pairs.map(([i, j]) => planeAngle(spots[i], spots[j])))] });
+    }
+  }
+  // (the fringes along every line selection: the period of its profile)
+  if (L.fringes) {
+    const lines = (d.rois ?? []).filter((q) => isLine(q) && !q.hidden && (q.pts?.length ?? 0) >= 2);
+    if (!lines.length) warnings.push('Lattice: draw a line across the fringes first (a line selection).');
+    const rows = lines.map((q) => {
+      const pts = q.pts!.map(([x, y]): Pt => [x - ox, y - oy]);
+      const prof = lineProfile(g, r.w, r.h, pts, q.width ?? 1);
+      const len = prof.d[prof.d.length - 1] ?? 0;
+      const per = profilePeriod(prof.v, prof.d.length > 1 ? prof.d[1] - prof.d[0] : 1);
+      return { name: q.name, len, period: per, count: per > 0 ? len / per : NaN };
+    });
+    view.fringes = rows.map((q) => ({ name: q.name, period: q.period * k, count: q.count }));
+    if (rows.length) sheets.push({ name: 'Fringes', columns: [txt('Line', rows.map((q) => q.name)), num(`Length (${u})`, rows.map((q) => q.len * k)), num(`Period (${u})`, rows.map((q) => q.period * k)), num('Fringes', rows.map((q) => q.count))] });
+  }
+  // (a diffraction pattern: its centre, its rings; d from the reciprocal size of a pixel; matched with the phases)
+  if (L.saed) {
+    const c0 = L.centre ? ([L.centre[0] - ox, L.centre[1] - oy] as Pt) : patternCentre(g, r.w, r.h);
+    const rp = radialProfile(g, r.w, r.h, c0[0], c0[1]);
+    const rings = ringsOf(rp);
+    const recip = L.recip && L.recip > 0 ? L.recip : NaN;
+    const ds = rings.map((R) => 1 / (R * recip));
+    // (in nm for the phases; the d given in the calibration's unit)
+    const toNm = NM[u] ?? NaN;
+    const own = (L.own ?? '').split(/[\s,;]+/).map(Number).filter((x) => x > 0).map((x) => x * toNm);
+    const match = Number.isFinite(recip) && Number.isFinite(toNm) ? matchRings(ds.map((x) => x * toNm), L.phases ?? [], own) : [];
+    if (L.saed && !Number.isFinite(recip)) warnings.push('Lattice: give the reciprocal size of a pixel (1 px = … 1/unit) for the rings’ d.');
+    view.centre = [c0[0] + ox, c0[1] + oy];
+    view.rings = rings;
+    view.labels = rings.map((_, i) => (match[i]?.phase ? `${match[i].phase} ${match[i].hkl}` : ''));
+    view.ringRows = rings.map((_, i) => ({ d: ds[i], phase: match[i]?.phase ?? '', hkl: match[i]?.hkl ?? '', err: match[i]?.err ?? NaN }));
+    sheets.push({
+      name: 'Rings',
+      columns: [
+        txt('Ring', rings.map((_, i) => `R${i + 1}`)),
+        num('Radius (px)', rings),
+        num(`Radius (1/${u})`, rings.map((R) => R * recip)),
+        num(`d (${u})`, ds),
+        num('Ratio to the first', rings.map((R) => R / rings[0])),
+        txt('Phase', match.map((m) => m.phase)),
+        txt('hkl', match.map((m) => m.hkl)),
+        num(`d ref (${u})`, match.map((m) => m.dRef / toNm)),
+        num('Error (%)', match.map((m) => m.err)),
+      ],
+    });
+    sheets.push({ name: 'Radial profile', columns: [{ ...num('r (px)', rp.r), role: 'x' }, { ...num('Mean', rp.mean), role: 'y' }] });
+  }
+  return { sheets, view, warnings };
+}
+
+// Surface: the image as heights (its values × zScale, in zUnit): the areal roughness of it and of its area
+// selections, the roughness along its lines, the histogram of the heights, the PSD, the autocorrelation, the step
+// between two selections; as sheets, and what its panel shows
+export type SurfaceView = {
+  areal?: (Areal & { name: string })[];
+  profiles?: (Omit<ProfileR, 'mean'> & { name: string; len: number })[];
+  acf?: { lcorr: number; Sal: number; Str: number };
+  step?: { a: string; b: string; ma: number; mb: number; sa: number; sb: number };
+};
+const surfaceKept = new WeakMap<Float32Array, { key: string; psd?: ReturnType<typeof radialPSD>; acf?: ReturnType<typeof autocorrelation> }>();
+// the heights: the result (a mask: the image it was made from), gray, × zScale
+export function surfaceHeights(d: ImageAnalysisData, p: Processed): Raster {
+  const src = p.out.kind !== 'mask' ? p.out : p.image;
+  const g = src.ch.length === 1 ? src.ch[0] : map1(src.ch[0], (v, i) => 0.299 * v + 0.587 * src.ch[1][i] + 0.114 * src.ch[2][i]);
+  const zs = d.surface?.zScale && d.surface.zScale > 0 ? d.surface.zScale : 1;
+  const ch = zs === 1 ? g : map1(g, (v) => v * zs);
+  return { ...src, ch: [ch], kind: 'gray', lo: src.lo * zs, hi: src.hi * zs };
+}
+export function surfaceSheets(d: ImageAnalysisData, p: Processed): { sheets: Dataset[]; view: SurfaceView; warnings: string[] } {
+  const S = d.surface ?? {};
+  const hr = surfaceHeights(d, p);
+  const [z, w, h] = [hr.ch[0], hr.w, hr.h];
+  const k = d.cal && d.cal.size > 0 ? d.cal.size : 1;
+  const u = d.cal && d.cal.size > 0 ? unitText(d.cal.unit) : 'px';
+  const zu = S.zUnit?.trim() ?? '';
+  const Z = (name: string) => (zu ? `${name} (${zu})` : name);
+  const num = (name: string, v: number[]) => column(name, Float64Array.from(v));
+  const txt = (name: string, v: string[]): Column => column(name, new Float64Array(v.length).fill(NaN), v);
+  const first = (n: number, v: number) => Array.from({ length: n }, (_, i) => (i ? NaN : v));
+  const sheets: Dataset[] = [];
+  const view: SurfaceView = {};
+  const warnings: string[] = [];
+  const full = d.pixels ? { w: d.pixels.w, h: d.pixels.h } : { w, h };
+  const crop = cropBox(d.crop, full.w, full.h);
+  const [ox, oy] = [crop?.[0] ?? 0, crop?.[1] ?? 0];
+  const insideOf = (r: Roi) => {
+    const m = roiMask(r, w, h, ox, oy);
+    return (x: number, y: number) => x >= m.x0 && y >= m.y0 && x < m.x0 + m.w && y < m.y0 + m.h && m.m[(y - m.y0) * m.w + x - m.x0] === 1;
+  };
+  const areas = (d.rois ?? []).filter((r) => isArea(r) && !r.hidden && !r.train);
+  // (a difference of heights between neighbours as a slope: the heights and the pixel both lengths)
+  const slope = zu in LENGTH_NM && u in LENGTH_NM ? LENGTH_NM[zu] / LENGTH_NM[u] / k : NaN;
+  if (S.areal) {
+    if (!Number.isFinite(slope)) warnings.push('Surface: Sdq and Sdr need the heights and the calibration both in units of length.');
+    const rows = [{ name: 'Image', ...arealParams(z, w, h, null, slope) }, ...areas.map((r) => ({ name: r.name, ...arealParams(z, w, h, insideOf(r), slope) }))];
+    view.areal = rows;
+    const col = (key: keyof Areal) => rows.map((q) => q[key]);
+    sheets.push({
+      name: 'Roughness',
+      columns: [txt('Region', rows.map((q) => q.name)), num(`Area (${u}²)`, rows.map((q) => q.n * k * k)), num(Z('Mean'), col('mean')), num(Z('Sa'), col('Sa')), num(Z('Sq'), col('Sq')), num(Z('Sp'), col('Sp')), num(Z('Sv'), col('Sv')), num(Z('Sz'), col('Sz')), num('Ssk', col('Ssk')), num('Sku', col('Sku')), num('Sdq', col('Sdq')), num('Sdr (%)', col('Sdr'))],
+    });
+  }
+  if (S.profile) {
+    const lines = (d.rois ?? []).filter((q) => isLine(q) && !q.hidden && (q.pts?.length ?? 0) >= 2);
+    if (!lines.length) warnings.push('Surface: draw a line for the profile roughness first (a line selection).');
+    const lc = S.lc && S.lc > 0 ? S.lc : NaN;
+    const rows = lines.map((q) => {
+      const prof = lineProfile(z, w, h, q.pts!.map(([x, y]): Pt => [x - ox, y - oy]), q.width ?? 1);
+      const step = (prof.d.length > 1 ? prof.d[1] - prof.d[0] : 1) * k;
+      const { mean: _m, ...r } = profileParams(prof.v, step, lc);
+      return { name: q.name, len: (prof.d[prof.d.length - 1] ?? 0) * k, ...r };
+    });
+    if (rows.some((q) => Number.isFinite(lc) && q.len < 2.5 * lc)) warnings.push('Surface: a profile shorter than 2.5 λc: its mean line is mostly the profile itself (a shorter λc).');
+    view.profiles = rows;
+    if (rows.length) {
+      const col = (key: 'len' | 'Ra' | 'Rq' | 'Rp' | 'Rv' | 'Rt' | 'Rz' | 'Rsk' | 'Rku') => rows.map((q) => q[key]);
+      sheets.push({ name: 'Profile roughness', columns: [txt('Line', rows.map((q) => q.name)), num(`Length (${u})`, col('len')), num(`λc (${u})`, rows.map(() => lc)), num(Z('Ra'), col('Ra')), num(Z('Rq'), col('Rq')), num(Z('Rp'), col('Rp')), num(Z('Rv'), col('Rv')), num(Z('Rt'), col('Rt')), num(Z('Rz'), col('Rz')), num('Rsk', col('Rsk')), num('Rku', col('Rku'))] });
+    }
+  }
+  if (S.hist) {
+    const hg = heightHistogram(z, S.bins ?? 100);
+    sheets.push({ name: 'Height histogram', columns: [{ ...num(Z('Height'), hg.at), role: 'x' }, { ...num('Count', hg.count), role: 'y' }, { ...num(zu ? `Density (1/${zu})` : 'Density', hg.density), role: 'none' }, { ...num('Material ratio (%)', hg.ratio), role: 'none' }] });
+  }
+  // (the PSD and the autocorrelation: kept for the same heights)
+  const key = JSON.stringify([k]);
+  const kept = surfaceKept.get(z);
+  const cache = kept && kept.key === key ? kept : { key };
+  if (S.psd) {
+    cache.psd ??= radialPSD(z, w, h, k);
+    const ps = cache.psd;
+    sheets.push({ name: 'PSD', columns: [{ ...num(`k (1/${u})`, ps.k), role: 'x' }, { ...num(zu ? `PSD (${zu}²·${u}²)` : `PSD (${u}²)`, ps.psd), role: 'y' }] });
+  }
+  if (S.acf) {
+    cache.acf ??= autocorrelation(z, w, h, k);
+    const ac = cache.acf;
+    view.acf = { lcorr: ac.lcorr, Sal: ac.Sal, Str: ac.Str };
+    const n = ac.r.length;
+    sheets.push({ name: 'ACF', columns: [{ ...num(`r (${u})`, ac.r), role: 'x' }, { ...num('ACF', ac.acf), role: 'y' }, { ...num(`Correlation length (${u})`, first(n, ac.lcorr)), role: 'none' }, { ...num(`Sal (${u})`, first(n, ac.Sal)), role: 'none' }, { ...num('Str', first(n, ac.Str)), role: 'none' }] });
+  }
+  surfaceKept.set(z, cache);
+  if (S.step) {
+    const [A, B] = S.step.map((id) => areas.find((r) => r.id === id));
+    if (!A || !B) warnings.push('Surface: choose the two area selections of the step.');
+    else {
+      const [a, b] = [regionHeight(z, w, h, insideOf(A)), regionHeight(z, w, h, insideOf(B))];
+      view.step = { a: A.name, b: B.name, ma: a.mean, mb: b.mean, sa: a.sd, sb: b.sd };
+      sheets.push({ name: 'Step height', columns: [txt('Selection', [A.name, B.name, 'Step']), num(Z('Mean'), [a.mean, b.mean, a.mean - b.mean]), num(Z('SD'), [a.sd, b.sd, NaN]), num(Z('SE'), [a.sd / Math.sqrt(a.n || 1), b.sd / Math.sqrt(b.n || 1), Math.hypot(a.sd / Math.sqrt(a.n || 1), b.sd / Math.sqrt(b.n || 1))]), num('Pixels', [a.n, b.n, NaN])] });
+    }
+  }
+  return { sheets, view, warnings };
+}
+
+// Structure ▸ grain size (the intercepts of test lines with the mask's boundaries, ASTM E112), orientation (the
+// structure tensor: the dominant direction, the coherency, the distribution; the image coloured by them), fractal
+// dimension (box counting): as sheets, and what is drawn and shown (the test lines and their crossings in pixels of
+// the original)
+export type TextureView = {
+  grains?: { paths: { pts: Pt[]; closed: boolean }[]; marks: Pt[]; rows: { name: string; length: number; hits: number; l: number; G: number }[] };
+  orient?: { dominant: number; coherency: number; png?: string };
+  fractal?: { D: number; r2: number };
+};
+const orientKept = new WeakMap<Float32Array, { sigma: number; o: Orientation; png?: string }>();
+export function textureSheets(d: ImageAnalysisData, p: Processed): { sheets: Dataset[]; view: TextureView; warnings: string[] } {
+  const T = d.texture ?? {};
+  const k = d.cal && d.cal.size > 0 ? d.cal.size : 1;
+  const u = d.cal && d.cal.size > 0 ? unitText(d.cal.unit) : 'px';
+  const num = (name: string, v: number[]) => column(name, Float64Array.from(v));
+  const txt = (name: string, v: string[]): Column => column(name, new Float64Array(v.length).fill(NaN), v);
+  const first = (n: number, v: number) => Array.from({ length: n }, (_, i) => (i ? NaN : v));
+  const sheets: Dataset[] = [];
+  const view: TextureView = {};
+  const warnings: string[] = [];
+  const mk = p.out.kind === 'mask' ? p.out : p.mask;
+  const full = d.pixels ? { w: d.pixels.w, h: d.pixels.h } : { w: p.out.w, h: p.out.h };
+  const crop = cropBox(d.crop, full.w, full.h);
+  const [ox, oy] = [crop?.[0] ?? 0, crop?.[1] ?? 0];
+  const mm = u in LENGTH_NM ? LENGTH_NM[u] / 1e6 : NaN;
+  if (T.grains?.on) {
+    if (!mk) warnings.push('Grain size: make a mask of the boundaries (or of the grains) in the steps first.');
+    else {
+      const g = intercepts(mk.ch[0], mk.w, mk.h, T.grains.of ?? 'boundaries', T.grains.lines ?? 'grid', T.grains.n ?? 5);
+      const sets = g.sets.length > 1 ? [...g.sets, { name: 'All', length: g.sets.reduce((a, s) => a + s.length, 0), hits: g.sets.reduce((a, s) => a + s.hits, 0) }] : g.sets;
+      const rows = sets.map((s) => {
+        const l = s.hits > 0 ? (s.length * k) / s.hits : NaN;
+        return { name: s.name, length: s.length * k, hits: s.hits, l, G: Number.isFinite(mm) ? astmG(l * mm) : NaN };
+      });
+      if (!Number.isFinite(mm)) warnings.push('Grain size: calibrate the image in a unit of length for the ASTM grain size number.');
+      const sh = (q: Pt[]) => q.map(([x, y]): Pt => [x + ox, y + oy]);
+      view.grains = { paths: g.paths.map((q) => ({ pts: sh(q.pts), closed: q.closed })), marks: sh(g.marks), rows };
+      sheets.push({ name: 'Grain size', columns: [txt('Lines', rows.map((r) => r.name)), num(`Length (${u})`, rows.map((r) => r.length)), num('Intersections', rows.map((r) => r.hits)), num(`Mean intercept (${u})`, rows.map((r) => r.l)), num('ASTM G', rows.map((r) => r.G)), num('Grains per mm²', rows.map((r) => grainsPerMm2(r.G)))] });
+    }
+  }
+  if (T.orient?.on) {
+    const src = p.out.kind !== 'mask' ? p.out : p.image;
+    const g = src.ch.length === 1 ? src.ch[0] : map1(src.ch[0], (v, i) => 0.299 * v + 0.587 * src.ch[1][i] + 0.114 * src.ch[2][i]);
+    const sigma = T.orient.sigma ?? 4;
+    const kept = orientKept.get(g);
+    const hit = kept && kept.sigma === sigma ? kept : { sigma, o: orientation(g, src.w, src.h, sigma) };
+    const o = hit.o;
+    if (T.orient.show && !hit.png) hit.png = pngDataUrl(orientationColours(o, g, src.lo, src.hi), src.w, src.h);
+    orientKept.set(g, hit);
+    view.orient = { dominant: o.dominant, coherency: o.coherency, ...(T.orient.show ? { png: hit.png } : {}) };
+    sheets.push({ name: 'Orientation', columns: [{ ...num('Angle (°)', o.hist.map((_, i) => i - 89.5)), role: 'x' }, { ...num('Weight (%)', o.hist), role: 'y' }, { ...num('Dominant (°)', first(180, o.dominant)), role: 'none' }, { ...num('Coherency', first(180, o.coherency)), role: 'none' }] });
+  }
+  if (T.fractal?.on) {
+    if (!mk) warnings.push('Fractal dimension: make a mask in the steps first.');
+    else {
+      const f = boxCounting(mk.ch[0], mk.w, mk.h, T.fractal.of ?? 'edges');
+      view.fractal = { D: f.D, r2: f.r2 };
+      const n = f.sizes.length;
+      sheets.push({ name: 'Fractal', columns: [{ ...num(`Box size (${u})`, f.sizes.map((s) => s * k)), role: 'x' }, { ...num('Boxes', f.counts), role: 'y' }, { ...num('D', first(n, f.D)), role: 'none' }, { ...num('R²', first(n, f.r2)), role: 'none' }] });
+    }
+  }
+  return { sheets, view, warnings };
+}
+
+// the result as a matrix: gray (RGB: its luminance), X and Y of every column and row in the calibrated unit; heights:
+// the values × their scale, the unit in its name
+export function imageMatrix(r: Raster, name: string, cal?: ImageCal, z?: { scale: number; unit: string }): Matrix {
+  const g = r.ch.length === 1 ? r.ch[0] : map1(r.ch[0], (v, i) => 0.299 * v + 0.587 * r.ch[1][i] + 0.114 * r.ch[2][i]);
+  const c = z && z.scale !== 1 ? map1(g, (v) => v * z.scale) : g;
   const k = cal && cal.size > 0 ? cal.size : 1;
   const u = cal && cal.size > 0 ? unitText(cal.unit) : 'px';
   return {
-    name,
+    name: z?.unit ? `${name} (${z.unit})` : name,
     rows: r.h,
     cols: r.w,
     v: Float64Array.from(c),

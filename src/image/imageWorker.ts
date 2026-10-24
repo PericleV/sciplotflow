@@ -15,6 +15,10 @@ import { findParticles, PARTICLE_DEFAULTS, type ParticleOpts } from './particles
 import { findLike, fitBox, MATCH_DEFAULTS, type Match, type MatchOpts } from './match.ts';
 import { fitRegular, snapToEdges, type Fitted, type RegularShape } from './refine.ts';
 import { clickOutline, RAYS_DEFAULTS, seedsAndRays } from './rays.ts';
+import { spectrum } from './fft2d.ts';
+import { refineSpot } from './lattice.ts';
+// the last spectrum's magnitudes (a spot clicked on it found on them)
+let lastSpectrum: { mag: Float32Array; N: number } | null = null;
 import type { TrainExample } from './classify.ts';
 import type { Workbook } from '../engine/table.ts';
 import { applyStep, STEP_DEFS, type ImgStep } from './steps.ts';
@@ -49,6 +53,13 @@ export type MeasureReply = { type: 'measure'; mseq: number; book: Workbook; summ
 // the wand at a point of the image shown (the part analysed): the pixels within tol of it, joined; their outline
 export type WandRequest = { type: 'wand'; x: number; y: number; tol: number };
 export type WandReply = { type: 'wand'; pts: Pt[] | null };
+// the spectrum of the image shown (or of the original part analysed): N × N, drawn in gray (log: from its median up,
+// linear: from 0, the strongest few saturated)
+export type SpectrumRequest = { type: 'spectrum'; log: boolean; hann: boolean; of: 'result' | 'original' };
+export type SpectrumReply = { type: 'spectrum'; N: number; rgba: Uint8ClampedArray; w: number; h: number };
+// a spot clicked on the spectrum shown (u, v: spectrum px from its middle), moved onto its peak (on the magnitudes)
+export type SpotRequest = { type: 'spot'; u: number; v: number };
+export type SpotReply = { type: 'spot'; fx: number; fy: number };
 // the Rays tool at a point of the image shown: the outline of the particle clicked (light: bright on a dark ground;
 // absent: as the pixel clicked)
 export type RaysRequest = { type: 'rays'; x: number; y: number; light?: boolean };
@@ -264,7 +275,7 @@ async function refine(m: RefineRequest) {
 // the gray of the image shown at full size (its luminance)
 const shownGray = () => (last.result ? (last.result.ch.length === 1 ? last.result.ch[0] : luminance(last.result)) : null);
 
-self.onmessage = (e: MessageEvent<ImgRequest | ValueRequest | MeasureRequest | WandRequest | RaysRequest | CentreRequest | ParticlesRequest | MatchRequest | RefineRequest>) => {
+self.onmessage = (e: MessageEvent<ImgRequest | ValueRequest | MeasureRequest | WandRequest | RaysRequest | SpectrumRequest | SpotRequest | CentreRequest | ParticlesRequest | MatchRequest | RefineRequest>) => {
   const q = e.data;
   if (q.type === 'refine') {
     void refine(q);
@@ -281,6 +292,32 @@ self.onmessage = (e: MessageEvent<ImgRequest | ValueRequest | MeasureRequest | W
   if (q.type === 'measure') {
     latestMeasure = q.mseq;
     void measure(q);
+    return;
+  }
+  if (q.type === 'spot') {
+    if (!lastSpectrum) return;
+    const [fx, fy] = refineSpot(lastSpectrum.mag, lastSpectrum.N, q.u, q.v);
+    post({ type: 'spot', fx, fy } satisfies SpotReply);
+    return;
+  }
+  if (q.type === 'spectrum') {
+    const r = q.of === 'original' ? last.base : last.result;
+    if (!r) return;
+    const g = r.ch.length === 1 ? r.ch[0] : luminance(r);
+    const sp0 = spectrum(g, r.w, r.h, { log: false, hann: q.hann });
+    lastSpectrum = sp0;
+    const sp = q.log ? { N: sp0.N, mag: Float32Array.from(sp0.mag, (v) => Math.log1p(v)) } : sp0;
+    const sorted = Float32Array.from(sp.mag).sort();
+    // (log: from the median, the noise floor grey, the spots above it; linear: from 0, the strongest few saturated)
+    const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))];
+    const [lo, hi] = q.log ? [at(0.5), at(0.9998)] : [0, at(0.999)];
+    const rgba = new Uint8ClampedArray(4 * sp.N * sp.N);
+    for (let i = 0; i < sp.N * sp.N; i++) {
+      const v = Math.round((255 * (sp.mag[i] - lo)) / (hi - lo || 1));
+      rgba[4 * i] = rgba[4 * i + 1] = rgba[4 * i + 2] = v;
+      rgba[4 * i + 3] = 255;
+    }
+    post({ type: 'spectrum', N: sp.N, rgba, w: r.w, h: r.h } satisfies SpectrumReply);
     return;
   }
   if (q.type === 'wand') {

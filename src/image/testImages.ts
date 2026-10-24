@@ -379,3 +379,83 @@ export function monolayerImage(): TestImage {
   );
   return { name: 'nanoparticle monolayer', w, h, px, truth };
 }
+
+// A gold nanoparticle as high-resolution TEM shows it: the {111} planes (0.2355 nm, 11.8 px at 0.02 nm a pixel) in two
+// sets 70.5° apart inside a disc, on an amorphous ground (noise), blurred a little
+export function hrtemImage(): TestImage & { spots: [number, number][] } {
+  const [w, h] = [320, 256];
+  const rnd = rng(61);
+  const d = 0.2355 / 0.02;
+  const t1 = 0.35;
+  const t2 = t1 + (70.53 * Math.PI) / 180;
+  const px = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const inside = Math.hypot(x - 160, y - 128) < 95;
+      const lat = inside ? 28 * (Math.cos((2 * Math.PI * (x * Math.cos(t1) + y * Math.sin(t1))) / d) + Math.cos((2 * Math.PI * (x * Math.cos(t2) + y * Math.sin(t2))) / d)) : 0;
+      const g = Math.sqrt(-2 * Math.log(1 - rnd())) * Math.cos(2 * Math.PI * rnd());
+      px[y * w + x] = Math.max(0, Math.min(255, Math.round(120 + lat + 22 * g)));
+    }
+  return { name: 'gold HRTEM', w, h, px, truth: [], spots: [t1, t2].map((t): [number, number] => [Math.cos(t) / d, Math.sin(t) / d]) };
+}
+
+// A gold diffraction pattern (SAED): the rings of its reflections (1 px = 0.07 1/nm), the central beam, noise
+export function saedImage(): TestImage {
+  const [w, h] = [300, 300];
+  const rnd = rng(67);
+  const [cx, cy] = [152.4, 147.8];
+  const ds = [0.23546, 0.20391, 0.14419, 0.12296, 0.11773];
+  const px = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const r = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
+      let v = 230 * Math.exp(-r / 12) + 12;
+      ds.forEach((d, k) => (v += (70 / (1 + 0.4 * k)) * Math.exp(-((r - 1 / d / 0.07) ** 2) / 3)));
+      px[y * w + x] = Math.max(0, Math.min(255, Math.round(v + 6 * (rnd() - 0.5))));
+    }
+  return { name: 'gold SAED', w, h, px, truth: [] };
+}
+
+// An AFM height map (nm; 256 × 256 px, 1 px = 7.8125 nm: a 2 µm scan): a rough substrate (Sq near 0.5 nm) tilted, a
+// trench 3 nm deep down its middle, gold particles on it (caps 8 to 14 nm high), the offsets of the scan lines
+export function afmImage(): { w: number; h: number; z: Float32Array; boxes: { top: [number, number, number, number]; base: [number, number, number, number] } } {
+  const [w, h] = [256, 256];
+  const rnd = rng(71);
+  const gauss = () => Math.sqrt(-2 * Math.log(1 - rnd())) * Math.cos(2 * Math.PI * rnd());
+  // (the roughness: noise smoothed by a few passes of a 5 × 5 mean)
+  let r = Float32Array.from({ length: w * h }, gauss);
+  for (let pass = 0; pass < 3; pass++) {
+    const o = new Float32Array(w * h);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        let s = 0;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) s += r[Math.min(h - 1, Math.max(0, y + dy)) * w + Math.min(w - 1, Math.max(0, x + dx))];
+        o[y * w + x] = s / 25;
+      }
+    r = o;
+  }
+  let sq = 0;
+  for (const v of r) sq += v * v;
+  const f = 0.5 / Math.sqrt(sq / r.length);
+  const top: [number, number, number, number] = [60, 128, 50, 120];
+  const base: [number, number, number, number] = [128, 128, 30, 120];
+  const inBox = ([cx, cy, bw, bh]: [number, number, number, number], x: number, y: number, m: number) => Math.abs(x - cx) < bw / 2 + m && Math.abs(y - cy) < bh / 2 + m;
+  const caps: [number, number, number, number][] = [];
+  while (caps.length < 14) {
+    const [x, y, rad] = [12 + rnd() * (w - 24), 12 + rnd() * (h - 24), 6 + rnd() * 3];
+    if (inBox(top, x, y, rad + 2) || inBox(base, x, y, rad + 2) || Math.abs(x - 128) < 28 + rad || caps.some(([a, b, q]) => Math.hypot(a - x, b - y) < q + rad + 4)) continue;
+    caps.push([x, y, rad, 8 + rnd() * 6]);
+  }
+  const line = Array.from({ length: h }, () => 0.25 * gauss());
+  const z = new Float32Array(w * h);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      let v = r[y * w + x] * f + 0.012 * x - 0.008 * y + 20 + line[y] - (Math.abs(x - 128) < 28 ? 3 : 0);
+      for (const [cx, cy, rad, ht] of caps) {
+        const d = Math.hypot(x - cx, y - cy);
+        if (d < rad) v += ht * Math.sqrt(1 - (d / rad) ** 2);
+      }
+      z[y * w + x] = v;
+    }
+  return { w, h, z, boxes: { top, base } };
+}

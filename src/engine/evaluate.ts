@@ -76,7 +76,7 @@ import { compare, compareTable, modelName, yorkRuns, type Scored } from './fitco
 import { parseRowHandle, rowHandle } from './ports.ts';
 import { hasGrad, type GradFill, AXIS_DEFAULTS, COLORBAR_DEFAULTS, SIDE_DEFAULTS, curveStyle, axesStyle, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, toPt, type Annotation, type AxesFig, type AxesStyle, type AxisSpec, type Curve, type CurveStyle, type Figure, type FigureBox, type LegendEntry, type LegendSpec, type LengthUnit, type Placement, type ShapeSpec, type TextDefaults, resolveText, type Side, INSET_DEFAULTS, insetBackground, scaledSize } from '../figure/spec.ts';
 import { CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, DRAWING_DEFAULTS, MATRIX_PLOT_DEFAULTS, PLOT_PAGE_DEFAULTS } from '../defaults.ts';
-import { figurePng, imageFigure, imageMatrix, imageMeasurements, imageNetwork, networkSheets, imageArrangement, arrangementSheets, processImage, scaleBarPlace, type ImageAnalysisData } from '../image/node.ts';
+import { figurePng, imageFigure, imageMatrix, imageMeasurements, imageNetwork, networkSheets, imageArrangement, arrangementSheets, radialSheet, latticeSheets, surfaceSheets, textureSheets, processImage, type LatticeView, type SurfaceView, type TextureView, scaleBarPlace, type ImageAnalysisData } from '../image/node.ts';
 import type { NetworkResult } from '../image/network.ts';
 import type { ArrangeResult } from '../image/arrangement.ts';
 import { isArea, roiCentre, roiOutline, ROI_COLOR } from '../image/roi.ts';
@@ -193,6 +193,9 @@ export type NodeView = {
   cooling?: Figure; // Phase diagram: the amounts of the phases of the alloy cooled
   network?: NetworkResult; // Image analysis, Structure: the network found (drawn over the image, a ligament explained)
   arrange?: ArrangeResult; // Image analysis, Arrangement: the particles' neighbours, cells, links (drawn over the image)
+  lattice?: LatticeView; // Image analysis, Lattice: a diffraction pattern's centre and rings, the fringes' periods
+  surface?: SurfaceView; // Image analysis, Surface: the roughness found, the correlation lengths, a step
+  texture?: TextureView; // Image analysis, Structure: the grain size's test lines, the orientation, the fractal dimension
   image?: { w: number; h: number; ch: number; kind: string; notes: Record<string, string>; errors: Record<string, string>; summary?: string }; // Image analysis: the result's size, every step's note and error, what the measurements found
   under?: Figure; // Figure Drawing: the figure connected under it
   pinShift?: Record<string, [number, number]>; // … and how far its objects pinned to that figure's data are moved (mm)
@@ -1663,7 +1666,9 @@ function commonName(names: string[]): string {
 function plot3dNode(n: { id: string; data: Plot3DData }, inputs: Inputs): Out {
   const d = n.data;
   if (d.kind === 'layers') return layers3dNode(n, inputs);
-  const ds = mergeSets((inputs.get('dataset') ?? []).flatMap((i) => (i.value?.t === 'dataset' ? [i.value.v] : [])));
+  // (a matrix: its table, read as a matrix; its X, Y and values named by it)
+  const mats = (inputs.get('dataset') ?? []).flatMap((i) => (i.value?.t === 'matrix' ? [i.value.v] : []));
+  const ds = mergeSets([...(inputs.get('dataset') ?? []).flatMap((i) => (i.value?.t === 'dataset' ? [i.value.v] : [])), ...mats.map(matrixDataset)]);
   const gridKind = d.kind === 'surface' || d.kind === 'wireframe' || d.kind === 'bars';
   if (!ds) return { view: { waiting: gridKind ? 'Connect a dataset: X, Y, Z columns, or a matrix (a Y column and Z columns named by their X).' : d.kind === 'waterfall' ? 'Connect a dataset: X and the Y columns of a sweep.' : 'Connect a dataset: X, Y and Z columns (and a column of groups).' } };
   const all = ds.columns;
@@ -1673,11 +1678,12 @@ function plot3dNode(n: { id: string; data: Plot3DData }, inputs: Inputs): Out {
   const warnings: string[] = [];
   let input: Plot3DInput;
   if (gridKind) {
-    const read = readGrid(d, all);
+    const M = mats[0];
+    const read = readGrid(M ? { ...d, layout: 'matrix' } : d, all);
     if ('error' in read) return { errors: [read.error], view: { available } };
     if ('waiting' in read) return { view: { available, waiting: read.waiting } };
     if (read.note) warnings.push(read.note);
-    input = { kind: 'grid', g: read.g, names: read.names };
+    input = { kind: 'grid', g: read.g, names: M ? { x: d.xTitle?.trim() || M.xName || read.names.x, y: M.yName || read.names.y, z: M.name || read.names.z } : read.names };
   } else if (d.kind === 'waterfall') {
     if (d.x && !by(d.x)) return { errors: [`No column “${d.x}”.`], view: { available } };
     const roles = curvesByRole(all).curves;
@@ -2359,11 +2365,25 @@ function imageNodeOut(id: string, d: ImageAnalysisData): Out {
   const arr = d.arrange?.on ? imageArrangement(d, p) : null;
   if (d.arrange?.on && !arr) warnings.push('Arrangement: find 3 particles or more first (Objects ▸ Particles).');
   const arrSheets = arr ? arrangementSheets(arr, d) : [];
-  const book = m || netSheets.length || arrSheets.length ? { name: m?.book.name ?? (d.name.replace(/\.[a-z0-9]+$/i, '') || 'image'), sheets: [...(m?.book.sheets ?? []), ...netSheets, ...arrSheets] } : null;
+  const radial = d.fft?.radial ? [radialSheet(d, p)] : [];
+  // (Lattice: its sheets, and what is drawn of it)
+  const lat = d.lattice && (d.lattice.spots?.length || d.lattice.fringes || d.lattice.saed) ? latticeSheets(d, p) : null;
+  if (lat) warnings.push(...lat.warnings);
+  // (Surface: its sheets, what its panel shows)
+  const S = d.surface;
+  const surf = S && (S.areal || S.profile || S.hist || S.psd || S.acf || S.step) ? surfaceSheets(d, p) : null;
+  if (surf) warnings.push(...surf.warnings);
+  // (Structure ▸ grain size, orientation, fractal dimension)
+  const X = d.texture;
+  const tex = X && (X.grains?.on || X.orient?.on || X.fractal?.on) ? textureSheets(d, p) : null;
+  if (tex) warnings.push(...tex.warnings);
+  const book = m || netSheets.length || arrSheets.length || radial.length || lat?.sheets.length || surf?.sheets.length || tex?.sheets.length ? { name: m?.book.name ?? (d.name.replace(/\.[a-z0-9]+$/i, '') || 'image'), sheets: [...(m?.book.sheets ?? []), ...netSheets, ...arrSheets, ...radial, ...(lat?.sheets ?? []), ...(surf?.sheets ?? []), ...(tex?.sheets ?? [])] } : null;
+  // (the matrix of heights: × their scale, their unit in its name)
+  const zMat = S && (S.zUnit || (S.zScale && S.zScale !== 1)) && p.out.kind !== 'mask' ? { scale: S.zScale && S.zScale > 0 ? S.zScale : 1, unit: S.zUnit?.trim() ?? '' } : undefined;
   return {
-    outputs: { matrix: { t: 'matrix', v: imageMatrix(p.out, d.name || 'image', d.cal) }, figure: { t: 'figure', v: figure }, ...(book ? { workbook: { t: 'workbook' as const, v: book } } : {}) },
+    outputs: { matrix: { t: 'matrix', v: imageMatrix(p.out, d.name || 'image', d.cal, zMat) }, figure: { t: 'figure', v: figure }, ...(book ? { workbook: { t: 'workbook' as const, v: book } } : {}) },
     warnings,
-    view: { figure, image: { w: p.out.w, h: p.out.h, ch: p.base.ch.length, kind: p.out.kind, notes: p.notes, errors: p.errors, ...(m?.summary ? { summary: m.summary } : {}) }, ...(net && typeof net !== 'string' ? { network: net } : {}), ...(arr ? { arrange: arr.res } : {}) },
+    view: { figure, image: { w: p.out.w, h: p.out.h, ch: p.base.ch.length, kind: p.out.kind, notes: p.notes, errors: p.errors, ...(m?.summary ? { summary: m.summary } : {}) }, ...(net && typeof net !== 'string' ? { network: net } : {}), ...(arr ? { arrange: arr.res } : {}), ...(lat ? { lattice: lat.view } : {}), ...(surf ? { surface: surf.view } : {}), ...(tex ? { texture: tex.view } : {}) },
   };
 }
 

@@ -288,7 +288,8 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
       if (node.type === 'plot3d' && /^layer-\d+$/.test(handle)) return ['dataset'];
       if (node.type === 'contour' && handle === 'matrix') return ['matrix'];
       // a workbook: the sheet named in the node
-      if (handle === 'dataset') return node.type === 'scattermatrix' ? ['dataset'] : ['dataset', 'workbook'];
+      // (Plot 3D: a matrix too, read as one)
+      if (handle === 'dataset') return node.type === 'scattermatrix' ? ['dataset'] : node.type === 'plot3d' ? ['dataset', 'workbook', 'matrix'] : ['dataset', 'workbook'];
       return (handle === 'pvalues' && (node.type === 'barchart' || node.type === 'boxviolin')) || (handle === 'overlay' && (node.type === 'barchart' || node.type === 'contour')) ? ['dataset'] : handle === 'insets' ? ['figure'] : [];
     case 'matrix':
       return handle === 'in' ? ['dataset'] : [];
