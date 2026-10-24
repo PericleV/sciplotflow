@@ -24,12 +24,13 @@ export type NonparData = StatInput & { test: 'mw' | 'wilcoxon' | 'sign' | 'krusk
 // clustering (related columns together)
 export type CorrData = { cols: string; method: 'pearson' | 'spearman' | 'kendall'; alpha: number; pca?: boolean; pcaOn?: 'corr' | 'cov'; order?: 'given' | 'cluster' };
 
-export type StatOut = { tables: Record<string, Dataset>; report: string[]; warnings: string[]; errors: string[] };
+// levels: the values of some columns, for the node's choices (the positive class, the reference of a category …)
+export type StatOut = { tables: Record<string, Dataset>; report: string[]; warnings: string[]; errors: string[]; levels?: Record<string, string[]> };
 
-const isText = (c: Column) => !!c.text && Array.from(c.values).every((v) => !Number.isFinite(v));
+export const isText = (c: Column) => !!c.text && Array.from(c.values).every((v) => !Number.isFinite(v));
 const finite = (c: Column) => Array.from(c.values).filter(Number.isFinite);
 // the columns asked for (empty: every numeric column but the ones designated “–”)
-function chosen(ds: Dataset, spec: string): Column[] | string {
+export function chosen(ds: Dataset, spec: string): Column[] | string {
   const cols = ds.columns;
   if (spec.trim()) {
     const p = pick(spec, cols.map((c) => c.name), true);
@@ -39,9 +40,9 @@ function chosen(ds: Dataset, spec: string): Column[] | string {
   // every numeric column (an X designated by default is a group too), except the ones designated “–”
   return cols.filter((c, j) => !isText(c) && roleOf(cols, j) !== 'none');
 }
-const byName = (ds: Dataset, name: string) => ds.columns.find((c) => c.name === name);
+export const byName = (ds: Dataset, name: string) => ds.columns.find((c) => c.name === name);
 // the level of row i of a factor column: its text, else its value
-const levelOf = (c: Column, i: number) => (c.text?.[i]?.trim() ? c.text[i].trim() : Number.isFinite(c.values[i]) ? fmtNum(c.values[i], 6) : '');
+export const levelOf = (c: Column, i: number) => (c.text?.[i]?.trim() ? c.text[i].trim() : Number.isFinite(c.values[i]) ? fmtNum(c.values[i], 6) : '');
 
 // groups: from columns (each a group) or from a value column split by a factor
 export function groupsOf(ds: Dataset, d: StatInput): { names: string[]; groups: number[][] } | string {
@@ -85,9 +86,9 @@ export function subjectsOf(ds: Dataset, d: StatInput): { names: string[]; m: num
 }
 
 // ---- tables ----
-type Row = Record<string, number | string>;
+export type Row = Record<string, number | string>;
 // a table from rows: a column per key (text keys: a text column), in the order the keys first appear
-function table(name: string, rows: Row[], roles: Record<string, Column['role']> = {}): Dataset {
+export function table(name: string, rows: Row[], roles: Record<string, Column['role']> = {}): Dataset {
   const keys: string[] = [];
   rows.forEach((r) => Object.keys(r).forEach((k) => !keys.includes(k) && keys.push(k)));
   const columns = keys.map((k): Column => {
@@ -97,9 +98,9 @@ function table(name: string, rows: Row[], roles: Record<string, Column['role']> 
   });
   return { name, columns };
 }
-const sig = (p: number, a: number) => (Number.isFinite(p) ? (p < a ? 'yes' : 'no') : '');
-const fp = (p: number) => (!Number.isFinite(p) ? '—' : p < 0.0001 ? 'p < 0.0001' : `p = ${fmtNum(p, 3)}`);
-const f3 = (v: number) => fmtNum(v, 4);
+export const sig = (p: number, a: number) => (Number.isFinite(p) ? (p < a ? 'yes' : 'no') : '');
+export const fp = (p: number) => (!Number.isFinite(p) ? '—' : p < 0.0001 ? 'p < 0.0001' : `p = ${fmtNum(p, 3)}`);
+export const f3 = (v: number) => fmtNum(v, 4);
 // the groups: the group (a number with its name) as X, the mean as Y, the SE as ±Y — ready for a Plot
 function groupTable(names: string[], groups: number[][], level: number): Dataset {
   const st = groups.map((g, i) => H.groupStats(names[i], g, level));

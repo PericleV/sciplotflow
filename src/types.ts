@@ -15,6 +15,7 @@ import type { PickOptions, PickRule } from './engine/pick.ts';
 import type { BaseKind, FindOptions, PeakItem } from './engine/peaks.ts';
 import type { BaseOptions } from './engine/baselines.ts';
 import type { AnovaData, CorrData, NonparData, NormData, TTestData } from './engine/statnodes.ts';
+import type { ContingencyData, PAdjustData, RegressData, RocData, SurvivalData } from './engine/statnodes2.ts';
 import type { CurveMathData, TranslateData } from './engine/curvemath.ts';
 import type { CleanData, FilterData } from './engine/cleaning.ts';
 import type { BatchSpec } from './engine/batch.ts';
@@ -42,6 +43,7 @@ export type { KKData };
 export type { AverageData, ConvData, FFTData, InterpData, NormalizeData, SmoothData };
 export type { CurveMathData, TranslateData };
 export type { AnovaData, CorrData, NonparData, NormData, TTestData };
+export type { ContingencyData, PAdjustData, RegressData, RocData, SurvivalData };
 import type { PeakShape } from './engine/fitModels.ts';
 import type { RowSelect } from './engine/rowsel.ts';
 import type { ColumnRole } from './engine/table.ts';
@@ -465,6 +467,11 @@ export type TTestNode = Node<TTestData, 'ttest'>;
 export type AnovaNode = Node<AnovaData, 'anova'>;
 export type NonparNode = Node<NonparData, 'nonparam'>;
 export type CorrNode = Node<CorrData, 'correl'>;
+export type PAdjustNode = Node<PAdjustData, 'padjust'>;
+export type ContingencyNode = Node<ContingencyData, 'contingency'>;
+export type RocNode = Node<RocData, 'roc'>;
+export type SurvivalNode = Node<SurvivalData, 'survival'>;
+export type RegressNode = Node<RegressData, 'regress'>;
 export type CurveMathNode = Node<CurveMathData, 'curvemath'>;
 export type TranslateNode = Node<TranslateData, 'translate'>;
 export type FilterNode = Node<FilterData, 'filterrows'>;
@@ -565,6 +572,11 @@ export type AppNode =
   | AnovaNode
   | NonparNode
   | CorrNode
+  | PAdjustNode
+  | ContingencyNode
+  | RocNode
+  | SurvivalNode
+  | RegressNode
   | CurveMathNode
   | TranslateNode
   | FilterNode

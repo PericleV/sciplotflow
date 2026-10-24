@@ -61,6 +61,7 @@ import { cellCurves, matrixAxes, matrixGrid, type MatrixPlotSpec } from './matri
 import { bracketCurves, bracketTable, SIG_DEFAULTS, significance, type SigElement, type SigSpec } from './signif.ts';
 import { averageNode, convNode, fftNode, interpNode, normalizeNode, smoothNode, valuesOf, type SignalOut, type SignalPlot } from './signalnodes.ts';
 import { anovaNode, corrNode, nonparNode, normalityNode, tTestNode, type StatOut } from './statnodes.ts';
+import { contingencyNode, pAdjustNode, regressNode, rocNode, STAT_WAIT, statLevels, survivalNode } from './statnodes2.ts';
 import { findPeaksIn, fittedPeak, fixedBaseline, fwhmAt, isFitted, measurePeaks, peakRunKey, regionPeak, type Found, type PeakItem } from './peaks.ts';
 import { curveThrough } from './baselines.ts';
 import { areaBetween, derivative, integrate, interp, pointsCurve, regionName, regionRows, type IntegralOptions } from './calculus.ts';
@@ -144,6 +145,7 @@ export type NodeView = {
   // Fit: the data (every point, which run it is in, whether it was fitted), the results of every run, the model
   peaks?: PeakView;
   report?: string[]; // the statistics nodes: the results in words
+  levels?: Record<string, string[]>; // the statistics nodes: the values of some columns, for their choices
   signal?: { labels: string[]; plots: SignalPlot[] }; // the Signal nodes: the data and the result of every Y
   availB?: { name: string; role?: ColumnRole }[]; // Curve math: the columns of B
   // Translate & resize: the columns and their designations, the curves; every curve before and after (the graph in the
@@ -4633,15 +4635,39 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
     case 'ttest':
     case 'anova':
     case 'nonparam':
-    case 'correl': {
+    case 'correl':
+    case 'padjust':
+    case 'contingency':
+    case 'roc':
+    case 'survival':
+    case 'regress': {
       const v = one('in');
-      if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset: the groups as columns, or a value column with factor columns (indexed), or a row per subject.' } };
+      if (v?.t !== 'dataset') return { view: { waiting: STAT_WAIT[n.type] ?? 'Connect a dataset: the groups as columns, or a value column with factor columns (indexed), or a row per subject.' } };
       const available = v.v.columns.map(colInfo);
       const r: StatOut =
-        n.type === 'normality' ? normalityNode(v.v, n.data) : n.type === 'ttest' ? tTestNode(v.v, n.data) : n.type === 'anova' ? anovaNode(v.v, n.data) : n.type === 'nonparam' ? nonparNode(v.v, n.data) : corrNode(v.v, n.data);
-      if (r.errors.length) return { errors: r.errors, view: { available } };
+        n.type === 'normality'
+          ? normalityNode(v.v, n.data)
+          : n.type === 'ttest'
+            ? tTestNode(v.v, n.data)
+            : n.type === 'anova'
+              ? anovaNode(v.v, n.data)
+              : n.type === 'nonparam'
+                ? nonparNode(v.v, n.data)
+                : n.type === 'padjust'
+                  ? pAdjustNode(v.v, n.data)
+                  : n.type === 'contingency'
+                    ? contingencyNode(v.v, n.data)
+                    : n.type === 'roc'
+                      ? rocNode(v.v, n.data)
+                      : n.type === 'survival'
+                        ? survivalNode(v.v, n.data)
+                        : n.type === 'regress'
+                          ? regressNode(v.v, n.data)
+                          : corrNode(v.v, n.data);
+      const levels = statLevels(v.v, n);
+      if (r.errors.length) return { errors: r.errors, view: { available, ...(levels ? { levels } : {}) } };
       const outputs: Record<string, Value> = Object.fromEntries(Object.entries(r.tables).map(([k, t]) => [k, { t: 'dataset', v: t } as Value]));
-      return { outputs, warnings: r.warnings, view: { available, report: r.report } };
+      return { outputs, warnings: r.warnings, view: { available, report: r.report, ...(levels ? { levels } : {}) } };
     }
     case 'pick':
       return pickNode(n.data, one('in'));

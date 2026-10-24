@@ -66,6 +66,11 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
     case 'anova':
     case 'nonparam':
     case 'correl':
+    case 'padjust':
+    case 'contingency':
+    case 'roc':
+    case 'survival':
+    case 'regress':
     case 'curvemath':
     case 'translate':
     case 'clean':
@@ -235,6 +240,11 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
     case 'anova':
     case 'nonparam':
     case 'correl':
+    case 'padjust':
+    case 'contingency':
+    case 'roc':
+    case 'survival':
+    case 'regress':
       return handle === 'in' ? ['dataset'] : [];
     case 'curvemath':
       // a curve from a dataset or a sheet of a workbook, or from columns (one X, a Y for each curve)

@@ -2,7 +2,7 @@
 import { peakRunKey } from './engine/peaks.ts';
 import type { Edge } from '@xyflow/react';
 import { REGION_COLORS } from './nodes/regionColors.ts';
-import { DRAWING_DEFAULTS, PYTHON_DEFAULTS, CONVERT_DEFAULTS, STACK_DEFAULTS, TRANSPOSE_DEFAULTS, COLUMNS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, DATAMANIP_DEFAULTS, AVERAGE_DEFAULTS, COMBINE_DEFAULTS, TRANSLATE_DEFAULTS, CURVEMATH_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, IMAGE_DEFAULTS, KK_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
+import { DRAWING_DEFAULTS, PYTHON_DEFAULTS, CONVERT_DEFAULTS, STACK_DEFAULTS, TRANSPOSE_DEFAULTS, COLUMNS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, DATAMANIP_DEFAULTS, AVERAGE_DEFAULTS, COMBINE_DEFAULTS, TRANSLATE_DEFAULTS, CURVEMATH_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, PADJUST_DEFAULTS, CONTINGENCY_DEFAULTS, ROC_DEFAULTS, SURVIVAL_DEFAULTS, REGRESS_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, IMAGE_DEFAULTS, KK_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
 import { INSET_DEFAULTS, AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, COLORBAR_DEFAULTS, CURVE_STYLE_DEFAULTS, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, SIDE_DEFAULTS, TEXT_SPEC_DEFAULTS, type AxesStyle, type CurveStyle, type SideStyle } from './figure/spec.ts';
 import { PROJECT_VERSION, type Project } from './project.ts';
 import type { AnnotationItem, AppNode, ImportSheet, NodeType, Plot1DData, PlotLegend, PlotPage } from './types.ts';
@@ -310,6 +310,63 @@ function drugFiles(): { columns: string; indexed: string; subjects: string } {
     subj.push(`S${i};${base.toFixed(1)};${(base - 9 + 5 * gauss(r)).toFixed(1)};${(base - 4 + 5 * gauss(r)).toFixed(1)}`);
   }
   return { columns, indexed: lines.join('\n'), subjects: subj.join('\n') };
+}
+
+// A clinical study made here: 120 patients in two arms. Survival (Kaplan–Meier, log-rank, the hazard ratio) drawn as
+// steps with the censored times; a biomarker (and the age) against the response (ROC, the best threshold); the arm
+// against the response (a contingency table, the odds ratio); the tumour size against age, marker and stage (linear
+// regression), its coefficients' p adjusted (Holm)
+function clinicalExample(): Project {
+  const b = builder();
+  const r = rng(911);
+  const lines = ['Patient;Arm;Age;Stage;Marker;Response;Tumour (mm);Months;Died'];
+  for (let i = 0; i < 120; i++) {
+    const arm = i % 2 ? 'New' : 'Standard';
+    const age = Math.round(62 + 9 * gauss(r));
+    const stage = ['I', 'II', 'III'][Math.min(2, Math.floor(r() * 3))];
+    const resp = r() < (arm === 'New' ? 0.62 : 0.4);
+    const marker = 3 + (resp ? 1.4 : 0) + 1.1 * gauss(r);
+    const tumour = 12 + 0.15 * (age - 60) - 1.6 * marker + { I: 0, II: 4, III: 9 }[stage]! + 3 * gauss(r);
+    const t = -Math.log(1 - r()) * (arm === 'New' ? 30 : 18) * (resp ? 1.4 : 1);
+    const c = 6 + 42 * r();
+    lines.push(`P${i + 1};${arm};${age};${stage};${marker.toFixed(2)};${resp ? 'yes' : 'no'};${Math.max(2, tumour).toFixed(1)};${Math.min(t, c).toFixed(1)};${t <= c ? 1 : 0}`);
+  }
+  const data = add(b, 'import', 'cl-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'clinical study', fileName: 'clinical_study.txt', text: lines.join('\n'), textId: 'cl-1' });
+  const sv = add(b, 'survival', 'cl-surv', 680, 0, { ...SURVIVAL_DEFAULTS, time: 'Months', event: 'Died', group: 'Arm', at: '0, 12, 24, 36, 48' });
+  link(b, data, sv, 'in');
+  const km = add(b, 'plot1d', 'cl-km', 1360, 0, {
+    ...plot(
+      {
+        label: 'Standard',
+        style: curve(0, { mode: 'step', lineWidth: 1.4 }),
+        cols: { x: 'Time (Standard)', y: 'Survival (Standard)' },
+        rows: [
+          { label: 'New', style: curve(1, { mode: 'step', lineWidth: 1.4 }), cols: { x: 'Time (New)', y: 'Survival (New)' } },
+          { label: 'censored (Standard)', style: curve(0, { mode: 'scatter', symbol: 'plus', symbolSize: 4 }), cols: { x: 'Censored time (Standard)', y: 'Censored (Standard)' } },
+          { label: 'censored (New)', style: curve(1, { mode: 'scatter', symbol: 'plus', symbolSize: 4 }), cols: { x: 'Censored time (New)', y: 'Censored (New)' } },
+        ],
+      },
+      { axes: { sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Months' }), left: side({ title: 'Survival' }) } }, legend: { x: 96, y: 4, anchor: 'tr' }, page: { name: 'kaplan_meier' } },
+    ),
+  });
+  link(b, sv, km, 'dataset', 'curves');
+  link(b, sv, km, 'dataset', 'censored');
+  const roc = add(b, 'roc', 'cl-roc', 680, 1100, { ...ROC_DEFAULTS, truth: 'Response', positive: 'yes', scores: 'Marker, Age' });
+  link(b, data, roc, 'in');
+  const rp = add(b, 'plot1d', 'cl-rocplot', 1360, 1100, {
+    ...plot(
+      { label: 'Marker', style: curve(0, { mode: 'line', lineWidth: 1.4 }), cols: { x: '1 − Specificity (Marker)', y: 'Sensitivity (Marker)' }, rows: [{ label: 'Age', style: curve(2, { mode: 'line', lineWidth: 1.2 }), cols: { x: '1 − Specificity (Age)', y: 'Sensitivity (Age)' } }] },
+      { axes: { sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: '1 − Specificity' }), left: side({ title: 'Sensitivity' }) } }, legend: { x: 96, y: 96, anchor: 'br' }, page: { name: 'roc' } },
+    ),
+  });
+  link(b, roc, rp, 'dataset', 'curves');
+  const ct = add(b, 'contingency', 'cl-ct', 680, 2200, { ...CONTINGENCY_DEFAULTS, rowCol: 'Arm', colCol: 'Response' });
+  link(b, data, ct, 'in');
+  const rg = add(b, 'regress', 'cl-reg', 680, 3000, { ...REGRESS_DEFAULTS, y: 'Tumour (mm)', xs: 'Age, Marker, Stage' });
+  link(b, data, rg, 'in');
+  const pa = add(b, 'padjust', 'cl-padj', 1360, 3000, { ...PADJUST_DEFAULTS, method: 'holm' });
+  link(b, rg, pa, 'in');
+  return project(b, 'Clinical study: survival, ROC, contingency, regression');
 }
 
 function drugExample(): Project {
@@ -3182,6 +3239,10 @@ const ABOUT: Record<string, About> = {
     what: 'A potentiostat file with three cycles in one table: cut into cycles and into the pieces going up and coming back, the area between the branches, the peaks read off.',
     try: ['Drag the edges of the hatched region in Integrate.', 'Add a value to read in Pick points (e.g. 0.3 V).'],
   },
+  'Clinical study: survival, ROC, contingency, regression': {
+    what: 'A small clinical study: who lives longer on which treatment, how well a biomarker tells the responders, whether the treatment changes the response, and what the tumour size depends on.',
+    try: ['In Survival, switch the test to Gehan–Breslow–Wilcoxon: the early deaths weigh more.', 'In ROC curve, set Best threshold to a sensitivity reached of 0.9: the threshold and the specificity it costs.', 'In Linear regression, tick interactions: does the marker act differently by stage?'],
+  },
   'Drug study: ANOVA, t-test, nonparametric, correlation': {
     what: 'The three layouts of data the statistics nodes read — a column per group, indexed rows, a row per subject — with the tests that go with each.',
     try: ['Switch the post-hoc test of the one-way ANOVA (Tukey, Bonferroni, Dunnett …): its table follows.', 'Look at the normality of every group before the ANOVA.'],
@@ -3365,6 +3426,7 @@ const LIST: { group: string; name: string; desc: string; make: () => Project }[]
   { group: 'Signals', name: 'Signal processing: smooth, FFT, deconvolution, interpolation', desc: 'A noisy spectrum smoothed (Savitzky–Golay) and normalized; the FFT spectrum of a sampled signal and an FFT low pass; a spectrum blurred by the instrument deconvolved (Richardson–Lucy); two curves on different X read on a common X (spline).', make: signalExample },
   { group: 'Signals', name: 'Signals: PSD, a Butterworth filter, the Allan deviation', desc: 'The FFT node in three modes: the power spectral density (Welch, dB), a zero-phase Butterworth low pass, the Allan deviation of a drifting sensor on log–log axes.', make: spectralExample },
   { group: 'Electrochemistry & impedance', name: 'Cyclic voltammogram: area between the branches', desc: 'A potentiostat file with three cycles in one table: Split into columns makes a current column per cycle (a Plot coloured by the cycle) and cuts the pieces going up and coming back; Integrate takes the area between them, absolute, over a region (hatched); Pick points reads the peaks and the current at 0.5 V.', make: cvExample },
+  { group: 'Statistics', name: 'Clinical study: survival, ROC, contingency, regression', desc: '120 patients made here, in two arms: Kaplan–Meier curves with the censored times, the log-rank test and the hazard ratio; a biomarker and the age as ROC curves (AUC, DeLong, the best threshold); the arm against the response (χ², Fisher, the odds ratio); the tumour size against age, marker and stage (linear regression, its p adjusted by Holm).', make: clinicalExample },
   { group: 'Statistics', name: 'Drug study: ANOVA, t-test, nonparametric, correlation', desc: 'The three layouts of the data for the statistics nodes — each group a column, indexed (value + factors), a row per subject — with Normality & outliers, one-way ANOVA + Tukey (the means ± SE in a Plot), a t-test, Kruskal–Wallis + Dunn, two-way ANOVA (Dose × Sex), repeated-measures ANOVA, Friedman and correlations.', make: drugExample },
   { group: 'Fitting', name: 'Python script: peaks found and fitted with scipy', desc: 'A spectrum given to a Python script: scipy finds its peaks and fits a Gaussian for each on a straight line; the table of the peaks to a Workbook, the fit drawn over the data. Runs when Run is pressed (the first time Python is downloaded, about 10 MB).', make: pythonExample },
   { group: 'Statistics', name: 'Regression, PCA, power and a control chart', desc: 'Fit ▸ linear and logistic regression on several predictors, Correlation with a clustered matrix and principal components (scores plotted), a t-test with its power, a control chart from Descriptive statistics.', make: regressionExample },

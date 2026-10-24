@@ -1,15 +1,15 @@
 // The statistics nodes (Normality & outliers, t-tests, ANOVA, Nonparametric, Correlation): how the data are laid out,
 // the test and its options, the report in words, the main table, the outputs.
 import type { ReactNode } from 'react';
-import { useReactFlow, type NodeProps } from '@xyflow/react';
-import { useNodeResult } from '../engine/engine.ts';
+import type { NodeProps } from '@xyflow/react';
 import type { NodeResult } from '../engine/evaluate.ts';
 import type { StatInput, StatLayout } from '../engine/statnodes.ts';
-import type { AnovaData, AnovaNode, AppNode, CorrData, CorrNode, NonparData, NonparNode, NormData, NormNode, TTestData, TTestNode } from '../types.ts';
+import type { AnovaData, AnovaNode, CorrData, CorrNode, NonparData, NonparNode, NormData, NormNode, TTestData, TTestNode } from '../types.ts';
 import { DataPreview } from './DataNodes.tsx';
 import { Check, Field, InPort, Messages, NumInput, OutPort, Select } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
 import { ColumnsPicker } from './ColumnsPicker.tsx';
+import { useNode } from './useStatNode.ts';
 
 const LAYOUTS: Record<StatLayout, string> = { columns: 'each group a column', indexed: 'a value column + factors', subjects: 'a row per subject' };
 const LAYOUT_HINT: Record<StatLayout, string> = {
@@ -71,7 +71,7 @@ function Report({ r }: { r?: NodeResult }) {
     </div>
   ) : null;
 }
-function Main({ r, children }: { r?: NodeResult; children?: ReactNode }) {
+export function Main({ r, children }: { r?: NodeResult; children?: ReactNode }) {
   const out = r?.outputs.out;
   // in the node: the report in words; the table of the results in the panel
   return (
@@ -103,11 +103,6 @@ function PowerRow({ power, target, set, what }: { power?: boolean; target?: numb
       )}
     </div>
   );
-}
-function useNode<T>(id: string) {
-  const { updateNodeData } = useReactFlow<AppNode>();
-  const r = useNodeResult(id);
-  return { r, names: (r?.view.available ?? []).map((c) => c.name), set: (p: Partial<T>) => updateNodeData(id, p as Record<string, unknown>) };
 }
 
 export function NormNodeView({ id, data }: NodeProps<NormNode>) {
