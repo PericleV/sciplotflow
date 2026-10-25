@@ -49,7 +49,7 @@
         "plot1d"
       ],
       "kind": "chain",
-      "example": "Four runs in a workbook: Auto-extract"
+      "example": "Four runs in a workbook: Sheets to columns"
     },
     {
       "q": "each row is a voltage and each column a wavelength, I want one spectrum per voltage",

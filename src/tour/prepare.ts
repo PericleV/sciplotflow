@@ -2,7 +2,7 @@
 // a stretch spoiled by an open door, the runs one under the other. Cleaned (Clean data, Filter & sort rows, Data
 // manipulation), cut into runs side by side and named (Split into columns, Columns), the offset taken away
 // (Translate); new columns (Extract column, Generate column, Math column, Combine columns); a table typed in
-// (Workbook); a spreadsheet's sheets gathered (Auto-extract); the canvas kept tidy (Note, Frame). Each node in two
+// (Workbook); a spreadsheet's sheets gathered (Sheets to columns); the canvas kept tidy (Note, Frame). Each node in two
 // small steps: added and connected, then its options.
 import type { Edge } from '@xyflow/react';
 import { AUTOEXTRACT_DEFAULTS, CLEAN_DEFAULTS, COLUMNS_DEFAULTS, COMBINE_DEFAULTS, DATAMANIP_DEFAULTS, EXTRACT_DEFAULTS, FILTER_DEFAULTS, GENCOL_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, NOTE_SIZE, TRANSLATE_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS } from '../defaults.ts';
@@ -254,8 +254,8 @@ export const PREPARE: Tour = {
         ),
         adds(
           'Gather a spreadsheet',
-          'Auto-extract',
-          'The **calibration** node holds a spreadsheet with two sheets, one per day. Add **Auto-extract** and connect the **workbook** output of calibration to it (the dot with a ring).\n\nYou get the columns of every sheet in one table, named after their sheet, so both days fit on one graph.',
+          'Sheets to columns',
+          'The **calibration** node holds a spreadsheet with two sheets, one per day. Add **Sheets to columns** and connect the **workbook** output of calibration to it (the dot with a ring).\n\nYou get the columns of every sheet in one table, named after their sheet, so both days fit on one graph.',
           auto,
           () => ({ type: 'autoextract', data: structuredClone(AUTOEXTRACT_DEFAULTS), from: wire(CALIB, 'in', 'book') }),
         ),

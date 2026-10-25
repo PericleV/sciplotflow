@@ -1,4 +1,4 @@
-// Auto-extract: columns taken out of the sheets of a workbook by rules — "column 1 of every sheet is X, columns 2 and 5
+// Sheets to columns: columns taken out of the sheets of a workbook by rules — "column 1 of every sheet is X, columns 2 and 5
 // are Y", "from the sheets whose name holds run: Absorbance" — into one dataset whose columns carry their designation
 // (X, Y, ±Y …), ready for a quick plot. Sheets and columns are chosen with the same short list:
 //   1, 3-5      by number (from 1; "2-end" up to the last)

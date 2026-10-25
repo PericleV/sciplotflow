@@ -569,7 +569,7 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
   );
   return (
     <div className="node node-datamanip">
-      <InPort label="dataset" port="dataset" id="in" title="The data to change (Import, Auto-extract, Combine columns …)" />
+      <InPort label="dataset" port="dataset" id="in" title="The data to change (Import, Sheets to columns, Combine columns …)" />
       <NodeOptions>
       <div className="grid2">
         <Field label="X">

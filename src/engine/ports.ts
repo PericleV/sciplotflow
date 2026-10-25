@@ -18,7 +18,7 @@ export const PORT_COLORS: Record<PortType, string> = {
   any: '#8a93a6',
 };
 export const PORT_LABELS: Record<PortType, string> = {
-  workbook: 'workbook (several sheets, each a table: Extract column, Auto-extract or a Workbook take one)',
+  workbook: 'workbook (several sheets, each a table: Extract column, Sheets to columns or a Workbook take one)',
   dataset: 'dataset (one table: several columns)',
   column: 'column',
   scalar: 'single value',
@@ -102,6 +102,8 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
     case 'transpose':
     case 'stack':
       return handle === 'book' ? 'workbook' : 'dataset';
+    case 'tosheets':
+      return 'workbook';
     case 'filterrows':
       // every sheet of a workbook: a workbook; the parts: a dataset each, all of them as sheets
       return handle === 'parts' || node.data.sheet === '*' ? 'workbook' : 'dataset';
@@ -230,6 +232,7 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
     case 'transpose':
     case 'stack':
       return handle === 'in' ? ['dataset', 'workbook'] : [];
+    case 'tosheets':
     case 'datamanip':
     case 'unstack':
     case 'columns':

@@ -9,7 +9,7 @@ import type { SheetEdits, SheetLook } from './engine/sheet.ts';
 import type { ExtractNames, ExtractRule } from './engine/extract.ts';
 import type { ManipOp } from './engine/manip.ts';
 import type { CombineMode, CombinePort, CombineSpec, UnstackSpec } from './engine/reshape.ts';
-import type { ConvertData, StackData, TransposeData } from './engine/tableShape.ts';
+import type { ConvertData, StackData, ToSheetsData, TransposeData } from './engine/tableShape.ts';
 import type { Baseline, DiffMethod, Pt, Region } from './engine/calculus.ts';
 import type { PickOptions, PickRule } from './engine/pick.ts';
 import type { BaseKind, FindOptions, PeakItem } from './engine/peaks.ts';
@@ -106,7 +106,7 @@ export type WorkbookData = { name: string; sheets: BookSheet[]; sheet: number; i
 // project's one value); value: one value of them instead (pick: the first, the last, or a statistic of them)
 export type ExtractPick = 'first' | 'last' | 'mean' | 'median' | 'sum' | 'min' | 'max' | 'count' | 'sd';
 export type ExtractData = { column: string; index: number; sheet?: string; value?: boolean; row?: number; rows?: RowSelect; pick?: ExtractPick };
-// Auto-extract: columns of the sheets of a workbook taken by rules, into one dataset with their designations.
+// Sheets to columns: columns of the sheets of a workbook taken by rules, into one dataset with their designations.
 // mode 'simple' (absent in older projects: the rules): the sheets ticked (by name; absent: all) and every column of the
 // first of them with its designation (by its place; 'none': not taken; absent: the sheet's own), the same in every sheet.
 export type AutoExtractData = { rules: ExtractRule[]; names: ExtractNames; mode?: 'simple' | 'rules'; pick?: string[]; roles?: (ColumnRole | null)[] };
@@ -565,7 +565,8 @@ export type UnstackNode = Node<UnstackData, 'unstack'>;
 export type ConvertNode = Node<ConvertData, 'convert'>;
 export type TransposeNode = Node<TransposeData, 'transpose'>;
 export type StackNode = Node<StackData, 'stack'>;
-export type { ConvertData, StackData, TransposeData };
+export type ToSheetsNode = Node<ToSheetsData, 'tosheets'>;
+export type { ConvertData, StackData, ToSheetsData, TransposeData };
 export type CombineNode = Node<CombineData, 'combine'>;
 export type MathColNode = Node<MathColData, 'mathcol'>;
 export type PythonNode = Node<PythonData, 'python'>;
@@ -653,6 +654,7 @@ export type AppNode =
   | ConvertNode
   | TransposeNode
   | StackNode
+  | ToSheetsNode
   | CombineNode
   | MathColNode
   | PythonNode

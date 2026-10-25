@@ -1,7 +1,7 @@
 // The settings of a new node of each type.
 import { CSV_DEFAULTS } from './engine/csv.ts';
 import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, COLORBAR_DEFAULTS, CURVE_STYLE_DEFAULTS, FONTS, SHAPE_DEFAULTS, TEXT_SPEC_DEFAULTS } from './figure/spec.ts';
-import type { MatCompData, MatrixData, PickData, CalculusData, BookSheet, WorkbookData, ColumnsData, PeakWidthData, CombineData, UnstackData, ConvertData, TransposeData, StackData, AnnotationItem, AutoExtractData, CanvasData, DrawingData, DrawingGrid, CanvasLayout, DataManipData, ExtractData, FitNodeData, GenColData, ImportData, MathColData, PythonData, NoteData, Plot1DData, PlotPage, StatsData, PeakData, AnovaData, CorrData, NonparData, NormData, TTestData, CurveMathData, TranslateData, ConvData, FFTData, InterpData, NormalizeData, SmoothData, AverageData, CleanData, DigitizerData, FilterData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from './types.ts';
+import type { MatCompData, MatrixData, PickData, CalculusData, BookSheet, WorkbookData, ColumnsData, PeakWidthData, CombineData, UnstackData, ConvertData, TransposeData, StackData, ToSheetsData, AnnotationItem, AutoExtractData, CanvasData, DrawingData, DrawingGrid, CanvasLayout, DataManipData, ExtractData, FitNodeData, GenColData, ImportData, MathColData, PythonData, NoteData, Plot1DData, PlotPage, StatsData, PeakData, AnovaData, CorrData, NonparData, NormData, TTestData, CurveMathData, TranslateData, ConvData, FFTData, InterpData, NormalizeData, SmoothData, AverageData, CleanData, DigitizerData, FilterData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from './types.ts';
 import { SET_COLORS } from './engine/digitize.ts';
 import type { PhaseDigitizerData } from './engine/phasedigitize.ts';
 import type { EisData } from './engine/eis.ts';
@@ -132,6 +132,7 @@ export const AUTOEXTRACT_DEFAULTS: AutoExtractData = {
 export const CONVERT_DEFAULTS: ConvertData = { to: 'numbers', cols: '' };
 export const TRANSPOSE_DEFAULTS: TransposeData = { names: '', head: 'text' };
 export const STACK_DEFAULTS: StackData = { cols: '', key: 'text' };
+export const TOSHEETS_DEFAULTS: ToSheetsData = { mode: 'columns', cols: '' };
 export const UNSTACK_DEFAULTS: UnstackData = { x: '', ys: '', by: 'auto', names: '', xs: 'first', naming: 'block' };
 export const COMBINE_DEFAULTS: CombineData = { how: 'after', at: 0, match: 'name', x: '', dup: 'all', name: '' };
 export const MATHCOL_DEFAULTS: MathColData = { name: '', formula: '' };

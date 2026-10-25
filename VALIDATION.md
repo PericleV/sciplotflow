@@ -714,11 +714,11 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ import: a workbook, the sheet shown on “dataset”
 - ✓ import: a text sheet keeps the text settings (decimal comma)
 - ✓ Extract column: a column of the sheet chosen
-- ✓ Auto-extract: the columns, in sheet order, named and designated
-- ✓ Auto-extract: a quick plot from its designations
-- ✓ Auto-extract: names kept different
-- ✓ Auto-extract simple: the sheets ticked, every column with its designation (one not taken)
-- ✓ Auto-extract simple: no sheet ticked; said
+- ✓ Sheets to columns: the columns, in sheet order, named and designated
+- ✓ Sheets to columns: a quick plot from its designations
+- ✓ Sheets to columns: names kept different
+- ✓ Sheets to columns simple: the sheets ticked, every column with its designation (one not taken)
+- ✓ Sheets to columns simple: no sheet ticked; said
 - ✓ manip: masked, unmasked, moved, scaled, deleted
 - ✓ manip: the state of every input row
 - ✓ manip: restore makes deleted or masked points normal again
@@ -804,9 +804,9 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ example “Gold n, k: two blocks in one file (Split into columns)” has no errors
 - ✓ example “Gold n, k: two blocks in one file (Split into columns)” draws curves
 - ✓ example “Gold n, k: two blocks in one file (Split into columns)” saves and opens
-- ✓ example “Four runs in a workbook: Auto-extract” has no errors
-- ✓ example “Four runs in a workbook: Auto-extract” draws curves
-- ✓ example “Four runs in a workbook: Auto-extract” saves and opens
+- ✓ example “Four runs in a workbook: Sheets to columns” has no errors
+- ✓ example “Four runs in a workbook: Sheets to columns” draws curves
+- ✓ example “Four runs in a workbook: Sheets to columns” saves and opens
 - ✓ example “Rows to columns: a voltage sweep turned into spectra” has no errors
 - ✓ example “Rows to columns: a voltage sweep turned into spectra” draws curves
 - ✓ example “Rows to columns: a voltage sweep turned into spectra” saves and opens

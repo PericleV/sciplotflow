@@ -5,7 +5,8 @@ import { useNodeResult } from '../engine/engine.ts';
 import { columnLetter } from '../engine/csv.ts';
 import { TO_NUMBER_DEFAULTS, TO_TEXT_DEFAULTS, type ToNumberRules, type ToTextRules } from '../engine/convert.ts';
 import { titleOf } from '../engine/table.ts';
-import type { AppNode, ConvertData, ConvertNode, StackData, StackNode, TransposeData, TransposeNode } from '../types.ts';
+import type { AppNode, ConvertData, ConvertNode, StackData, StackNode, ToSheetsData, ToSheetsNode, TransposeData, TransposeNode } from '../types.ts';
+import { sheetOptions } from './sheetOptions.ts';
 import { DataPreview } from './DataNodes.tsx';
 import { Check, Field, InPort, Messages, NumInput, OutPort, ResultSummary, Select, TextInput } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
@@ -238,6 +239,73 @@ export function StackNodeView({ id, data }: NodeProps<StackNode>) {
         {preview(r)}
       </NodeOptions>
       <Outputs r={r} />
+    </div>
+  );
+}
+
+// ---- Columns to sheets ----
+export function ToSheetsNodeView({ id, data }: NodeProps<ToSheetsNode>) {
+  const { updateNodeData } = useReactFlow<AppNode>();
+  const r = useNodeResult(id);
+  const set = (p: Partial<ToSheetsData>) => updateNodeData(id, p);
+  const avail = r?.view.available ?? [];
+  const sheets = r?.view.sheets ?? [];
+  const made = r?.view.toSheets ?? [];
+  const xFrom = data.xFrom ?? 'one';
+  const byValue = data.mode === 'values';
+  return (
+    <div className="node node-tosheets">
+      <InPort label="table" port="dataset" id="in" title="A table, or a workbook (its sheet chosen)" />
+      <NodeOptions>
+        <div className="grid2">
+          {sheets.length > 0 && (
+            <Field label="Sheet" title="The sheet of the workbook made sheets">
+              <Select<string> {...sheetOptions(sheets, data.sheet ?? '')} onChange={(sheet) => set({ sheet: sheet || undefined })} />
+            </Field>
+          )}
+          <Field label="A sheet per" title="A sheet per column (with its X and its ±Y), or a sheet per value of a column (its rows, all the columns)">
+            <Select<ToSheetsData['mode']>
+              seg
+              value={data.mode}
+              options={[
+                ['columns', 'column'],
+                ['values', 'value of a column'],
+              ]}
+              onChange={(mode) => set({ mode })}
+            />
+          </Field>
+          {byValue ? (
+            <Field label="By" title="The column whose values make the sheets (S1, S2 …): every sheet the rows of one value">
+              <Select<string> value={data.by ?? ''} options={[['', 'choose the column'], ...avail.map((c, k): [string, string] => [c.name, `${columnLetter(k)} · ${titleOf(c)}`])]} onChange={(by) => set({ by: by || undefined })} />
+            </Field>
+          ) : (
+            <>
+              <Field label="Columns" title="The columns, a sheet each: 2-6, B-F, names, R* (empty: every Y)">
+                <TextInput value={data.cols} placeholder="every Y" onChange={(cols) => set({ cols })} />
+              </Field>
+              <Field label="Their X" title="One column for all, the X on the left of each column, or the row number">
+                <Select<NonNullable<ToSheetsData['xFrom']>>
+                  value={xFrom}
+                  options={[
+                    ['one', 'one for all'],
+                    ['left', 'the X on the left of each'],
+                    ['row', 'the row number'],
+                  ]}
+                  onChange={(v) => set({ xFrom: v === 'one' ? undefined : v })}
+                />
+              </Field>
+              {xFrom === 'one' && (
+                <Field label="X" title="The X of every sheet (empty: the designated X, else the first column)">
+                  <Select<string> value={data.x ?? ''} options={[['', 'the designated X'], ...avail.map((c, k): [string, string] => [c.name, `${columnLetter(k)} · ${titleOf(c)}`])]} onChange={(x) => set({ x: x || undefined })} />
+                </Field>
+              )}
+            </>
+          )}
+        </div>
+      </NodeOptions>
+      {made.length > 0 && <div className="hint">{`${made.length} sheet${made.length === 1 ? '' : 's'}: ${made.slice(0, 6).join(', ')}${made.length > 6 ? ' …' : ''}`}</div>}
+      <Messages result={r} />
+      <OutPort label={`workbook${made.length ? ` (${made.length} sheet${made.length === 1 ? '' : 's'})` : ''}`} port="workbook" id="out" title="The sheets: for a Batch over the files, Extract column, Sheets to columns, a Plot of a workbook" />
     </div>
   );
 }

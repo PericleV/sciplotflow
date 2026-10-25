@@ -5,7 +5,7 @@
 import { columnRuns } from './batch.ts';
 import { formatNumber, fromTemplate, numbersInNames, TO_NUMBER_DEFAULTS, TO_TEXT_DEFAULTS, toNumbers, toText, type ToNumberRules, type ToTextRules } from './convert.ts';
 import { pick } from './extract.ts';
-import { column, findColumn, unitOf, withUnit, bareName, type Column, type Dataset } from './table.ts';
+import { column, findColumn, fmtNum, unitOf, withUnit, bareName, type Column, type Dataset, type Workbook } from './table.ts';
 import { maxOf } from './minmax.ts';
 
 // cols: the columns (2-6, B-F, names; empty: none, until chosen)
@@ -18,6 +18,11 @@ export type TransposeData = { as?: 'cols'; names: string; fmt?: Partial<ToTextRu
 // (the value it keeps from Split into columns or Transpose, else the number in its name); keyName, valueName: the
 // names of the new columns (empty: found)
 export type StackData = { cols: string; xFrom?: 'one' | 'left' | 'row'; x?: string; key: 'text' | 'number'; keyName?: string; valueName?: string };
+// Columns to sheets (the reverse of Sheets to columns): a sheet per column (cols, xFrom, x: as a Batch over columns;
+// every sheet its X, the column and its ±Y), or a sheet per value of a column (by: its name; every sheet the rows of
+// that value, all the columns); sheet: of a workbook coming in, the one taken (absent: the first)
+export type ToSheetsData = { mode: 'columns' | 'values'; cols: string; xFrom?: 'one' | 'left' | 'row'; x?: string; by?: string; sheet?: string };
+export const MAX_SHEETS = 500;
 
 const MAX_COLS = 10_000;
 const rowsOf = (ds: Dataset) => Math.max(0, maxOf(ds.columns.map((c) => c.values.length)));
@@ -140,4 +145,44 @@ export function stackColumns(ds: Dataset, d: StackData): { dataset: Dataset; war
   const cols: Column[] = [keyCol, { ...column(xName, Float64Array.from(xv), xHasText ? xText : undefined), role: 'x' }, { ...column(valueName, Float64Array.from(yv)), role: 'y' }];
   if (hasErr) cols.push({ ...column(withUnit(`${bareName(valueName)} error`, unitOf(valueName)), Float64Array.from(ev)), role: 'yerr' });
   return { dataset: { name: ds.name, columns: cols }, warnings };
+}
+
+// A table made a workbook: a sheet per column (with its X and its ±Y), or a sheet per value of a column (its rows)
+export function columnsToSheets(ds: Dataset, d: ToSheetsData): { book: Workbook; warnings: string[] } | string {
+  const warnings: string[] = [];
+  let sheets: Dataset[];
+  if (d.mode === 'values') {
+    if (!d.by?.trim()) return 'Choose the column whose values make the sheets.';
+    const by = findColumn(ds.columns, d.by);
+    if (!by) return `By: no column “${d.by}”.`;
+    // (the rows of every value, in the order the values first come; an empty cell its own sheet, “(empty)”)
+    const groups = new Map<string, number[]>();
+    for (let i = 0; i < by.values.length; i++) {
+      const t = by.text?.[i];
+      const key = t !== undefined && t !== '' && !Number.isFinite(by.values[i]) ? t : Number.isFinite(by.values[i]) ? fmtNum(by.values[i]) : '(empty)';
+      const g = groups.get(key);
+      if (g) g.push(i);
+      else groups.set(key, [i]);
+    }
+    sheets = [...groups].map(([key, rows]) => ({
+      name: key,
+      columns: ds.columns.map((c) => ({ ...c, values: Float64Array.from(rows, (i) => (i < c.values.length ? c.values[i] : NaN)), ...(c.text ? { text: rows.map((i) => c.text![i] ?? '') } : {}) })),
+    }));
+  } else {
+    const runs = columnRuns(ds, d);
+    if (typeof runs === 'string') return runs;
+    sheets = runs;
+  }
+  if (sheets.length > MAX_SHEETS) {
+    warnings.push(`${sheets.length} sheets: the first ${MAX_SHEETS} kept.`);
+    sheets = sheets.slice(0, MAX_SHEETS);
+  }
+  // (the names of the sheets kept different: a name met twice numbered)
+  const seen = new Map<string, number>();
+  sheets = sheets.map((sh) => {
+    const k = (seen.get(sh.name) ?? 0) + 1;
+    seen.set(sh.name, k);
+    return k > 1 ? { ...sh, name: `${sh.name} (${k})` } : sh;
+  });
+  return { book: { name: ds.name, sheets }, warnings };
 }

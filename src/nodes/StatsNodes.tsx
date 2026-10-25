@@ -89,7 +89,7 @@ export function RowSelectControls({ value, onChange, hasX, result }: { value: Ro
   );
 }
 
-// The columns of a dataset (a list as in Auto-extract) and its X.
+// The columns of a dataset (a list as in Sheets to columns) and its X.
 function ColumnChoice({ cols, x, onCols, onX, result }: { cols: string; x: string; onCols: (v: string) => void; onX: (v: string) => void; result?: NodeResult }) {
   const avail = result?.view.available ?? [];
   const used = result?.view.statCols ?? [];

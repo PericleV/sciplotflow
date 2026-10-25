@@ -86,7 +86,7 @@ export async function readFiles(files: File[], encoding = 'auto'): Promise<{ tex
     } else sheets.push({ name: f.name.replace(/\.[^.]+$/, ''), text: await readText(f, encoding) });
   }
   if (!sheets.length) throw new Error('The file has no sheet with data.');
-  // names must differ: they name the sheets in Extract column and Auto-extract
+  // names must differ: they name the sheets in Extract column and Sheets to columns
   const seen = new Map<string, number>();
   for (const s of sheets) {
     const k = seen.get(s.name) ?? 0;

@@ -1,4 +1,4 @@
-// Data nodes: Import, Extract column, Math column, Generate column, Columns, Auto-extract.
+// Data nodes: Import, Extract column, Math column, Generate column, Columns, Sheets to columns.
 import { ExportTable } from './ExportTable.tsx';
 import { MATH_PRESETS } from '../engine/mathPresets.ts';
 import { Fragment, useLayoutEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
@@ -373,7 +373,7 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
       </NodeOptions>
       <Messages result={r} />
       <OutPort label={shownSheet ? `dataset (${shownSheet.name})` : 'dataset'} port="dataset" />
-      {sheets.length > 0 && <OutPort label={`workbook (${sheets.length} sheet${sheets.length > 1 ? 's' : ''})`} port="workbook" id="book" title="All the sheets, for Extract column (choose the sheet) or Auto-extract" />}
+      {sheets.length > 0 && <OutPort label={`workbook (${sheets.length} sheet${sheets.length > 1 ? 's' : ''})`} port="workbook" id="book" title="All the sheets, for Extract column (choose the sheet) or Sheets to columns" />}
     </div>
   );
 }
@@ -1216,7 +1216,7 @@ export function ColumnsNodeView({ id, data: nodeData }: NodeProps<ColumnsNode>) 
   );
 }
 
-// ---- Auto-extract ----
+// ---- Sheets to columns ----
 
 export function AutoExtractNodeView({ id, data }: NodeProps<AutoExtractNode>) {
   const { updateNodeData } = useReactFlow<AppNode>();

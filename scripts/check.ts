@@ -138,7 +138,7 @@ import { CALCULUS_DEFAULTS, newSheet, PEAK_DEFAULTS as PEAK_NEW, PICK_DEFAULTS, 
 const PEAK_DEFAULTS = { ...PEAK_NEW, needRun: undefined };
 import { fmtPm } from '../src/engine/report.ts';
 import { looksNumeric, readCell, TO_NUMBER_DEFAULTS } from '../src/engine/convert.ts';
-import { convertTable, stackColumns, transposeTable } from '../src/engine/tableShape.ts';
+import { columnsToSheets, convertTable, stackColumns, transposeTable } from '../src/engine/tableShape.ts';
 import { areaBetween, derivative, integrate, pointsCurve, regionRows } from '../src/engine/calculus.ts';
 import { groupText, splitRows } from '../src/engine/split.ts';
 import { autoRanges, hitAt, withRanges, zoomOutRanges } from '../src/nodes/figureRanges.ts';
@@ -840,7 +840,7 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   ok(e2.series.yErrLo?.values[0] === 40 && e2.series.yErr?.values[25] === 0.1, 'a − error of its own');
 }
 
-// ---- workbooks: several sheets in one Import, Extract column from a sheet, Auto-extract rules ----
+// ---- workbooks: several sheets in one Import, Extract column from a sheet, Sheets to columns rules ----
 {
   const names = ['Time', 'Signal', 'Temp', 'σ', 'Notes'];
   const f = (spec: string, letters = true) => pick(spec, names, letters).found.join(',');
@@ -848,7 +848,7 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   ok(f('*, !Notes, !1') === '1,2,3' && f('T*') === '0,2' && f('!5') === '0,1,2,3', 'rules: all, left out, patterns');
   ok(pick('9, Volts', names, true).missing.join('|') === '9|Volts', 'rules: what is not there is reported');
   ok(pick('Run*', ['Run 1', 'Notes', 'run 2'], false).found.join(',') === '0,2', 'rules: sheets by a pattern');
-  // an Import of three sheets (text and Excel-like); Extract column from the second; Auto-extract over all
+  // an Import of three sheets (text and Excel-like); Extract column from the second; Sheets to columns over all
   const sheet = (k: number) => ({ name: `Run ${k}`, text: `Time\tSignal\tσ\n0\t${k}\t0.1\n1\t${2 * k}\t0.2\n`, excel: true });
   const imp = { id: 'w', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, textId: 'w', sheets: [sheet(1), sheet(2), { name: 'Notes', text: 'a;b\n1,5;2\n' }], sheet: 1 } } as AppNode;
   const ex = { id: 'x', type: 'extract', position: { x: 0, y: 0 }, data: { column: 'Signal', index: 1, sheet: 'Run 2' } } as AppNode;
@@ -863,17 +863,17 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   const xo = res.get('x')!.outputs.out;
   ok(xo?.t === 'column' && xo.v.values[1] === 4, 'Extract column: a column of the sheet chosen');
   const ao = res.get('a')!.outputs.out;
-  ok(ao?.t === 'dataset' && ao.v.columns.map((c) => `${c.name}/${c.role}`).join(',') === 'Run 1: Time/x,Run 1/y,Run 1: σ/yerr,Run 2: Time/x,Run 2/y,Run 2: σ/yerr', 'Auto-extract: the columns, in sheet order, named and designated');
-  ok(ao?.t === 'dataset' && JSON.stringify(curvesByRole(ao.v.columns).curves[1]) === JSON.stringify({ x: 'Run 2: Time', y: 'Run 2', yerr: 'Run 2: σ' }), 'Auto-extract: a quick plot from its designations');
+  ok(ao?.t === 'dataset' && ao.v.columns.map((c) => `${c.name}/${c.role}`).join(',') === 'Run 1: Time/x,Run 1/y,Run 1: σ/yerr,Run 2: Time/x,Run 2/y,Run 2: σ/yerr', 'Sheets to columns: the columns, in sheet order, named and designated');
+  ok(ao?.t === 'dataset' && JSON.stringify(curvesByRole(ao.v.columns).curves[1]) === JSON.stringify({ x: 'Run 2: Time', y: 'Run 2', yerr: 'Run 2: σ' }), 'Sheets to columns: a quick plot from its designations');
   const names2 = autoExtract([{ name: 'A', columns: [column('t', new Float64Array(1))] }, { name: 'B', columns: [column('t', new Float64Array(1))] }], [{ sheets: '*', columns: '1', role: 'x' }], 'column').dataset.columns.map((c) => c.name);
-  ok(names2.join('|') === 't|t (2)', 'Auto-extract: names kept different');
+  ok(names2.join('|') === 't|t (2)', 'Sheets to columns: names kept different');
   // simple: the sheets ticked, the columns of the first by their place (the sheet's own designations unless chosen)
   const simpleNode = { ...au, id: 's', data: { rules: [], names: 'sheet', mode: 'simple', pick: ['Run 2', 'Run 1'], roles: [null, null, 'none'] } } as AppNode;
   const sr = evaluateGraph([imp, simpleNode], [{ id: '3', source: 'w', sourceHandle: 'book', target: 's', targetHandle: 'in' }]).get('s')!;
   const so = sr.outputs.out;
-  ok(so?.t === 'dataset' && so.v.columns.map((c) => `${c.name}/${c.role}`).join(',') === 'Run 1: Time/x,Run 1/y,Run 2: Time/x,Run 2/y' && sr.view.extractCols?.sheet === 'Run 1' && sr.view.extractCols.columns.map((c) => c.role).join() === 'x,y,none', 'Auto-extract simple: the sheets ticked, every column with its designation (one not taken)');
+  ok(so?.t === 'dataset' && so.v.columns.map((c) => `${c.name}/${c.role}`).join(',') === 'Run 1: Time/x,Run 1/y,Run 2: Time/x,Run 2/y' && sr.view.extractCols?.sheet === 'Run 1' && sr.view.extractCols.columns.map((c) => c.role).join() === 'x,y,none', 'Sheets to columns simple: the sheets ticked, every column with its designation (one not taken)');
   const none = evaluateGraph([imp, { ...simpleNode, data: { ...simpleNode.data, pick: [] } } as AppNode], [{ id: '3', source: 'w', sourceHandle: 'book', target: 's', targetHandle: 'in' }]).get('s')!;
-  ok(!none.outputs.out && none.view.waiting === 'Tick a sheet.', 'Auto-extract simple: no sheet ticked — said');
+  ok(!none.outputs.out && none.view.waiting === 'Tick a sheet.', 'Sheets to columns simple: no sheet ticked — said');
 }
 
 // ---- Data manipulation: masks, deletions, moves; masks through Math column, Statistics, Plot ----
@@ -5497,6 +5497,17 @@ for (const ex of EXAMPLES) {
   const s2 = stackColumns({ name: 'k', columns: [column('x', Float64Array.from([0, 1])), column('A', Float64Array.from([1, 2])), { ...column('A err', Float64Array.from([0.1, 0.2])), role: 'yerr' }, column('B', Float64Array.from([3, 4])), { ...column('B err', Float64Array.from([0.3, 0.4])), role: 'yerr' }] }, { cols: 'A, B', key: 'text', valueName: 'Signal (mV)' });
   const s2c = typeof s2 === 'string' ? [] : s2.dataset.columns;
   ok(s2c.map((q) => `${q.name}:${q.role}`).join() === 'Name:label,x:x,Signal (mV):y,Signal error (mV):yerr' && s2c[0].text?.join() === 'A,A,B,B' && Array.from(s2c[3].values).join() === '0.1,0.2,0.3,0.4', 'stack columns: the names as text, the errors stacked with the values');
+  // Columns to sheets: a sheet per column (its X, its ±Y), and back by Sheets to columns the same columns; a sheet per
+  // value of a column (text and numbers, in the order first met; a name met twice numbered); errors said
+  const tbl: Dataset = { name: 't', columns: [{ ...column('x', Float64Array.from([0, 1, 2])), role: 'x' }, { ...column('A', Float64Array.from([1, 2, 3])), role: 'y' }, { ...column('A err', Float64Array.from([0.1, 0.2, 0.3])), role: 'yerr' }, { ...column('B', Float64Array.from([4, 5, 6])), role: 'y' }] };
+  const bk = columnsToSheets(tbl, { mode: 'columns', cols: '' });
+  const roundTrip = typeof bk === 'string' ? null : autoExtract(bk.book.sheets, [{ sheets: '*', columns: '1', role: 'x' }, { sheets: '*', columns: '2', role: 'y' }, { sheets: '*', columns: '3', role: 'yerr' }], 'column').dataset;
+  const bys = roundTrip?.columns.filter((c) => c.role === 'y').map((c) => Array.from(c.values).join(' ')).join(' | ');
+  const long: Dataset = { name: 'l', columns: [{ ...column('Sample', new Float64Array(5).fill(NaN), ['S1', 'S2', 'S1', 'S3', 'S2']), role: 'label' }, { ...column('t', Float64Array.from([1, 2, 3, 4, 5])), role: 'x' }, { ...column('v', Float64Array.from([10, 20, 30, 40, 50])), role: 'y' }] };
+  const bv = columnsToSheets(long, { mode: 'values', cols: '', by: 'Sample' });
+  const bn = columnsToSheets({ name: 'n', columns: [column('T', Float64Array.from([300, 310, 300])), column('v', Float64Array.from([1, 2, 3]))] }, { mode: 'values', cols: '', by: 'T' });
+  const sheetsOf = (r: typeof bv) => (typeof r === 'string' ? r : r.book.sheets.map((s) => `${s.name}:${Array.from(s.columns[s.columns.length - 1].values).join(',')}`).join(' '));
+  ok(typeof bk !== 'string' && bk.book.sheets.map((s) => `${s.name}=${s.columns.map((c) => `${c.name}/${c.role}`).join('+')}`).join(' ') === 'A=x/x+A/y+A err/yerr B=x/x+B/y' && bys === '1 2 3 | 4 5 6' && sheetsOf(bv) === 'S1:10,30 S2:20,50 S3:40' && sheetsOf(bn) === '300:1,3 310:2' && columnsToSheets(long, { mode: 'values', cols: '' }) === 'Choose the column whose values make the sheets.' && columnsToSheets(long, { mode: 'values', cols: '', by: 'Q' }) === 'By: no column “Q”.', `Columns to sheets: a sheet per column (and back: ${bys}), per value of a column (${sheetsOf(bv)}; ${sheetsOf(bn)}), errors said`);
 }
 
 // ---- a table written out ----

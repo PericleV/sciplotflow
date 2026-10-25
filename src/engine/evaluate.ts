@@ -93,7 +93,7 @@ import { STEP_DEFS } from '../image/steps.ts';
 import { phaseFigures, type PhaseDiagramData } from './phasenode.ts';
 import { maxOf, minOf } from './minmax.ts';
 import { nodeDisplayName } from '../nodeColors.ts';
-import { convertTable, stackColumns, transposeTable } from './tableShape.ts';
+import { columnsToSheets, convertTable, stackColumns, transposeTable } from './tableShape.ts';
 import { looksNumeric, TO_NUMBER_DEFAULTS } from './convert.ts';
 
 export type Value =
@@ -138,6 +138,7 @@ export type NodeView = {
   csv?: CsvResult;
   sheet?: SheetMap; // Import: which row / column of the table as read each row / column shown is
   sheets?: string[]; // Import, Extract column, Workbook: the names of the sheets of the workbook
+  toSheets?: string[]; // Columns to sheets: the names of the sheets made
   // Convert columns: the columns converted, and every column whose text looks like numbers (how many of its text cells)
   convert?: { changed: string[]; looks: { name: string; numeric: number; text: number; examples: string[] }[] };
   // Workbook: its own sheets (the first `own`; the others: from the inputs, read-only) and its inputs; kinds: every sheet
@@ -197,7 +198,7 @@ export type NodeView = {
   columnsHead?: { names: string[]; rows: string[][] }; // Columns: the first rows of the data as they come in (for the names from a row)
   // Peak width: the points (their run, in a region or not), the baseline of every run, every result
   widths?: { x: Float64Array; y: Float64Array; run: Int32Array; used: Uint8Array; labels: string[]; xName: string; bases: { x: number[]; y: number[] }[]; results: { run: number; region: number; kind: 'peak' | 'dip'; x: number; y: number; fwhm: number; left: number; right: number; leftY: number; rightY: number; height: number; min: number; xMin: number; max: number; xMax: number; count: number; of: number }[] };
-  extractCols?: { sheet: string; columns: { name: string; role: ColumnRole }[] }; // Auto-extract (simple): the first sheet's columns
+  extractCols?: { sheet: string; columns: { name: string; role: ColumnRole }[] }; // Sheets to columns (simple): the first sheet's columns
   layerInputs?: { port: number; letter: string; name: string; columns: string[]; labels: Record<string, string[]> }[];
   figure?: Figure;
   cooling?: Figure; // Phase diagram: the amounts of the phases of the alloy cooled
@@ -3188,7 +3189,7 @@ function statsColumns(d: StatsData, v: Value | undefined): Out {
 // Statistics on rows: for every row chosen, the statistics of the values of the columns chosen (replicates → mean ± SD);
 // each statistic a column, and a dataset with X, the mean (Y) and its error (±Y) ready for a plot.
 function statsRows(d: { cols: string; x: string; rows?: StatsData['rows']; err: 'sd' | 'se'; pcts?: string; ci?: number }, v: Value | undefined): Out {
-  if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset (Import, Auto-extract …), then choose its columns.' } };
+  if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset (Import, Sheets to columns …), then choose its columns.' } };
   const available = v.v.columns.map(colInfo);
   const { X, cols, warnings } = statColumns(v.v, d.cols, d.x);
   if (!cols.length) return { warnings, view: { available, waiting: 'No column chosen.' } };
@@ -4787,7 +4788,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       return pickNode(n.data, one('in'));
     case 'datamanip': {
       const v = one('in');
-      if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset (Import, Auto-extract …).' } };
+      if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset (Import, Sheets to columns …).' } };
       const available = v.v.columns.map(colInfo);
       // the columns of the graph: chosen, else from the designations (the first Y and its X)
       const byRole = curvesByRole(v.v.columns).curves[0];
@@ -4825,6 +4826,15 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
         warnings: [...new Set(warnings)],
         view: { available, ...(n.type === 'convert' ? { convert: { changed, looks } } : {}) },
       };
+    }
+    case 'tosheets': {
+      // a table made a workbook: a sheet per column, or per value of a column
+      const v = one('in');
+      if (v?.t !== 'dataset') return { view: { waiting: 'Connect a table (or a workbook: its sheet chosen).' } };
+      const available = v.v.columns.map(colInfo);
+      const r = columnsToSheets(v.v, n.data);
+      if (typeof r === 'string') return { errors: [r], view: { available } };
+      return { outputs: { out: { t: 'workbook', v: r.book } }, warnings: r.warnings, view: { available, toSheets: r.book.sheets.map((s) => s.name) } };
     }
     case 'unstack': {
       const v = one('in');
@@ -5100,7 +5110,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
 // have results under `group/inner` ids.
 // The nodes that take one sheet of a workbook on a port (its name: the node's `sheet`): the graphs on their dataset
 // port, Columns, Extract column, Pick points, Filter & sort rows, Split into columns on their input
-const SHEET_PORTS: Record<string, string> = { columns: 'in', extract: 'in', pick: 'in', eis: 'in', filterrows: 'in', unstack: 'in', ...Object.fromEntries(['histogram', 'barchart', 'boxviolin', 'probplot', 'blandaltman', 'pie', 'polar', 'waterfall', 'contour', 'ternary', 'plot3d'].map((t) => [t, 'dataset'])) };
+const SHEET_PORTS: Record<string, string> = { columns: 'in', extract: 'in', pick: 'in', eis: 'in', filterrows: 'in', unstack: 'in', tosheets: 'in', ...Object.fromEntries(['histogram', 'barchart', 'boxviolin', 'probplot', 'blandaltman', 'pie', 'polar', 'waterfall', 'contour', 'ternary', 'plot3d'].map((t) => [t, 'dataset'])) };
 export const sheetPort = (type: string | undefined): string | undefined => (type ? SHEET_PORTS[type] : undefined);
 // the nodes that can also take every sheet (`sheet` '*': the workbook itself, a workbook out)
 export const everySheet = (type: string | undefined) => type === 'filterrows' || type === 'columns';

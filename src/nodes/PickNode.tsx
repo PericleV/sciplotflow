@@ -179,7 +179,7 @@ export function PickNodeView({ id, data }: NodeProps<PickNode>) {
         </div>
       )}
       <OutPort label={sheets.length > 1 ? `dataset (${shownDs?.name ?? ''})` : 'dataset'} port="dataset" title="The points picked: the Y column (its block value when cut by Split into columns), the rule, the value asked, the row found, X, Y and the other columns read there (or a row per Y column)" />
-      <OutPort label={`workbook (${sheets.length} sheet${sheets.length === 1 ? '' : 's'})`} port="workbook" id="book" title="All the sheets (at X, at Y…), for Extract column (choose the sheet), Plot, or Auto-extract" />
+      <OutPort label={`workbook (${sheets.length} sheet${sheets.length === 1 ? '' : 's'})`} port="workbook" id="book" title="All the sheets (at X, at Y…), for Extract column (choose the sheet), Plot, or Sheets to columns" />
     </div>
   );
 }

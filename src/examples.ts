@@ -2,7 +2,7 @@
 import { peakRunKey } from './engine/peaks.ts';
 import type { Edge } from '@xyflow/react';
 import { REGION_COLORS } from './nodes/regionColors.ts';
-import { DRAWING_DEFAULTS, PYTHON_DEFAULTS, CONVERT_DEFAULTS, STACK_DEFAULTS, TRANSPOSE_DEFAULTS, COLUMNS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, DATAMANIP_DEFAULTS, AVERAGE_DEFAULTS, COMBINE_DEFAULTS, TRANSLATE_DEFAULTS, CURVEMATH_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, PADJUST_DEFAULTS, CONTINGENCY_DEFAULTS, ROC_DEFAULTS, SURVIVAL_DEFAULTS, REGRESS_DEFAULTS, POWER_DEFAULTS, RESAMPLE_DEFAULTS, DISTFIT_DEFAULTS, AGREE_DEFAULTS, METHCOMP_DEFAULTS, LOGISTIC_DEFAULTS, BASELINE_DEFAULTS, WAVEFORM_DEFAULTS, STEPS_DEFAULTS, EVENTS_DEFAULTS, WAVELET_DEFAULTS, FRAC_DEFAULTS, FRFT_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, IMAGE_DEFAULTS, KK_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
+import { DRAWING_DEFAULTS, PYTHON_DEFAULTS, CONVERT_DEFAULTS, STACK_DEFAULTS, TOSHEETS_DEFAULTS, TRANSPOSE_DEFAULTS, COLUMNS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, DATAMANIP_DEFAULTS, AVERAGE_DEFAULTS, COMBINE_DEFAULTS, TRANSLATE_DEFAULTS, CURVEMATH_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, PADJUST_DEFAULTS, CONTINGENCY_DEFAULTS, ROC_DEFAULTS, SURVIVAL_DEFAULTS, REGRESS_DEFAULTS, POWER_DEFAULTS, RESAMPLE_DEFAULTS, DISTFIT_DEFAULTS, AGREE_DEFAULTS, METHCOMP_DEFAULTS, LOGISTIC_DEFAULTS, BASELINE_DEFAULTS, WAVEFORM_DEFAULTS, STEPS_DEFAULTS, EVENTS_DEFAULTS, WAVELET_DEFAULTS, FRAC_DEFAULTS, FRFT_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, IMAGE_DEFAULTS, KK_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
 import { INSET_DEFAULTS, AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, COLORBAR_DEFAULTS, CURVE_STYLE_DEFAULTS, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, SIDE_DEFAULTS, TEXT_SPEC_DEFAULTS, type AxesStyle, type CurveStyle, type SideStyle } from './figure/spec.ts';
 import { PROJECT_VERSION, type Project } from './project.ts';
 import type { AnnotationItem, AppNode, ImportSheet, NodeType, Plot1DData, PlotLegend, PlotPage } from './types.ts';
@@ -894,7 +894,7 @@ function workbookExample(): Project {
   link(b, imp, ex, 'in', 'book');
   const st = add(b, 'stats', 'run3-stats', 1180, 900, {});
   link(b, ex, st, 'in');
-  return project(b, 'Four runs in a workbook: Auto-extract');
+  return project(b, 'Four runs in a workbook: Sheets to columns');
 }
 
 // A photocurrent map saved a row per voltage (a column per wavelength): Rows to columns gives a spectrum per voltage
@@ -914,6 +914,9 @@ function sweepExample(): Project {
   link(b, tr, pl, 'dataset');
   const st = add(b, 'stack', 'sw-long', 700, 760, { ...STACK_DEFAULTS, key: 'number', keyName: 'Voltage (V)', valueName: 'Photocurrent (A)' });
   link(b, tr, st, 'in');
+  // every spectrum a sheet of its own (for a Batch over files, or a Plot of a workbook)
+  const sh = add(b, 'tosheets', 'sw-sheets', 1400, 760, { ...TOSHEETS_DEFAULTS });
+  link(b, tr, sh, 'in');
   const notes = ['Sample,Temperature,Band gap,Yield', 'A,300 K,1.21 ± 0.02 eV,45 %', 'B,310 K,1.18 ± 0.03 eV,52 %', 'C,320 K,1.15 ± 0.02 eV,n.d.', 'D,330 K,1.13 ± 0.04 eV,61 %'];
   const tx = add(b, 'import', 'sw-text', 0, 1500, { ...IMPORT_DEFAULTS, name: 'samples', fileName: 'samples.csv', text: notes.join('\n'), textId: 'sw-2' });
   const cv = add(b, 'convert', 'sw-convert', 700, 1500, { ...CONVERT_DEFAULTS, cols: 'B-D' });
@@ -3391,9 +3394,9 @@ const ABOUT: Record<string, About> = {
     what: 'A file with two blocks written one under the other (wl, n, then wl, k) laid side by side by Split into columns; n on the left axis, k on its own right axis.',
     try: ['Look at the Import table: the second block starts after an empty line.', 'In Split into columns, change Blocks and see the columns it gives.'],
   },
-  'Four runs in a workbook: Auto-extract': {
-    what: 'A spreadsheet with a sheet per run: Auto-extract takes the same columns out of every sheet by rules (Time = X, Signal = Y, D = ±Y), and one Plot draws them all from their designations.',
-    try: ['Change a rule of Auto-extract (e.g. leave a sheet out with !2).', 'Choose another sheet in Extract column.'],
+  'Four runs in a workbook: Sheets to columns': {
+    what: 'A spreadsheet with a sheet per run: Sheets to columns takes the same columns out of every sheet by rules (Time = X, Signal = Y, D = ±Y), and one Plot draws them all from their designations.',
+    try: ['Change a rule of Sheets to columns (e.g. leave a sheet out with !2).', 'Choose another sheet in Extract column.'],
   },
   'Cleaning a sensor log: order, repeats, gaps, spikes': {
     what: 'A logger file as it comes (rows out of order, times written twice, missing values, spikes, a column not needed) made clean step by step; every step is a node you can open, change or remove.',
@@ -3714,8 +3717,8 @@ const LIST: { group: string; name: string; desc: string; make: () => Project }[]
   { group: 'Getting started', name: 'UV-Vis spectrum: mean ± SD of three measurements', desc: 'Import (skipped lines, units line, decimal commas), Statistics on rows (mean ± SD of the replicates), Statistics on columns over a range of X, error bars, an arrow on the peak, an eV axis on top.', make: spectrumExample },
   { group: 'Getting started', name: 'Generated data: a damped oscillation and noisy samples', desc: 'Generate column (linspace, random), Math column, one Plot with three curves (one with its own X), legend.', make: generatedExample },
   { group: 'Getting started', name: 'Gold n, k: two blocks in one file (Split into columns)', desc: 'A file of optical constants with wl, n and then wl, k written under it: Split into columns lays the blocks side by side (wl, n, k) and one Plot draws n on the left axis, k on its own right axis.', make: nkExample },
-  { group: 'Getting started', name: 'Four runs in a workbook: Auto-extract', desc: 'A spreadsheet workbook (a sheet per run), Auto-extract rules (Time = X, Signal = Y, column D = ±Y in every sheet, each Y named by its sheet), one Plot from the designations; Extract column from one sheet.', make: workbookExample },
-  { group: 'Data preparation', name: 'Rows to columns: a voltage sweep turned into spectra', desc: 'A photocurrent map saved a row per voltage, a column per wavelength: Rows to columns turns it into a spectrum per voltage (the wavelengths read from the old names, every column keeping its voltage), drawn in one Plot; Stack columns lays the spectra one under the other (voltage, wavelength, photocurrent); Convert columns reads a table written as text (300 K, 1.21 ± 0.02 eV, 45 %) as numbers, the units into the names and the errors in their own column.', make: sweepExample },
+  { group: 'Getting started', name: 'Four runs in a workbook: Sheets to columns', desc: 'A spreadsheet workbook (a sheet per run), Sheets to columns rules (Time = X, Signal = Y, column D = ±Y in every sheet, each Y named by its sheet), one Plot from the designations; Extract column from one sheet.', make: workbookExample },
+  { group: 'Data preparation', name: 'Rows to columns: a voltage sweep turned into spectra', desc: 'A photocurrent map saved a row per voltage, a column per wavelength: Rows to columns turns it into a spectrum per voltage (the wavelengths read from the old names, every column keeping its voltage), drawn in one Plot; Stack columns lays the spectra one under the other (voltage, wavelength, photocurrent), Columns to sheets puts each in a sheet of its own (for a Batch); Convert columns reads a table written as text (300 K, 1.21 ± 0.02 eV, 45 %) as numbers, the units into the names and the errors in their own column.', make: sweepExample },
   { group: 'Data preparation', name: 'Batch: the peak of every spectrum in a folder', desc: 'Six photoluminescence spectra, a file each (PL_50K … PL_300K, opened together as from a folder): a Batch smooths every spectrum and picks its maximum; the temperature read from the file names, the files in its order; the peak wavelength against the temperature in a Plot. Open the batch to see its steps on the first file.', make: batchExample },
   { group: 'Data preparation', name: 'Cleaning a sensor log: order, repeats, gaps, spikes', desc: 'A logger file as it comes: Columns leaves the battery out, Filter & sort rows puts the rows in time order and merges the times written twice, Clean data fills the missing temperatures and replaces the spikes (moving median), Data manipulation masks two humidity readings by hand; the raw and the cleaned data in one Plot, the changes in a Workbook.', make: loggerExample },
   { group: 'Data preparation', name: 'Replicate scans: mean ± SD on a common X', desc: 'Three scans on different wavelength grids: Average curves gives their mean ± SD on a common grid (a band in the Plot); Combine columns puts every point of the three scans in one table, in the order of the wavelength.', make: scansExample },

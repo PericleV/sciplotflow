@@ -309,7 +309,7 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
       </div>
       <Messages result={r} />
       <OutPort label={names[k] ? `dataset (${names[k]})` : 'dataset'} port="dataset" />
-      <OutPort label={`workbook (${names.length} sheet${names.length === 1 ? '' : 's'})`} port="workbook" id="book" title="All the sheets, for Extract column (choose the sheet) or Auto-extract" />
+      <OutPort label={`workbook (${names.length} sheet${names.length === 1 ? '' : 's'})`} port="workbook" id="book" title="All the sheets, for Extract column (choose the sheet) or Sheets to columns" />
     </div>
   );
 }
