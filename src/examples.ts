@@ -2,7 +2,7 @@
 import { peakRunKey } from './engine/peaks.ts';
 import type { Edge } from '@xyflow/react';
 import { REGION_COLORS } from './nodes/regionColors.ts';
-import { DRAWING_DEFAULTS, PYTHON_DEFAULTS, CONVERT_DEFAULTS, STACK_DEFAULTS, TOSHEETS_DEFAULTS, TRANSPOSE_DEFAULTS, COLUMNS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, DATAMANIP_DEFAULTS, AVERAGE_DEFAULTS, COMBINE_DEFAULTS, TRANSLATE_DEFAULTS, CURVEMATH_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, PADJUST_DEFAULTS, CONTINGENCY_DEFAULTS, ROC_DEFAULTS, SURVIVAL_DEFAULTS, REGRESS_DEFAULTS, POWER_DEFAULTS, RESAMPLE_DEFAULTS, DISTFIT_DEFAULTS, AGREE_DEFAULTS, METHCOMP_DEFAULTS, LOGISTIC_DEFAULTS, BASELINE_DEFAULTS, WAVEFORM_DEFAULTS, STEPS_DEFAULTS, EVENTS_DEFAULTS, WAVELET_DEFAULTS, FRAC_DEFAULTS, FRFT_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, IMAGE_DEFAULTS, KK_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
+import { DRAWING_DEFAULTS, PYTHON_DEFAULTS, CONVERT_DEFAULTS, STACK_DEFAULTS, TOSHEETS_DEFAULTS, TRANSPOSE_DEFAULTS, COLUMNS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, DATAMANIP_DEFAULTS, AVERAGE_DEFAULTS, COMBINE_DEFAULTS, TRANSLATE_DEFAULTS, CURVEMATH_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, PADJUST_DEFAULTS, CONTINGENCY_DEFAULTS, ROC_DEFAULTS, SURVIVAL_DEFAULTS, REGRESS_DEFAULTS, POWER_DEFAULTS, RESAMPLE_DEFAULTS, DISTFIT_DEFAULTS, AGREE_DEFAULTS, METHCOMP_DEFAULTS, LOGISTIC_DEFAULTS, BASELINE_DEFAULTS, WAVEFORM_DEFAULTS, STEPS_DEFAULTS, EVENTS_DEFAULTS, WAVELET_DEFAULTS, FRAC_DEFAULTS, FRFT_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SMITH_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, IMAGE_DEFAULTS, KK_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
 import { INSET_DEFAULTS, AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, COLORBAR_DEFAULTS, CURVE_STYLE_DEFAULTS, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, SIDE_DEFAULTS, TEXT_SPEC_DEFAULTS, type AxesStyle, type CurveStyle, type SideStyle } from './figure/spec.ts';
 import { PROJECT_VERSION, type Project } from './project.ts';
 import type { AnnotationItem, AppNode, ImportSheet, NodeType, Plot1DData, PlotLegend, PlotPage } from './types.ts';
@@ -1092,6 +1092,24 @@ function groupedBarsExample(): Project {
   });
   link(b, imp, bc, 'dataset');
   return project(b, 'Grouped bars with their values');
+}
+
+// a Smith chart: the impedance of a patch antenna from 2 to 3 GHz (a series RLC near 2.45 GHz, its resistance growing
+// away from resonance), before and after a matching section; markers at 2.40, 2.45 and 2.50 GHz, VSWR 2
+function smithExample(): Project {
+  const b = builder();
+  const rows = ['Frequency (GHz);R (Ω);X (Ω);Antenna'];
+  for (const [name, r0, k] of [['bare', 32, 1], ['matched', 50, 0.55]] as const)
+    for (let i = 0; i <= 100; i++) {
+      const f = 2 + i / 100;
+      const R = r0 + 30 * ((f - 2.45) / 0.5) ** 2;
+      const X = k * 110 * (f / 2.45 - 2.45 / f);
+      rows.push(`${f.toFixed(2)};${R.toFixed(3)};${X.toFixed(3)};${name}`);
+    }
+  const imp = add(b, 'import', 'sm-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'antenna', fileName: 'antenna_impedance.txt', text: rows.join('\n'), textId: 'sm-1', edits: roles({ 0: 'x', 1: 'y', 2: 'y', 3: 'label' }) });
+  const sm = add(b, 'smith', 'sm-chart', 640, 0, { ...SMITH_DEFAULTS, a: 'R (Ω)', b: 'X (Ω)', group: 'Antenna', colors: ['#D55E00', '#0072B2'], arrows: true, markers: '2.40, 2.45, 2.50', markerInfo: ['f', 'z', 'vswr'], markerTable: 'bl', vswr: '2', match: true, page: { ...PLOT_PAGE_DEFAULTS, width: 110, height: 110, name: 'smith' } });
+  link(b, imp, sm, 'dataset');
+  return project(b, 'Smith chart: an antenna before and after matching');
 }
 
 // stacked and 100 % stacked columns, side by side in a Merge
@@ -3787,6 +3805,7 @@ const LIST: { group: string; name: string; desc: string; make: () => Project }[]
   { group: 'Charts: distributions', name: 'Weibull probability plot of failure times', desc: 'A Weibull plot as in reliability work: the hours to failure of two batches on a Weibull probability axis with the hours on a log axis, the fitted Weibull lines (shape and scale in the node); a P-P plot with the 95 % DKW band.', make: weibullExample },
   { group: 'Charts: distributions', name: 'Bland–Altman: two devices', desc: 'After Bland & Altman 1986: the systolic pressure of 60 patients by two devices; the differences against the means, the bias and the limits of agreement with their exact 95 % intervals (shaded), the regression on the mean (device B reads higher in the high range), the points by site; then the differences in % with limits from a regression (Bland & Altman 1999).', make: blandAltmanExample },
   { group: 'Charts: more types', name: 'Pie, doughnut and nested rings', desc: 'The energy sources of a grid: a pie with wind and solar moved out, the names outside on leader lines and the percents inside, a doughnut sorted largest first with the total in the hole, and the two years as nested rings.', make: pieExample },
+  { group: 'Charts: more types', name: 'Smith chart: an antenna before and after matching', desc: 'The impedance of a patch antenna from 2 to 3 GHz, before and after a matching section, on a Smith chart normalized to 50 Ω: the curves in the order of the frequency with arrows, markers at 2.40, 2.45 and 2.50 GHz (f, z, VSWR), the VSWR 2 circle and the matching circle.', make: smithExample },
   { group: 'Charts: more types', name: 'Polar: antenna pattern, wind rose, radar', desc: 'The gain of a half-wave dipole in dB on a half circle (0° at the top, clockwise, −30 dB at the centre), a month of wind as polar bars with compass labels, and three materials scored on six properties as filled radar polygons.', make: polarExample },
   { group: 'Charts: more types', name: 'Scatter matrix of four measures, three species', desc: 'Four measures of 90 flowers (in the manner of Fisher’s iris data): every pair as points coloured by species below the diagonal, the kernel densities on it, the Pearson correlations (with stars) above; X shared down the columns, Y along the rows.', make: scatterMatrixExample },
   { group: 'Charts: more types', name: 'Ternary: soil texture, a diffusion path', desc: 'The soil texture triangle: the clay, sand and silt of 45 samples from three sites (percents, coloured by site), and the Fe–Ni–Cr composition along a diffusion couple as a line with symbols (fractions, a grid every 0.2).', make: ternaryExample },

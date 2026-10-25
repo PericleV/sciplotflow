@@ -33,6 +33,7 @@ import type { BASpec } from './engine/blandaltman.ts';
 import type { PieSpec } from './engine/piechart.ts';
 import type { ContourSpec } from './engine/contour.ts';
 import type { PolarSpec } from './engine/polar.ts';
+import type { SmithSpec } from './engine/smith.ts';
 import type { MatrixSpec } from './engine/scattermatrix.ts';
 import type { TernarySpec } from './engine/ternary.ts';
 import type { WaterfallSpec } from './engine/waterfall.ts';
@@ -538,6 +539,9 @@ export type ContourNode = Node<ContourData, 'contour'>;
 // Polar / radar: series in θ and r, or categories as spokes, a whole figure as a Plot's (no axes drawn).
 export type PolarData = PolarSpec & Pick<Plot1DData, 'axes' | 'legend' | 'annotations' | 'page' | 'insets'>;
 export type PolarNode = Node<PolarData, 'polar'>;
+// Smith chart: impedances, admittances or reflections as Γ in the unit circle, a whole figure as a Plot's (no axes).
+export type SmithData = SmithSpec & Pick<Plot1DData, 'axes' | 'legend' | 'annotations' | 'page' | 'insets'>;
+export type SmithNode = Node<SmithData, 'smith'>;
 // Scatter matrix: every pair of k columns, a whole figure of k × k panels (their axes styled alike, the page its size).
 export type ScatterMatrixData = MatrixSpec & Pick<Plot1DData, 'axes' | 'legend' | 'annotations' | 'page' | 'insets'>;
 export type ScatterMatrixNode = Node<ScatterMatrixData, 'scattermatrix'>;
@@ -638,6 +642,7 @@ export type AppNode =
   | PieNode
   | ContourNode
   | PolarNode
+  | SmithNode
   | ScatterMatrixNode
   | TernaryNode
   | WaterfallNode

@@ -13,7 +13,7 @@ import { generatedValues } from './gencol.ts';
 import { withColumnFunctions } from './colfns.ts';
 export { withColumnFunctions };
 import type { Edge } from '@xyflow/react';
-import type { AnnotationItem, AppNode, CalculusData, ColumnsData, PeakData, PeakWidthData, PickData, CanvasData, DrawingData, DrawingComponent, CanvasItem, CanvasLayout, CurveRow, MathColData, PythonData, RowRule, FitNodeData, GenColData, PageData, Plot1DData, StatsData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from '../types.ts';
+import type { AnnotationItem, AppNode, CalculusData, ColumnsData, PeakData, PeakWidthData, PickData, CanvasData, DrawingData, DrawingComponent, CanvasItem, CanvasLayout, CurveRow, MathColData, PythonData, RowRule, FitNodeData, GenColData, PageData, Plot1DData, StatsData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, SmithData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from '../types.ts';
 import { axisRange } from '../figure/ticks.ts';
 import { autoFrame, axesGeometry, placeAuto, placeInsets, placeLegends } from '../figure/axes.ts';
 import { legendLayout } from '../figure/legendLayout.ts';
@@ -52,6 +52,7 @@ import { probPlot, type ProbGroup, type ProbRow } from './probplot.ts';
 import { blandAltman, type BAGroup, type BAStats } from './blandaltman.ts';
 import { pieChart } from './piechart.ts';
 import { polarChart, radarSeries, toDegrees } from './polar.ts';
+import { smithChart, toGamma, type SmithSet } from './smith.ts';
 import { scatterMatrix } from './scattermatrix.ts';
 import { ternaryChart } from './ternary.ts';
 import { waterfallChart, waterfallZ } from './waterfall.ts';
@@ -1486,6 +1487,42 @@ function noAxes(a: Plot1DData['axes']): Plot1DData['axes'] {
 
 // Polar / radar: θ and r columns (a curve each r), or categories (spokes) and their value columns (a polygon each);
 // masked rows left out; a whole figure as a Plot's with no axes drawn.
+// a Smith chart: the two columns read as Z, Y, Γ or S11, a curve per group in the order of the frequency
+function smithNode(n: { id: string; data: SmithData }, inputs: Inputs): Out {
+  const d = n.data;
+  const ds = mergeSets((inputs.get('dataset') ?? []).flatMap((i) => (i.value?.t === 'dataset' ? [i.value.v] : [])));
+  if (!ds) return { view: { waiting: 'Connect a dataset: R and X (or G and B, Re and Im of Γ, |Γ| and its phase, S11 in dB and its phase), and the frequency.' } };
+  const all = ds.columns;
+  const available = all.map(colInfo);
+  const by = (nm: string) => (nm ? findColumn(all, nm) : undefined);
+  for (const nm of [d.a, d.b, d.freq === '-' ? '' : d.freq, d.group ?? '']) if (nm && !by(nm)) return { errors: [`No column “${nm}”.`], view: { available } };
+  const fCol = d.freq === '-' ? undefined : d.freq ? by(d.freq) : all.find((_, j) => roleOf(all, j) === 'x');
+  const ys = all.filter((c, j) => c !== fCol && roleOf(all, j) === 'y' && c.values.some(Number.isFinite));
+  const numeric = all.filter((c) => c !== fCol && c.values.some(Number.isFinite));
+  const pool = ys.length >= 2 ? ys : numeric;
+  const A = d.a ? by(d.a) : pool[0];
+  const B = d.b ? by(d.b) : pool.find((c) => c !== A);
+  if (!A || !B) return { view: { available, waiting: 'Choose the two columns.' } };
+  const g = toGamma(d.input, A.values, B.values, d.z0, !!d.norm);
+  const mask = maskOf([A, B], A.values.length);
+  const f = fCol ? Array.from(fCol.values) : Array.from({ length: g.length }, () => NaN);
+  const G = d.group ? by(d.group) : undefined;
+  const keys = G ? Array.from({ length: g.length }, (_, i) => keyOf(G, i)) : [];
+  const names = G ? [...new Set(keys)] : [''];
+  const sets: SmithSet[] = names.map((nm) => {
+    const rows = Array.from({ length: g.length }, (_, i) => i).filter((i) => !mask?.[i] && (!G || keys[i] === nm));
+    if (fCol) rows.sort((p, q) => (Number.isFinite(f[p]) ? f[p] : Infinity) - (Number.isFinite(f[q]) ? f[q] : Infinity));
+    return { name: G ? nm : B.name ? `${A.name}, ${B.name}` : 'Γ', g: rows.map((i) => g[i]), f: rows.map((i) => f[i]) };
+  });
+  const r = smithChart(sets, d, fCol?.name ?? '');
+  if (typeof r === 'string') return { errors: [r], view: { available } };
+  const warnings = [...r.warnings];
+  const annotations = autoBar(d.annotations, !!(d.colorbar && r.colorRange), { x: 94, y: 18, length: 64, title: fCol?.name ?? 'f' });
+  const insetFigs = (inputs.get('insets') ?? []).flatMap((i) => (i.value?.t === 'figure' ? [i.value.v] : []));
+  const { figure, legendCurves } = plotFigure({ id: n.id, data: { label: '', style: {}, axes: noAxes(d.axes), legend: d.legend, annotations, page: d.page, insets: d.insets } }, r.curves, warnings, insetFigs);
+  return { outputs: { figure: { t: 'figure', v: figure } }, warnings: [...new Set(warnings)], view: { available, figure, legendCurves } };
+}
+
 function polarNode(n: { id: string; data: PolarData }, inputs: Inputs): Out {
   const d = n.data;
   const ds = mergeSets((inputs.get('dataset') ?? []).flatMap((i) => (i.value?.t === 'dataset' ? [i.value.v] : [])));
@@ -4979,6 +5016,8 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       return contourNode(n, inputs);
     case 'polar':
       return polarNode(n, inputs);
+    case 'smith':
+      return smithNode(n, inputs);
     case 'scattermatrix':
       return scatterMatrixNode(n, inputs);
     case 'ternary':

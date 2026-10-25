@@ -6,7 +6,7 @@
 // r, spokes every so many degrees, their labels. Pure: the geometry is computed in the renderer from the frame.
 import { niceStep } from '../figure/ticks.ts';
 import { column } from './table.ts';
-import { curveStyle, PALETTE, type Curve, type Dash, type ElementLook, type PolarSeries, type SymbolFill, type SymbolShape } from '../figure/spec.ts';
+import { curveStyle, PALETTE, type Curve, type Dash, type ElementLook, type PolarAxes, type PolarSeries, type SymbolFill, type SymbolShape } from '../figure/spec.ts';
 import type { BarTable } from './barchart.ts';
 import { maxOf, minOf } from './minmax.ts';
 
@@ -21,7 +21,7 @@ export type PolarSpec = {
   fill: boolean; // filled to the centre (radar: the polygon)
   close: boolean; // polar: the line closed (the last point back to the first)
   barWidth: number; // degrees (NaN: the step between the angles)
-  zero: 'E' | 'N'; // where 0° is
+  zero: 'E' | 'N' | 'W' | 'S'; // where 0° is (paxes.zeroAngle: any angle)
   clockwise: boolean;
   from: number; // the sector shown, degrees (0 – 360 = all)
   to: number;
@@ -29,7 +29,7 @@ export type PolarSpec = {
   rMax: number;
   rTicks: number; // about this many circles
   thetaStep: number; // degrees between spokes
-  thetaLabels: 'deg' | 'compass' | 'rad' | 'none';
+  thetaLabels: 'deg' | 'compass' | 'compass16' | 'rad' | 'custom' | 'none';
   rLabelAngle: number; // degrees: where the values of r are written
   gridShape: 'circle' | 'polygon'; // radar: the grid
   colors?: string[];
@@ -40,6 +40,7 @@ export type PolarSpec = {
   symbolFill: SymbolFill;
   opacity: number; // of the fill
   gridColor: string;
+  paxes?: PolarAxes; // the axes' own look (the Axes tab)
 };
 
 export type PolarResult = { curves: Curve[]; warnings: string[] };
@@ -49,6 +50,13 @@ const R2D = 180 / Math.PI;
 // the circles of r: nice values from rMin to rMax
 export function rTicksOf(lo: number, hi: number, count: number): number[] {
   const step = niceStep(hi - lo, Math.max(2, count));
+  const out: number[] = [];
+  for (let k = Math.ceil(lo / step - 1e-9); k * step <= hi + step * 1e-9; k++) out.push(+(k * step).toPrecision(12));
+  return out.filter((v) => v > lo + 1e-12 * Math.abs(hi - lo));
+}
+
+// the circles of r every `step` from lo to hi (lo itself left out: the centre)
+function stepTicks(lo: number, hi: number, step: number): number[] {
   const out: number[] = [];
   for (let k = Math.ceil(lo / step - 1e-9); k * step <= hi + step * 1e-9; k++) out.push(+(k * step).toPrecision(12));
   return out.filter((v) => v > lo + 1e-12 * Math.abs(hi - lo));
@@ -107,7 +115,10 @@ export function polarChart(series: { name: string; theta: number[]; r: number[] 
         series: items,
         lo,
         hi,
-        rTicks: rTicksOf(lo, hi, d.rTicks || 5),
+        rTicks: d.paxes?.rStep && d.paxes.rStep > 0 && (hi - lo) / d.paxes.rStep <= 200 ? stepTicks(lo, hi, d.paxes.rStep) : rTicksOf(lo, hi, d.rTicks || 5),
+        // where 0° is: an angle of its own, else E, N, W, S (a radar: at the top)
+        zeroDeg: d.kind === 'radar' ? 90 : Number.isFinite(d.paxes?.zeroAngle) ? d.paxes!.zeroAngle! : { E: 0, N: 90, W: 180, S: 270 }[d.zero] ?? 0,
+        ...(d.paxes ? { ax: d.paxes } : {}),
         // a radar: the first spoke at the top, the others clockwise
         zero: d.kind === 'radar' ? 'N' : d.zero,
         clockwise: d.kind === 'radar' ? true : d.clockwise,

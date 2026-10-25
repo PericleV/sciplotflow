@@ -166,6 +166,7 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
     case 'contour':
       return handle === 'figure' ? 'figure' : handle === 'grid' || handle === 'row' || handle === 'column' ? 'dataset' : null;
     case 'polar':
+    case 'smith':
     case 'ternary':
       return handle === 'figure' ? 'figure' : null;
     case 'waterfall':
@@ -319,6 +320,7 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
     case 'pie':
     case 'contour':
     case 'polar':
+    case 'smith':
     case 'scattermatrix':
     case 'ternary':
     case 'waterfall':
@@ -356,7 +358,7 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
 
 // Target handles that accept any number of incoming connections (drawn as squares).
 // (3D stacked maps: A, B, C … one dataset each)
-export const isMultiInput = (node: AppNode | undefined, handle: string | null | undefined) => !(node?.type === 'plot3d' && node.data.kind === 'layers' && handle === 'dataset') && ((node?.type === 'canvas' && handle === 'figures') || ((node?.type === 'plot1d' || node?.type === 'histogram' || node?.type === 'barchart' || node?.type === 'boxviolin' || node?.type === 'probplot' || node?.type === 'blandaltman' || node?.type === 'pie' || node?.type === 'contour' || node?.type === 'polar' || node?.type === 'scattermatrix' || node?.type === 'ternary' || node?.type === 'waterfall' || node?.type === 'plot3d') && (handle === 'dataset' || handle === 'insets')));
+export const isMultiInput = (node: AppNode | undefined, handle: string | null | undefined) => !(node?.type === 'plot3d' && node.data.kind === 'layers' && handle === 'dataset') && ((node?.type === 'canvas' && handle === 'figures') || ((node?.type === 'plot1d' || node?.type === 'histogram' || node?.type === 'barchart' || node?.type === 'boxviolin' || node?.type === 'probplot' || node?.type === 'blandaltman' || node?.type === 'pie' || node?.type === 'contour' || node?.type === 'polar' || node?.type === 'smith' || node?.type === 'scattermatrix' || node?.type === 'ternary' || node?.type === 'waterfall' || node?.type === 'plot3d') && (handle === 'dataset' || handle === 'insets')));
 
 export function canConnect(source?: AppNode, target?: AppNode, targetHandle?: string | null, sourceHandle?: string | null, ctx?: PortContext) {
   if (!source || !target || source.id === target.id) return false;

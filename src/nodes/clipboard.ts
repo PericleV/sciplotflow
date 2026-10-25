@@ -47,7 +47,7 @@ const OWN_PART: Record<string, string[]> = { axes: ['pos', 'panelLabel', 'x', 'y
 export function settingsOf(n: AppNode): Record<string, unknown> {
   const { caption: _c, collapsed: _k, ...rest } = structuredClone(n.data) as Record<string, unknown>;
   for (const k of OWN[n.type] ?? []) delete rest[k];
-  if (n.type === 'plot1d' || n.type === 'histogram' || n.type === 'barchart' || n.type === 'boxviolin' || n.type === 'probplot' || n.type === 'blandaltman' || n.type === 'pie' || n.type === 'contour' || n.type === 'polar' || n.type === 'scattermatrix' || n.type === 'ternary' || n.type === 'waterfall' || n.type === 'plot3d')
+  if (n.type === 'plot1d' || n.type === 'histogram' || n.type === 'barchart' || n.type === 'boxviolin' || n.type === 'probplot' || n.type === 'blandaltman' || n.type === 'pie' || n.type === 'contour' || n.type === 'polar' || n.type === 'smith' || n.type === 'scattermatrix' || n.type === 'ternary' || n.type === 'waterfall' || n.type === 'plot3d')
     for (const [part, keys] of Object.entries(OWN_PART)) {
       const o = rest[part] as Record<string, unknown> | undefined;
       if (o) for (const k of keys) delete o[k];

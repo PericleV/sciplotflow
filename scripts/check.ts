@@ -152,12 +152,13 @@ import { averageNode } from '../src/engine/signalnodes.ts';
 import { AVERAGE_DEFAULTS, BARCHART_DEFAULTS, DIGITIZER_DEFAULTS, HISTOGRAM_DEFAULTS } from '../src/defaults.ts';
 import { barChart, rawTable, wideTable, sortTable, type BarTable } from '../src/engine/barchart.ts';
 import { boxGroups, boxStats, boxViolin, violinStats } from '../src/engine/boxviolin.ts';
-import { BLANDALTMAN_DEFAULTS, BOXVIOLIN_DEFAULTS, CONTOUR_DEFAULTS, PIE_DEFAULTS, POLAR_DEFAULTS, PROBPLOT_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS } from '../src/defaults.ts';
+import { BLANDALTMAN_DEFAULTS, BOXVIOLIN_DEFAULTS, CONTOUR_DEFAULTS, PIE_DEFAULTS, POLAR_DEFAULTS, SMITH_DEFAULTS, PROBPLOT_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS } from '../src/defaults.ts';
 import { blandAltman } from '../src/engine/blandaltman.ts';
 import { pieAngles, pieChart } from '../src/engine/piechart.ts';
 import { bracketCurves, SIG_DEFAULTS, significance, type SigElement, type SigSpec } from '../src/engine/signif.ts';
 import type { Dataset } from '../src/engine/table.ts';
 import { polarChart, radarSeries } from '../src/engine/polar.ts';
+import { gammaOfZ, markerText, smithChart, toGamma, zOfGamma } from '../src/engine/smith.ts';
 import { scatterMatrix } from '../src/engine/scattermatrix.ts';
 import { normalize, ternaryChart, ternaryXY } from '../src/engine/ternary.ts';
 import { asGrid, coarsen, contourLevels, contourLines, contourPlot, gridFromMatrix, gridFromScatter, profileList, profiles, type Grid } from '../src/engine/contour.ts';
@@ -3255,6 +3256,22 @@ for (const ex of EXAMPLES) {
   const rad = polarChart(rs.series, { ...POLAR_DEFAULTS, kind: 'radar', fill: true, looks: [null, { line: { dash: 'dash', width: 2 }, opacity: 0.6 }] }, rs.spokes);
   const R = typeof rad === 'string' ? null : rad.curves[0].polar!;
   ok(rs.spokes.length === 5 && rs.series[0].theta.join() === '0,72,144,216,288' && !!R && R.thetaStep === 72 && R.series[1].dash === 'dash' && R.series[1].lineWidth === 2 && R.series[1].opacity === 0.6 && R.series[0].opacity === 0.25 && R.series.every((s) => s.close), 'Radar: 5 spokes evenly, closed polygons, a series with its own line and fill');
+  // the Axes tab: 0° where asked (E, N, W, S, any angle; a radar at the top), the circles every step, the axes' look
+  // carried to the drawing
+  const zeroOf = (p: Partial<typeof POLAR_DEFAULTS>) => {
+    const r = polarChart([{ name: 'r', theta: [0, 90], r: [1, 2] }], { ...POLAR_DEFAULTS, ...p });
+    return typeof r === 'string' ? NaN : (r.curves[0].polar!.zeroDeg ?? NaN);
+  };
+  const stepped = polarChart([{ name: 'r', theta: [0, 90, 180], r: [1.2, 3.7, 2] }], { ...POLAR_DEFAULTS, paxes: { rStep: 0.5, hole: 0.2, rReverse: true, minor: 1 } });
+  const S = typeof stepped === 'string' ? null : stepped.curves[0].polar!;
+  // Smith chart: Γ of Z, Y, Γ, |Γ|∠, S11 (dB, phase); z of Γ; what a marker says; a point outside the circle at the rim
+  const g1 = (inp: Parameters<typeof toGamma>[0], a: number, b: number, z0 = 50, norm = false) => toGamma(inp, [a], [b], z0, norm)[0].map((v) => +v.toFixed(6)).join();
+  const zb = zOfGamma(gammaOfZ([0.5, -1.2]));
+  const mt = markerText([1 / 3, 0], 2.45, ['f', 'z', 'vswr', 'rl'], 50, false, 'Frequency (GHz)');
+  const sc = smithChart([{ name: 'a', g: [[0, 0], [2, 0]], f: [1, 2] }], { ...SMITH_DEFAULTS, markers: '1.9' }, 'f (GHz)');
+  const sf = typeof sc === 'string' ? null : sc.curves[0].smith!;
+  ok(g1('z', 50, 0) === '0,0' && g1('z', 0, 0) === '-1,0' && g1('z', 1, 1, 50, true) === '0.2,0.4' && g1('y', 0.02, 0) === '0,0' && g1('gamma', 0.3, -0.4) === '0.3,-0.4' && g1('gammaPolar', 0.5, 90) === '0,0.5' && g1('s11', -20, 180) === '-0.1,0' && Math.abs(zb[0] - 0.5) < 1e-12 && Math.abs(zb[1] + 1.2) < 1e-12 && mt.join(' | ') === 'f = 2.45 GHz | Z = 100 + j0 Ω | VSWR = 2 | RL = 9.54 dB' && !!sf && sf.series[0].u[1] === 1 && sf.series[0].markers[0].lines[0].startsWith('f = 2') && typeof sc !== 'string' && sc.warnings.some((w) => w.includes('outside')), `Smith chart: Γ of Z, Y, Γ, S11; back to z; a marker (${mt.join(', ')}); a point outside at the rim`);
+  ok([zeroOf({ zero: 'E' }), zeroOf({ zero: 'N' }), zeroOf({ zero: 'W' }), zeroOf({ zero: 'S' }), zeroOf({ paxes: { zeroAngle: 45 } }), zeroOf({ kind: 'radar', zero: 'S' })].join() === '0,90,180,270,45,90' && S?.rTicks.join() === '0.5,1,1.5,2,2.5,3,3.5,4' && S.ax?.hole === 0.2 && S.ax.rReverse === true && S.ax.minor === 1, `Polar axes: 0° where asked, the circles every step (${S?.rTicks.join(', ')}), the axes' look to the drawing`);
 }
 
 {

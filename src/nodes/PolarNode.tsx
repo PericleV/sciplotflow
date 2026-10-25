@@ -1,6 +1,6 @@
-// Polar / radar: the data (θ and r columns, or categories as spokes and value columns), how the series are drawn, where
-// 0° is and the direction, the sector, the range of r, the grid and its labels; every series its colour and own look (⚙);
-// the figure with the same tabs as a Plot.
+// Polar / radar: the data (θ and r columns, or categories as spokes and value columns), how the series are drawn; every
+// series its colour and own look (⚙); the figure with the same tabs as a Plot, its Axes tab its own (where 0° is, the
+// direction, the sector, r, the grid and its labels: PolarAxesEditor).
 import { useState } from 'react';
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
@@ -12,6 +12,7 @@ import { ColorSwatches, LookPanel } from './ColorSwatches.tsx';
 import { ColumnsPicker } from './ColumnsPicker.tsx';
 import { SYMBOLS } from './figureOptions.ts';
 import { FigureTabs, InsetsPort } from './FigureTabs.tsx';
+import { PolarAxesEditor } from './PolarAxesEditor.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
 import { FigureView } from './FigureView.tsx';
 import { Check, Field, InPort, Messages, NumInput, OutPort, Select } from './ui.tsx';
@@ -103,69 +104,6 @@ export function PolarNodeView({ id, data: d }: NodeProps<PolarNode>) {
               </Field>
             )}
           </span>
-          {!radar && (
-            <>
-              <span>Angles</span>
-              <span className="row wrap">
-                <Select<PolarSpec['zero']>
-                  value={d.zero}
-                  title="Where 0° is"
-                  options={[
-                    ['E', '0° at the right'],
-                    ['N', '0° at the top'],
-                  ]}
-                  onChange={(zero) => set({ zero })}
-                />
-                <Check label="Clockwise" value={d.clockwise} onChange={(clockwise) => set({ clockwise })} />
-                <Field label="From" title="The sector shown, degrees (0 to 360: all; 0 to 180: a half circle)">
-                  <NumInput className="tiny" step={15} value={d.from} onChange={(from) => set({ from: Number.isFinite(from) ? from : 0 })} />
-                </Field>
-                <Field label="To">
-                  <NumInput className="tiny" step={15} value={d.to} onChange={(to) => set({ to: Number.isFinite(to) ? to : 360 })} />
-                </Field>
-              </span>
-              <span>Spokes</span>
-              <span className="row wrap">
-                <Field label="Every °">
-                  <NumInput className="tiny" min={1} step={5} value={d.thetaStep} onChange={(thetaStep) => set({ thetaStep: Math.max(1, thetaStep || 30) })} />
-                </Field>
-                <Select<PolarSpec['thetaLabels']>
-                  value={d.thetaLabels}
-                  options={[
-                    ['deg', 'degrees'],
-                    ['compass', 'compass (N, NE …)'],
-                    ['rad', 'radians (π)'],
-                    ['none', 'no labels'],
-                  ]}
-                  onChange={(thetaLabels) => set({ thetaLabels })}
-                />
-              </span>
-            </>
-          )}
-          <span>r</span>
-          <span className="row wrap">
-            <NumInput className="short" value={d.rMin} placeholder="auto" title="At the centre" onChange={(rMin) => set({ rMin })} />–<NumInput className="short" value={d.rMax} placeholder="auto" onChange={(rMax) => set({ rMax })} />
-            <Field label="Circles" title="About this many">
-              <NumInput className="tiny" min={1} max={20} step={1} value={d.rTicks} onChange={(rTicks) => set({ rTicks: Math.min(20, Math.max(1, Math.floor(rTicks) || 5)) })} />
-            </Field>
-            <Field label="Labels at °" title="The spoke the values of r are written along">
-              <NumInput className="tiny" step={15} value={d.rLabelAngle} onChange={(rLabelAngle) => set({ rLabelAngle: Number.isFinite(rLabelAngle) ? rLabelAngle : 22.5 })} />
-            </Field>
-          </span>
-          <span>Grid</span>
-          <span className="row wrap">
-            <input className="nodrag color" type="color" value={d.gridColor || '#b0b0b0'} onChange={(e) => set({ gridColor: e.target.value })} />
-            {radar && (
-              <Select<PolarSpec['gridShape']> seg
-                value={d.gridShape}
-                options={[
-                  ['polygon', 'polygons'],
-                  ['circle', 'circles'],
-                ]}
-                onChange={(gridShape) => set({ gridShape })}
-              />
-            )}
-          </span>
           <span title="For every series (⚙ beside a colour: that series' own)">Look</span>
           <span className="row wrap">
             <Field label="Line">
@@ -204,7 +142,7 @@ export function PolarNodeView({ id, data: d }: NodeProps<PolarNode>) {
       </NodeOptions>
       {fig && <FigureView fig={fig} width={600} page={page} setPage={(p) => set({ page: { ...page, ...p } })} layoutTitle="Move and resize the frame with the mouse (it is then placed by hand: Page ▸ Frame; Shift keeps its shape). Off: the legend and the annotations move." />}
       <NodeOptions>
-        <FigureTabs id={id} data={d} legendCurves={r?.view.legendCurves ?? []} pos={fig?.axes[0]?.style.pos} port={false} />
+        <FigureTabs id={id} data={d} legendCurves={r?.view.legendCurves ?? []} pos={fig?.axes[0]?.style.pos} port={false} axesEditor={<PolarAxesEditor d={d} set={set} />} />
         <Messages result={r} />
       </NodeOptions>
       <InsetsPort />

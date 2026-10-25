@@ -10,7 +10,7 @@ import { legendLayout } from './legendLayout.ts';
 import { dashArray, hasLine, hasSymbols, innerPath, lineHeightOf, lineOnly, parseRich, plainText, richMetrics, runMath, runSize, splinePath, symbolPath, textRunWidth, type Run } from './draw.ts';
 import { mathBox, mathError, mathFace, useMathVersion } from '../math/store.ts';
 import { CORNERED, isClosed as pathClosed, mapSegs, parsePath, pathBox, pathPolylines, pathText, radiiOf, roundedRectD, shapeToPath, turnedPath, type Seg } from './paths.ts';
-import { parseBreaks } from './ticks.ts';
+import { formatLabels, parseBreaks } from './ticks.ts';
 import { barOffset, barReach, barTitle } from './colorbar.ts';
 import { ThreeView } from './render3d.tsx';
 import { aboveOf, arcPath, piePath, turnPt, boxHandleAt, resizeBox, type Box4, bendPoints, bendText, bentLine, bentPoints, bracketBase, bracketPath, bracketTextPlace, elbowCorners, endAngles, lineLength, niceLength, offsetLine, pointAlong, pointsD, pointsPath, roundedCorners, starPoints, taperOutline, throughLine, throughPoints, trimLine, waveLine, type Pt } from './shapes.ts';
@@ -31,6 +31,8 @@ import {
   type Figure,
   type FigureBox,
   type GradFill,
+  type GridLook,
+  SIDE_DEFAULTS,
   hasGrad,
   legendBox,
   type LegendSpec,
@@ -819,10 +821,19 @@ function WedgesView({ c, frame, defaults, gid }: { c: Curve; frame: Box; default
 function PolarView({ c, frame, defaults }: { c: Curve; frame: Box; defaults: TextDefaults }) {
   const P = c.polar!;
   const t = resolveText(undefined, { ...defaults, size: defaults.size * 0.9 });
+  // the axes' own look (the Axes tab): the texts of θ and of r, their titles
+  const A = P.ax ?? {};
+  const tt = A.thetaText ? resolveText(A.thetaText, t) : t;
+  const rt = A.rText ? resolveText(A.rText, t) : t;
+  const zero = P.zeroDeg ?? (P.zero === 'N' ? 90 : 0);
+  const gap = A.thetaGap ?? 0;
+  const tickOut = A.ticksOut && A.ticksOut > 0 ? A.ticksOut : 0;
+  const titleT = resolveText(A.thetaTitleText, defaults);
+  const titleH = A.thetaTitle ? titleT.size * 1.8 : 0;
   const [s0, s1] = P.sector;
   const full = s1 - s0 >= 359.999;
   // screen angle (radians, counterclockwise from the right) of a θ
-  const ang = (th: number) => (((P.zero === 'N' ? 90 : 0) + (P.clockwise ? -1 : 1) * th) * Math.PI) / 180;
+  const ang = (th: number) => ((zero + (P.clockwise ? -1 : 1) * th) * Math.PI) / 180;
   // the sector's extent in units of the radius (with the centre), then fitted in the frame, room left for the labels
   const samples = full ? [0, 90, 180, 270] : Array.from({ length: 37 }, (_, k) => s0 + ((s1 - s0) * k) / 36);
   const ux = [0, ...samples.map((th) => Math.cos(ang(th)))];
@@ -830,49 +841,105 @@ function PolarView({ c, frame, defaults }: { c: Curve; frame: Box; defaults: Tex
   const [bx0, bx1, by0, by1] = [minOf(ux), maxOf(ux), minOf(uy), maxOf(uy)];
   // room for the labels of θ: across, the widest one (a radar's categories); along, a line of text
   const labelled = P.thetaLabels !== 'none' || !!P.spokes;
-  const padX = !labelled ? 4 : P.spokes ? maxOf(P.spokes.map((s) => richMetrics(s, t).width)) + t.size : t.size * 2.6;
-  const padY = !labelled ? 4 : t.size * 2;
-  const R = Math.max(5, Math.min((frame.w - 2 * padX) / (bx1 - bx0 || 1), (frame.h - 2 * padY) / (by1 - by0 || 1)));
+  const custom = (A.thetaCustom ?? '').split(',').map((q) => q.trim());
+  const padX = (!labelled ? 4 : P.spokes ? maxOf(P.spokes.map((q) => richMetrics(q, tt).width)) + tt.size : P.thetaLabels === 'custom' ? maxOf([1, ...custom.map((q) => richMetrics(q, tt).width)]) + tt.size : tt.size * 2.6) + gap + tickOut;
+  const padY = (!labelled ? 4 : tt.size * 2) + gap + tickOut;
+  const fh = frame.h - titleH;
+  const R = Math.max(5, Math.min((frame.w - 2 * padX) / (bx1 - bx0 || 1), (fh - 2 * padY) / (by1 - by0 || 1)));
   const cx = frame.x + padX - bx0 * R + (frame.w - 2 * padX - (bx1 - bx0) * R) / 2;
-  const cy = frame.y + padY + by1 * R + (frame.h - 2 * padY - (by1 - by0) * R) / 2;
-  const rad = (r: number) => (Math.max(P.lo, Math.min(P.hi, r)) - P.lo) / (P.hi - P.lo || 1);
+  const cy = frame.y + padY + by1 * R + (fh - 2 * padY - (by1 - by0) * R) / 2;
+  // r as a part of the radius: from the hole's edge (none: the centre) out, or reversed (the largest at the centre)
+  const hole = Math.min(0.8, Math.max(0, A.hole ?? 0));
+  const frac = (r: number) => {
+    const f = (Math.max(P.lo, Math.min(P.hi, r)) - P.lo) / (P.hi - P.lo || 1);
+    return A.rReverse ? 1 - f : f;
+  };
+  const rad = (r: number) => hole + (1 - hole) * frac(r);
   const at = (th: number, r: number): [number, number] => [cx + rad(r) * R * Math.cos(ang(th)), cy - rad(r) * R * Math.sin(ang(th))];
+  const atU = (th: number, u: number): [number, number] => [cx + u * Math.cos(ang(th)), cy - u * Math.sin(ang(th))];
   const pt = (p: [number, number]) => `${n2(p[0])},${n2(p[1])}`;
   const grid = c.style.color;
-  // the spokes: every thetaStep degrees in the sector (or the radar's categories)
+  // a family of grid lines: shown or not, its colour (the grid's), width, dashes, opacity
+  const look = (L: GridLook | undefined, w: number, def: GridLook = {}) => {
+    const m = { ...def, ...L };
+    if (m.show === false) return null;
+    const width = m.width ?? w;
+    return { stroke: m.color || grid, strokeWidth: width, strokeDasharray: m.dash && m.dash !== 'solid' ? dashArray(m.dash, width) : undefined, strokeOpacity: m.opacity !== undefined && m.opacity < 1 ? m.opacity : undefined };
+  };
+  const ringLook = look(A.rings, 0.5);
+  const rimLook = look(A.rim, 0.8);
+  const spokeLook = look(A.spokesLook, 0.5);
+  const minorLook = look(A.minorLook, 0.3, { opacity: 0.6, dash: 'dot' });
+  // the spokes: every thetaStep degrees in the sector (or the radar's categories); the minor ones between them
   const spokes: number[] = [];
   for (let th = s0; th < s1 + 1e-9 && spokes.length < 400; th += P.thetaStep) if (!(full && th >= s0 + 360 - 1e-9)) spokes.push(th);
-  // a ring of the grid at r: a circle (an arc on a sector) or a polygon through the spokes
-  const ring = (r: number) => {
-    if (P.gridShape === 'polygon') return `M${spokes.map((th) => pt(at(th, r))).join('L')}Z`;
-    const pts = Array.from({ length: 121 }, (_, k) => s0 + ((s1 - s0) * k) / 120).map((th) => pt(at(th, r)));
-    return `M${pts.join('L')}${full ? 'Z' : ''}`;
+  const minorN = !P.spokes && A.minor && A.minor > 0 ? Math.min(9, Math.floor(A.minor)) : 0;
+  const minorSpokes: number[] = [];
+  if (minorN) for (const th of spokes) for (let m = 1; m <= minorN; m++) {
+    const v = th + (P.thetaStep * m) / (minorN + 1);
+    if (v < s1 - 1e-9) minorSpokes.push(v);
+  }
+  // a ring of the grid at r: a circle (an arc on a sector) or a polygon through the spokes; reversed for a hole's inside
+  const ringPts = (r: number) => (P.gridShape === 'polygon' ? spokes.map((th) => at(th, r)) : Array.from({ length: 121 }, (_, k) => s0 + ((s1 - s0) * k) / 120).map((th) => at(th, r)));
+  const ring = (r: number) => `M${ringPts(r).map(pt).join('L')}${full || P.gridShape === 'polygon' ? 'Z' : ''}`;
+  // the area between two rings (a band, the disc): the outer one forward, the inner one back (the centre for none)
+  const area = (ra: number | null, rb: number) => {
+    const outer = ringPts(rb);
+    const inner = ra === null ? (hole > 0 ? ringPts(P.lo) : null) : ringPts(ra);
+    if (full || P.gridShape === 'polygon') return `M${outer.map(pt).join('L')}Z${inner ? `M${[...inner].reverse().map(pt).join('L')}Z` : ''}`;
+    return `M${outer.map(pt).join('L')}L${inner ? [...inner].reverse().map(pt).join('L') : pt([cx, cy])}Z`;
   };
+  const COMPASS16 = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
   const thetaText = (th: number, k: number) => {
     if (P.spokes) return P.spokes[k] ?? '';
     const v = ((th % 360) + 360) % 360;
+    if (P.thetaLabels === 'custom') return custom[k] ?? '';
     // compass: θ as a bearing (0 = N, 90 = E …; meant with 0° at the top, clockwise)
     if (P.thetaLabels === 'compass') return Math.abs(v / 45 - Math.round(v / 45)) < 1e-9 ? ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(v / 45) % 8] : `${+v.toFixed(1)}°`;
+    if (P.thetaLabels === 'compass16') return Math.abs(v / 22.5 - Math.round(v / 22.5)) < 1e-9 ? COMPASS16[Math.round(v / 22.5) % 16] : `${+v.toFixed(1)}°`;
     if (P.thetaLabels === 'rad') {
       const q = v / 180;
-      const frac = (n: number, dd: number) => (n === 0 ? '0' : `${n === 1 ? '' : n}π${dd === 1 ? '' : `/${dd}`}`);
-      for (const dd of [1, 2, 3, 4, 6, 12]) if (Math.abs(q * dd - Math.round(q * dd)) < 1e-9) return frac(Math.round(q * dd), dd);
+      const fr = (n: number, dd: number) => (n === 0 ? '0' : `${n === 1 ? '' : n}π${dd === 1 ? '' : `/${dd}`}`);
+      for (const dd of [1, 2, 3, 4, 6, 12]) if (Math.abs(q * dd - Math.round(q * dd)) < 1e-9) return fr(Math.round(q * dd), dd);
       return (v / R2D_).toFixed(2);
     }
     return `${+v.toFixed(1)}°`;
   };
-  const fmtR = (v: number) => String(+v.toPrecision(6)).replace('-', '−');
+  // the values of r: as before, or in the format asked
+  const rLabels = A.rFormat || (A.rDecimals !== undefined && A.rDecimals >= 0) ? formatLabels(P.rTicks, false, { ...SIDE_DEFAULTS, ...(A.rFormat ? { format: A.rFormat } : {}), ...(A.rDecimals !== undefined && A.rDecimals >= 0 ? { decimals: A.rDecimals } : {}) }).labels : P.rTicks.map((v) => String(+v.toPrecision(6)).replace('-', '−'));
+  // the minor circles: halfway between two
+  const radii = [P.lo, ...P.rTicks.filter((r) => r < P.hi - 1e-12 * Math.abs(P.hi)), P.hi];
+  const minorRings = minorN ? radii.slice(1).map((r, k) => (radii[k] + r) / 2) : [];
+  // the r title: along the spoke of the values, beside its middle
+  const la = ang(P.rLabelAngle);
+  let rot = (-la * 180) / Math.PI;
+  if (rot > 90) rot -= 180;
+  if (rot < -90) rot += 180;
+  const rTitleT = resolveText(A.rTitleText, defaults);
+  const mid = atU(P.rLabelAngle, R * (hole + (1 - hole) / 2));
+  const off = rt.size * 1.2 + rTitleT.size * 0.8;
   return (
     <g>
+      {/* the disc and its bands */}
+      {A.disc && <path d={area(null, P.hi)} fill={A.disc} fillOpacity={A.discOpacity} fillRule="evenodd" stroke="none" />}
+      {A.bands && radii.slice(1).map((r, k) => (k % 2 === 0 ? <path key={`band${k}`} d={area(k === 0 ? (hole > 0 ? P.lo : null) : radii[k], r)} fill={A.bands} fillOpacity={A.bandOpacity ?? 0.12} fillRule="evenodd" stroke="none" /> : null))}
       {/* the grid */}
-      {P.rTicks.map((r) => (
-        <path key={`r${r}`} d={ring(r)} fill="none" stroke={grid} strokeWidth={0.5} />
-      ))}
-      <path d={ring(P.hi)} fill="none" stroke={grid} strokeWidth={0.8} />
-      {spokes.map((th) => (
-        <path key={`s${th}`} d={`M${pt(at(th, P.lo))}L${pt(at(th, P.hi))}`} stroke={grid} strokeWidth={0.5} />
-      ))}
-      {!full && [s0, s1].map((th) => <path key={`e${th}`} d={`M${pt(at(th, P.lo))}L${pt(at(th, P.hi))}`} stroke={grid} strokeWidth={0.8} />)}
+      {minorLook && minorRings.map((r) => <path key={`mr${r}`} d={ring(r)} fill="none" {...minorLook} />)}
+      {minorLook && minorSpokes.map((th) => <path key={`ms${th}`} d={`M${pt(at(th, P.lo))}L${pt(at(th, P.hi))}`} {...minorLook} />)}
+      {ringLook && P.rTicks.map((r) => <path key={`r${r}`} d={ring(r)} fill="none" {...ringLook} />)}
+      {spokeLook && spokes.map((th) => <path key={`s${th}`} d={`M${pt(at(th, P.lo))}L${pt(at(th, P.hi))}`} {...spokeLook} />)}
+      {rimLook && <path d={ring(A.rReverse ? P.lo : P.hi)} fill="none" {...rimLook} />}
+      {rimLook && hole > 0 && <path d={ring(A.rReverse ? P.hi : P.lo)} fill="none" {...rimLook} />}
+      {rimLook && !full && [s0, s1].map((th) => <path key={`e${th}`} d={`M${pt(at(th, P.lo))}L${pt(at(th, P.hi))}`} {...rimLook} />)}
+      {/* ticks outside the rim: at every spoke, half as long at the minor ones */}
+      {tickOut > 0 && (
+        <path
+          d={[...spokes.map((th) => [th, tickOut] as const), ...minorSpokes.map((th) => [th, tickOut / 2] as const)].map(([th, len]) => `M${pt(atU(th, R))}L${pt(atU(th, R + len))}`).join('')}
+          fill="none"
+          stroke={rimLook?.stroke ?? grid}
+          strokeWidth={rimLook?.strokeWidth ?? 0.8}
+        />
+      )}
       {/* the series */}
       {P.series.map((s, j) => {
         const pts = s.theta.map((th, i) => (Number.isFinite(th) && Number.isFinite(s.r[i]) ? at(th, s.r[i]) : null));
@@ -883,7 +950,7 @@ function PolarView({ c, frame, defaults }: { c: Curve; frame: Box; defaults: Tex
           const w = s.barWidth || (steps.length ? minOf(steps) * 0.9 : 10);
           s.theta.forEach((th, i) => {
             const r = s.r[i];
-            if (!Number.isFinite(th) || !Number.isFinite(r) || rad(r) <= 0) return;
+            if (!Number.isFinite(th) || !Number.isFinite(r) || !(r > P.lo)) return;
             const arc = Array.from({ length: 9 }, (_, k) => th - w / 2 + (w * k) / 8);
             const d = `M${pt(at(th - w / 2, P.lo))}L${arc.map((a) => pt(at(a, r))).join('L')}L${pt(at(th + w / 2, P.lo))}Z`;
             parts.push(<path key={`b${i}`} d={d} fill={s.color} fillOpacity={Math.max(0.6, s.opacity)} stroke={s.showLine ? '#ffffff' : 'none'} strokeWidth={0.5} />);
@@ -929,19 +996,193 @@ function PolarView({ c, frame, defaults }: { c: Curve; frame: Box; defaults: Tex
       {P.thetaLabels !== 'none' || P.spokes
         ? spokes.map((th, k) => {
             const a = ang(th);
-            const [x, y] = [cx + (R + t.size * 0.6) * Math.cos(a), cy - (R + t.size * 0.6) * Math.sin(a)];
+            const d = R + tt.size * 0.6 + gap + tickOut;
+            const [x, y] = [cx + d * Math.cos(a), cy - d * Math.sin(a)];
             const ca = Math.cos(a);
-            return <RichText key={`t${th}`} x={x} y={y} text={thetaText(th, k)} st={t} anchor={Math.abs(ca) < 0.2 ? 'middle' : ca > 0 ? 'start' : 'end'} valign={Math.sin(a) > 0.3 ? 'bottom' : Math.sin(a) < -0.3 ? 'top' : 'middle'} />;
+            return <RichText key={`t${th}`} x={x} y={y} text={thetaText(th, k)} st={tt} anchor={Math.abs(ca) < 0.2 ? 'middle' : ca > 0 ? 'start' : 'end'} valign={Math.sin(a) > 0.3 ? 'bottom' : Math.sin(a) < -0.3 ? 'top' : 'middle'} />;
           })
         : null}
-      {P.rTicks.map((r) => {
-        const [x, y] = at(P.rLabelAngle, r);
-        return <RichText key={`rl${r}`} x={x + 2} y={y - 1} text={fmtR(r)} st={t} anchor="start" valign="bottom" num />;
-      })}
+      {A.rLabels !== false &&
+        P.rTicks.map((r, k) => {
+          const [x, y] = at(P.rLabelAngle, r);
+          return <RichText key={`rl${r}`} x={x + 2} y={y - 1} text={rLabels[k] ?? ''} st={rt} anchor="start" valign="bottom" num />;
+        })}
+      {A.rTitle && <RichText x={mid[0] - Math.sin(la) * off} y={mid[1] - Math.cos(la) * off} text={A.rTitle} st={rTitleT} anchor="middle" valign="middle" rotate={rot} />}
+      {A.thetaTitle && <RichText x={frame.x + frame.w / 2} y={frame.y + frame.h - titleH / 2} text={A.thetaTitle} st={titleT} anchor="middle" valign="middle" />}
     </g>
   );
 }
 const R2D_ = 180 / Math.PI;
+
+// A Smith chart: the unit circle of Γ fitted in the frame (room for the labels and the scale); the grid (circles of
+// constant r and arcs of constant x for the impedance, their mirror through the centre for the admittance, clipped to the
+// circle),
+// the real axis and the rim; the matching circle, circles of VSWR, arcs of Q; the labels (r along the axis, x around the
+// rim); a scale outside (the angle of Γ, or wavelengths toward the generator); the series (their lines, coloured by
+// frequency if asked, symbols, arrows of increasing frequency), what every point says under the mouse, the markers.
+function SmithView({ c, frame, defaults }: { c: Curve; frame: Box; defaults: TextDefaults }) {
+  const S = c.smith!;
+  const t = resolveText(undefined, { ...defaults, size: defaults.size * 0.8 });
+  const scaleW = S.scale === 'none' ? 0 : t.size * 2.4;
+  const pad = t.size * 2.6 + scaleW;
+  const R = Math.max(5, Math.min(frame.w, frame.h) / 2 - pad);
+  const cx = frame.x + frame.w / 2;
+  const cy = frame.y + frame.h / 2;
+  const X = (u: number) => cx + u * R;
+  const Y = (v: number) => cy - v * R;
+  const cid = `smith-${Math.round(cx * 10)}-${Math.round(cy * 10)}-${Math.round(R * 10)}`;
+  const gw = S.gridWidth;
+  // the grid of one kind: impedance (as it is) or admittance (every point mirrored through the centre)
+  const family = (kind: 'z' | 'y', color: string) => {
+    const k = kind === 'y' ? -1 : 1;
+    return (
+      <g key={kind} stroke={color} strokeWidth={gw} fill="none">
+        {S.r.map((r) => <circle key={`r${r}`} cx={n2(X((k * r) / (1 + r)))} cy={n2(cy)} r={n2(R / (1 + r))} />)}
+        {S.x.flatMap((x) => [1, -1].map((sg) => <circle key={`x${x}${sg}`} cx={n2(X(k))} cy={n2(Y((k * sg) / x))} r={n2(R / x)} />))}
+        {S.match && <circle cx={n2(X(k / 2))} cy={n2(cy)} r={n2(R / 2)} strokeWidth={gw * 3} />}
+      </g>
+    );
+  };
+  const kinds: ['z' | 'y', string][] = S.grid === 'both' ? [['y', S.yColor], ['z', S.gridColor]] : [[S.grid, S.grid === 'y' ? S.yColor : S.gridColor]];
+  // the labels: r along the real axis, ±x around the rim (of the grid drawn: the impedance's, else the admittance's)
+  const lk = S.grid === 'y' ? -1 : 1;
+  const out = (u: number, v: number, d: number): [number, number] => [cx + u * (R + d), cy - v * (R + d)];
+  const xLabel = (x: number, sg: number) => {
+    const q = x * x + 1;
+    const [u, v] = [(lk * (x * x - 1)) / q, (lk * sg * 2 * x) / q];
+    const [px, py] = out(u, v, t.size * 0.9);
+    return <RichText key={`xl${x}${sg}`} x={px} y={py} text={`${sg < 0 ? '−' : ''}j${fmtSmith(x)}`} st={t} anchor={u > 0.2 ? 'start' : u < -0.2 ? 'end' : 'middle'} valign={v > 0.2 ? 'bottom' : v < -0.2 ? 'top' : 'middle'} num />;
+  };
+  // the scale outside the rim: every 10° (labelled every 30°), or wavelengths toward the generator every 0.01 λ
+  // (labelled every 0.05)
+  const scaleR = R + scaleW;
+  const scale: ReactNode[] = [];
+  if (S.scale !== 'none') {
+    scale.push(<circle key="ring" cx={n2(cx)} cy={n2(cy)} r={n2(scaleR - t.size * 1.2)} fill="none" stroke={S.gridColor} strokeWidth={gw} />);
+    const ticks: { a: number; major: boolean; text: string }[] = [];
+    if (S.scale === 'angle') for (let d = -170; d <= 180; d += 10) ticks.push({ a: d, major: d % 30 === 0, text: `${d}°`.replace('-', '−') });
+    else
+      for (let k = 0; k < 50; k++) {
+        const w = k / 100;
+        ticks.push({ a: 180 - 720 * w, major: k % 5 === 0, text: `${fmtSmith(w)}λ` });
+      }
+    const r0 = scaleR - t.size * 1.2;
+    for (const q of ticks) {
+      const a = (q.a * Math.PI) / 180;
+      const [ca, sa] = [Math.cos(a), Math.sin(a)];
+      const len = q.major ? t.size * 0.5 : t.size * 0.25;
+      scale.push(<path key={`st${q.a}`} d={`M${n2(cx + r0 * ca)},${n2(cy - r0 * sa)}L${n2(cx + (r0 + len) * ca)},${n2(cy - (r0 + len) * sa)}`} stroke={S.gridColor} strokeWidth={gw} />);
+      if (q.major) scale.push(<RichText key={`sl${q.a}`} x={cx + (r0 + t.size * 1.25) * ca} y={cy - (r0 + t.size * 1.25) * sa} text={q.text} st={t} anchor="middle" valign="middle" num />);
+    }
+  }
+  return (
+    <g>
+      <defs>
+        <clipPath id={cid}>
+          <circle cx={n2(cx)} cy={n2(cy)} r={n2(R)} />
+        </clipPath>
+      </defs>
+      <g clipPath={`url(#${cid})`}>
+        {kinds.map(([k, col]) => family(k, col))}
+        {/* arcs of constant Q (through ±1), circles of constant VSWR */}
+        {S.q.flatMap((q) => [1, -1].map((sg) => <circle key={`q${q}${sg}`} cx={n2(cx)} cy={n2(Y(sg / q))} r={n2(R * Math.sqrt(1 + 1 / (q * q)))} fill="none" stroke="#7a7a7a" strokeWidth={gw * 1.5} strokeDasharray="4 2" />))}
+      </g>
+      {S.vswr.map((s) => {
+        const m = (s - 1) / (s + 1);
+        return (
+          <g key={`v${s}`}>
+            <circle cx={n2(cx)} cy={n2(cy)} r={n2(m * R)} fill="none" stroke="#555555" strokeWidth={gw * 1.5} strokeDasharray="5 3" />
+            <RichText x={cx} y={cy - m * R - 1.5} text={`VSWR ${fmtSmith(s)}`} st={t} anchor="middle" valign="bottom" num />
+          </g>
+        );
+      })}
+      <path d={`M${n2(X(-1))},${n2(cy)}L${n2(X(1))},${n2(cy)}`} stroke={S.gridColor} strokeWidth={gw * 1.5} />
+      <circle cx={n2(cx)} cy={n2(cy)} r={n2(R)} fill="none" stroke={S.gridColor} strokeWidth={gw * 2.5} />
+      {S.q.map((q) => {
+        const v = Math.sqrt(1 + 1 / (q * q)) - 1 / q;
+        return <RichText key={`ql${q}`} x={cx + 2} y={Y(v) - 1.5} text={`Q ${fmtSmith(q)}`} st={t} anchor="start" valign="bottom" num />;
+      })}
+      {/* the labels */}
+      {S.labels.map((r) => (
+        <RichText key={`rl${r}`} x={X((lk * (r - 1)) / (r + 1)) - 1} y={cy - 1.5} text={fmtSmith(r)} st={t} anchor="end" valign="bottom" rotate={-90} num />
+      ))}
+      {S.xLabels.flatMap((x) => [xLabel(x, 1), xLabel(x, -1)])}
+      {S.labels.length > 0 && (
+        <>
+          <RichText x={X(-1) - t.size * 0.4} y={cy} text="0" st={t} anchor="end" valign="middle" num />
+          <RichText x={X(1) + t.size * 0.4} y={cy} text="∞" st={t} anchor="start" valign="middle" />
+        </>
+      )}
+      {scale}
+      {/* the series */}
+      {S.series.map((s, j) => {
+        const parts: ReactNode[] = [];
+        const ok = (i: number) => Number.isFinite(s.u[i]) && Number.isFinite(s.v[i]);
+        const P = (i: number) => `${n2(X(s.u[i]))},${n2(Y(s.v[i]))}`;
+        if (s.mode !== 'scatter') {
+          if (s.colors) {
+            // coloured by frequency: a piece between two points in the colour of the first
+            for (let i = 0; i < s.u.length - 1; i++) if (ok(i) && ok(i + 1)) parts.push(<path key={`g${i}`} d={`M${P(i)}L${P(i + 1)}`} stroke={s.colors[i]} strokeWidth={s.lineWidth} strokeLinecap="round" fill="none" />);
+          } else {
+            let d = '';
+            for (let i = 0; i < s.u.length; i++) if (ok(i)) d += `${d && ok(i - 1) ? 'L' : 'M'}${P(i)}`;
+            parts.push(<path key="l" d={d} stroke={s.color} strokeWidth={s.lineWidth} fill="none" strokeLinejoin="round" />);
+          }
+        }
+        if (s.mode !== 'line') for (let i = 0; i < s.u.length; i++) if (ok(i)) parts.push(<path key={`p${i}`} d={symbolPath(s.symbol, s.symbolSize, X(s.u[i]), Y(s.v[i]))} fill={s.colors?.[i] ?? s.color} stroke={s.colors?.[i] ?? s.color} strokeWidth={0.5} />);
+        // arrows of increasing frequency: four along the curve
+        if (S.arrows && s.u.length > 4)
+          for (let k = 1; k <= 4; k++) {
+            const i = Math.floor((s.u.length - 1) * (k / 5));
+            if (!ok(i) || !ok(i + 1)) continue;
+            const [x0, y0, x1, y1] = [X(s.u[i]), Y(s.v[i]), X(s.u[i + 1]), Y(s.v[i + 1])];
+            const L = Math.hypot(x1 - x0, y1 - y0);
+            if (!(L > 1e-6)) continue;
+            const [dx, dy] = [(x1 - x0) / L, (y1 - y0) / L];
+            const sz = Math.max(3, s.lineWidth * 3.5);
+            const [mx, my] = [(x0 + x1) / 2, (y0 + y1) / 2];
+            parts.push(<path key={`a${k}`} d={`M${n2(mx + dx * sz * 0.5)},${n2(my + dy * sz * 0.5)}L${n2(mx - dx * sz * 0.5 - dy * sz * 0.4)},${n2(my - dy * sz * 0.5 + dx * sz * 0.4)}L${n2(mx - dx * sz * 0.5 + dy * sz * 0.4)},${n2(my - dy * sz * 0.5 - dx * sz * 0.4)}Z`} fill={s.colors?.[i] ?? s.color} />);
+          }
+        // what a point says under the mouse
+        if (s.tips && s.u.length <= 3000) for (let i = 0; i < s.u.length; i++) if (ok(i)) parts.push(<circle key={`t${i}`} cx={n2(X(s.u[i]))} cy={n2(Y(s.v[i]))} r={3} fill="transparent" stroke="none"><title>{s.tips[i]}</title></circle>);
+        return <g key={`s${j}`}>{parts}</g>;
+      })}
+      {/* the markers: a ring at the point with its number (as a network analyser shows them); what they say in a table
+          in a corner of the frame (chosen), a line each, in the colour of its curve */}
+      {S.series.flatMap((s, j) =>
+        s.markers.map((m, k) => {
+          const [px, py] = [X(m.u), Y(m.v)];
+          return (
+            <g key={`m${j}-${k}`}>
+              <circle cx={n2(px)} cy={n2(py)} r={3} fill="#ffffff" stroke={s.color} strokeWidth={1.2} />
+              <text x={n2(px + 3.5)} y={n2(py - 3.5)} fontSize={n2(t.size)} fontFamily={t.font} fontWeight={700} fill={s.color} stroke="#ffffff" strokeWidth={2} paintOrder="stroke">
+                {k + 1}
+              </text>
+            </g>
+          );
+        }),
+      )}
+      {(() => {
+        const rows = S.series.flatMap((s) => s.markers.map((m, k) => ({ color: s.color, text: `${k + 1}  ${m.lines.join(', ')}` })));
+        if (!rows.length || S.table === 'none') return null;
+        const lh = t.size * 1.25;
+        const w = Math.max(...rows.map((q) => richMetrics(q.text, t).width)) + 6;
+        const h = rows.length * lh + 3;
+        const bx = S.table === 'tr' || S.table === 'br' ? frame.x + frame.w - w - 1 : frame.x + 1;
+        const by = S.table === 'bl' || S.table === 'br' ? frame.y + frame.h - h - 1 : frame.y + 1;
+        return (
+          <g>
+            <rect x={n2(bx)} y={n2(by)} width={n2(w)} height={n2(h)} rx={1.5} fill="#ffffff" fillOpacity={0.88} stroke={S.gridColor} strokeWidth={0.4} />
+            {rows.map((q, k) => (
+              <RichText key={k} x={bx + 3} y={by + 1.5 + (k + 0.5) * lh} text={q.text} st={{ ...t, color: q.color }} anchor="start" valign="middle" />
+            ))}
+          </g>
+        );
+      })()}
+    </g>
+  );
+}
+const fmtSmith = (v: number) => String(+v.toPrecision(4)).replace('-', '−');
 
 // A ternary chart: an equilateral triangle fitted in the frame (A at the top, B bottom left, C bottom right), the grid
 // every step (lines of equal A, B, C), the values along the edges (A on the left, B at the bottom, C on the right, each
@@ -1180,6 +1421,7 @@ function CurveView({ c, sx, sy, frame, defaults, below, others = [], gid = 'c' }
   if (st.show === false) return null;
   if (c.grid) return below ? <GridView c={c} sx={sx} sy={sy} /> : null;
   if (c.polar) return below ? null : <PolarView c={c} frame={frame} defaults={defaults} />;
+  if (c.smith) return below ? null : <SmithView c={c} frame={frame} defaults={defaults} />;
   if (c.ternary) return below ? null : <TernaryView c={c} frame={frame} defaults={defaults} />;
   if (c.three) return below ? null : <ThreeView c={c} frame={frame} defaults={defaults} />;
   if (c.wedges) return below ? null : <WedgesView c={c} frame={frame} defaults={defaults} gid={`${gid}-${c.key.replace(/[^\w-]/g, '_')}`} />;

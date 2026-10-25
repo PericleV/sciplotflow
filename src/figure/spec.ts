@@ -188,6 +188,8 @@ export type Curve = {
   ternary?: { series: TernarySeries[]; step: number; percent: boolean; names: [string, string, string] };
   // a polar / radar chart (Polar / radar): its series in θ (degrees) and r, its grid; drawn in the frame itself
   polar?: PolarFrame;
+  // a Smith chart: its series as Γ (u, v in the unit circle), its grid; drawn in the frame itself
+  smith?: SmithFrame;
   // a 3D scene (3D plot): surfaces, bars, lines and points in data units, the box and its axes, the view; drawn in the
   // frame itself (projected, the nearest drawn last)
   three?: ThreeScene;
@@ -243,7 +245,48 @@ export type Wedges = { items: WedgeItem[]; size: number; at?: number; center?: s
 export type PolarSeries = { name: string; theta: number[]; r: number[]; color: string; mode: 'line' | 'scatter' | 'linesymbol' | 'bars'; fill: boolean; opacity: number; close: boolean; lineWidth: number; dash: Dash; showLine: boolean; symbol: SymbolShape; symbolSize: number; symbolFill: SymbolFill; showPoints: boolean; barWidth: number };
 // colors: a colour every point (coloured by a column), else color
 export type TernarySeries = { name: string; a: number[]; b: number[]; c: number[]; color: string; mode: 'scatter' | 'line' | 'linesymbol'; lineWidth: number; dash: Dash; showLine: boolean; symbol: SymbolShape; symbolSize: number; symbolFill: SymbolFill; showPoints: boolean; colors?: string[] };
-export type PolarFrame = { series: PolarSeries[]; lo: number; hi: number; rTicks: number[]; zero: 'E' | 'N'; clockwise: boolean; sector: [number, number]; thetaStep: number; thetaLabels: 'deg' | 'compass' | 'rad' | 'none'; rLabelAngle: number; gridShape: 'circle' | 'polygon'; spokes?: string[] };
+// The look of a family of lines of a polar grid (absent: as before): shown or not, colour, width, dashes, opacity
+export type GridLook = { show?: boolean; color?: string; width?: number; dash?: Dash; opacity?: number };
+// A polar chart's axes, their own look (the Axes tab; absent: as before). r: its step (else about rTicks values), reversed
+// (the largest at the centre), a hole in the centre (a part of the radius), its values' format, decimals, shown or not,
+// text; its title and the title's text. θ: where 0° is (degrees, counterclockwise from the right: overrides E / N), the
+// labels typed (thetaCustom: comma-separated, in the order of the spokes), their text and how far out (pt), minor spokes
+// between two (and minor circles halfway), ticks outside the rim (pt), its title. The grid: the circles, the spokes, the
+// minor ones, the rim (each a GridLook); the disc's fill and bands of colour every other circle.
+export type PolarAxes = {
+  rStep?: number;
+  rReverse?: boolean;
+  hole?: number;
+  rFormat?: LabelFormat;
+  rDecimals?: number;
+  rLabels?: boolean;
+  rText?: TextStyle;
+  rTitle?: string;
+  rTitleText?: TextStyle;
+  zeroAngle?: number;
+  thetaCustom?: string;
+  thetaText?: TextStyle;
+  thetaGap?: number;
+  minor?: number;
+  ticksOut?: number;
+  thetaTitle?: string;
+  thetaTitleText?: TextStyle;
+  rings?: GridLook;
+  spokesLook?: GridLook;
+  minorLook?: GridLook;
+  rim?: GridLook;
+  disc?: string;
+  discOpacity?: number;
+  bands?: string;
+  bandOpacity?: number;
+};
+// A Smith chart's series: Γ = u + jv of every point, its frequency, its colour (or a colour a point: by frequency), how it
+// is drawn; its markers (where, what they say); what every point says under the mouse (tips)
+export type SmithSeries = { name: string; u: number[]; v: number[]; f: number[]; color: string; colors?: string[]; mode: 'line' | 'linesymbol' | 'scatter'; lineWidth: number; symbol: SymbolShape; symbolSize: number; markers: { u: number; v: number; lines: string[] }[]; tips?: string[] };
+// its grid: impedance, admittance or both; the circles of constant r and arcs of constant x (and their labels); its
+// colours; circles of constant VSWR, arcs of constant Q, the matching circle, a scale outside the rim, arrows
+export type SmithFrame = { series: SmithSeries[]; grid: 'z' | 'y' | 'both'; r: number[]; x: number[]; labels: number[]; xLabels: number[]; gridColor: string; yColor: string; gridWidth: number; vswr: number[]; q: number[]; match: boolean; scale: 'none' | 'angle' | 'wavelengths'; arrows: boolean; table: 'tl' | 'tr' | 'bl' | 'br' | 'none' };
+export type PolarFrame = { series: PolarSeries[]; lo: number; hi: number; rTicks: number[]; zero: 'E' | 'N' | 'W' | 'S'; clockwise: boolean; sector: [number, number]; thetaStep: number; thetaLabels: 'deg' | 'compass' | 'compass16' | 'rad' | 'custom' | 'none'; rLabelAngle: number; gridShape: 'circle' | 'polygon'; spokes?: string[]; zeroDeg?: number; ax?: PolarAxes };
 // The look of bars beyond their colour: a hatching (its lines' direction, colour, spacing and width), the edge's line,
 // rounded corners, a gradient (the colour fading towards the base), a shadow.
 // lines (/ \ | - + x), marks (dots, dots in staggered rows, rings, squares, small x), bricks, a zigzag, waves, a

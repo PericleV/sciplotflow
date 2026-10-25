@@ -1,7 +1,7 @@
 // The settings of a new node of each type.
 import { CSV_DEFAULTS } from './engine/csv.ts';
 import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, COLORBAR_DEFAULTS, CURVE_STYLE_DEFAULTS, FONTS, SHAPE_DEFAULTS, TEXT_SPEC_DEFAULTS } from './figure/spec.ts';
-import type { MatCompData, MatrixData, PickData, CalculusData, BookSheet, WorkbookData, ColumnsData, PeakWidthData, CombineData, UnstackData, ConvertData, TransposeData, StackData, ToSheetsData, AnnotationItem, AutoExtractData, CanvasData, DrawingData, DrawingGrid, CanvasLayout, DataManipData, ExtractData, FitNodeData, GenColData, ImportData, MathColData, PythonData, NoteData, Plot1DData, PlotPage, StatsData, PeakData, AnovaData, CorrData, NonparData, NormData, TTestData, CurveMathData, TranslateData, ConvData, FFTData, InterpData, NormalizeData, SmoothData, AverageData, CleanData, DigitizerData, FilterData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from './types.ts';
+import type { MatCompData, MatrixData, PickData, CalculusData, BookSheet, WorkbookData, ColumnsData, PeakWidthData, CombineData, UnstackData, ConvertData, TransposeData, StackData, ToSheetsData, AnnotationItem, AutoExtractData, CanvasData, DrawingData, DrawingGrid, CanvasLayout, DataManipData, ExtractData, FitNodeData, GenColData, ImportData, MathColData, PythonData, NoteData, Plot1DData, PlotPage, StatsData, PeakData, AnovaData, CorrData, NonparData, NormData, TTestData, CurveMathData, TranslateData, ConvData, FFTData, InterpData, NormalizeData, SmoothData, AverageData, CleanData, DigitizerData, FilterData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, SmithData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from './types.ts';
 import { SET_COLORS } from './engine/digitize.ts';
 import type { PhaseDigitizerData } from './engine/phasedigitize.ts';
 import type { EisData } from './engine/eis.ts';
@@ -376,6 +376,29 @@ export const POLAR_DEFAULTS: PolarData = {
   symbolFill: 'filled',
   opacity: 0.25,
   gridColor: '#b0b0b0',
+  legend: { show: true, x: 100, y: 0, anchor: 'tr' },
+  page: { ...PLOT_PAGE_DEFAULTS },
+};
+export const SMITH_DEFAULTS: SmithData = {
+  input: 'z',
+  a: '',
+  b: '',
+  freq: '',
+  z0: 50,
+  mode: 'line',
+  color: '#0072B2',
+  lineWidth: 1.2,
+  symbol: 'circle',
+  symbolSize: 3,
+  colorBy: 'one',
+  cmap: 'viridis',
+  markerInfo: ['f', 'z'],
+  grid: 'z',
+  density: 'medium',
+  gridColor: '#9aa3b2',
+  yColor: '#d08770',
+  gridLabels: true,
+  scale: 'none',
   legend: { show: true, x: 100, y: 0, anchor: 'tr' },
   page: { ...PLOT_PAGE_DEFAULTS },
 };
