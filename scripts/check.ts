@@ -21,6 +21,8 @@ import type { CurveMathData, ExtractData, TranslateData } from '../src/types.ts'
 import { anovaNode } from '../src/engine/statnodes.ts';
 import { ANOVA_DEFAULTS } from '../src/defaults.ts';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { helpDocs, helpParts } from '../src/search/helpDocs.ts';
+import { highlight, makeIndex, snippet, stem } from '../src/search/textSearch.ts';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -35,9 +37,9 @@ import { describedNames, FORMULA_GROUPS } from '../src/engine/formulaHelp.ts';
 import { COLUMN_FUNCTION_NAMES, withColumnFunctions } from '../src/engine/colfns.ts';
 import { describe, describeAll, extraStats } from '../src/engine/stats.ts';
 import { axisRange, formatLabels, inBreak, parseBreaks, ticks } from '../src/figure/ticks.ts';
-import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, axesStyle, CURVE_STYLE_DEFAULTS, SIDE_DEFAULTS, curveStyle, toPt, type AxesStyle, type Curve, type Figure, LEGEND_STYLE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, FONTS, type Annotation, COLORBAR_DEFAULTS, type ColorbarSpec, legendBox, legendBoxPatch, type LegendSpec } from '../src/figure/spec.ts';
+import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, axesStyle, CURVE_STYLE_DEFAULTS, SIDE_DEFAULTS, curveStyle, toPt, type AxesStyle, type Curve, type Figure, LEGEND_STYLE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, FONTS, type Annotation, COLORBAR_DEFAULTS, type ColorbarSpec, legendBox, legendBoxPatch, symbolLook, type LegendSpec } from '../src/figure/spec.ts';
 import { BUILTIN_STYLES, styledData } from '../src/nodes/styles.ts';
-import { fontRatio, parseRich, plainText, richMetrics } from '../src/figure/draw.ts';
+import { fontRatio, innerPath, parseRich, plainText, richMetrics } from '../src/figure/draw.ts';
 import { mathFace, mathKey, setMathSizes } from '../src/math/sizes.ts';
 import { plotMapping, stuckLines } from '../src/engine/evaluate.ts';
 import { canvasFigure, collapseGroups, evaluateGraph, legendCurves, newCache, packCells, parseRows, plotRows, shapeSpec } from '../src/engine/evaluate.ts';
@@ -123,7 +125,7 @@ import { darkShade, loadColors, SWATCHES } from '../src/theme.ts';
 import { doStep, figureSaved, importWithData, plotOfImport, stepsOf, TOURS, uvVisText, type TourState } from '../src/tour/tours.ts';
 import { groupNodes } from '../src/groups.ts';
 import { asBatch, emptyBatch, GROUP_IN, GROUP_OUT } from '../src/engine/subgraph.ts';
-import { columnRuns, guessPattern, patternOf, portNames, readName, sideBySide, tidyOwn, withOwn } from '../src/engine/batch.ts';
+import { columnRuns, guessPattern, patternOf, portNames, readName, sideBySide, skipSteps, eachSteps, tidyOwn, withOwn } from '../src/engine/batch.ts';
 import type { GroupData } from '../src/types.ts';
 import { fileProject, isPng, makeEmbedded, openEmbedded, pngProject, pngWithProject, projectRevision, svgProject, svgWithProject, withoutImported } from '../src/figure/embed.ts';
 import { EMU_PER_PT, readOffice, writeOffice } from '../src/figure/office.ts';
@@ -6095,6 +6097,14 @@ for (const ex of EXAMPLES) {
     const ot = ownRes.outputs.table?.t === 'dataset' ? ownRes.outputs.table.v : undefined;
     const oc = (name: string) => ot?.columns.find((c) => c.name === name);
     ok(Array.from(oc('x')?.values ?? []).join(' ') === '30 40 70' && oc('Own settings')?.text?.join('|') === '|Pick points|' && ownRes.view.batch?.list?.[1].own?.join() === 'Pick points', `Batch: a file with its own settings of a step (sample_30C read at X = 40; the others their maximum: ${Array.from(oc('x')?.values ?? []).join(', ')})`);
+    // a step skipped for one file: what reaches it goes on (a table to a table: here the curve itself, not its maximum),
+    // the table says so; a step whose changes go to the file shown (chosen, or with own settings of some file)
+    const skipRes = evaluateGraph([imp, { ...batch, data: { ...(batch.data as GroupData), batch: { pattern: 'sample_{T}C', order: 'value' as const, skip: { sample_30C: ['pk'] } } } } as AppNode], g.edges).get('b1')!;
+    const sk = skipRes.outputs.table?.t === 'dataset' ? skipRes.outputs.table.v : undefined;
+    const skc = (name: string) => sk?.columns.find((c) => c.name === name);
+    const skSheets = skipRes.outputs.sheets?.t === 'workbook' ? skipRes.outputs.sheets.v.sheets : [];
+    const flat = skipSteps(inner, innerE, ['pk']);
+    ok(skc('Own settings')?.text?.join('|') === '|Pick points skipped|' && skSheets[1]?.columns[0].values.length === 101 && skSheets[0]?.columns[0].values.length === 1 && flat.nodes.find((q) => q.id === 'pk')?.type === 'reroute' && flat.edges.length === 2 && eachSteps({ each: ['a'], own: { f: { b: { k: 1 } } } }).size === 2, `Batch: a step skipped for one file (its data passed on: ${skSheets[1]?.columns[0].values.length} rows; the others their maximum), said in the table; the steps whose changes are for one file`);
     ok(tidyOwn({ a: { s: {} }, b: {} }) === undefined && JSON.stringify(tidyOwn({ a: { s: { k: 1 }, t: {} } })) === '{"a":{"s":{"k":1}}}' && (withOwn([{ id: 's', data: { k: 0, m: 2 } }], { s: { k: 1 } })[0].data as { k: number; m: number }).m === 2, 'Batch: own settings tidied (no empty step or file), laid over the common ones (the others kept)');
     // a pattern guessed from the names: the numbers that change become {V}, those that do not stay
     const gp1 = guessPattern(['PL_300K_run1', 'PL_310K_run1', 'PL_320K_run1']);
@@ -6697,6 +6707,44 @@ checkPhase(ok);
   ok(run.status === 0 && run.stdout.includes('OK: the project opens') && run2.status === 1 && run2.stdout.includes('has no output “nope”'), `catalog: check.mjs runs alone (${run.stderr.trim().split('\n')[0] || 'ok'})`);
   const leaks = ['llms.txt', 'api/nodes.json', 'api/project.schema.json', 'api/recipes.json', 'api/check.mjs'].filter((f) => privateHits(readFileSync(join(dir, f), 'utf8')).length);
   ok(leaks.length === 0 && privateHits('C:\\Users\\someone\\x').length > 0 && privateHits('mail me: someone@gmail.com').length > 0, `catalog: nothing private in the published files${leaks.length ? ` (${leaks.join(', ')})` : ''}`);
+}
+
+{
+  // the search of Help (and later of the assistant): endings, synonyms, a word being typed, a typo; the help cut into
+  // its subsections; the words found highlighted; on the assistant's questions, the right node near the top
+  const docs = [
+    { id: 'a', title: 'Smooth', text: 'Savitzky–Golay smoothing of a noisy curve' },
+    { id: 'b', title: 'Baseline correction', text: 'the background under the peaks taken off' },
+    { id: 'c', title: 'Histogram', text: 'the values counted in bins' },
+  ];
+  const ix = makeIndex(docs);
+  const first = (q: string) => ix.search(q)[0]?.id;
+  ok(stem('peaks') === 'peak' && stem('fitted') === 'fit' && stem('smoothing') === 'smooth' && stem('analysis') === 'analysis' && first('smoothed curves') === 'a' && first('remove the background') === 'b' && first('histo') === 'c' && first('smoth') === 'a' && first('histogramm') === 'c' && ix.search('zebra').length === 0, 'Help search: endings, synonyms, a word being typed, a typo, nothing found');
+  const parts = helpParts(NODE_HELP.image);
+  const marked = highlight('Find the peaks of a peak list', ['peak']);
+  const sn = snippet(`${'x '.repeat(200)}the peak is here ${'y '.repeat(200)}`, ['peak']);
+  ok(parts.length > 10 && parts.some((p) => p.heading === 'Find like this') && parts.map((p) => p.text).join(' ').length >= NODE_HELP.image.length - parts.length * 2 && marked.filter((p) => p.hit).length === 2 && sn[0].t === '… ' && sn.some((p) => p.hit && p.t === 'peak'), `Help: a long help cut into ${parts.length} subsections (nothing lost); the words found highlighted, the piece around them`);
+  const qs = (JSON.parse(readFileSync(new URL('./fixtures/assistant-questions.json', import.meta.url), 'utf8')) as { questions: { q: string; expect: string[]; alt?: string[][] }[] }).questions.filter((x) => x.expect.length);
+  const hx = makeIndex(helpDocs([]));
+  const top3 = qs.filter((x) => {
+    const want = [x.expect, ...(x.alt ?? [])].map((a) => a[0]);
+    const nodes = [...new Set(hx.search(`${x.q} `, 60).filter((h) => h.id.startsWith('node:')).map((h) => h.id.split(':')[1]))];
+    return nodes.slice(0, 3).some((t) => want.includes(t));
+  }).length;
+  ok(top3 / qs.length >= 0.75, `Help search on the assistant's ${qs.length} questions: the right node in the first three for ${Math.round((100 * top3) / qs.length)} % (no recipes yet)`);
+}
+
+{
+  // a curve's symbols: filled in its colour, open, or a colour of their own with its opacity (an older white: white; an
+  // older dot: open with a dot inside); the marks inside (a dot filled, the others lines)
+  const base = { symbol: 'circle' as const };
+  const filled = symbolLook({ ...base, symbolFill: 'filled' }, '#0072b2');
+  const white = symbolLook({ ...base, symbolFill: 'white' }, '#0072b2');
+  const dot = symbolLook({ ...base, symbolFill: 'dot' }, '#0072b2');
+  const own = symbolLook({ ...base, symbolFill: 'color', symbolFillColor: '#ffcc00', symbolFillOpacity: 0.4, symbolInner: 'plus' }, '#0072b2');
+  const plus = innerPath('plus', 10, 0, 0, 0.5);
+  const dotIn = innerPath('dot', 10, 5, 5);
+  ok(filled.fill === '#0072b2' && !filled.inner && white.fill === '#ffffff' && dot.fill === 'none' && dot.inner === 'dot' && own.fill === '#ffcc00' && own.fillOpacity === 0.4 && own.inner === 'plus' && plus.d === 'M-2.5,0L2.5,0M0,-2.5L0,2.5' && !plus.filled && dotIn.filled && innerPath('backslash', 10, 0, 0).d.startsWith('M-1.77,-1.77'), 'Symbols: filled, white and dot as before, a fill colour of their own with its opacity, the marks inside');
 }
 
 // the version shown in the app is package.json's

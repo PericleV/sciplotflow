@@ -3,7 +3,7 @@ import { useState, type ReactNode } from 'react';
 import { Button, Select as MSelect, TextInput as MTextInput } from '@mantine/core';
 import { MousePointerClick } from 'lucide-react';
 import { CMAP_OPTIONS } from '../figure/colors.ts';
-import type { ArrowHead, CurveStyle, Hatch, SymbolShape } from '../figure/spec.ts';
+import type { ArrowHead, CurveStyle, Hatch, InnerMark, SymbolShape } from '../figure/spec.ts';
 import { HATCHES, SYMBOLS } from './figureOptions.ts';
 import { Tabs } from './fields.tsx';
 import { AutoSlider, Choice, ColorField, NumField, NumPair, OpacityField, PictureGrid, PicturePick, Row, Section, Sections, SliderField, TextStyleRows, Toggle, WidthField } from '../ui/props.tsx';
@@ -14,6 +14,18 @@ import { HatchRows } from '../ui/HatchRows.tsx';
 const HEADS: ArrowHead[] = ['none', 'triangle', 'stealth', 'open', 'bar', 'circle', 'diamond', 'square', 'half'];
 const headPics = (start: boolean) => HEADS.map((h): [ArrowHead, ReactNode, string] => [h, <HeadIcon key={h} head={h} start={start} />, h]);
 const SYMBOL_PICS = SYMBOLS.map(([s, n]): [SymbolShape, ReactNode, string] => [s, <SymbolIcon key={s} shape={s} />, n.replace(/^\S+\s/, '')]);
+// the marks inside a symbol ('': none)
+const INNER_PICS: ['' | InnerMark, ReactNode, string][] = [
+  ['', <span key="n" className="inner-pic none">none</span>, 'Nothing inside'],
+  ['dot', <span key="d" className="inner-pic">•</span>, 'A dot'],
+  ['dash', <span key="h" className="inner-pic">–</span>, 'A dash'],
+  ['plus', <span key="p" className="inner-pic">+</span>, 'A plus'],
+  ['cross', <span key="x" className="inner-pic">×</span>, 'A cross'],
+  ['ring', <span key="o" className="inner-pic">○</span>, 'A ring'],
+  ['bar', <span key="b" className="inner-pic">|</span>, 'A bar'],
+  ['slash', <span key="s" className="inner-pic">/</span>, 'A slash'],
+  ['backslash', <span key="k" className="inner-pic">\</span>, 'A backslash'],
+];
 // the sources of a size or a width from the data
 const BY: { value: NonNullable<CurveStyle['widthBy']>; label: string }[] = [
   { value: 'none', label: 'No' },
@@ -120,6 +132,11 @@ export function CurveStyleEditor({ st, set, hasYErr, hasXErr, curves = [], placi
                 <SliderField value={st.halo ?? 0} onChange={(v) => set({ halo: num(v) || undefined })} min={0} max={6} step={0.25} unit="pt" />
                 {(st.halo ?? 0) > 0 && <ColorField value={st.haloColor ?? ''} auto="#ffffff" onChange={(haloColor) => set({ haloColor: haloColor || undefined })} />}
               </Row>
+              {(st.halo ?? 0) > 0 && (
+                <Row label="Halo opacity">
+                  <OpacityField value={st.haloOpacity ?? 1} onChange={(v) => set({ haloOpacity: Number.isFinite(v) && v < 1 ? Math.max(0, v) : undefined })} />
+                </Row>
+              )}
               <Row label="Heads" hint="Arrow heads at the curve's start and end">
                 <div className="prop-btns">
                   <PicturePick label="Head at the start" value={st.arrowStart ?? 'none'} onChange={(arrowStart) => set({ arrowStart })} options={headPics(true)} cols={3} />
@@ -257,17 +274,56 @@ export function CurveStyleEditor({ st, set, hasYErr, hasXErr, curves = [], placi
             <SliderField value={st.symbolSize} onChange={(v) => set({ symbolSize: num(v) })} min={0} max={20} step={0.5} unit="pt" />
           </Row>
           <Row label="Fill">
-            <Choice
-              value={st.symbolFill}
-              onChange={(symbolFill) => set({ symbolFill })}
+            <Choice<'filled' | 'open' | 'color'>
+              value={st.symbolFill === 'white' || st.symbolFill === 'color' ? 'color' : st.symbolFill === 'dot' ? 'open' : st.symbolFill}
+              onChange={(f) =>
+                set(
+                  f === 'color'
+                    ? { symbolFill: 'color', symbolFillColor: st.symbolFillColor || '#ffffff' }
+                    : // (an older dot: open, its dot kept as the mark inside)
+                      { symbolFill: f, ...(st.symbolFill === 'dot' && !st.symbolInner ? { symbolInner: 'dot' as const } : {}) },
+                )
+              }
               options={[
-                ['filled', 'Filled'],
-                ['open', 'Open'],
-                ['white', 'White', 'Filled with white (hides the line behind it)'],
-                ['dot', 'Dot', 'Open, a dot inside'],
+                ['filled', 'Filled', 'In the curve’s colour'],
+                ['open', 'Open', 'Only its outline'],
+                ['color', 'Colour', 'Filled with a colour of its own (white hides the line behind it)'],
               ]}
             />
           </Row>
+          {(st.symbolFill === 'color' || st.symbolFill === 'white') && (
+            <>
+              <Row label="Fill colour">
+                <ColorField value={st.symbolFill === 'white' ? '#ffffff' : st.symbolFillColor || '#ffffff'} onChange={(c) => set({ symbolFill: 'color', symbolFillColor: c || '#ffffff' })} />
+              </Row>
+              <Row label="Fill opacity">
+                <OpacityField value={st.symbolFillOpacity ?? 1} onChange={(v) => set({ symbolFill: 'color', symbolFillColor: st.symbolFillColor || '#ffffff', symbolFillOpacity: Number.isFinite(v) && v < 1 ? Math.max(0, v) : undefined })} />
+              </Row>
+            </>
+          )}
+          <Row label="Inside" hint="A mark inside every symbol">
+            <PictureGrid<'' | InnerMark>
+              value={st.symbolInner ?? (st.symbolFill === 'dot' ? 'dot' : '')}
+              onChange={(m) => set({ symbolInner: m || undefined, ...(st.symbolFill === 'dot' ? { symbolFill: 'open' as const } : {}) })}
+              options={INNER_PICS}
+              cols={9}
+            />
+          </Row>
+          {(st.symbolInner || st.symbolFill === 'dot') && (
+            <>
+              <Row label="Its size" hint="A part of the symbol's size">
+                <SliderField value={Math.round((st.innerSize ?? 0.5) * 100)} onChange={(v) => set({ innerSize: Number.isFinite(v) && v > 0 && v !== 50 ? v / 100 : undefined })} min={10} max={100} step={5} unit="%" />
+              </Row>
+              <Row label="Its colour" hint="auto: as the outline">
+                <ColorField value={st.innerColor ?? ''} auto={st.edgeColor || st.color} onChange={(c) => set({ innerColor: c || undefined })} />
+              </Row>
+              {st.symbolInner !== 'dot' && st.symbolFill !== 'dot' && (
+                <Row label="Its width">
+                  <WidthField value={st.innerWidth ?? Math.max(0.5, st.symbolEdge)} onChange={(v) => set({ innerWidth: Number.isFinite(v) && v > 0 ? v : undefined })} max={3} />
+                </Row>
+              )}
+            </>
+          )}
           <Row label="Outline" hint="The width of the outline">
             <WidthField value={st.symbolEdge} onChange={(v) => set({ symbolEdge: num(v) })} max={3} />
           </Row>
@@ -280,18 +336,45 @@ export function CurveStyleEditor({ st, set, hasYErr, hasXErr, curves = [], placi
           <Row label="Every N-th" hint="A symbol on every N-th point only (dense data)">
             <SliderField value={st.every} onChange={(v) => set({ every: Math.max(1, Math.floor(v) || 1) })} min={1} max={20} step={1} />
           </Row>
-          <Row label="Rug" hint="Every value a short tick along the frame's edge: the x values at the bottom, the y values at the left; the line's colour and width">
-            <Choice<'' | 'x' | 'y'>
+          <Row label="Rug" hint="Every value a tick from the frame's edge: the x values at the bottom, the y values at the left, or both">
+            <Choice<'' | 'x' | 'y' | 'both'>
               value={st.rug ?? ''}
               onChange={(rug) => set({ rug: rug || undefined })}
               options={[
                 ['', 'None'],
-                ['x', 'x (bottom)'],
-                ['y', 'y (left)'],
+                ['x', 'X'],
+                ['y', 'Y'],
+                ['both', 'Both'],
               ]}
             />
-            {st.rug && <SliderField value={st.rugLength ?? 4} onChange={(v) => set({ rugLength: v > 0 ? v : undefined })} min={1} max={15} step={0.5} unit="pt" />}
           </Row>
+          {st.rug && (
+            <>
+              <Row label="Rug length" hint="A tick of a length, or a line from the edge to the point">
+                <Choice<'len' | 'point'>
+                  value={st.rugTo === 'point' ? 'point' : 'len'}
+                  onChange={(v) => set({ rugTo: v === 'point' ? 'point' : undefined })}
+                  options={[
+                    ['len', 'A tick'],
+                    ['point', 'To the point'],
+                  ]}
+                />
+                {st.rugTo !== 'point' && <SliderField value={st.rugLength ?? 4} onChange={(v) => set({ rugLength: v > 0 ? v : undefined })} min={1} max={15} step={0.5} unit="pt" />}
+              </Row>
+              <Row label="Rug width">
+                <WidthField value={st.rugWidth ?? Math.max(0.3, st.lineWidth)} onChange={(v) => set({ rugWidth: Number.isFinite(v) && v > 0 ? v : undefined })} max={3} />
+              </Row>
+              <Row label="Rug colour" hint="auto: the curve's">
+                <ColorField value={st.rugColor ?? ''} auto={st.color} onChange={(c) => set({ rugColor: c || undefined })} />
+              </Row>
+              <Row label="Rug dashes">
+                <PictureGrid value={st.rugDash ?? 'solid'} onChange={(rugDash) => set({ rugDash: rugDash === 'solid' ? undefined : rugDash })} options={DASH_PICS} cols={4} />
+              </Row>
+              <Row label="Rug opacity">
+                <OpacityField value={st.rugOpacity ?? st.lineOpacity} onChange={(v) => set({ rugOpacity: Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : undefined })} />
+              </Row>
+            </>
+          )}
         </Section>
         <Section value="size" title="Size from data" aside={st.sizeBy === 'none' ? 'no' : st.sizeBy}>
           <Row label="Size from" hint="The symbol size follows a value: the points' row, x, y, or a column on the port “size”">

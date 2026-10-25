@@ -5,7 +5,9 @@
 // evaluate.ts (it evaluates the group's graph once per file).
 import { column, findColumn, roleOf, type Column, type Dataset, type Scalar, type Workbook } from './table.ts';
 import { pick } from './extract.ts';
-import type { GroupPort } from '../types.ts';
+import { sourcePort } from './ports.ts';
+import type { Edge } from '@xyflow/react';
+import type { AppNode, GroupPort } from '../types.ts';
 
 // The names of a group's ports: the one given by hand, else the one made; a name met twice numbered (“Smooth (2)”), as
 // the results of a Batch are gathered by their names
@@ -28,7 +30,37 @@ export type BatchOwn = Record<string, Record<string, Record<string, unknown>>>;
 // (absent: the first); cols: the columns (2-6, B-F, names, R*, !C; empty: every Y); xFrom: their X — one column for all
 // (x: its name; empty: the designated X), the X on the left of each (its designations: X, Y, X, Y …), or the row number;
 // long: the tables of more than one row, every file's rows one under the other (absent) or its columns side by side
-export type BatchSpec = { pattern?: string; order?: 'given' | 'name' | 'value'; show?: number; own?: BatchOwn; over?: 'columns'; sheet?: string; cols?: string; xFrom?: 'one' | 'left' | 'row'; x?: string; long?: 'side' };
+// each: the steps whose changes are made for the file (or column) shown, not for all (a step with own settings of some
+// file is one too); skip: by the file's (or column's) name, the steps that do not run on it
+export type BatchSpec = { pattern?: string; order?: 'given' | 'name' | 'value'; show?: number; own?: BatchOwn; each?: string[]; skip?: Record<string, string[]>; over?: 'columns'; sheet?: string; cols?: string; xFrom?: 'one' | 'left' | 'row'; x?: string; long?: 'side' };
+// the steps whose changes go to the file shown only: chosen so, or with own settings of some file already
+export function eachSteps(spec: BatchSpec): Set<string> {
+  return new Set([...(spec.each ?? []), ...Object.values(spec.own ?? {}).flatMap((o) => Object.keys(o))]);
+}
+// The steps without those skipped for one file (or column): a step skipped passes on what reaches it (its first input)
+// on the outputs that give the same kind of data (a table to a table: Smooth, Normalize, Filter rows …); its other
+// outputs give nothing (a Fit's parameters), so what is kept from them is empty for that file
+export function skipSteps(nodes: AppNode[], edges: Edge[], skip: string[] | undefined): { nodes: AppNode[]; edges: Edge[] } {
+  if (!skip?.length) return { nodes, edges };
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const kind = (id: string, handle: string | null | undefined) => {
+    const n = byId.get(id);
+    return !n ? null : n.type === 'groupin' ? 'dataset' : sourcePort(n, handle);
+  };
+  let es = edges;
+  const out = nodes.map((n) => {
+    if (!skip.includes(n.id) || n.type === 'groupin' || n.type === 'groupout') return n;
+    const inn = es.find((e) => e.target === n.id);
+    const passes = inn ? kind(inn.source, inn.sourceHandle) : null;
+    es = es.flatMap((e) => {
+      if (e.target === n.id) return e === inn ? [{ ...e, targetHandle: 'in' }] : [];
+      if (e.source === n.id) return passes && kind(n.id, e.sourceHandle) === passes ? [{ ...e, sourceHandle: 'out' }] : [];
+      return [e];
+    });
+    return { id: n.id, type: 'reroute', position: n.position, data: {} } as AppNode;
+  });
+  return { nodes: out, edges: es };
+}
 // the steps with a file's own settings over the common ones
 export function withOwn<T extends { id: string; data: unknown }>(nodes: T[], own: Record<string, Record<string, unknown>> | undefined): T[] {
   if (!own || !Object.keys(own).length) return nodes;

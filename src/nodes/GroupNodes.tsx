@@ -9,7 +9,7 @@ import { guessPattern, portNames, type BatchSpec } from '../engine/batch.ts';
 import { nodeTitle } from '../nodeColors.ts';
 import type { AppNode, GroupNode, GroupPort } from '../types.ts';
 import { useGroupNav } from './groupNav.ts';
-import { Field, InPort, Messages, OutPort, Select, TextInput } from './ui.tsx';
+import { Check, Field, InPort, Messages, OutPort, Select, TextInput } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
 import { ColumnsPicker } from './ColumnsPicker.tsx';
 import { sheetOptions } from './sheetOptions.ts';
@@ -248,66 +248,72 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
   );
 }
 
-// Inside a Batch, at the top: the file its steps are shown on (◀ ▶ or chosen; ✎ one with its own settings), what is
-// kept from every file; a change of a step made for every file or only for the file shown; the steps with that file's
-// own settings — each back to the common ones (↺) or made the common ones, for every file (⇪)
+// Inside a Batch, at the top: the file (or column) its steps are shown on (◀ ▶ or chosen; ✎ one with its own settings
+// or steps skipped), what is kept from every one; the steps with that file's own settings (each back to the common
+// ones, ↺, or made the common ones for every file, ⇪), the steps skipped for it (↺: run on it again). Whether a
+// step's changes go to every file or to the one shown: in its options (BatchStepBar).
 export function BatchFileBar({
   files,
   shown,
+  unit,
   kept,
   onShow,
-  mode,
-  setMode,
   ownSteps,
+  skippedSteps,
   ownCount,
   onBack,
   onForAll,
+  onUnskip,
 }: {
   files: { name: string; errors: string[] }[];
   shown: number;
+  unit: 'file' | 'column';
   kept: string[];
   onShow: (k: number) => void;
-  mode: 'all' | 'own';
-  setMode: (m: 'all' | 'own') => void;
   ownSteps: { id: string; title: string }[];
+  skippedSteps: { id: string; title: string }[];
   ownCount: (name: string) => number;
   onBack: (id: string) => void;
   onForAll: (id: string) => void;
+  onUnskip: (id: string) => void;
 }) {
-  if (!files.length) return <span className="hint">These steps run on every file: connect the files to the batch (outside) to see them here, one at a time. Connect to “+ keep” what to keep from each file.</span>;
+  if (!files.length) return <span className="hint">These steps run on every {unit}: connect the {unit === 'file' ? 'files' : 'table'} to the batch (outside) to see them here, one at a time. Connect to “+ keep” what to keep from each {unit}.</span>;
   return (
     <span className="batch-bar">
       <span className="row">
-        <span className="muted">File shown:</span>
+        <span className="muted">{unit === 'file' ? 'File' : 'Column'} shown:</span>
         <button className="nodrag" disabled={shown <= 0} title="The file before" onClick={() => onShow(shown - 1)}>
           <ChevronLeft {...IC} />
         </button>
-        <Select<string> value={String(shown)} title="The file these steps are shown on (they run on every one); ✎ a file with its own settings, ⚠ one with errors" options={files.map((f, k): [string, string] => [String(k), `${k + 1} / ${files.length}: ${f.name}${ownCount(f.name) ? ' ✎' : ''}${f.errors.length ? ' ⚠' : ''}`])} onChange={(v) => onShow(Number(v))} />
-        <button className="nodrag" disabled={shown >= files.length - 1} title="The file after" onClick={() => onShow(shown + 1)}>
+        <Select<string> value={String(shown)} title={`The ${unit} these steps are shown on (they run on every one); ✎ a ${unit} with its own settings or steps skipped, ⚠ one with errors`} options={files.map((f, k): [string, string] => [String(k), `${k + 1} / ${files.length}: ${f.name}${ownCount(f.name) ? ' ✎' : ''}${f.errors.length ? ' ⚠' : ''}`])} onChange={(v) => onShow(Number(v))} />
+        <button className="nodrag" disabled={shown >= files.length - 1} title={`The ${unit} after`} onClick={() => onShow(shown + 1)}>
           <ChevronRight {...IC} />
         </button>
-        <span className="muted">Changes:</span>
-        <Select<'all' | 'own'>
-          value={mode}
-          title="A change of a step: for every file (the common settings), or only for the file shown (its own settings; the others keep the common ones)"
-          options={[
-            ['all', 'for all files'],
-            ['own', 'only for this file'],
-          ]}
-          onChange={setMode}
-        />
         <span className="muted">{kept.length ? `kept: ${kept.join(', ')}` : 'nothing kept yet: connect to “+ keep”'}</span>
       </span>
+      {skippedSteps.length > 0 && (
+        <span className="row">
+          <span className="muted">Skipped for {files[shown]?.name}:</span>
+          {skippedSteps.map((q) => (
+            <span key={q.id} className="chip">
+              ⊘ {q.title}
+              <button className="nodrag ts-btn" title={`Run it on this ${unit} again`} onClick={() => onUnskip(q.id)}>
+                ↺
+              </button>
+            </span>
+          ))}
+        </span>
+      )}
       {ownSteps.length > 0 && (
         <span className="row">
           <span className="muted">Own settings of {files[shown]?.name}:</span>
           {ownSteps.map((q) => (
             <span key={q.id} className="chip">
               ✎ {q.title}
-              <button className="nodrag ts-btn" title="Back to the common settings (for this file)" onClick={() => onBack(q.id)}>
+              <button className="nodrag ts-btn" title={`Back to the common settings (for this ${unit})`} onClick={() => onBack(q.id)}>
                 ↺
               </button>
-              <button className="nodrag ts-btn" title="Use for all files: these settings become the common ones" onClick={() => onForAll(q.id)}>
+              <button className="nodrag ts-btn" title={`Use for all ${unit}s: these settings become the common ones`} onClick={() => onForAll(q.id)}>
                 ⇪
               </button>
             </span>
@@ -315,6 +321,38 @@ export function BatchFileBar({
         </span>
       )}
     </span>
+  );
+}
+
+// A step of a Batch, above its options: its changes for every file (the common settings) or for the file shown only
+// (each file its own; the others keep the common ones); skipped for the file shown (it passes its data on unchanged
+// where it can, else gives nothing for that file)
+export function BatchStepBar({ unit, shown, each, skipped, ownCount, total, onEach, onSkip }: { unit: 'file' | 'column'; shown?: string; each: boolean; skipped: boolean; ownCount: number; total: number; onEach: (on: boolean) => void; onSkip: (on: boolean) => void }) {
+  return (
+    <div className="batch-step">
+      <span className="row wrap">
+        <span className="muted">In the batch:</span>
+        <Select<'all' | 'each'>
+          seg
+          value={each ? 'each' : 'all'}
+          title={`Its changes: the same for all ${unit}s (the common settings; back to it, the ${unit}s' own settings of this step are dropped), or each ${unit} its own (a change made while a ${unit} is shown is for that ${unit} only)`}
+          options={[
+            ['all', `Same for all ${unit}s`],
+            ['each', `Each ${unit} its own`],
+          ]}
+          onChange={(v) => onEach(v === 'each')}
+        />
+        {each && <span className="muted">{ownCount ? `${ownCount} of ${total} with their own` : `none with their own yet`}</span>}
+      </span>
+      {shown && (
+        <Check
+          label={`Skip for this ${unit} (${shown})`}
+          title={`The step does not run on this ${unit}: what reaches it goes on unchanged (a table to a table), else it gives nothing for this ${unit} (what is kept from it is empty there)`}
+          value={skipped}
+          onChange={onSkip}
+        />
+      )}
+    </div>
   );
 }
 

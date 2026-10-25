@@ -322,15 +322,45 @@ table.point td { padding: 2px 10px; }
 .presence-cursor svg { display: block; filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.35)); }
 .presence-cursor span { position: absolute; left: 14px; top: 16px; padding: 1px 6px; border-radius: 4px; color: #ffffff; font-size: 11px; font-weight: 600; white-space: nowrap; }
 .lib-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; padding: 2px; flex: none; }
-.help-panel h4 { margin: 10px 0 2px; }
-.help-panel ol { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
-.help-panel details summary { cursor: pointer; font-weight: 600; }
-.help-panel dl { margin: 4px 0 8px; display: flex; flex-direction: column; gap: 6px; }
-.help-panel dt { font-weight: 600; }
-.help-panel dd { margin: 0 0 0 10px; color: var(--muted); }
-.help-panel dd p { margin: 0 0 4px; }
-.help-panel dd .help-short { color: var(--text); }
-.help-panel .help-focus { outline: 2px solid var(--accent, #2f6fd6); outline-offset: 3px; border-radius: 4px; }
+/* Help: a window of its own (as the welcome window), the search at the top, the contents on the left, the page on the right */
+.help-backdrop { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: rgb(0 0 0 / 0.45); animation: panel-in 0.18s ease-out; }
+.help-window { display: flex; flex-direction: column; width: min(1100px, calc(100vw - 32px)); height: calc(100vh - 48px); box-sizing: border-box; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 40px rgb(0 0 0 / 0.35); overflow: hidden; }
+.help-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.help-head > strong { font-size: var(--fs-large); }
+.help-search { flex: 1; display: flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg, transparent); color: var(--muted); }
+.help-search input { flex: 1; border: none; outline: none; background: transparent; color: var(--text); font-size: var(--fs-large); padding: 3px 0; }
+.help-search:focus-within { border-color: var(--accent, #2f6fd6); }
+.help-clear, .help-x { border: none; background: transparent; padding: 2px; color: var(--muted); }
+.help-main { flex: 1; display: grid; grid-template-columns: 230px 1fr; min-height: 0; }
+.help-nav { overflow: auto; padding: 10px 8px 16px 12px; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 1px; }
+.help-nav-title { margin: 10px 0 2px; font-size: var(--fs-tiny); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.help-nav details summary { cursor: pointer; font-weight: 600; padding: 3px 4px; }
+.help-nav details .help-nav-item { padding-left: 18px; }
+.help-nav-item { display: block; width: 100%; text-align: left; border: none; background: transparent; padding: 3px 6px; border-radius: 4px; color: var(--text); font-size: var(--fs); }
+.help-nav-item:hover { background: var(--hover, rgb(127 127 127 / 0.12)); }
+.help-nav-item.on { background: var(--accent, #2f6fd6); color: #fff !important; }
+.help-body { overflow: auto; padding: 14px 24px 28px; }
+.help-body article { max-width: 78ch; }
+.help-body h2 { margin: 0 0 6px; font-size: var(--fs-xl); }
+.help-body h3 { margin: 16px 0 4px; font-size: var(--fs-large); }
+.help-body p, .help-body li { line-height: 1.5; }
+.help-body .help-short { font-size: var(--fs-large); }
+.help-steps { padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.help-toc { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 4px; }
+.help-toc button { font-size: var(--fs-small); padding: 1px 8px; border-radius: 10px; }
+.help-body section { scroll-margin-top: 10px; }
+.help-body section.help-found { border-left: 3px solid var(--accent, #2f6fd6); padding-left: 10px; margin-left: -13px; }
+.help-body mark, .help-hit mark { background: rgb(255 214 10 / 0.45); color: inherit; border-radius: 2px; padding: 0 1px; }
+.help-results { display: flex; flex-direction: column; gap: 4px; max-width: 86ch; }
+.help-results h4 { margin: 12px 0 2px; font-size: var(--fs-small); text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.help-hit { display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left; border: 1px solid transparent; background: transparent; padding: 6px 8px; border-radius: 6px; color: var(--text); }
+.help-hit:hover { border-color: var(--border); background: var(--hover, rgb(127 127 127 / 0.08)); }
+.help-hit span { color: var(--muted); font-size: var(--fs-small); line-height: 1.45; }
+.help-keys { font-size: var(--fs); }
+.help-keys td { padding: 5px 8px; }
+.help-example-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.help-link { border: none; background: transparent; padding: 0; color: var(--accent, #2f6fd6); font-weight: 600; text-align: left; cursor: pointer; }
+.help-link:hover { text-decoration: underline; }
 .help-table { border-collapse: collapse; font-size: var(--fs-small); }
 .help-table td { border-top: 1px solid var(--border); padding: 3px 6px; vertical-align: top; }
 .help-table td:first-child { font-weight: 600; white-space: nowrap; }
@@ -606,7 +636,7 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .made-by b { color: var(--text); font-weight: 600; }
 .made-by a { white-space: nowrap; }
 .made-by a svg { vertical-align: -0.15em; }
-.help-panel .made-by { text-align: left; border-top: none; margin-top: 4px; padding-top: 0; }
+.help-body .made-by { text-align: left; border-top: none; margin-top: 4px; padding-top: 0; }
 /* the tours in the welcome window: their level and length, a tour left half-way */
 .welcome-card .tour-meta { color: var(--accent); font-weight: 600; -webkit-line-clamp: 1; }
 /* a guided tour: a layer over the whole app (dialogs too) that lets the clicks through but for its window; the element
@@ -944,8 +974,16 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .group-bar .batch-bar .row { gap: 6px; flex-wrap: wrap; align-items: center; }
 .group-bar .batch-bar .row > span { white-space: nowrap; }
 /* inside a Batch: a step with its own settings for the file shown */
+/* a step of a Batch: each file (column) its own; its own settings for the one shown; skipped for it */
+.react-flow__node.batch-each::before { content: 'each file its own'; position: absolute; top: -20px; left: 4px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.react-flow__node.batch-each.batch-c::before { content: 'each column its own'; }
 .react-flow__node.batch-own .node { outline: 2px dashed #e8590c; outline-offset: 3px; }
 .react-flow__node.batch-own::before { content: '✎ own settings for this file'; position: absolute; top: -20px; left: 4px; font-size: 11px; color: #e8590c; white-space: nowrap; }
+.react-flow__node.batch-own.batch-c::before { content: '✎ own settings for this column'; }
+.react-flow__node.batch-skip .node { opacity: 0.45; outline: 2px dashed var(--muted); outline-offset: 3px; }
+.react-flow__node.batch-skip::before { content: '⊘ skipped for this file'; position: absolute; top: -20px; left: 4px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.react-flow__node.batch-skip.batch-c::before { content: '⊘ skipped for this column'; }
+.batch-step { display: flex; flex-direction: column; gap: 4px; margin: 0 0 6px; padding: 6px 8px; border: 1px dashed var(--border); border-radius: 6px; }
 .group-bar .batch-bar select { max-width: 260px; }
 /* Batch: the guide of its three steps, its files (the one shown inside marked) */
 .batch-guide { list-style: none; margin: 4px 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }

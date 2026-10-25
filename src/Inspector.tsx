@@ -4,7 +4,7 @@
 // one for every node pinned (the pin: it stays while other nodes are clicked, so several can be seen at once); a section
 // holds its node's options (NodeOptions draws them there). Its width is dragged at its left edge and kept. Above them,
 // the data inspected (Inspect: a node's outputs, or what a connection carries), each pinned or closed apart.
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { useLeaving } from './useLeaving.ts';
 import { nodeColor, nodeDisplayName } from './nodeColors.ts';
 import { setSlot } from './nodes/inspectorStore.ts';
@@ -68,7 +68,8 @@ function Section({ node, pinned, onPin }: { node: AppNode; pinned: boolean; onPi
 
 // paneClicks: counts the clicks on the empty canvas (each folds the panel when nothing is pinned); nodeClicks: the
 // clicks on a node (each unfolds it, the same node clicked again too)
-export function Inspector({ current, pinned, onPin, paneClicks = 0, nodeClicks = 0, data }: { current: AppNode | null; pinned: AppNode[]; onPin: (id: string, on: boolean) => void; paneClicks?: number; nodeClicks?: number; data?: InspectData }) {
+// top: what goes above a node's options (a step of a Batch: its changes for every file or each its own, skipped or not)
+export function Inspector({ current, pinned, onPin, paneClicks = 0, nodeClicks = 0, data, top }: { current: AppNode | null; pinned: AppNode[]; onPin: (id: string, on: boolean) => void; paneClicks?: number; nodeClicks?: number; data?: InspectData; top?: (n: AppNode) => ReactNode }) {
   // folded when the app opens; a node clicked (or chosen another way) unfolds it
   const [state, setState] = useState<State>(() => ({ ...load(), open: false }));
   const update = (patch: Partial<State>) =>
@@ -132,7 +133,10 @@ export function Inspector({ current, pinned, onPin, paneClicks = 0, nodeClicks =
               <DataSection key={`${t.kind}-${t.id}`} target={t} results={data.results} nodes={data.nodes} edges={data.edges} onPin={(on) => data.onPin(t, on)} onClose={() => data.onClose(t)} />
             ))}
             {sections.map((n) => (
-              <Section key={n.id} node={n} pinned={pinned.some((p) => p.id === n.id)} onPin={(on) => onPin(n.id, on)} />
+              <Fragment key={n.id}>
+                {top?.(n)}
+                <Section node={n} pinned={pinned.some((p) => p.id === n.id)} onPin={(on) => onPin(n.id, on)} />
+              </Fragment>
             ))}
             {!sections.length && !data?.targets.length && <div className="muted palette-empty">Click a node: its options appear here.</div>}
           </div>

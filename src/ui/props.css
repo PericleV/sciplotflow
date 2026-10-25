@@ -42,6 +42,9 @@
 
 /* pictures to choose from */
 :is(.props-panel, body) .pic-grid { display: grid; gap: 4px; }
+/* a mark inside a symbol, as a picture */
+:is(.props-panel, body) .inner-pic { font-size: 15px; line-height: 1; font-weight: 600; }
+:is(.props-panel, body) .inner-pic.none { font-size: 10px; font-weight: 400; }
 :is(.props-panel, body) .pic { height: 28px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--input); }
 :is(.props-panel, body) .pic:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
 :is(.props-panel, body) .pic.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--input)); color: color-mix(in srgb, var(--accent) 70%, var(--text)); }

@@ -1,0 +1,1575 @@
+{
+  "about": "Questions a user might type to the assistant (English only), made from the examples of the app: each one a real task. 'expect': the nodes that should be proposed, in order (node types); 'alt': other answers that are also right; 'detail': what the recipe should fill in from the question; 'kind': clear, vague (several ways), jargon (words not in the node names), typo, chain (several steps), from-node (asked with a node selected), detail (numbers, rows, units or names to fill in), other-app (the words of Origin, Excel, ImageJ, Python), none (out of scope: expect empty, the assistant should say so and offer Help). To be checked and completed by hand; the tests aim at top-1 >= 85 % and top-3 >= 95 %.",
+  "questions": [
+    {
+      "q": "how do I open a csv file with decimal commas and skip the first lines",
+      "expect": [
+        "import"
+      ],
+      "detail": "decimal comma, lines skipped",
+      "kind": "clear",
+      "example": "UV-Vis spectrum: mean ± SD of three measurements"
+    },
+    {
+      "q": "mean and standard deviation of my three measurements for every wavelength",
+      "expect": [
+        "stats"
+      ],
+      "alt": [
+        [
+          "average"
+        ]
+      ],
+      "detail": "statistics on rows, mean and SD",
+      "kind": "clear",
+      "example": "UV-Vis spectrum: mean ± SD of three measurements"
+    },
+    {
+      "q": "add an eV axis on top of my wavelength plot",
+      "expect": [
+        "plot1d"
+      ],
+      "detail": "a top axis as a function of the bottom one (1239.84 / x)",
+      "kind": "jargon",
+      "example": "UV-Vis spectrum: mean ± SD of three measurements"
+    },
+    {
+      "q": "my file has n and then k written under it, wavelength twice, how do i get them next to each other",
+      "expect": [
+        "unstack"
+      ],
+      "kind": "vague",
+      "example": "Gold n, k: two blocks in one file (Split into columns)"
+    },
+    {
+      "q": "excel workbook with one sheet per run, plot signal vs time for all of them",
+      "expect": [
+        "import",
+        "autoextract",
+        "plot1d"
+      ],
+      "kind": "chain",
+      "example": "Four runs in a workbook: Auto-extract"
+    },
+    {
+      "q": "each row is a voltage and each column a wavelength, I want one spectrum per voltage",
+      "expect": [
+        "transpose"
+      ],
+      "alt": [
+        [
+          "stack"
+        ]
+      ],
+      "kind": "clear",
+      "example": "Rows to columns: a voltage sweep turned into spectra"
+    },
+    {
+      "q": "find the peak wavelenght of every spectrum in a folder and plot it against temperature",
+      "expect": [
+        "import",
+        "pick",
+        "plot1d"
+      ],
+      "detail": "a Batch over the files, the temperature from the file names",
+      "kind": "typo",
+      "example": "Batch: the peak of every spectrum in a folder"
+    },
+    {
+      "q": "sensor log has duplicate timestamps, missing values and some spikes",
+      "expect": [
+        "filterrows",
+        "clean"
+      ],
+      "detail": "merge repeated times, fill gaps, replace spikes by a moving median",
+      "kind": "chain",
+      "example": "Cleaning a sensor log: order, repeats, gaps, spikes"
+    },
+    {
+      "q": "average three scans measured on different x grids",
+      "expect": [
+        "average"
+      ],
+      "detail": "a common grid, mean ± SD",
+      "kind": "clear",
+      "example": "Replicate scans: mean ± SD on a common X"
+    },
+    {
+      "q": "subtract the reference spectrum from the sample",
+      "expect": [
+        "curvemath"
+      ],
+      "alt": [
+        [
+          "mathcol"
+        ]
+      ],
+      "detail": "sample − reference on a common grid",
+      "kind": "clear",
+      "example": "Difference spectrum: sample minus reference"
+    },
+    {
+      "q": "the sample is shifted by 2 nm, move it back",
+      "expect": [
+        "translate"
+      ],
+      "kind": "clear",
+      "example": "Difference spectrum: sample minus reference"
+    },
+    {
+      "q": "subtract the blank row from every value and compute the unknown concentrations from the standards",
+      "expect": [
+        "book"
+      ],
+      "alt": [
+        [
+          "fit"
+        ]
+      ],
+      "detail": "Set column values: a column minus the value of another row",
+      "kind": "chain",
+      "example": "Workbook formulas: a blank subtracted, the unknowns found"
+    },
+    {
+      "q": "get the data points out of a graph image from a paper",
+      "expect": [
+        "digitizer"
+      ],
+      "kind": "jargon",
+      "example": "Digitizer: values read off the image of a graph"
+    },
+    {
+      "q": "count the particles in my SEM image and get their size distribution",
+      "expect": [
+        "image",
+        "histogram"
+      ],
+      "detail": "threshold, find particles, measure area / Feret",
+      "kind": "chain",
+      "example": "Particles: clusters cut apart, shapes named, their sizes"
+    },
+    {
+      "q": "the particles touch each other and the threshold merges them",
+      "expect": [
+        "image"
+      ],
+      "detail": "watershed or Split along dark lines, or Find like this",
+      "kind": "vague",
+      "example": "Nanocubes: found like one, their side and orientation"
+    },
+    {
+      "q": "roughness Sa Sq of an AFM scan after levelling",
+      "expect": [
+        "image"
+      ],
+      "detail": "Scan lines, Level, the Surface tab",
+      "kind": "jargon",
+      "example": "AFM: levelling, roughness, PSD and a step height"
+    },
+    {
+      "q": "lattice spacing from a HRTEM image",
+      "expect": [
+        "image"
+      ],
+      "detail": "the FFT spectrum, the spots, the Lattice tab",
+      "kind": "jargon",
+      "example": "Gold by TEM: lattice spacing, Bragg filter, diffraction rings"
+    },
+    {
+      "q": "separate two overlapping peaks and get their areas",
+      "expect": [
+        "peaks"
+      ],
+      "alt": [
+        [
+          "fit"
+        ]
+      ],
+      "detail": "a baseline and peaks fitted together, the table of the peaks",
+      "kind": "clear",
+      "example": "Overlapping peaks: peak deconvolution"
+    },
+    {
+      "q": "shirley background for xps",
+      "expect": [
+        "peaks"
+      ],
+      "alt": [
+        [
+          "baseline"
+        ]
+      ],
+      "kind": "jargon",
+      "example": "XPS: Shirley background and a spin–orbit doublet"
+    },
+    {
+      "q": "get rid of the fluorescence background under my raman spectrum",
+      "expect": [
+        "baseline"
+      ],
+      "alt": [
+        [
+          "peaks"
+        ]
+      ],
+      "detail": "arPLS or airPLS",
+      "kind": "jargon",
+      "example": "Signals: baseline, waveform, steps, event averaging"
+    },
+    {
+      "q": "calibration curve with LOD and LOQ and the concentration of my unknowns",
+      "expect": [
+        "fit"
+      ],
+      "detail": "a weighted straight line, Use the fit: read backwards",
+      "kind": "clear",
+      "example": "Calibration: unknowns, LOD and LOQ"
+    },
+    {
+      "q": "fit a fluorescence decay with the instrument response",
+      "expect": [
+        "fit"
+      ],
+      "detail": "reconvolution with the IRF",
+      "kind": "jargon",
+      "example": "Kinetics and lifetimes: rate equations, reconvolution"
+    },
+    {
+      "q": "fit an equivalent circuit to my impedance data and show nyquist",
+      "expect": [
+        "eis"
+      ],
+      "alt": [
+        [
+          "fit"
+        ]
+      ],
+      "kind": "clear",
+      "example": "Equivalent circuit (EIS): R(RQ)W fitted, two points left out"
+    },
+    {
+      "q": "is my impedance spectrum valid? kramers kronig test",
+      "expect": [
+        "kk"
+      ],
+      "kind": "clear",
+      "example": "Kramers–Kronig (impedance): a stable cell passes, a drifting one fails"
+    },
+    {
+      "q": "area between the forward and backward scan of a cyclic voltammogram",
+      "expect": [
+        "unstack",
+        "calculus"
+      ],
+      "kind": "chain",
+      "example": "Cyclic voltammogram: area between the branches"
+    },
+    {
+      "q": "smooth a noisy spectrum",
+      "expect": [
+        "smooth"
+      ],
+      "alt": [
+        [
+          "fft"
+        ]
+      ],
+      "detail": "Savitzky–Golay",
+      "kind": "vague",
+      "example": "Signal processing: smooth, FFT, deconvolution, interpolation"
+    },
+    {
+      "q": "remove 50 Hz mains hum",
+      "expect": [
+        "fft"
+      ],
+      "detail": "a notch at 50 Hz and its harmonics",
+      "kind": "jargon",
+      "example": "Signals: uneven periods, harmonics, mains hum (FFT)"
+    },
+    {
+      "q": "find the period of data sampled at uneven times",
+      "expect": [
+        "fft"
+      ],
+      "detail": "Lomb–Scargle",
+      "kind": "vague",
+      "example": "Signals: uneven periods, harmonics, mains hum (FFT)"
+    },
+    {
+      "q": "compare 3 groups, are they different",
+      "expect": [
+        "anova"
+      ],
+      "alt": [
+        [
+          "nonparam"
+        ]
+      ],
+      "detail": "one-way ANOVA + Tukey; Kruskal–Wallis if not normal",
+      "kind": "vague",
+      "example": "Drug study: ANOVA, t-test, nonparametric, correlation"
+    },
+    {
+      "q": "survival curves for two treatment arms with log-rank",
+      "expect": [
+        "survival"
+      ],
+      "kind": "clear",
+      "example": "Clinical study: survival, ROC, contingency, regression"
+    },
+    {
+      "q": "do two instruments agree",
+      "expect": [
+        "blandaltman"
+      ],
+      "alt": [
+        [
+          "methcomp"
+        ],
+        [
+          "agree"
+        ]
+      ],
+      "kind": "vague",
+      "example": "Bland–Altman: two devices"
+    },
+    {
+      "q": "how many samples do i need",
+      "expect": [
+        "power"
+      ],
+      "kind": "vague",
+      "example": "Laboratory: method comparison, agreement, distributions, power"
+    },
+    {
+      "q": "bar chart with error bars and significance stars between groups",
+      "expect": [
+        "barchart"
+      ],
+      "detail": "mean ± SD from raw values, brackets with a test",
+      "kind": "clear",
+      "example": "Significance brackets on bars and boxes"
+    },
+    {
+      "q": "violin plot",
+      "expect": [
+        "boxviolin"
+      ],
+      "kind": "clear",
+      "example": "Box plot vs violin plot"
+    },
+    {
+      "q": "histogram of particle sizes with a lognormal fit",
+      "expect": [
+        "histogram"
+      ],
+      "alt": [
+        [
+          "distfit"
+        ]
+      ],
+      "kind": "clear",
+      "example": "Nanoparticle monolayer: neighbours, order and sizes"
+    },
+    {
+      "q": "put two plots side by side with labels a and b",
+      "expect": [
+        "canvas"
+      ],
+      "kind": "clear",
+      "example": "Two panels: colour by value, colour bar, spikes removed"
+    },
+    {
+      "q": "a third y axis for pressure",
+      "expect": [
+        "plot1d"
+      ],
+      "kind": "clear",
+      "example": "Three Y axes and a broken X axis"
+    },
+    {
+      "q": "zoomed inset of the weak bands",
+      "expect": [
+        "plot1d"
+      ],
+      "detail": "a second Plot as an inset, the region marked",
+      "kind": "jargon",
+      "example": "Publication figure: an inset and annotations over it"
+    },
+    {
+      "q": "heatmap of a reflectance map with contour lines",
+      "expect": [
+        "contour"
+      ],
+      "kind": "clear",
+      "example": "Contour and heatmap: a reflectance map, scattered points"
+    },
+    {
+      "q": "3d surface plot",
+      "expect": [
+        "plot3d"
+      ],
+      "kind": "clear",
+      "example": "3D: a surface, bars, clusters, a waterfall"
+    },
+    {
+      "q": "invert a matrix and get its eigenvalues",
+      "expect": [
+        "matrix",
+        "matcomp"
+      ],
+      "kind": "chain",
+      "example": "Matrices: inverse, eigenvalues, SVD, a map as a matrix"
+    },
+    {
+      "q": "spectra stacked one behind the other, ridgeline",
+      "expect": [
+        "waterfall"
+      ],
+      "alt": [
+        [
+          "plot3d"
+        ]
+      ],
+      "kind": "jargon",
+      "example": "Waterfall: reflectance vs thickness, a PL ridgeline"
+    },
+    {
+      "q": "lever rule on a phase diagram image",
+      "expect": [
+        "phasedigitizer"
+      ],
+      "kind": "clear",
+      "example": "Cu-Ni phase diagram: Lever rule & dual components (wt.% Ni and wt.% Cu)"
+    },
+    {
+      "q": "what can I do next with this",
+      "expect": [
+        "plot1d"
+      ],
+      "alt": [
+        [
+          "stats"
+        ],
+        [
+          "fit"
+        ]
+      ],
+      "detail": "asked with an Import node selected: the next nodes for a dataset",
+      "kind": "from-node",
+      "example": ""
+    },
+    {
+      "q": "normalize to the maximum",
+      "expect": [
+        "normalize"
+      ],
+      "detail": "asked with a Smooth node selected: connected after it",
+      "kind": "from-node",
+      "example": "Organizing a large graph: frames, a group, a reroute"
+    },
+    {
+      "q": "import a .txt with tab separated columns and 5 header lines",
+      "expect": [
+        "import"
+      ],
+      "detail": "tab separator, 5 lines skipped",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "my csv uses semicolons not commas",
+      "expect": [
+        "import"
+      ],
+      "detail": "semicolon separator",
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "open several files at once and put them all in one graph",
+      "expect": [
+        "import",
+        "plot1d"
+      ],
+      "detail": "several files, a curve each",
+      "kind": "chain",
+      "example": ""
+    },
+    {
+      "q": "delete every second row",
+      "expect": [
+        "filterrows"
+      ],
+      "alt": [
+        [
+          "datamanip"
+        ]
+      ],
+      "detail": "the even rows left out",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "keep only the rows where Temperature is above 300",
+      "expect": [
+        "filterrows"
+      ],
+      "detail": "Temperature > 300",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "sort the data by time",
+      "expect": [
+        "filterrows"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "remove rows 1 to 10",
+      "expect": [
+        "filterrows"
+      ],
+      "alt": [
+        [
+          "datamanip"
+        ]
+      ],
+      "detail": "rows 1-10 left out",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "drop the battery column, I dont need it",
+      "expect": [
+        "columns"
+      ],
+      "kind": "clear",
+      "example": "Cleaning a sensor log: order, repeats, gaps, spikes"
+    },
+    {
+      "q": "rename column B to Voltage (V)",
+      "expect": [
+        "book"
+      ],
+      "alt": [
+        [
+          "import"
+        ],
+        [
+          "columns"
+        ]
+      ],
+      "detail": "the name with its unit",
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "my table has text like 1.21 ± 0.02 eV, make it numbers with the error separate",
+      "expect": [
+        "convert"
+      ],
+      "kind": "jargon",
+      "example": "Rows to columns: a voltage sweep turned into spectra"
+    },
+    {
+      "q": "transpose",
+      "expect": [
+        "transpose"
+      ],
+      "kind": "other-app",
+      "example": ""
+    },
+    {
+      "q": "pivot the long table to wide, one column per sample",
+      "expect": [
+        "unstack"
+      ],
+      "alt": [
+        [
+          "transpose"
+        ]
+      ],
+      "kind": "other-app",
+      "example": ""
+    },
+    {
+      "q": "melt all the columns into one long column",
+      "expect": [
+        "stack"
+      ],
+      "kind": "other-app",
+      "example": ""
+    },
+    {
+      "q": "merge two files by matching the time",
+      "expect": [
+        "combine"
+      ],
+      "alt": [
+        [
+          "interp"
+        ],
+        [
+          "curvemath"
+        ]
+      ],
+      "kind": "vague",
+      "example": ""
+    },
+    {
+      "q": "append the second dataset under the first one",
+      "expect": [
+        "combine"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "fill the missing values by interpolation",
+      "expect": [
+        "clean"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "there are outliers in my data, how do i find them",
+      "expect": [
+        "normality"
+      ],
+      "alt": [
+        [
+          "clean"
+        ]
+      ],
+      "kind": "vague",
+      "example": ""
+    },
+    {
+      "q": "remove a few bad points by hand",
+      "expect": [
+        "datamanip"
+      ],
+      "kind": "clear",
+      "example": "Cleaning a sensor log: order, repeats, gaps, spikes"
+    },
+    {
+      "q": "take column C from sheet 2",
+      "expect": [
+        "extract"
+      ],
+      "detail": "sheet 2, column C",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "convert wavelength in nm to energy in eV",
+      "expect": [
+        "mathcol"
+      ],
+      "detail": "1239.84 / x, named Energy (eV)",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "new column = A*B/1000",
+      "expect": [
+        "mathcol"
+      ],
+      "alt": [
+        [
+          "book"
+        ]
+      ],
+      "detail": "the formula A*B/1000",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "set column values like in origin",
+      "expect": [
+        "book"
+      ],
+      "kind": "other-app",
+      "example": "Workbook formulas: a blank subtracted, the unknowns found"
+    },
+    {
+      "q": "generate x from 0 to 10 with step 0.1",
+      "expect": [
+        "gencol"
+      ],
+      "detail": "from 0, step 0.1, to 10",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "add a column of random noise, normal with sd 0.05",
+      "expect": [
+        "gencol"
+      ],
+      "alt": [
+        [
+          "mathcol"
+        ]
+      ],
+      "detail": "normal, mean 0, SD 0.05",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "log10 of a column",
+      "expect": [
+        "mathcol"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "cumulative sum of the signal",
+      "expect": [
+        "calculus"
+      ],
+      "alt": [
+        [
+          "mathcol"
+        ]
+      ],
+      "kind": "vague",
+      "example": ""
+    },
+    {
+      "q": "savgol filter window 11 order 2",
+      "expect": [
+        "smooth"
+      ],
+      "detail": "Savitzky–Golay, 11 points, order 2",
+      "kind": "other-app",
+      "example": ""
+    },
+    {
+      "q": "moving average over 5 points",
+      "expect": [
+        "smooth"
+      ],
+      "detail": "moving average, 5 points",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "first derivative of the curve",
+      "expect": [
+        "calculus"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "integrate the peak between 400 and 450 nm",
+      "expect": [
+        "calculus"
+      ],
+      "alt": [
+        [
+          "peaks"
+        ]
+      ],
+      "detail": "from 400 to 450",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "area under the curve",
+      "expect": [
+        "calculus"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "where is the maximum and at what x",
+      "expect": [
+        "pick"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "FWHM of my peak",
+      "expect": [
+        "peakwidth"
+      ],
+      "alt": [
+        [
+          "peaks"
+        ]
+      ],
+      "kind": "jargon",
+      "example": ""
+    },
+    {
+      "q": "find all the peaks higher than 0.2",
+      "expect": [
+        "peaks"
+      ],
+      "alt": [
+        [
+          "pick"
+        ]
+      ],
+      "detail": "a least height of 0.2",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "low pass filter with a cutoff at 10 Hz",
+      "expect": [
+        "fft"
+      ],
+      "detail": "low pass, 10 Hz",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "power spectrum of my time signal",
+      "expect": [
+        "fft"
+      ],
+      "kind": "jargon",
+      "example": ""
+    },
+    {
+      "q": "resample my curve on the x values of the other curve",
+      "expect": [
+        "interp"
+      ],
+      "alt": [
+        [
+          "curvemath"
+        ]
+      ],
+      "kind": "vague",
+      "example": ""
+    },
+    {
+      "q": "remove the blur of the instrument from my spectrum",
+      "expect": [
+        "convolve"
+      ],
+      "kind": "jargon",
+      "example": "Signal processing: smooth, FFT, deconvolution, interpolation"
+    },
+    {
+      "q": "rise time and overshoot of a pulse",
+      "expect": [
+        "waveform"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "find the steps in a photobleaching trace",
+      "expect": [
+        "steps"
+      ],
+      "kind": "jargon",
+      "example": ""
+    },
+    {
+      "q": "average the response over every trigger, the response is smaller than the noise",
+      "expect": [
+        "events"
+      ],
+      "kind": "jargon",
+      "example": ""
+    },
+    {
+      "q": "wavelet transform of my signal",
+      "expect": [
+        "wavelet"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "allan deviation of a drifting sensor",
+      "expect": [
+        "fft"
+      ],
+      "kind": "jargon",
+      "example": "Signals: PSD, a Butterworth filter, the Allan deviation"
+    },
+    {
+      "q": "semi-derivative of a voltammogram",
+      "expect": [
+        "fraccalc"
+      ],
+      "kind": "jargon",
+      "example": ""
+    },
+    {
+      "q": "normalize so the area is 1",
+      "expect": [
+        "normalize"
+      ],
+      "detail": "by the area",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "divide by the max so it goes from 0 to 1",
+      "expect": [
+        "normalize"
+      ],
+      "detail": "to the maximum, min to 0",
+      "kind": "vague",
+      "example": ""
+    },
+    {
+      "q": "fit a gaussian",
+      "expect": [
+        "fit"
+      ],
+      "alt": [
+        [
+          "peaks"
+        ]
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "linear fit, I need the slope with its error",
+      "expect": [
+        "fit"
+      ],
+      "alt": [
+        [
+          "regress"
+        ]
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "exponential decay fit, I need tau",
+      "expect": [
+        "fit"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "fit my own equation y = a*exp(-x/b) + c",
+      "expect": [
+        "fit"
+      ],
+      "detail": "the equation as written, parameters a, b, c",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "nonlinear curve fit like NLFit in origin",
+      "expect": [
+        "fit"
+      ],
+      "kind": "other-app",
+      "example": ""
+    },
+    {
+      "q": "fit several datasets at once with a shared parameter",
+      "expect": [
+        "fit"
+      ],
+      "kind": "jargon",
+      "example": ""
+    },
+    {
+      "q": "fit using the error bars as weights",
+      "expect": [
+        "fit"
+      ],
+      "detail": "weights 1/σ²",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "polynomial fit of order 3",
+      "expect": [
+        "fit"
+      ],
+      "detail": "a polynomial of order 3",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "can I use scipy curve_fit",
+      "expect": [
+        "python"
+      ],
+      "alt": [
+        [
+          "fit"
+        ]
+      ],
+      "kind": "other-app",
+      "example": ""
+    },
+    {
+      "q": "extrapolate the fit to x = 0",
+      "expect": [
+        "fit"
+      ],
+      "alt": [
+        [
+          "interp"
+        ]
+      ],
+      "kind": "vague",
+      "example": ""
+    },
+    {
+      "q": "t-test between control and treated",
+      "expect": [
+        "ttest"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "paired t test before vs after",
+      "expect": [
+        "ttest"
+      ],
+      "detail": "paired",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "is my data normally distributed",
+      "expect": [
+        "normality"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "mann whitney",
+      "expect": [
+        "nonparam"
+      ],
+      "kind": "jargon",
+      "example": ""
+    },
+    {
+      "q": "two way anova with dose and sex",
+      "expect": [
+        "anova"
+      ],
+      "detail": "factors Dose and Sex",
+      "kind": "detail",
+      "example": "Drug study: ANOVA, t-test, nonparametric, correlation"
+    },
+    {
+      "q": "pearson correlation between all my columns",
+      "expect": [
+        "correl"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "correct my p values for multiple comparisons, bonferroni",
+      "expect": [
+        "padjust"
+      ],
+      "detail": "Bonferroni",
+      "kind": "jargon",
+      "example": ""
+    },
+    {
+      "q": "chi square on a 2x2 table",
+      "expect": [
+        "contingency"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "AUC and the best cutoff",
+      "expect": [
+        "roc"
+      ],
+      "kind": "jargon",
+      "example": ""
+    },
+    {
+      "q": "multiple linear regression with 3 predictors",
+      "expect": [
+        "regress"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "bootstrap confidence interval of the median",
+      "expect": [
+        "resample"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "which distribution fits my data best",
+      "expect": [
+        "distfit"
+      ],
+      "kind": "vague",
+      "example": ""
+    },
+    {
+      "q": "PCA",
+      "expect": [
+        "correl"
+      ],
+      "kind": "jargon",
+      "example": "Regression, PCA, power and a control chart"
+    },
+    {
+      "q": "logistic regression with a yes/no outcome",
+      "expect": [
+        "logistic"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "mean, median, SD, min and max of each column",
+      "expect": [
+        "stats"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "cohen's kappa between two raters",
+      "expect": [
+        "agree"
+      ],
+      "kind": "jargon",
+      "example": ""
+    },
+    {
+      "q": "control chart of my process",
+      "expect": [
+        "stats"
+      ],
+      "kind": "jargon",
+      "example": "Regression, PCA, power and a control chart"
+    },
+    {
+      "q": "scatter plot with error bars",
+      "expect": [
+        "plot1d"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "log scale on y",
+      "expect": [
+        "plot1d"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "change the line colour and thickness",
+      "expect": [
+        "plot1d"
+      ],
+      "kind": "vague",
+      "example": ""
+    },
+    {
+      "q": "two curves with different y axes, like twinx",
+      "expect": [
+        "plot1d"
+      ],
+      "kind": "other-app",
+      "example": ""
+    },
+    {
+      "q": "subplots 2x2",
+      "expect": [
+        "canvas"
+      ],
+      "kind": "other-app",
+      "example": ""
+    },
+    {
+      "q": "export the figure as a 300 dpi tiff",
+      "expect": [
+        "plot1d"
+      ],
+      "detail": "TIFF, 300 dpi",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "make the figure 8.5 cm wide for the journal",
+      "expect": [
+        "plot1d"
+      ],
+      "detail": "page width 8.5 cm",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "add an arrow and a text label on the graph",
+      "expect": [
+        "plot1d"
+      ],
+      "alt": [
+        [
+          "drawing"
+        ]
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "color the points by a third column",
+      "expect": [
+        "plot1d"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "pie chart of the percentages",
+      "expect": [
+        "pie"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "radar chart",
+      "expect": [
+        "polar"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "box plot showing all the points",
+      "expect": [
+        "boxviolin"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "Q-Q plot",
+      "expect": [
+        "probplot"
+      ],
+      "kind": "jargon",
+      "example": ""
+    },
+    {
+      "q": "weibull plot of failure times",
+      "expect": [
+        "probplot"
+      ],
+      "kind": "jargon",
+      "example": ""
+    },
+    {
+      "q": "ternary diagram",
+      "expect": [
+        "ternary"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "pairplot of all the variables",
+      "expect": [
+        "scattermatrix"
+      ],
+      "kind": "other-app",
+      "example": ""
+    },
+    {
+      "q": "contour plot from x y z columns",
+      "expect": [
+        "contour"
+      ],
+      "detail": "X, Y, Z columns, scattered or on a grid",
+      "kind": "detail",
+      "example": ""
+    },
+    {
+      "q": "stacked bar chart",
+      "expect": [
+        "barchart"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "break the x axis where there is no data",
+      "expect": [
+        "plot1d"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "analyze particles like in imagej",
+      "expect": [
+        "image"
+      ],
+      "kind": "other-app",
+      "example": ""
+    },
+    {
+      "q": "rolling ball background subtraction",
+      "expect": [
+        "image"
+      ],
+      "kind": "jargon",
+      "example": ""
+    },
+    {
+      "q": "set the scale from the scale bar in the image",
+      "expect": [
+        "image"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "grain size ASTM E112",
+      "expect": [
+        "image"
+      ],
+      "kind": "jargon",
+      "example": ""
+    },
+    {
+      "q": "length of the ligaments in a nanowire network",
+      "expect": [
+        "image"
+      ],
+      "kind": "jargon",
+      "example": "Nanoporous gold: ligaments from the skeleton"
+    },
+    {
+      "q": "my particles are textured and the threshold misses them",
+      "expect": [
+        "image"
+      ],
+      "kind": "vague",
+      "example": "Trainable classifier: textured particles a threshold misses"
+    },
+    {
+      "q": "put several nodes into one group",
+      "expect": [
+        "subgraph"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "write a note on the canvas",
+      "expect": [
+        "note"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "draw a frame around a part of the graph",
+      "expect": [
+        "frame"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "run my own python code on the data",
+      "expect": [
+        "python"
+      ],
+      "kind": "clear",
+      "example": ""
+    },
+    {
+      "q": "n and k from a reflectance with kramers kronig",
+      "expect": [
+        "kk"
+      ],
+      "kind": "jargon",
+      "example": ""
+    },
+    {
+      "q": "draw a phase diagram from my own data",
+      "expect": [
+        "phasediagram"
+      ],
+      "alt": [
+        [
+          "phasedigitizer"
+        ]
+      ],
+      "kind": "vague",
+      "example": ""
+    },
+    {
+      "q": "plot the fit over the data",
+      "expect": [
+        "plot1d"
+      ],
+      "detail": "asked with a Fit selected: its curve and the data in one Plot",
+      "kind": "from-node",
+      "example": ""
+    },
+    {
+      "q": "histogram of the areas",
+      "expect": [
+        "histogram"
+      ],
+      "detail": "asked with an Image analysis selected: its Area column",
+      "kind": "from-node",
+      "example": ""
+    },
+    {
+      "q": "now make a bar chart of this",
+      "expect": [
+        "barchart"
+      ],
+      "detail": "asked with a Workbook selected",
+      "kind": "from-node",
+      "example": ""
+    },
+    {
+      "q": "train a neural network on my data",
+      "expect": [],
+      "kind": "none",
+      "example": ""
+    },
+    {
+      "q": "send the figure by email",
+      "expect": [],
+      "kind": "none",
+      "example": ""
+    },
+    {
+      "q": "translate the app to romanian",
+      "expect": [],
+      "kind": "none",
+      "example": ""
+    },
+    {
+      "q": "baseline corection for raman",
+      "expect": [
+        "baseline"
+      ],
+      "alt": [
+        [
+          "peaks"
+        ]
+      ],
+      "kind": "typo",
+      "example": ""
+    },
+    {
+      "q": "fitt a lorentzian peak",
+      "expect": [
+        "fit"
+      ],
+      "alt": [
+        [
+          "peaks"
+        ]
+      ],
+      "kind": "typo",
+      "example": ""
+    },
+    {
+      "q": "histogramm of the values",
+      "expect": [
+        "histogram"
+      ],
+      "kind": "typo",
+      "example": ""
+    },
+    {
+      "q": "standart deviation of each colum",
+      "expect": [
+        "stats"
+      ],
+      "kind": "typo",
+      "example": ""
+    },
+    {
+      "q": "smoth the curve",
+      "expect": [
+        "smooth"
+      ],
+      "kind": "typo",
+      "example": ""
+    },
+    {
+      "q": "anova + tukey post hoc",
+      "expect": [
+        "anova"
+      ],
+      "kind": "jargon",
+      "example": ""
+    },
+    {
+      "q": "intergrate under the peak",
+      "expect": [
+        "calculus"
+      ],
+      "alt": [
+        [
+          "peaks"
+        ]
+      ],
+      "kind": "typo",
+      "example": ""
+    },
+    {
+      "q": "corelation matrix heatmap",
+      "expect": [
+        "correl"
+      ],
+      "kind": "typo",
+      "example": ""
+    },
+    {
+      "q": "remove a chirp from my signal",
+      "expect": [
+        "frft"
+      ],
+      "kind": "jargon",
+      "example": "Signals: a chirp taken out by the fractional Fourier transform"
+    },
+    {
+      "q": "a long connection crosses everything, can I route it around",
+      "expect": [
+        "reroute"
+      ],
+      "kind": "vague",
+      "example": "Organizing a large graph: frames, a group, a reroute"
+    }
+  ]
+}

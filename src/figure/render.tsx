@@ -7,7 +7,7 @@ import type { AnnotationItem, CanvasItem } from '../types.ts';
 import { categoryColors, legendColor, mapColor, mapT, stopsOf } from './colors.ts';
 import { cellEdges } from '../engine/contour.ts';
 import { legendLayout } from './legendLayout.ts';
-import { dashArray, hasLine, hasSymbols, lineHeightOf, lineOnly, parseRich, plainText, richMetrics, runMath, runSize, splinePath, symbolPath, textRunWidth, type Run } from './draw.ts';
+import { dashArray, hasLine, hasSymbols, innerPath, lineHeightOf, lineOnly, parseRich, plainText, richMetrics, runMath, runSize, splinePath, symbolPath, textRunWidth, type Run } from './draw.ts';
 import { mathBox, mathError, mathFace, useMathVersion } from '../math/store.ts';
 import { CORNERED, isClosed as pathClosed, mapSegs, parsePath, pathBox, pathPolylines, pathText, radiiOf, roundedRectD, shapeToPath, turnedPath, type Seg } from './paths.ts';
 import { parseBreaks } from './ticks.ts';
@@ -20,6 +20,7 @@ import { axesGeometry, axisNeeds, endLabels, labelReach, legendPlace, turnedExte
 import {
   AUTO_BAR,
   resolveText,
+  symbolLook,
   toPt,
   type Anchor,
   type Annotation,
@@ -299,12 +300,16 @@ function pointColors(c: Curve): string[] | null {
 }
 
 // ---- curves ----
-function Mark({ shape, size, x, y, color, edge, fill, width }: { shape: Curve['style']['symbol']; size: number; x: number; y: number; color: string; edge: string; fill: Curve['style']['symbolFill']; width: number }) {
-  const open = lineOnly(shape) || fill === 'open' || fill === 'dot';
+function Mark({ st, size, x, y, color, edge }: { st: Curve['style']; size: number; x: number; y: number; color: string; edge: string }) {
+  const shape = st.symbol;
+  const look = symbolLook(st, color);
+  const width = st.symbolEdge;
+  const inner = look.inner ? innerPath(look.inner, size, x, y, st.innerSize ?? 0.5) : null;
+  const innerCol = st.innerColor || edge;
   return (
     <>
-      <path d={symbolPath(shape, size)} transform={`translate(${n2(x)} ${n2(y)})`} fill={open ? 'none' : fill === 'white' ? '#ffffff' : color} stroke={edge} strokeWidth={lineOnly(shape) ? Math.max(width, 0.6) : width} strokeLinejoin="round" />
-      {fill === 'dot' && <circle cx={n2(x)} cy={n2(y)} r={n2(Math.max(0.4, size * 0.12))} fill={edge} />}
+      <path d={symbolPath(shape, size)} transform={`translate(${n2(x)} ${n2(y)})`} fill={lineOnly(shape) ? 'none' : look.fill} fillOpacity={look.fillOpacity} stroke={edge} strokeWidth={lineOnly(shape) ? Math.max(width, 0.6) : width} strokeLinejoin="round" />
+      {inner && (inner.filled ? <path d={inner.d} fill={innerCol} /> : <path d={inner.d} fill="none" stroke={innerCol} strokeWidth={st.innerWidth ?? Math.max(0.5, width)} strokeLinecap="round" />)}
     </>
   );
 }
@@ -1234,18 +1239,29 @@ function CurveView({ c, sx, sy, frame, defaults, below, others = [], gid = 'c' }
     return <g>{parts}</g>;
   }
   // a rug: every value a tick from the frame's edge inward (whatever the other coordinate)
+  // (both: along the bottom and the left; to the point: each tick from the edge to its point)
   if (st.rug) {
     const len = st.rugLength && st.rugLength > 0 ? st.rugLength : 4;
-    const vs = st.rug === 'x' ? x.values : y.values;
-    const s = st.rug === 'x' ? sx : sy;
+    const toPoint = st.rugTo === 'point';
     let path = '';
-    for (let i = 0; i < vs.length; i++) {
-      if (!validFor(s.spec, vs[i]) || c.mask?.[i]) continue;
-      const p = s.f(vs[i]);
-      if (st.rug === 'x' ? p < frame.x - 0.01 || p > frame.x + frame.w + 0.01 : p < frame.y - 0.01 || p > frame.y + frame.h + 0.01) continue;
-      path += st.rug === 'x' ? `M${n2(p)},${n2(frame.y + frame.h)}v${n2(-len)}` : `M${n2(frame.x)},${n2(p)}h${n2(len)}`;
+    for (const axis of st.rug === 'both' ? (['x', 'y'] as const) : [st.rug]) {
+      const vs = axis === 'x' ? x.values : y.values;
+      const s = axis === 'x' ? sx : sy;
+      for (let i = 0; i < vs.length; i++) {
+        if (!validFor(s.spec, vs[i]) || c.mask?.[i]) continue;
+        const p = s.f(vs[i]);
+        if (axis === 'x' ? p < frame.x - 0.01 || p > frame.x + frame.w + 0.01 : p < frame.y - 0.01 || p > frame.y + frame.h + 0.01) continue;
+        if (toPoint) {
+          const o = axis === 'x' ? sy.f(y.values[i]) : sx.f(x.values[i]);
+          if (!Number.isFinite(o) || !validFor(axis === 'x' ? sy.spec : sx.spec, axis === 'x' ? y.values[i] : x.values[i])) continue;
+          // (stopped at the symbol's edge)
+          const r = hasSymbols(c) ? (c.sizeValues ? 0 : st.symbolSize / 2) : 0;
+          path += axis === 'x' ? `M${n2(p)},${n2(frame.y + frame.h)}V${n2(Math.max(frame.y, Math.min(frame.y + frame.h, o + r)))}` : `M${n2(frame.x)},${n2(p)}H${n2(Math.max(frame.x, Math.min(frame.x + frame.w, o - r)))}`;
+        } else path += axis === 'x' ? `M${n2(p)},${n2(frame.y + frame.h)}v${n2(-len)}` : `M${n2(frame.x)},${n2(p)}h${n2(len)}`;
+      }
     }
-    if (path) parts.push(<path key="rug" d={path} stroke={st.color} strokeWidth={Math.max(0.3, st.lineWidth)} strokeOpacity={st.lineOpacity} fill="none" />);
+    const rw = st.rugWidth !== undefined && st.rugWidth > 0 ? st.rugWidth : Math.max(0.3, st.lineWidth);
+    if (path) parts.push(<path key="rug" d={path} stroke={st.rugColor || st.color} strokeWidth={rw} strokeDasharray={st.rugDash ? dashArray(st.rugDash, rw) : undefined} strokeOpacity={st.rugOpacity ?? st.lineOpacity} fill="none" />);
   }
   if (st.drop !== 'none')
     parts.push(
@@ -1330,7 +1346,7 @@ function CurveView({ c, sx, sy, frame, defaults, below, others = [], gid = 'c' }
       runs.forEach((r, k) => {
         const px = r.map((i) => sx.f(x.values[i]));
         const py = r.map((i) => sy.f(y.values[i]));
-        lineParts.push(<path key={`h${k}`} d={linePath(c, px, py)} fill="none" stroke={st.haloColor || '#ffffff'} strokeWidth={st.lineWidth + 2 * (st.halo ?? 0)} strokeLinejoin={st.lineJoin ?? 'round'} strokeLinecap="round" />);
+        lineParts.push(<path key={`h${k}`} d={linePath(c, px, py)} fill="none" stroke={st.haloColor || '#ffffff'} strokeOpacity={st.haloOpacity !== undefined && st.haloOpacity < 1 ? Math.max(0, st.haloOpacity) : undefined} strokeWidth={st.lineWidth + 2 * (st.halo ?? 0)} strokeLinejoin={st.lineJoin ?? 'round'} strokeLinecap="round" />);
       });
     if (c.widthValues) {
       // the width from the data: one segment per pair of points, as wide as its two points on average (and in the colour
@@ -1428,6 +1444,9 @@ function CurveView({ c, sx, sy, frame, defaults, below, others = [], gid = 'c' }
     // same colour and size adds nothing to the picture: one per cell of a tenth of its size (a number as the key — a
     // million points drawn fast)
     const groups = new Map<string, { d: string; dots: string; seen: Map<number, Set<number>> }>();
+    // (its fill: the curve's colour, none, or a colour of its own; the mark inside, if any: in one path a colour)
+    const inner = symbolLook(st, st.color).inner;
+    const innerFilled = inner === 'dot';
     for (let k = 0; k < idx.length; k += every) {
       const i = idx[k];
       const col = symColored && colors ? colors[i] : st.color;
@@ -1446,15 +1465,17 @@ function CurveView({ c, sx, sy, frame, defaults, below, others = [], gid = 'c' }
       if (seen.has(cell)) continue;
       seen.add(cell);
       g.d += symbolPath(st.symbol, size, px, py);
-      if (st.symbolFill === 'dot') g.dots += symbolPath('circle', Math.max(0.8, size * 0.24), px, py);
+      if (inner) g.dots += innerPath(inner, size, px, py, st.innerSize ?? 0.5).d;
     }
-    const open = lineOnly(st.symbol) || st.symbolFill === 'open' || st.symbolFill === 'dot';
     parts.push(
       <g key="sym" opacity={st.symbolOpacity < 1 ? st.symbolOpacity : undefined} strokeLinejoin="round" strokeWidth={lineOnly(st.symbol) ? Math.max(st.symbolEdge, 0.6) : st.symbolEdge}>
         {[...groups].map(([col, g]) => (
           <Fragment key={col}>
-            <path d={g.d} fill={open ? 'none' : st.symbolFill === 'white' ? '#ffffff' : col} stroke={st.edgeColor || col} />
-            {g.dots && <path d={g.dots} fill={st.edgeColor || col} stroke="none" />}
+            {(() => {
+              const look = symbolLook(st, col);
+              return <path d={g.d} fill={lineOnly(st.symbol) ? 'none' : look.fill} fillOpacity={look.fillOpacity} stroke={st.edgeColor || col} />;
+            })()}
+            {g.dots && (innerFilled ? <path d={g.dots} fill={st.innerColor || st.edgeColor || col} stroke="none" /> : <path d={g.dots} fill="none" stroke={st.innerColor || st.edgeColor || col} strokeWidth={st.innerWidth ?? Math.max(0.5, st.symbolEdge)} strokeLinecap="round" />)}
           </Fragment>
         ))}
       </g>,
@@ -1587,7 +1608,7 @@ function LegendDraw({ lg, box, defaults, place }: { lg: LegendSpec; box: Box; de
           <g key={`${c.key}-${k}`}>
             {(st.fill !== 'none' || (st.errStyle === 'band' && c.series.yErr)) && <rect x={n2(x0)} y={n2(cy - L.sampleH / 2)} width={n2(lg.lineLen)} height={n2(L.sampleH)} fill={st.fill !== 'none' ? st.fillColor || color : st.errColor || color} fillOpacity={st.fillOpacity} />}
             {hasLine(c) && <line x1={n2(x0)} x2={n2(x0 + lg.lineLen)} y1={n2(cy)} y2={n2(cy)} stroke={color} strokeWidth={c.widthValues ? ((st.widthMin ?? 0.5) + (st.widthMax ?? 3)) / 2 : st.lineWidth} strokeOpacity={st.lineOpacity} strokeDasharray={dashArray(st.dash, st.lineWidth)} />}
-            {hasSymbols(c) && <Mark shape={st.symbol} size={c.sizeValues ? (st.sizeMin + st.sizeMax) / 2 : st.symbolSize} x={x0 + lg.lineLen / 2} y={cy} color={color} edge={st.edgeColor || color} fill={st.symbolFill} width={st.symbolEdge} />}
+            {hasSymbols(c) && <Mark st={st} size={c.sizeValues ? (st.sizeMin + st.sizeMax) / 2 : st.symbolSize} x={x0 + lg.lineLen / 2} y={cy} color={color} edge={st.edgeColor || color} />}
             <RichText x={x0 + lg.lineLen + L.gap} y={ty} text={c.label} st={L.t} valign="middle" />
           </g>
         );

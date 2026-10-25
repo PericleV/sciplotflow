@@ -32,9 +32,12 @@ const saveOpen = (panel: string, v: string[]) => {
 };
 // panel: what remembers the sections open (one key for every object of a kind); open: the ones open at first
 export function Sections({ panel, open, children }: { panel: string; open: string[]; children: ReactNode }) {
-  const [value, setValue] = useState(() => readOpen(panel, open));
+  // (another panel in the same place, a tab changed: its own sections open, not those of the one before)
+  const [state, setState] = useState(() => ({ panel, value: readOpen(panel, open) }));
+  if (state.panel !== panel) setState({ panel, value: readOpen(panel, open) });
+  const value = state.panel === panel ? state.value : readOpen(panel, open);
   return (
-    <Accordion multiple value={value} onChange={(v) => (setValue(v), saveOpen(panel, v))} chevronPosition="left" variant="default" className="props-sections">
+    <Accordion key={panel} multiple value={value} onChange={(v) => (setState({ panel, value: v }), saveOpen(panel, v))} chevronPosition="left" variant="default" className="props-sections">
       {children}
     </Accordion>
   );

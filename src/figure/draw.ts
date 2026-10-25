@@ -201,6 +201,33 @@ export function richMetrics(text: string, st: ResolvedText): { widths: number[];
 // Text of a markup without the markup (tooltips, names).
 export const plainText = (text: string) => parseRich(text).map((l) => l.map((r) => r.t).join('')).join(' ');
 
+// The mark inside a symbol of size s at (cx, cy), k its part of the symbol: a path to stroke, or (a dot) to fill
+export function innerPath(kind: 'dot' | 'dash' | 'plus' | 'cross' | 'ring' | 'bar' | 'slash' | 'backslash', s: number, cx: number, cy: number, k = 0.5): { d: string; filled: boolean } {
+  const r = (s * k) / 2;
+  const P = (x: number, y: number) => `${+(cx + x).toFixed(2)},${+(cy + y).toFixed(2)}`;
+  const q = r * Math.SQRT1_2;
+  switch (kind) {
+    case 'dot': {
+      const d = Math.max(0.3, r * 0.6);
+      return { d: `M${P(-d, 0)}A${+d.toFixed(2)},${+d.toFixed(2)} 0 1,0 ${P(d, 0)}A${+d.toFixed(2)},${+d.toFixed(2)} 0 1,0 ${P(-d, 0)}Z`, filled: true };
+    }
+    case 'dash':
+      return { d: `M${P(-r, 0)}L${P(r, 0)}`, filled: false };
+    case 'bar':
+      return { d: `M${P(0, -r)}L${P(0, r)}`, filled: false };
+    case 'plus':
+      return { d: `M${P(-r, 0)}L${P(r, 0)}M${P(0, -r)}L${P(0, r)}`, filled: false };
+    case 'cross':
+      return { d: `M${P(-q, -q)}L${P(q, q)}M${P(-q, q)}L${P(q, -q)}`, filled: false };
+    case 'slash':
+      return { d: `M${P(-q, q)}L${P(q, -q)}`, filled: false };
+    case 'backslash':
+      return { d: `M${P(-q, -q)}L${P(q, q)}`, filled: false };
+    case 'ring':
+      return { d: `M${P(-r, 0)}A${+r.toFixed(2)},${+r.toFixed(2)} 0 1,0 ${P(r, 0)}A${+r.toFixed(2)},${+r.toFixed(2)} 0 1,0 ${P(-r, 0)}Z`, filled: false };
+  }
+}
+
 // ---- symbols: paths of width `s` centred at 0, 0 ----
 const f = (v: number) => +v.toFixed(2);
 // The path of a symbol of width `s` centred at (cx, cy) — many of them make one path.

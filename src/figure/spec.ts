@@ -28,7 +28,9 @@ export const resolveText = (s: TextStyle | undefined, d: TextDefaults): Resolved
 export type PlotMode = 'line' | 'scatter' | 'linesymbol' | 'step';
 export type SymbolShape = 'circle' | 'square' | 'triangle' | 'triangleDown' | 'triangleLeft' | 'triangleRight' | 'diamond' | 'pentagon' | 'hexagon' | 'cross' | 'plus' | 'star';
 export type Dash = 'solid' | 'dash' | 'dot' | 'dashdot' | 'longdash' | 'shortdash' | 'dashdotdot';
-export type SymbolFill = 'filled' | 'open' | 'white' | 'dot';
+export type SymbolFill = 'filled' | 'open' | 'white' | 'dot' | 'color';
+// a mark inside a symbol: a dot, a dash, a plus, a cross, a ring, a bar, a slash, a backslash
+export type InnerMark = 'dot' | 'dash' | 'plus' | 'cross' | 'ring' | 'bar' | 'slash' | 'backslash';
 export type ColorMapName = 'viridis' | 'plasma' | 'inferno' | 'magma' | 'cividis' | 'turbo' | 'coolwarm' | 'rdbu' | 'gray' | 'custom';
 export type ColorBy = 'none' | 'index' | 'x' | 'y' | 'column';
 
@@ -43,7 +45,7 @@ export type CurveStyle = {
   lineOpacity: number; // 0 … 1
   symbol: SymbolShape;
   symbolSize: number; // pt, the width of the symbol
-  symbolFill: SymbolFill; // open: no fill; white: filled with white (hides the line behind it); dot: open with a dot
+  symbolFill: SymbolFill; // open: no fill; white: filled with white (hides the line behind it); dot: open with a dot; color: filled with symbolFillColor
   symbolEdge: number; // pt, outline of the symbol
   edgeColor: string; // '' = the colour of the curve
   symbolOpacity: number;
@@ -119,6 +121,15 @@ export type CurveStyle = {
   lineJoin?: 'miter' | 'round' | 'bevel';
   halo?: number;
   haloColor?: string;
+  haloOpacity?: number;
+  // the symbols: their fill's own colour and opacity (symbolFill 'color'); a mark inside them, its size (a part of the
+  // symbol's), colour (absent: the outline's) and width (absent: the outline's)
+  symbolFillColor?: string;
+  symbolFillOpacity?: number;
+  symbolInner?: InnerMark;
+  innerSize?: number;
+  innerColor?: string;
+  innerWidth?: number;
   arrowStart?: ArrowHead;
   arrowEnd?: ArrowHead;
   arrowSize?: number;
@@ -131,10 +142,24 @@ export type CurveStyle = {
   // its label written at its end, outside the frame at the right, in its colour (lines labelled directly; the labels
   // kept apart)
   endLabel?: boolean;
-  // a rug: a short tick at every x value along the bottom of the frame (x), or every y value along its left (y); length pt
-  rug?: 'x' | 'y';
+  // a rug: a short tick at every x value along the bottom of the frame (x), every y value along its left (y), or both;
+  // length pt, or to the point itself (rugTo); its width, colour, dashes and opacity (absent: the line's)
+  rug?: 'x' | 'y' | 'both';
   rugLength?: number;
+  rugTo?: 'point';
+  rugWidth?: number;
+  rugColor?: string;
+  rugDash?: Dash;
+  rugOpacity?: number;
 };
+// How a curve's symbols are filled, and the mark inside them: an older white fill a fill of white, an older dot an open
+// symbol with a dot inside
+export function symbolLook(st: Pick<CurveStyle, 'symbol' | 'symbolFill' | 'symbolFillColor' | 'symbolFillOpacity' | 'symbolInner'>, color: string): { fill: string; fillOpacity?: number; inner?: InnerMark } {
+  const f = st.symbolFill;
+  const inner = st.symbolInner ?? (f === 'dot' ? 'dot' : undefined);
+  const fill = f === 'open' || f === 'dot' ? 'none' : f === 'white' ? '#ffffff' : f === 'color' ? st.symbolFillColor || '#ffffff' : color;
+  return { fill, ...(f === 'color' && st.symbolFillOpacity !== undefined && st.symbolFillOpacity < 1 ? { fillOpacity: Math.max(0, st.symbolFillOpacity) } : {}), ...(inner ? { inner } : {}) };
+}
 export type ErrXStyle = { same: boolean; width: number; cap: number; color: string; dash: Dash; dir: 'both' | 'plus' | 'minus' };
 // A curve as drawn: its data, style, and the per-point values that colour / size / label it.
 export type Curve = {

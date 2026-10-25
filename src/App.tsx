@@ -31,7 +31,7 @@ import { DRAG_TYPE, NodePalette, type PaletteGroup } from './NodePalette.tsx';
 // side panels: separate chunks, loaded when first opened
 const ProjectsPanel = lazy(() => import('./ProjectsPanel.tsx').then((m) => ({ default: m.ProjectsPanel })));
 const DocumentPanel = lazy(() => import('./DocumentPanel.tsx').then((m) => ({ default: m.DocumentPanel })));
-const HelpPanel = lazy(() => import('./HelpPanel.tsx').then((m) => ({ default: m.HelpPanel })));
+const HelpWindow = lazy(() => import('./HelpWindow.tsx').then((m) => ({ default: m.HelpWindow })));
 const CollabPanel = lazy(() => import('./CollabPanel.tsx').then((m) => ({ default: m.CollabPanel })));
 import { download } from './figure/export.ts';
 import { PALETTE } from './figure/spec.ts';
@@ -105,7 +105,7 @@ import { FracNodeView, FrftNodeView } from './nodes/FracNodes.tsx';
 import { WaveletNodeView } from './nodes/WaveletNode.tsx';
 import { WaveformNodeView, StepsNodeView, EventsNodeView } from './nodes/SignalNodes2.tsx';
 import { RerouteNodeView } from './nodes/RerouteNode.tsx';
-import { BatchFileBar, GroupInNodeView, GroupNodeView, GroupOutNodeView } from './nodes/GroupNodes.tsx';
+import { BatchFileBar, BatchStepBar, GroupInNodeView, GroupNodeView, GroupOutNodeView } from './nodes/GroupNodes.tsx';
 import { GroupNavContext } from './nodes/groupNav.ts';
 import { forgetTemplate, listTemplates, saveTemplate, templateById, useTemplates } from './nodes/templates.ts';
 import { asBatch, composeRoot, emptyBatch, makeGroup, NEW_OUT, ungroupNode, type Level } from './engine/subgraph.ts';
@@ -113,7 +113,7 @@ import type { NodeResult } from './engine/evaluate.ts';
 import { canPaste, copySettings, pastedData, useClipboard } from './nodes/clipboard.ts';
 import { clearDefaultStyle, defaultStyleFor, forgetStyle, saveStyle, setDefaultStyle, styledData, stylesFor, userStylesFor, withDefaultStyle } from './nodes/styles.ts';
 import { FRAME_COLORS, GROUP_COLORS, NODE_COLORS, nodeColor, nodeDisplayName, nodeTitle } from './nodeColors.ts';
-import { portNames, tidyOwn, type BatchOwn, type BatchSpec } from './engine/batch.ts';
+import { eachSteps, portNames, tidyOwn, type BatchOwn, type BatchSpec } from './engine/batch.ts';
 import { FindNode } from './FindNode.tsx';
 import { PlotColumnsDialog, type PlotChoice } from './PlotColumnsDialog.tsx';
 import { buildFigure } from './plotBuild.ts';
@@ -451,12 +451,25 @@ function Flow() {
   // the Batch opened: its spec changed (in the level above, where the Batch node is)
   const setBatchSpec = (f: (b: BatchSpec) => BatchSpec) => setStack((st) => st.map((lv, j) => (j < st.length - 1 ? lv : { ...lv, nodes: lv.nodes.map((n) => (n.id === lv.groupId && n.type === 'subgraph' ? ({ ...n, data: { ...n.data, batch: f(n.data.batch ?? {}) } } as AppNode) : n)) })));
   const showBatchFile = (k: number) => setBatchSpec((b) => ({ ...b, show: k || undefined }));
-  // a file's own settings: the steps shown with them (over the common ones), marked; a change made for every file (it
-  // then drops the file's own of what it changes) or only for the file shown (its own settings)
-  const [batchMode, setBatchMode] = useState<'all' | 'own'>('all');
+  // a file's own settings: the steps shown with them (over the common ones), marked; a change of a step made for every
+  // file (it then drops the file's own of what it changes) or, a step chosen so, only for the file shown (its own
+  // settings); the steps skipped for the file shown, faint
   const shownName = currentGroup?.batch ? batchFiles[batchShown]?.name : undefined;
+  const batchUnit = currentGroup?.batch?.over === 'columns' ? 'column' : 'file';
+  const eachSet = useMemo(() => (currentGroup?.batch ? eachSteps(currentGroup.batch) : new Set<string>()), [currentGroup]);
   const ownShown = useMemo(() => (shownName ? (currentGroup?.batch?.own?.[shownName] ?? {}) : {}), [currentGroup, shownName]);
-  const shownNodes = useMemo(() => (Object.keys(ownShown).length ? nodes.map((n) => (ownShown[n.id] ? ({ ...n, data: { ...n.data, ...ownShown[n.id] }, className: [n.className, 'batch-own'].filter(Boolean).join(' ') } as AppNode) : n)) : nodes), [nodes, ownShown]);
+  const skipShown = useMemo(() => new Set(shownName ? (currentGroup?.batch?.skip?.[shownName] ?? []) : []), [currentGroup, shownName]);
+  const shownNodes = useMemo(
+    () =>
+      Object.keys(ownShown).length || eachSet.size || skipShown.size
+        ? nodes.map((n) => {
+            const cls = [ownShown[n.id] && 'batch-own', eachSet.has(n.id) && 'batch-each', skipShown.has(n.id) && 'batch-skip'].filter(Boolean);
+            if (cls.length && batchUnit === 'column') cls.push('batch-c');
+            return cls.length ? ({ ...n, data: ownShown[n.id] ? { ...n.data, ...ownShown[n.id] } : n.data, className: [n.className, ...cls].filter(Boolean).join(' ') } as AppNode) : n;
+          })
+        : nodes,
+    [nodes, ownShown, eachSet, skipShown, batchUnit],
+  );
   const setOwn = (f: (own: BatchOwn) => BatchOwn) => setBatchSpec((b) => ({ ...b, own: tidyOwn(f(structuredClone(b.own ?? {}))) }));
   const onNodesRouted = (changes: NodeChange<AppNode>[]) => {
     if (!shownName) return onNodesChange(changes);
@@ -473,9 +486,10 @@ function Flow() {
       const [a, b] = [shown.data as Record<string, unknown>, c.item.data as Record<string, unknown>];
       const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((k) => JSON.stringify(a[k]) !== JSON.stringify(b[k]));
       const changed = Object.fromEntries(keys.map((k) => [k, b[k]]));
-      if (batchMode === 'own' && keys.length) patch[c.id] = changed;
+      const each = eachSet.has(c.id);
+      if (each && keys.length) patch[c.id] = changed;
       else if (keys.length && ownShown[c.id]) drop[c.id] = keys;
-      rest.push({ ...c, item: { ...c.item, className: common.className, data: (batchMode === 'own' ? common.data : { ...common.data, ...changed }) as AppNode['data'] } as AppNode });
+      rest.push({ ...c, item: { ...c.item, className: common.className, data: (each ? common.data : { ...common.data, ...changed }) as AppNode['data'] } as AppNode });
     }
     onNodesChange(rest);
     if (Object.keys(patch).length || Object.keys(drop).length)
@@ -508,6 +522,36 @@ function Flow() {
     const n = nodes.find((q) => q.id === id);
     return n ? [{ id, title: nodeDisplayName(n) }] : [];
   });
+  const skippedSteps = [...skipShown].flatMap((id) => {
+    const n = nodes.find((q) => q.id === id);
+    return n ? [{ id, title: nodeDisplayName(n) }] : [];
+  });
+  // a step's changes: for every file, or for the file shown only (back to every file: the files' own settings of it
+  // dropped, every file then has the common ones)
+  const setStepEach = (id: string, each: boolean) =>
+    setBatchSpec((b) => {
+      const list = (b.each ?? []).filter((x) => x !== id);
+      const own = structuredClone(b.own ?? {});
+      if (!each) for (const f of Object.values(own)) delete f[id];
+      return { ...b, each: each ? [...list, id] : list.length ? list : undefined, own: tidyOwn(own) };
+    });
+  // a step skipped for the file shown, or run on it again
+  const setStepSkip = (id: string, skip: boolean) => {
+    if (!shownName) return;
+    setBatchSpec((b) => {
+      const all = { ...b.skip };
+      const mine = (all[shownName] ?? []).filter((x) => x !== id);
+      if (skip) mine.push(id);
+      if (mine.length) all[shownName] = mine;
+      else delete all[shownName];
+      return { ...b, skip: Object.keys(all).length ? all : undefined };
+    });
+  };
+  // a step's place in the Batch, at the top of its options
+  const batchStepTop = (n: AppNode) =>
+    currentGroup?.batch && n.type !== 'groupin' && n.type !== 'groupout' && nodes.some((q) => q.id === n.id) ? (
+      <BatchStepBar unit={batchUnit} shown={shownName} each={eachSet.has(n.id)} skipped={skipShown.has(n.id)} ownCount={Object.values(currentGroup.batch.own ?? {}).filter((o) => o[n.id]).length} total={batchFiles.length} onEach={(on) => setStepEach(n.id, on)} onSkip={(on) => setStepSkip(n.id, on)} />
+    ) : null;
   const openGroup = (id: string) => {
     const g = getNode(id);
     if (!g || g.type !== 'subgraph') return;
@@ -1272,7 +1316,7 @@ function Flow() {
         items: [
           ...g.items.filter((t) => !t.hidden).map((t) => ({ type: (t.key ?? t.type) as AppNode['type'], label: t.label, help: NODE_SHORT[t.type] ?? NODE_HELP[t.type], color: NODE_COLORS[t.type] })),
           // a Batch with no steps yet: its steps built inside, on one file
-          ...(g.name === 'Data' ? [{ type: BATCH_NEW as AppNode['type'], label: 'Batch (every file)', help: 'The same analysis on every file: connect an Import with several files (or a folder) to “files”, open it, build the steps on one file, connect to “+ keep” what to keep: a table with a row per file comes out.', color: GROUP_COLORS.Groups }] : []),
+          ...(g.name === 'Data' ? [{ type: BATCH_NEW as AppNode['type'], label: 'Batch', help: 'The same analysis on every file: connect an Import with several files (or a folder) to “files”, open it, build the steps on one file, connect to “+ keep” what to keep: a table with a row per file comes out.', color: GROUP_COLORS.Groups }] : []),
         ],
       })),
       ...(templates.length
@@ -1653,7 +1697,7 @@ function Flow() {
                     .map((l) => (l.nodes.find((n) => n.id === l.groupId)?.data as { name?: string } | undefined)?.name || 'Group')
                     .join(' › ')}
                 </b>
-                {currentGroup?.batch ? <BatchFileBar files={batchFiles} shown={batchShown} kept={portNames(currentGroup.outputs)} onShow={showBatchFile} mode={batchMode} setMode={setBatchMode} ownSteps={ownSteps} ownCount={(name) => Object.keys(currentGroup.batch?.own?.[name] ?? {}).length} onBack={ownBack} onForAll={ownForAll} /> : <span className="hint">The Group input and Group output nodes are its ports.</span>}
+                {currentGroup?.batch ? <BatchFileBar files={batchFiles} shown={batchShown} unit={batchUnit} kept={portNames(currentGroup.outputs)} onShow={showBatchFile} ownSteps={ownSteps} skippedSteps={skippedSteps} ownCount={(name) => Object.keys(currentGroup.batch?.own?.[name] ?? {}).length + (currentGroup.batch?.skip?.[name]?.length ?? 0)} onBack={ownBack} onForAll={ownForAll} onUnskip={(id) => setStepSkip(id, false)} /> : <span className="hint">The Group input and Group output nodes are its ports.</span>}
               </div>
             )}
             <ReactFlow
@@ -1793,8 +1837,12 @@ function Flow() {
               )}
               {shownPanel === 'collab' && <CollabPanel onClose={() => setPanel(null)} session={collab} answer={answerInfo} joinCode={joinCode} onStart={(name) => void startSession(name)} onJoin={joinSession} onRejoin={rejoinSession} onLeave={leaveSession} />}
               {shownPanel === 'docs' && <DocumentPanel onClose={() => setPanel(null)} current={projectInfo.current} id={projectId} results={rootEngine.results} />}
-              {shownPanel === 'help' && (
-                <HelpPanel
+            </Suspense>
+            </div>
+            {finding && <FindNode onClose={() => setFinding(false)} />}
+            {panel === 'help' && (
+              <Suspense fallback={null}>
+                <HelpWindow
                   onClose={() => setPanel(null)}
                   examples={examples}
                   focus={helpAt}
@@ -1802,11 +1850,14 @@ function Flow() {
                     setPanel(null);
                     setWelcome(true);
                   }}
+                  onExample={(name) => {
+                    const ex = examples.find((e) => e.name === name);
+                    setPanel(null);
+                    if (ex) load(ex.make(), ex.name);
+                  }}
                 />
-              )}
-            </Suspense>
-            </div>
-            {finding && <FindNode onClose={() => setFinding(false)} />}
+              </Suspense>
+            )}
             {welcome && (
               <Welcome
                 examples={examples}
@@ -1878,6 +1929,7 @@ function Flow() {
           onPin={pin}
           paneClicks={paneClicks}
           nodeClicks={nodeClicks}
+          top={batchStepTop}
           data={{
             targets: dataTargets,
             results: engine.results,

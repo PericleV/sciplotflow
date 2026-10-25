@@ -22,7 +22,7 @@ import { curveColumns, digest, figPort, outValue, toPy, type PyJob, type PyResul
 import { applySheet, hasEdits, readSheet, type SheetMap } from './sheet.ts';
 import { applyFormulas } from './sheetFormula.ts';
 import { flattenGroups, GROUP_IN, GROUP_OUT } from './subgraph.ts';
-import { columnRuns, gather, gatherOne, orderFiles, portNames, readText, resultOf, withOwn, type FileRun } from './batch.ts';
+import { columnRuns, gather, gatherOne, orderFiles, portNames, readText, resultOf, skipSteps, withOwn, type FileRun } from './batch.ts';
 import { takeRows } from './split.ts';
 import { parseRows } from './rows.ts';
 export { parseRows };
@@ -5185,9 +5185,11 @@ function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cac
     cache.sub!.set(key, sub);
     const rev = Object.values(others).reduce((a, o) => a * 7919 + revOf(o.v as object), revOf(f));
     const seed = new Map<string, NodeResult>([[GROUP_IN, { rev, outputs: { [first!]: { t: 'dataset', v: f }, ...others }, errors: [], warnings: [], view: {} }]]);
-    // (a file with its own settings of some steps: its steps with them)
+    // (a file with its own settings of some steps: its steps with them; the steps skipped for it passing on their data)
     const own = spec.own?.[f.name];
-    const steps = own ? flattenGroups(withOwn(g.nodes, own), g.edges) : inner;
+    const skip = spec.skip?.[f.name];
+    const mine = skip?.length ? skipSteps(own ? withOwn(g.nodes, own) : g.nodes, g.edges, skip) : own ? { nodes: withOwn(g.nodes, own), edges: g.edges } : null;
+    const steps = mine ? flattenGroups(mine.nodes, mine.edges) : inner;
     const res = evaluateFlat(steps.nodes, steps.edges, sub, seed);
     const run: FileRun = { name: f.name, values: [], tables: [], errors: [] };
     g.outputs.forEach((p, q) => {
@@ -5207,10 +5209,16 @@ function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cac
   const side = spec.long === 'side';
   const out = gather(runs, ordered.read, ordered.parts, overCols ? 'Column' : 'File', side);
   // the files with their own settings: which steps (a column of the table, when any file has them)
-  const ownOf = (name: string) => Object.keys(spec.own?.[name] ?? {}).flatMap((sid) => {
-    const q = g.nodes.find((x) => x.id === sid);
-    return q ? [nodeDisplayName(q)] : [];
-  });
+  const ownOf = (name: string) => [
+    ...Object.keys(spec.own?.[name] ?? {}).flatMap((sid) => {
+      const q = g.nodes.find((x) => x.id === sid);
+      return q ? [nodeDisplayName(q)] : [];
+    }),
+    ...(spec.skip?.[name] ?? []).flatMap((sid) => {
+      const q = g.nodes.find((x) => x.id === sid);
+      return q ? [`${nodeDisplayName(q)} skipped`] : [];
+    }),
+  ];
   if (runs.some((r) => ownOf(r.name).length)) out.table.columns.push(column('Own settings', new Float64Array(runs.length).fill(NaN), runs.map((r) => ownOf(r.name).join(', '))));
   // every result kept on a port of its own (k-…, by its id inside)
   const each: Record<string, Value> = {};
