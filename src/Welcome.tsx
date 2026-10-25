@@ -2,8 +2,8 @@
 // Welcome. What the app is; import a data file, open a project file, start empty or go on with the project open; the
 // examples in one menu, by their groups; the guided tours (one left half-way: taken up again); the projects kept in
 // this browser last worked on; who made it.
-import { useEffect, useRef, useState } from 'react';
-import { FileUp, FolderOpen, FilePlus2, ArrowRight, Camera, GraduationCap, X } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { FileUp, FolderOpen, FilePlus2, ArrowRight, GraduationCap, X } from 'lucide-react';
 import { libList, type LibEntry } from './library.ts';
 import { IC } from './nodes/iconProps.ts';
 import { ACCEPT, pickDataFiles } from './readFiles.ts';
@@ -13,6 +13,57 @@ import { versionShown } from './version.ts';
 
 const INSTAGRAM = 'https://www.instagram.com/pericle_v/';
 
+// The Instagram glyph (a rounded square, the lens, the flash), drawn as the app's line icons, in the text's colour
+export const InstagramIcon = ({ size = 14 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="icon">
+    <rect x="2.5" y="2.5" width="19" height="19" rx="5.5" />
+    <circle cx="12" cy="12" r="4.2" />
+    <circle cx="17.4" cy="6.6" r="0.6" fill="currentColor" />
+  </svg>
+);
+
+// Who made it, in the top bar: only while the bar has room for it on its row (else it would push the buttons to a row
+// of their own); shown again when the room is back (the free space before it measured)
+export function TopCredit() {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [shown, setShown] = useState(true);
+  const width = useRef(260);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const bar = el?.parentElement;
+    const spacer = el?.previousElementSibling as HTMLElement | null;
+    if (!el || !bar || !spacer) return;
+    const first = bar.firstElementChild as HTMLElement;
+    // (on the first row: its top above the bottom of the bar's first item)
+    const onFirstRow = (e: HTMLElement) => e.getBoundingClientRect().top < first.getBoundingClientRect().bottom;
+    const check = () => {
+      if (el.style.display !== 'none') {
+        width.current = el.scrollWidth;
+        // (it, or what comes after it, pushed to a row of its own: no room)
+        if ([...bar.children].some((c) => (c as HTMLElement).offsetWidth > 0 && !onFirstRow(c as HTMLElement))) setShown(false);
+      } else if (onFirstRow(spacer) && spacer.getBoundingClientRect().width >= width.current + 16) setShown(true);
+    };
+    check();
+    // (the bar resized, or the window: its items may move between the rows without the bar changing size)
+    const ro = new ResizeObserver(check);
+    ro.observe(bar);
+    window.addEventListener('resize', check);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', check);
+    };
+  }, [shown]);
+  return (
+    <span ref={ref} className="tb-credit" style={shown ? undefined : { display: 'none' }}>
+      Made by <b>Pericle Vărășteanu</b>
+      <span aria-hidden="true">·</span>
+      <a href={INSTAGRAM} target="_blank" rel="noopener noreferrer" title="Follow me on Instagram">
+        <InstagramIcon /> @pericle_v
+      </a>
+    </span>
+  );
+}
+
 // The version, who made it, and the photography (the welcome window and Help ▸ About).
 export function MadeBy() {
   return (
@@ -21,9 +72,9 @@ export function MadeBy() {
         SciPlotFlow {versionShown} · Made by <b>Pericle Vărășteanu</b> · IMT Bucharest
       </div>
       <div>
-        If you find this app useful, please support my photography endeavour and follow my Instagram{' '}
+        If you find this app useful, please support my photography: follow me on Instagram{' '}
         <a href={INSTAGRAM} target="_blank" rel="noopener noreferrer">
-          <Camera {...IC} /> @pericle_v
+          <InstagramIcon /> @pericle_v
         </a>
       </div>
     </div>

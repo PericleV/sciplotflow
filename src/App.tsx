@@ -49,7 +49,7 @@ import { applyColors, applyNotePage, applyTheme, getNotePage, loadColors, loadPr
 import { ColorChoice } from './ColorChoice.tsx';
 import { hasRefs, withTexts } from './textStore.ts';
 import { libGet, libMigrate, libPut } from './library.ts';
-import { Welcome } from './Welcome.tsx';
+import { TopCredit, Welcome } from './Welcome.tsx';
 import { TourPanel } from './tour/TourPanel.tsx';
 import { RecordLayer, type RecordExtra } from './tour/RecordLayer.tsx';
 import { loadTourProgress, placeOf, saveTourProgress, TOURS, wireEdge, withAdded, type TourApi } from './tour/tours.ts';
@@ -1643,6 +1643,7 @@ function Flow() {
         </span>
         </span>
         <span className="tb-spacer" />
+        <TopCredit />
         <button className={panel === 'help' ? 'active' : ''} onClick={() => togglePanel('help')} title="Getting started, the nodes, shortcuts, validation">
           <CircleHelp {...IC} /> <span className="tb-label">Help</span>
         </button>

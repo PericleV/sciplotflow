@@ -127,7 +127,7 @@ tbody th, th.rowhead { font-weight: 400; }
    S, its ports and a line or two of summary; M, a few lines of text (a formula, a list of values, a test written out,
    a small table); L, a graph, a large table or an editor; XL, a whole figure. A new node takes its place here. */
 .node-extract, .node-gencol, .node-unstack, .node-convert, .node-transpose, .node-stack, .node-columns, .node-combine, .node-clean, .node-pick, .node-groupio { width: var(--node-s); }
-.node-mathcol, .node-autoextract, .node-stats, .node-matrix, .node-stattest, .node-group, .node-note { width: var(--node-m); }
+.node-mathcol, .node-autoextract, .node-tosheets, .node-stats, .node-matrix, .node-stattest, .node-group, .node-note { width: var(--node-m); }
 .node-import, .node-book, .node-signal, .node-translate, .node-curvemath, .node-datamanip, .node-digitizer, .node-phasedigitizer, .node-eis, .node-peaks, .node-calculus, .node-fit, .node-matcomp, .node-python { width: var(--node-l); }
 .node-plot1d, .node-canvas, .node-drawing { width: var(--node-xl); }
 
@@ -1590,6 +1590,11 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 /* (the list a select opens takes its colours from the select: transparent, the browser draws it white on a dark theme) */
 select option, select optgroup { background: var(--panel); color: var(--text); }
 .tb-spacer { flex: 1; }
+/* who made it, in the top bar: small and muted; only while the bar has room for it (else in Help ▸ About; Welcome.tsx) */
+.tb-credit { display: inline-flex; align-items: center; gap: 5px; margin-right: 6px; font-size: var(--fs-small); color: var(--muted); white-space: nowrap; }
+.tb-credit b { font-weight: 600; color: var(--text); }
+.tb-credit a { display: inline-flex; align-items: center; gap: 3px; color: inherit; text-decoration: none; }
+.tb-credit a:hover { color: var(--accent); }
 .toolbar > button { display: inline-flex; align-items: center; gap: 5px; }
 .tb-theme > button { padding: 3px 5px; color: var(--muted); }
 .tb-theme > button.active { color: color-mix(in srgb, var(--accent) 70%, var(--text)); }
@@ -1797,12 +1802,14 @@ input[type='checkbox'], input[type='radio'] { box-shadow: none; }
 :root .mantine-Input-wrapper { --input-height-xs: 26px; }
 :root .mantine-Button-root { --button-height-xs: 26px; }
 :root .mantine-SegmentedControl-root { --sc-padding-xs: 2px 8px; }
-/* a select: its arrows drawn as the Mantine ones (up and down, in the text's colour) */
+/* a select: its arrows drawn as the Mantine ones (up and down, in the text's colour); their colour by the theme (a
+   variable: a select whose own background takes them away, as in a worksheet's head, stays without them in both) */
+:root { --select-arrows: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%236b7385' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E"); }
 select:not([multiple]):not([size]) {
   appearance: none;
   -webkit-appearance: none;
   padding-right: 20px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%236b7385' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
+  background-image: var(--select-arrows);
   background-repeat: no-repeat;
   background-position: right 6px center;
   background-size: 10px 10px;
@@ -1829,13 +1836,9 @@ input[type='radio']:checked { background-image: radial-gradient(circle, white 0 
 input[type='checkbox']:indeterminate { background-color: var(--accent); border-color: var(--accent); background-image: linear-gradient(white, white); background-size: 8px 2px; }
 input[type='checkbox']:hover:not(:disabled), input[type='radio']:hover:not(:disabled) { border-color: var(--accent); }
 input[type='checkbox']:disabled, input[type='radio']:disabled { cursor: default; }
-:root[data-theme='dark'] select:not([multiple]):not([size]) {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23a3abbd' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
-}
+:root[data-theme='dark'] { --select-arrows: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23a3abbd' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E"); }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) select:not([multiple]):not([size]) {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23a3abbd' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
-  }
+  :root:not([data-theme='light']) { --select-arrows: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23a3abbd' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E"); }
 }
 /* the names of the fields of a two-column form, in the options panel: as the newer panels write them (muted, smaller) */
 .inspector-options .col-form > span:not([class]) { color: var(--muted); font-size: var(--fs-small); }
