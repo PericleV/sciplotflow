@@ -574,7 +574,7 @@ export function SmoothNodeView({ id, data }: NodeProps<SmoothNode>) {
             </span>
             <span>Threshold</span>
             <span className="row">
-              <Select<'soft' | 'hard'>
+              <Select<'soft' | 'hard'> seg
                 value={data.wmode ?? 'soft'}
                 title="Soft: the details shrunk toward 0 by the threshold; hard: those under it set to 0, the others kept"
                 options={[
@@ -1263,7 +1263,7 @@ export function KramersKronigNodeView({ id, data: given }: NodeProps<KKNode>) {
                 <>
                   <span>Find</span>
                   <span className="row">
-                    <Select<KKData['direction']>
+                    <Select<KKData['direction']> seg
                       value={data.direction}
                       options={[
                         ['im2re', 'Re from Im'],

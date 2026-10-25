@@ -208,7 +208,7 @@ export function NetworkPanel(p: {
               onChange={(measure) => p.set({ measure })}
             />
             <span className="ie-label">Edge</span>
-            <Select<NonNullable<NetworkSpec['edge']>>
+            <Select<NonNullable<NetworkSpec['edge']>> seg
               value={s.edge}
               title="The branches touching the image's edge (cut by it): left out of the statistics, or counted"
               options={[

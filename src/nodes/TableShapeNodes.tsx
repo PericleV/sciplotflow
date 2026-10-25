@@ -80,7 +80,7 @@ export function ConvertNodeView({ id, data }: NodeProps<ConvertNode>) {
       <NodeOptions>
         <div className="grid2">
           <Field label="To" title="Text read as numbers, or numbers written as text">
-            <Select<ConvertData['to']>
+            <Select<ConvertData['to']> seg
               value={data.to}
               options={[
                 ['numbers', 'numbers'],

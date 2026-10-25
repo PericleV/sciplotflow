@@ -20,13 +20,14 @@ import { legendLayout } from '../figure/legendLayout.ts';
 import { columnLetter, readTable, type CsvResult } from './csv.ts';
 import { curveColumns, digest, figPort, outValue, toPy, type PyJob, type PyResult, type PyValue } from './python.ts';
 import { applySheet, hasEdits, readSheet, type SheetMap } from './sheet.ts';
+import { applyFormulas } from './sheetFormula.ts';
 import { flattenGroups, GROUP_IN, GROUP_OUT } from './subgraph.ts';
 import { columnRuns, gather, gatherOne, orderFiles, portNames, readText, resultOf, withOwn, type FileRun } from './batch.ts';
 import { takeRows } from './split.ts';
 import { parseRows } from './rows.ts';
 export { parseRows };
 import { mapColor, mapT, stopsOf } from '../figure/colors.ts';
-import { compile, compileComplex } from './expr.ts';
+import { compile, compileComplex, seedOf } from './expr.ts';
 import { errorAt, parseErrors } from './errprop.ts';
 import { applyFit, type UseRow } from './fituse.ts';
 import { reconvolved } from './reconv.ts';
@@ -342,8 +343,8 @@ function lettered(inputs: Inputs) {
 const isCol = (v: Column | Scalar): v is Column => 'values' in v;
 
 // Row-by-row evaluation of a formula over lettered inputs (missing rows of shorter columns are NaN).
-function rowEvaluator(src: string, vals: Record<string, Column | Scalar>, extra: string[] = []) {
-  const f = compile(src);
+function rowEvaluator(src: string, vals: Record<string, Column | Scalar>, extra: string[] = [], seed?: number) {
+  const f = compile(src, undefined, { seed });
   if (typeof f === 'string') return f;
   const unknown = f.names.filter((x) => !(x in vals) && x !== 'i' && x !== 'n' && !extra.includes(x));
   if (unknown.length) return `Unknown name${unknown.length > 1 ? 's' : ''} ${unknown.join(', ')} in “${src}”: connect ${unknown.length > 1 ? 'columns' : 'a column'} to the port${unknown.length > 1 ? 's' : ''} of that letter (inputs are A, B, C …; i is the row, n the number of rows).`;
@@ -4457,18 +4458,26 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       let map: SheetMap | undefined;
       let keys: string[] | undefined;
       const kinds: ('own' | 'input' | 'mixed')[] = [];
+      // (the columns given by a formula, Set column values: computed once the sheet is put together, its inputs too)
+      const bookWarnings: string[] = [];
+      const withFormulas = (s: { name: string; edits?: { formulas?: Parameters<typeof applyFormulas>[2] } }, columns: Column[], ks: string[]) => {
+        if (!s.edits?.formulas) return columns;
+        const f = applyFormulas(columns, ks, s.edits.formulas, s.name);
+        bookWarnings.push(...f.warnings.map((w) => (own.length > 1 ? `${s.name}: ${w}` : w)));
+        return f.columns;
+      };
       const sheets = own.map((s, j) => {
         const r = applySheet(readSheet(s.text, s.name), s.edits, '.');
         const got = onSheet.get(s.name);
         if (!got) {
           kinds.push('own');
           if (j === k) map = r.map;
-          return { ...r.dataset, name: s.name };
+          return { ...r.dataset, name: s.name, columns: withFormulas(s, r.dataset.columns, r.map.cols.map((q) => `o${q}`)) };
         }
         const inCols = inputKeyed(s.name, got);
         // an empty sheet (nothing typed, pasted or added among the inputs) shows the inputs; a table of its own gets them
         // at its right (or where they were moved)
-        const ownUsed = !!s.text || Object.keys(s.edits?.cells ?? {}).length > 0 || (n.data.layout?.[s.name]?.order ?? []).some((q) => /^o\d+$/.test(q));
+        const ownUsed = !!s.text || Object.keys(s.edits?.cells ?? {}).length > 0 || Object.keys(s.edits?.formulas ?? {}).length > 0 || (n.data.layout?.[s.name]?.order ?? []).some((q) => /^o\d+$/.test(q));
         const ownCols: Keyed[] = ownUsed ? r.dataset.columns.map((col, i) => ({ key: `o${r.map.cols[i]}`, col })) : [];
         kinds.push(ownUsed ? 'mixed' : 'input');
         const out = arrange(s.name, [...ownCols, ...inCols]);
@@ -4476,7 +4485,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
           keys = out.keys;
           if (ownUsed) map = r.map;
         }
-        return { name: s.name, columns: ownUsed ? out.columns : laidRows(s.name, out.columns, j === k) };
+        return { name: s.name, columns: ownUsed ? withFormulas(s, out.columns, out.keys) : laidRows(s.name, out.columns, j === k) };
       });
       for (const s of inSheets) {
         const nm = s.name;
@@ -4486,7 +4495,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
         kinds.push('input');
         sheets.push({ ...s, name: nm, columns: laidRows(nm, out.columns, shown) });
       }
-      return { outputs: { out: { t: 'dataset', v: sheets[k] }, book: { t: 'workbook', v: { name: n.data.name || 'Book', sheets } } }, view: { sheets: sheets.map((s) => s.name), book: { own: own.length, ins, kinds, ...(rowsOf ? { rowsOf } : {}), ...(keys ? { keys } : {}), ...(hiddenSheets.length ? { hiddenSheets } : {}) }, ...(map ? { sheet: map } : {}) } };
+      return { outputs: { out: { t: 'dataset', v: sheets[k] }, book: { t: 'workbook', v: { name: n.data.name || 'Book', sheets } } }, warnings: bookWarnings, view: { sheets: sheets.map((s) => s.name), book: { own: own.length, ins, kinds, ...(rowsOf ? { rowsOf } : {}), ...(keys ? { keys } : {}), ...(hiddenSheets.length ? { hiddenSheets } : {}) }, ...(map ? { sheet: map } : {}) } };
     }
     case 'extract': {
       const v = one('in');
@@ -4860,25 +4869,31 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       const { ins, vals } = lettered(inputs);
       const view = { inputs: ins };
       if (!d.formula.trim()) return { view: { ...view, waiting: 'Write a formula of the inputs, e.g. A*100 or (A − B)/C.' } };
-      // mean(A), max(A) … of a whole column: values of their own
-      const formula = withColumnFunctions(d.formula, vals);
-      if (d.complex) return complexColumn(d, formula, vals, view);
+      // mean(A), max(A) … of a whole column: values of their own (notes: about those with a condition)
+      const notes: string[] = [];
+      const formula = withColumnFunctions(d.formula, vals, notes);
+      // (the random values: of this node, new ones with New random values)
+      const seed = seedOf(`${n.id}|${d.seed ?? 0}`);
+      if (d.complex) {
+        const c = complexColumn(d, formula, vals, view);
+        return notes.length ? { ...c, warnings: [...notes, ...(c.warnings ?? [])] } : c;
+      }
       if (d.output === 'value') {
         // one value: the formula of single values and functions of whole columns, computed once
         const g = compile(formula);
         if (typeof g === 'string') return { errors: [g], view };
         const rowWise = g.names.filter((x) => x in vals && isCol(vals[x]));
         if (rowWise.length) return { errors: [`One value: ${rowWise.join(', ')} ${rowWise.length > 1 ? 'are columns' : 'is a column'}: use a function of the whole column (mean(${rowWise[0]}), max(${rowWise[0]}) …), or give a column out.`], view };
-        const ev1 = rowEvaluator(formula, vals);
+        const ev1 = rowEvaluator(formula, vals, [], seed);
         if (typeof ev1 === 'string') return { errors: [ev1], view };
         const value = ev1(0, 1);
         const name1 = d.name || d.formula.trim();
         const outputs1: Record<string, Value> = { out: { t: 'scalar', v: { name: name1, value } } };
         const pe1 = mathErrors(d.errors, g, vals, 1);
         if (pe1) outputs1.err = { t: 'scalar', v: { name: `${name1} error`, value: pe1.err[0] } };
-        return { outputs: outputs1, warnings: pe1?.warnings ?? [], view };
+        return { outputs: outputs1, warnings: [...notes, ...(pe1?.warnings ?? [])], view };
       }
-      const ev = rowEvaluator(formula, vals);
+      const ev = rowEvaluator(formula, vals, [], seed);
       if (typeof ev === 'string') return { errors: [ev], view };
       const f = compile(formula) as Exclude<ReturnType<typeof compile>, string>;
       const cols = f.names.filter((x) => x in vals && isCol(vals[x])).map((x) => vals[x] as Column);
@@ -4887,7 +4902,8 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       const warnings = lengths.length > 1 ? [`The columns have different lengths (${lengths.join(', ')} rows): the missing values of the shorter ones are empty (NaN).`] : [];
       const out = new Float64Array(rows);
       for (let i = 0; i < rows; i++) out[i] = ev(i, rows);
-      const rules = (d.rules ?? []).map((r) => ({ ...r, formula: withColumnFunctions(r.formula, vals), rows: r.mode === 'condition' ? withColumnFunctions(r.rows, vals) : r.rows }));
+      const rules = (d.rules ?? []).map((r) => ({ ...r, formula: withColumnFunctions(r.formula, vals, notes), rows: r.mode === 'condition' ? withColumnFunctions(r.rows, vals, notes) : r.rows }));
+      warnings.unshift(...notes);
       const ruled = applyRowRules(rules, out, vals, rules.length ? d.others : undefined, d.otherValue ?? 0);
       if (typeof ruled === 'string') return { errors: [ruled], view };
       warnings.push(...ruled.warnings);

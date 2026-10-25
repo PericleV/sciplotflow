@@ -65,7 +65,7 @@ export function ScatterMatrixNodeView({ id, data: d }: NodeProps<ScatterMatrixNo
           <Select<MatrixSpec['upper']> value={d.upper} options={PANEL} onChange={(upper) => set({ upper })} />
           <span>Correlation</span>
           <span className="row wrap">
-            <Select<MatrixSpec['method']>
+            <Select<MatrixSpec['method']> seg
               value={d.method}
               title="Written in the correlation panels (with stars when p < 0.05) and in the corr output"
               options={[

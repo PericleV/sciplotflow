@@ -14,7 +14,7 @@ export function RowRules({ rules, onChange }: { rules: RowRule[]; onChange: (rul
         <div key={k} className="rule">
           <div className="row">
             <b>{k + 1}</b>
-            <Select
+            <Select seg
               value={rule.mode}
               options={[
                 ['rows', 'rows'],

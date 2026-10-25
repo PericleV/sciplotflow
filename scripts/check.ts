@@ -30,7 +30,9 @@ import { NODE_TITLES } from '../src/nodeColors.ts';
 import * as Hy from '../src/engine/hypo.ts';
 import * as Di from '../src/engine/dist.ts';
 import { parseCsv, CSV_DEFAULTS, plainNumber } from '../src/engine/csv.ts';
-import { compile } from '../src/engine/expr.ts';
+import { compile, FUNCTION_NAMES } from '../src/engine/expr.ts';
+import { describedNames, FORMULA_GROUPS } from '../src/engine/formulaHelp.ts';
+import { COLUMN_FUNCTION_NAMES, withColumnFunctions } from '../src/engine/colfns.ts';
 import { describe, describeAll, extraStats } from '../src/engine/stats.ts';
 import { axisRange, formatLabels, inBreak, parseBreaks, ticks } from '../src/figure/ticks.ts';
 import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, axesStyle, CURVE_STYLE_DEFAULTS, SIDE_DEFAULTS, curveStyle, toPt, type AxesStyle, type Curve, type Figure, LEGEND_STYLE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, FONTS, type Annotation, COLORBAR_DEFAULTS, type ColorbarSpec, legendBox, legendBoxPatch, type LegendSpec } from '../src/figure/spec.ts';
@@ -57,7 +59,8 @@ import { aboveOf, boxHandleAt, elbowCorners, lineLength, offsetLine, outlinePoin
 import { alignMoves, distributeMoves, geomBox, moveItem, snapAxis } from '../src/nodes/drawingOps.ts';
 import { CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, COMBINE_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, IMPORT_DEFAULTS, PLOT1D_DEFAULTS } from '../src/defaults.ts';
 import type { AppNode, CalculusData, CombineData, FitNodeData, PeakData, PickData, Plot1DData, WorkbookData } from '../src/types.ts';
-import { applySheet, convertInSheet, hasEdits, readSheet, sheetText } from '../src/engine/sheet.ts';
+import { applySheet, convertInSheet, hasEdits, readSheet, sheetText, type SheetEdits } from '../src/engine/sheet.ts';
+import { formulaKept, formulaOfKept } from '../src/engine/sheetFormula.ts';
 import { scaledSize, SHAPE_DEFAULTS } from '../src/figure/spec.ts';
 import { formatTime, parseTime, timeTicks } from '../src/figure/timeaxis.ts';
 import { readTable } from '../src/engine/csv.ts';
@@ -947,6 +950,12 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   ok(sr({ mode: 'rule', rule: 'x > 600', conds: [cx('<', 450)] }) === '0' && sr({ mode: 'rule', rule: 'x > 600', conds: [cx('<', 450)], formula: true }) === '5' && sr({ mode: 'rule', rule: 'x > 600' }) === '5', 'rows: the conditions, or the formula when chosen (an older project: its formula)');
   const fz = condsFormula([cx('>', 450), cx('between', 2, 5, 'a'), cx('filled', undefined, undefined, 'a')], 'any', x, [x, a]);
   ok(fz === 'x > 450 or (B >= 2 and B <= 5) or (not isnan(B))' && sr({ mode: 'rule', rule: fz!, formula: true }) === sr({ mode: 'rule', join: 'any', conds: [cx('>', 450), cx('between', 2, 5, 'a'), cx('filled', undefined, undefined, 'a')] }), `rows: the conditions written as a formula, the same rows (${fz})`);
+  // is one of: the values given (a value not a number left aside), the same rows as its formula (isin)
+  const isIn = { col: 'a', op: 'in' as RowOp, vs: [2, 5, NaN, 9] };
+  const inText = selectRows({ mode: 'rule', conds: [isIn] }, 6, x, [x, a]);
+  const fin = condsFormula([isIn, cx('>', 600)], 'any', x, [x, a]);
+  ok(sr({ mode: 'rule', conds: [isIn] }) === '1,4' && typeof inText !== 'string' && inText.text === 'where a is one of 2, 5, 9' && fin === 'isin(B, 2, 5, 9) or x > 600' && sr({ mode: 'rule', rule: fin!, formula: true }) === '1,4,5', `rows: is one of (a in 2, 5, 9), said, as a formula (${fin})`);
+  ok(sr({ mode: 'rule', conds: [{ col: 'a', op: 'in', vs: [] }] }) === '0,1,2,3,4,5', 'rows: is one of with no values yet left aside');
   const gap = column('g', Float64Array.from([0, NaN, 2, 0, NaN, 5]));
   const sg = (op: RowOp) => {
     const r = selectRows({ mode: 'rule', conds: [cx(op, undefined, undefined, 'g')] }, 6, x, [x, gap]);
@@ -1149,6 +1158,146 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   ok(one?.t === 'scalar' && near(one.v.value, 4 + 3 + 2.5 + 3 + 5 + 15), `Math column: one value of whole columns (${one?.t === 'scalar' ? one.v.value : '—'})`);
   ok(run({ formula: 'A * 2', output: 'value' }).errors.some((e) => e.includes('is a column')), 'Math column: one value from a column row by row — said');
   ok(sourcePort({ id: 'm', type: 'mathcol', position: at, data: { name: '', formula: 'mean(A)', output: 'value' } } as AppNode, 'out') === 'scalar', 'Math column: one value — a value port');
+}
+
+// ---- formulas: a value from another row (at, first, last), statistics of the rows where a condition is true, isin,
+// between ----
+{
+  const at = { x: 0, y: 0 };
+  // A = 1 … 10, B = 1 2 3 0 1 2 3 0 1 2
+  const nodes = [
+    { id: 'a', type: 'gencol', position: at, data: { ...GENCOL_DEFAULTS, name: 'a', mode: 'formula', formula: 'i', count: 10 } },
+    { id: 'b', type: 'gencol', position: at, data: { ...GENCOL_DEFAULTS, name: 'b', mode: 'formula', formula: 'mod(i, 4)', count: 10 } },
+  ] as AppNode[];
+  const run = (data: Record<string, unknown>) =>
+    evaluateGraph([...nodes, { id: 'm', type: 'mathcol', position: at, data: { name: '', formula: '', ...data } } as AppNode], [
+      { id: 'x', source: 'a', sourceHandle: 'out', target: 'm', targetHandle: 'in-0' },
+      { id: 'y', source: 'b', sourceHandle: 'out', target: 'm', targetHandle: 'in-1' },
+    ]).get('m')!;
+  const one = (formula: string) => {
+    const r = run({ formula, output: 'value' });
+    const o = r.outputs.out;
+    return { v: o?.t === 'scalar' ? o.v.value : NaN, w: r.warnings.join(' | '), e: r.errors.join(' | ') };
+  };
+  const colOf = (formula: string) => {
+    const o = run({ formula }).outputs.out;
+    return o?.t === 'column' ? Array.from(o.v.values) : [];
+  };
+  ok(colOf('A * at(A, 3)').join() === '3,6,9,12,15,18,21,24,27,30', 'formulas: at(A, 3), the value of row 3 in every row');
+  ok(one('at(A, n - 1)').v === 9, 'formulas: at(A, n - 1), the row a formula of n');
+  const f1 = one('first(A, between(B, 2, 3))');
+  ok(f1.v === 2 && /5 rows match, the first used \(row 2\)/.test(f1.w), `formulas: first(A, between(B, 2, 3)), several rows said (${f1.v}; ${f1.w})`);
+  ok(one('first(A, between(B, 3, 3) or B == 0)').v === 3 && one('first(A, between(B, 3, 2))').v === 2, 'formulas: first with a condition of or; between either way round');
+  const l1 = one('last(A, isin(B, 0))');
+  ok(l1.v === 8 && /2 rows match, the last used \(row 8\)/.test(l1.w), `formulas: last(A, isin(B, 0)) (${l1.v})`);
+  ok(one('first(A, A == 7)').v === 7 && one('first(A, A == 7)').w === '', 'formulas: one row matching, nothing said');
+  const s = (f: string) => one(f).v;
+  ok(s('mean(A, B == 1)') === 5 && s('sum(A, B > 2)') === 10 && s('count(A, B == 1)') === 3 && s('median(A, B == 1)') === 5 && near(s('sd(A, B == 1)'), 4), 'formulas: mean, sum, count, median, sd of the rows where a condition is true');
+  ok(s('minif(A, B == 2)') === 2 && s('maxif(A, B == 2)') === 10 && colOf('max(A, B)')[3] === 4, 'formulas: minif, maxif; max(A, B) still row by row');
+  ok(s('mean(A, A > mean(A))') === 8, 'formulas: a condition with a function of the whole column in it');
+  const none = one('first(A, B > 10)');
+  ok(Number.isNaN(none.v) && /no row where B > 10/.test(none.w) && one('count(A, B > 10)').v === 0 && one('count(A, B > 10)').w === '', `formulas: no row matching, empty and said (count: 0, nothing said) (${none.w})`);
+  const far = one('at(A, 99)');
+  ok(Number.isNaN(far.v) && /no row 99 \(the column has 10 rows\)/.test(far.w), 'formulas: at a row that is not there, empty and said');
+  ok(/unknown name Q/.test(one('first(A, Q > 1)').w), 'formulas: a condition with an unknown name, said');
+  ok(colOf('isin(B, 0, 3)').join() === '0,0,1,1,0,0,1,1,0,0' && colOf('between(A, 8, 3)').join() === '0,0,1,1,1,1,1,1,0,0', 'formulas: isin, between (either way round), row by row');
+  ok(colOf('B * if(isin(B, 2, 3), 10, 1)').join() === '1,20,30,0,1,20,30,0,1,20', 'formulas: if with isin');
+  ok(typeof compile('between(A, 1)') === 'string' && typeof compile('isin(A)') === 'string' && typeof compile('randint(1)') === 'string' && typeof compile('rand(1)') === 'string', 'formulas: the wrong number of parts said (between, isin, randint, rand)');
+}
+
+// ---- formulas: random values, the same every time computed, others with another seed ----
+{
+  const many = (src: string, n: number, seed?: number) => {
+    const f = compile(src, undefined, { seed });
+    if (typeof f === 'string') return [];
+    const v: Record<string, number> = { n };
+    return Array.from({ length: n }, (_, i) => ((v.i = i + 1), f.fn(v)));
+  };
+  const a = many('rand()', 2000, 7);
+  ok(a.join() === many('rand()', 2000, 7).join() && a.join() !== many('rand()', 2000, 8).join(), 'rand: the same values computed again, others with another seed');
+  ok(a.every((x) => x > 0 && x < 1) && Math.abs(a.reduce((p, q) => p + q, 0) / a.length - 0.5) < 0.03, 'rand: between 0 and 1, mean 0.5');
+  const b = many('rand(5, 10)', 2000, 3);
+  ok(b.every((x) => x >= 5 && x < 10) && Math.abs(b.reduce((p, q) => p + q, 0) / b.length - 7.5) < 0.15, 'rand(5, 10): between 5 and 10');
+  const d = many('randint(1, 6)', 6000, 3);
+  const counts = [1, 2, 3, 4, 5, 6].map((k) => d.filter((x) => x === k).length);
+  ok(d.every((x) => Number.isInteger(x) && x >= 1 && x <= 6) && counts.every((c) => c > 850 && c < 1150), `randint(1, 6): whole numbers 1 … 6, each about as often (${counts.join(' ')})`);
+  const z = many('randn(10, 2)', 20000, 5);
+  const m = z.reduce((p, q) => p + q, 0) / z.length;
+  const sd = Math.sqrt(z.reduce((p, q) => p + (q - m) ** 2, 0) / (z.length - 1));
+  ok(Math.abs(m - 10) < 0.05 && Math.abs(sd - 2) < 0.05, `randn(10, 2): mean 10, SD 2 (${m.toFixed(3)}, ${sd.toFixed(3)})`);
+  ok(many('rand() - rand()', 50, 1).every((x) => x !== 0), 'rand: two calls in a formula, two values');
+  // (a row computed alone gives the value it has among all the rows)
+  const f = compile('rand()', undefined, { seed: 7 });
+  ok(typeof f !== 'string' && f.fn({ i: 1234, n: 2000 }) === a[1233], 'rand: a row’s value does not depend on the rows computed before it');
+  const at = { x: 0, y: 0 };
+  const g = { id: 'g', type: 'gencol', position: at, data: { ...GENCOL_DEFAULTS, name: 'g', mode: 'formula', formula: 'i', count: 5 } } as AppNode;
+  const mc = (id: string, seed?: number) => {
+    const o = evaluateGraph([g, { id, type: 'mathcol', position: at, data: { name: '', formula: 'A + rand()', seed } } as AppNode], [{ id: 'x', source: 'g', sourceHandle: 'out', target: id, targetHandle: 'in-0' }]).get(id)!.outputs.out;
+    return o?.t === 'column' ? Array.from(o.v.values).join() : '';
+  };
+  ok(mc('m') === mc('m') && mc('m') !== mc('m', 1) && mc('m') !== mc('m2'), 'Math column: rand() the same computed again; a new seed or another node, other values');
+  // Columns: a value from another row, what is said about it; rand() of two columns added, not the same
+  const ds = { name: 'd', columns: [{ name: 'x', values: Float64Array.from([1, 2, 3, 4]) }, { name: 'k', values: Float64Array.from([0, 5, 5, 9]) }] };
+  const cr = columnsOf(ds, { computed: [{ id: 'c1', name: 'y', formula: '[x] * first([x], [k] == 5)' }, { id: 'c2', name: 'r1', formula: 'rand()' }, { id: 'c3', name: 'r2', formula: 'rand()' }] });
+  const cy = typeof cr === 'string' ? null : cr.dataset.columns;
+  ok(!!cy && cy[2].values.join() === '2,4,6,8' && typeof cr !== 'string' && cr.warnings.some((w) => /“y”: first\(\[x\], \[k\] == 5\): 2 rows match/.test(w)) && cy[3].values.join() !== cy[4].values.join(), `Columns: first([x], [k] == 5), said; two rand() columns differ (${typeof cr === 'string' ? cr : cr.warnings.join(' | ')})`);
+}
+
+// ---- the menu ƒ Functions: every function of the formulas described, every example computes ----
+{
+  const described = describedNames();
+  const missing = [...FUNCTION_NAMES, ...COLUMN_FUNCTION_NAMES].filter((f) => !described.has(f));
+  ok(!missing.length, `ƒ Functions: every function described (missing: ${missing.join(', ') || 'none'})`);
+  const col = (vs: number[]) => ({ name: 'c', values: Float64Array.from(vs) });
+  const bad: string[] = [];
+  for (const g of FORMULA_GROUPS)
+    for (const f of g.items) {
+      const vals: Record<string, Column | { name: string; value: number }> = { A: col([1, 15, 3, 18]), B: col([2, 7, 1, 12]), C: col([0, 2, 5, 7]) };
+      const c = compile(withColumnFunctions(f.example, vals));
+      if (typeof c === 'string') bad.push(`${f.name}: ${c}`);
+      else if (c.names.some((x) => !(x in vals) && x !== 'i' && x !== 'n')) bad.push(`${f.name}: ${c.names.join(', ')}`);
+    }
+  ok(!bad.length, `ƒ Functions: every example computes (${bad.join(' | ') || 'all'})`);
+}
+
+// ---- Workbook ▸ Set column values: a column given by a formula of the sheet, computed again when its columns change ----
+{
+  const at = { x: 0, y: 0 };
+  const TEXT = 'x\ty\tz\n1\t10\t0\n2\t20\t5\n3\t30\t5\n4\t40\t9\n';
+  const book = (edits: SheetEdits, more: AppNode[] = [], edges: { id: string; source: string; sourceHandle: string; target: string; targetHandle: string }[] = []) => {
+    const r = evaluateGraph([{ id: 'w', type: 'book', position: at, data: { ...WORKBOOK_DEFAULTS, sheets: [{ name: 'S1', text: TEXT, edits }] } } as AppNode, ...more], edges).get('w')!;
+    const o = r.outputs.out;
+    return { cols: o?.t === 'dataset' ? o.v.columns : [], w: r.warnings.join(' | '), r };
+  };
+  const vals = (c: Column | undefined) => (c ? Array.from(c.values).join() : '');
+  // the formula written with the letters shown, kept by the columns' keys
+  const keys = ['o0', 'o1', 'o2', 'o3', 'o4'];
+  const named = ['x', 'y', 'z', 'D', 'E'].map((name) => ({ name, values: new Float64Array(0) }) as Column);
+  const kept = formulaKept('A * B * first(A, C == 5)', named, keys);
+  ok(kept === '[@o0] * [@o1] * first([@o0], [@o2] == 5)' && formulaOfKept(kept, named, keys) === 'A * B * first(A, C == 5)', `Set column values: the formula kept by the columns' keys, shown with their letters (${kept})`);
+  const a = book({ addCols: 1, formulas: { 3: { formula: kept } } });
+  ok(vals(a.cols[3]) === '20,80,180,320' && /2 rows match, the first used \(row 2\)/.test(a.w), `Set column values: D = A * B * first(A, C == 5) (${vals(a.cols[3])}; ${a.w})`);
+  const b = book({ addCols: 1, cells: { '0:1': '100' }, formulas: { 3: { formula: kept } } });
+  ok(vals(b.cols[3]) === '200,80,180,320', 'Set column values: a cell of B changed, the column computed again');
+  const where = { mode: 'rule' as const, conds: [{ col: 'z', op: '>' as const, v: 4 }] };
+  ok(vals(book({ formulas: { 2: { formula: '[@o1] / 10', rows: where } } }).cols[2]) === '0,2,3,4' && vals(book({ formulas: { 2: { formula: '[@o1] / 10', rows: where, others: 'empty' } } }).cols[2]) === 'NaN,2,3,4', 'Set column values: on the rows where z > 4, the others kept or emptied');
+  ok(vals(book({ formulas: { 2: { formula: '[@o1] * 0', rows: { mode: 'rule', conds: [{ col: 'z', op: 'in', vs: [0, 9] }] } } } }).cols[2]) === '0,5,5,0', 'Set column values: on the rows where z is one of 0, 9');
+  const dep = book({ addCols: 2, formulas: { 3: { formula: '[@o4] + 1' }, 4: { formula: '[@o0] * 10' } } });
+  ok(vals(dep.cols[3]) === '11,21,31,41' && vals(dep.cols[4]) === '10,20,30,40', 'Set column values: a formula of another formula column, computed after it');
+  const loop = book({ addCols: 2, formulas: { 3: { formula: '[@o4]' }, 4: { formula: '[@o3] * 2' } } });
+  ok(vals(loop.cols[3]) === 'NaN,NaN,NaN,NaN' && /in a loop/.test(loop.w), `Set column values: two formulas needing one another, said (${loop.w})`);
+  ok(/uses its own column/.test(book({ addCols: 1, formulas: { 3: { formula: '[@o3] + 1' } } }).w), 'Set column values: a formula of its own column, said');
+  ok(/unknown name Q/.test(book({ addCols: 1, formulas: { 3: { formula: 'Q * 2' } } }).w), 'Set column values: an unknown name, said');
+  // moved: the same columns computed, the formula shown with their letters now
+  const moved = book({ addCols: 1, order: [3, 0, 1, 2], formulas: { 3: { formula: '[@o0] * 2' } } });
+  ok(vals(moved.cols[0]) === '2,4,6,8' && formulaOfKept('[@o0] * 2', moved.cols, ['o3', 'o0', 'o1', 'o2']) === 'B * 2', 'Set column values: a column moved, the formula follows it');
+  // an input's column on the sheet
+  const g = { id: 'g', type: 'gencol', position: at, data: { ...GENCOL_DEFAULTS, name: 'g', mode: 'formula', formula: 'i * 100', count: 4 } } as AppNode;
+  const withIn = book({ addCols: 1, formulas: { 3: { formula: '[@o0] + [@i:g]' } } }, [g], [{ id: 'e', source: 'g', sourceHandle: 'out', target: 'w', targetHandle: 'in-0' }]);
+  ok(vals(withIn.cols.find((c) => c.name !== 'g' && c.name !== 'x' && c.name !== 'y' && c.name !== 'z')) === '101,202,303,404', `Set column values: a formula of an input's column (${withIn.cols.map((c) => c.name).join(', ')})`);
+  // rand(): the same computed again, other values on another sheet column or with a new seed
+  const r1 = book({ addCols: 2, formulas: { 3: { formula: 'rand()' }, 4: { formula: 'rand()' } } });
+  ok(vals(r1.cols[3]) === vals(book({ addCols: 2, formulas: { 3: { formula: 'rand()' }, 4: { formula: 'rand()' } } }).cols[3]) && vals(r1.cols[3]) !== vals(r1.cols[4]) && vals(r1.cols[3]) !== vals(book({ addCols: 2, formulas: { 3: { formula: 'rand()', seed: 1 } } }).cols[3]), 'Set column values: rand() the same computed again; another column or a new seed, other values');
 }
 
 // ---- Import: missing values, thousands separator, a footer ----

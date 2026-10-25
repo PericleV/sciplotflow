@@ -520,7 +520,7 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
         </div>
         <div className="row wrap">
           <Field label="Find" title="Maxima, minima (dips) or both: also what a region takes: its maximum for peaks, its minimum for dips">
-            <Select
+            <Select seg
               value={find.sign}
               options={[
                 ['peaks', 'peaks'],
@@ -569,7 +569,7 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
                           <NumInput className="short" value={q.to!} onChange={(to) => Number.isFinite(to) && setPeak(j, { to })} />
                         </span>
                       </Field>
-                      <Select<'max' | 'min'>
+                      <Select<'max' | 'min'> seg
                         value={q.at ?? (find.sign === 'dips' ? 'min' : 'max')}
                         title="The peak at the maximum of the region, or at its minimum (a dip)"
                         options={[

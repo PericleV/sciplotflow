@@ -58,7 +58,7 @@ export function TernaryNodeView({ id, data: d }: NodeProps<TernaryNode>) {
               ]}
               onChange={(mode) => set({ mode })}
             />
-            <Select<TernarySpec['scale']>
+            <Select<TernarySpec['scale']> seg
               value={d.scale}
               title="Every row divided by its sum: fractions (0 – 1) or percents"
               options={[
@@ -81,7 +81,7 @@ export function TernaryNodeView({ id, data: d }: NodeProps<TernaryNode>) {
             <Field label="Size">
               <NumInput className="tiny" min={0.5} step={0.5} value={d.symbolSize} onChange={(symbolSize) => set({ symbolSize: Math.max(0.5, symbolSize || 4) })} />
             </Field>
-            <Select<SymbolFill>
+            <Select<SymbolFill> seg
               value={d.symbolFill}
               options={[
                 ['filled', 'filled'],

@@ -143,7 +143,7 @@ export function BlandAltmanNodeView({ id, data: d }: NodeProps<BlandAltmanNode>)
             <Field label="Size">
               <NumInput className="tiny" min={0.5} step={0.5} value={d.symbolSize} onChange={(symbolSize) => set({ symbolSize: Math.max(0.5, symbolSize || 5) })} />
             </Field>
-            <Select<SymbolFill>
+            <Select<SymbolFill> seg
               value={d.symbolFill}
               options={[
                 ['filled', 'filled'],

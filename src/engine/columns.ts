@@ -8,7 +8,7 @@
 // ([=c1]) and an input of the node by its letter ({A}); a column written by its letter in the list (A, B … as in a
 // spreadsheet) is kept as [@its key]: renaming or moving a column in the node changes only how the formula is shown
 // (formulaShown / formulaStored translate), never what it computes.
-import { compile } from './expr.ts';
+import { compile, seedOf } from './expr.ts';
 import { pick } from './extract.ts';
 import { isCol, withColumnFunctions } from './colfns.ts';
 import { GEN_SPEC_DEFAULTS, generatedValues, type GenSpec } from './gencol.ts';
@@ -21,7 +21,8 @@ export type ColumnItem = { from: string; name?: string; role?: ColumnRole; keep?
 // name, when it has none of its own), or generated (as Generate column, as many rows as the data); its place: its item's
 export type ComputedKind = 'formula' | 'value' | 'copy' | 'generate';
 // folded: shown as one line in the node's options (its name and formula), the rest hidden
-export type ComputedColumn = { id: string; name: string; kind?: ComputedKind; formula?: string; value?: number; copy?: string; gen?: Partial<GenSpec>; folded?: boolean };
+// seed: of its random values (rand() …: new values when it changes; absent: 0)
+export type ComputedColumn = { id: string; name: string; kind?: ComputedKind; formula?: string; value?: number; copy?: string; gen?: Partial<GenSpec>; folded?: boolean; seed?: number };
 // the names of columns from the values of a column ([name] of the data or {A}), in order: of all the others, the Y
 // columns, or a list (2-4, B-D, names); the column itself left out of the data when drop
 export type NamesFrom = { col: string; to?: 'others' | 'y' | 'list'; list?: string; drop?: boolean };
@@ -93,7 +94,7 @@ export function formulaStored(shown: string, lines: Pick<ColumnLine, 'from' | 'n
 }
 
 // a column added, of `rows` rows (those of its columns, else of the data): its values, or why not
-function computeColumn(c: ComputedColumn, get: (ref: string) => Column | Scalar | null, rows: number): Column | string {
+function computeColumn(c: ComputedColumn, get: (ref: string) => Column | Scalar | null, rows: number, notes?: string[]): Column | string {
   const kind = c.kind ?? 'formula';
   const name = c.name.trim() || 'Column';
   if (kind === 'value') return { name, values: new Float64Array(rows).fill(Number.isFinite(c.value) ? c.value! : NaN) };
@@ -134,8 +135,12 @@ function computeColumn(c: ComputedColumn, get: (ref: string) => Column | Scalar 
     return refs.get(whole)!;
   });
   if (missing) return `no column ${missing}`;
-  const f = compile(withColumnFunctions(text, vals));
+  const said: string[] = [];
+  const f = compile(withColumnFunctions(text, vals, said), undefined, { seed: seedOf(`${c.id}|${c.seed ?? 0}`) });
   if (typeof f === 'string') return f;
+  // (said with the columns as written: [name], not the letters they were given here)
+  const back = new Map([...refs].map(([whole, x]) => [x, whole.startsWith('[@') ? `[${whole.slice(2)}` : whole]));
+  notes?.push(...said.map((t) => `“${name}”: ${t.replace(/\b[A-Z]{1,2}\b/g, (x) => back.get(x) ?? x)}`));
   const bad = f.names.filter((x) => !(x in vals) && x !== 'i' && x !== 'n');
   if (bad.length) return `unknown name${bad.length > 1 ? 's' : ''} ${bad.join(', ')}: write a column as its letter (A, B …) or [its name], an input as {A}`;
   const cols = f.names.filter((x) => x in vals && isCol(vals[x])).map((x) => [x, (vals[x] as Column).values] as const);
@@ -196,7 +201,7 @@ export function columnsOf(ds: Dataset, s: ColumnsSpec, inputs: Inputs = {}): Col
   // the columns added, in their order
   const added: Column[] = [];
   for (const c of s.computed ?? []) {
-    const r = computeColumn(c, get, rows);
+    const r = computeColumn(c, get, rows, warnings);
     const col = typeof r === 'string' ? { name: c.name.trim() || 'Column', values: new Float64Array(rows).fill(NaN) } : r;
     if (typeof r === 'string') warnings.push(`“${col.name}”: ${r}.`);
     byKey.set(`=${c.id}`, col);

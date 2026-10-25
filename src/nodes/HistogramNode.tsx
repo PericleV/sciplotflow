@@ -236,7 +236,7 @@ export function HistogramNodeView({ id, data: d }: NodeProps<HistogramNode>) {
                   />
                 ) : (
                   <>
-                    <Select<NonNullable<HistFit['bandwidth']>>
+                    <Select<NonNullable<HistFit['bandwidth']>> seg
                       value={f.bandwidth ?? 'scott'}
                       options={[
                         ['scott', 'Scott'],

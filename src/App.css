@@ -1757,12 +1757,12 @@ input[type='checkbox'], input[type='radio'] { box-shadow: none; }
 :root .mantine-Input-wrapper { --input-height-xs: 26px; }
 :root .mantine-Button-root { --button-height-xs: 26px; }
 :root .mantine-SegmentedControl-root { --sc-padding-xs: 2px 8px; }
-/* a select: its arrow drawn as the Mantine ones (a chevron in the text's colour) */
+/* a select: its arrows drawn as the Mantine ones (up and down, in the text's colour) */
 select:not([multiple]):not([size]) {
   appearance: none;
   -webkit-appearance: none;
   padding-right: 20px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%236b7385' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%236b7385' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 6px center;
   background-size: 10px 10px;
@@ -1790,11 +1790,11 @@ input[type='checkbox']:indeterminate { background-color: var(--accent); border-c
 input[type='checkbox']:hover:not(:disabled), input[type='radio']:hover:not(:disabled) { border-color: var(--accent); }
 input[type='checkbox']:disabled, input[type='radio']:disabled { cursor: default; }
 :root[data-theme='dark'] select:not([multiple]):not([size]) {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23a3abbd' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23a3abbd' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) select:not([multiple]):not([size]) {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23a3abbd' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23a3abbd' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
   }
 }
 /* the names of the fields of a two-column form, in the options panel: as the newer panels write them (muted, smaller) */
@@ -1805,3 +1805,106 @@ input[type='checkbox']:disabled, input[type='radio']:disabled { cursor: default;
 .quick-tip.on { opacity: 1; transform: none; }
 .quick-tip-head { font-weight: 500; }
 .quick-tip-more { margin-top: 4px; font-size: var(--fs-tiny); opacity: 0.82; }
+
+/* ---- one look, step 2: the app's own buttons, lists, fields and checks drawn as the Mantine ones of the newer panels
+   wherever settings are made (the options panel, the large views, the image editor, the questions); the nodes on the
+   canvas keep theirs. Kept at the weight of a tag (:where), so the rules of a window's own buttons still win ---- */
+:root { --row-label: 96px; }
+:where(.inspector-options, .big-view, .image-editor, .dlg) :is(button, select, input, textarea, label.radio) { font-size: 12px; }
+:where(.inspector-options, .big-view, .image-editor, .dlg) button { font-weight: 600; padding: 4px 8px; min-height: 26px; background-color: var(--input); }
+/* (one with an icon: as narrow as before) */
+:where(.inspector-options, .big-view, .image-editor, .dlg) button:where(:has(> svg)) { padding-left: 6px; padding-right: 6px; }
+:where(.inspector-options, .big-view, .image-editor, .dlg) button:hover { background-color: color-mix(in srgb, var(--accent) 8%, var(--input)); }
+:where(.inspector-options, .big-view, .image-editor, .dlg) button:disabled:hover { background-color: var(--input); }
+:where(.inspector-options, .big-view, .image-editor, .dlg) :is(select, input:where(:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file']))) { height: 26px; padding-top: 0; padding-bottom: 0; }
+/* a list: its arrows up and down, as the Mantine lists */
+:where(.inspector-options, .big-view, .image-editor, .dlg) select:not([multiple]):not([size]) { padding-right: 22px; background-position: right 6px center; background-size: 12px 12px; }
+/* an option of its own (Check): a switch; the checks of a list stay boxes */
+:where(.inspector-options, .big-view, .image-editor, .dlg, .welcome) label.check > input[type='checkbox'] {
+  width: 28px;
+  min-width: 28px;
+  height: 16px;
+  margin-right: 4px;
+  vertical-align: -4px;
+  border-radius: 999px;
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--muted) 35%, var(--input)) radial-gradient(circle, #fff 0 5.5px, transparent 6px) no-repeat 0 center / 14px 14px;
+  transition: background-color 0.15s, background-position 0.15s;
+}
+:where(.inspector-options, .big-view, .image-editor, .dlg, .welcome) label.check > input[type='checkbox']:checked { background-color: var(--accent); border-color: var(--accent); background-image: radial-gradient(circle, #fff 0 5.5px, transparent 6px); background-position: 12px center; background-size: 14px 14px; }
+@media (prefers-reduced-motion: reduce) { label.check > input[type='checkbox'] { transition: none; } }
+
+/* the options panel: a field's name in a column as wide as the newer panels' (its hint: a dotted line under it), its
+   controls over the rest of the line; the same space between the lines */
+.inspector .prop-row { grid-template-columns: var(--row-label) minmax(0, 1fr); }
+.inspector-options.node { gap: 8px; }
+.inspector-options .grid2, .inspector-options .col-form { row-gap: 8px; }
+.inspector-options label:not(.radio):not(.slider):not(.row):not([class*='mantine']) { grid-template-columns: var(--row-label) minmax(0, 1fr); }
+.inspector-options .col-form { grid-template-columns: var(--row-label) minmax(0, 1fr); justify-content: stretch; }
+.inspector-options .col-form.three { grid-template-columns: var(--row-label) minmax(0, 1fr) auto; }
+@container (max-width: 560px) {
+  .inspector-options .grid2 > label:not(.radio):not(.slider):not([class*='mantine']) { grid-template-columns: var(--row-label) minmax(0, 1fr); }
+}
+.inspector-options label:is([title], [data-tip]):not(.radio):not(.slider):not(.row) > span:first-child, .inspector-options .col-form > span:is([title], [data-tip]):not([class]) { text-decoration: underline dotted color-mix(in srgb, var(--muted) 50%, transparent); text-underline-offset: 3px; cursor: help; }
+.inspector-options label:not(.radio):not(.slider):not(.row) > .field-ctl { justify-self: stretch; width: 100%; }
+.inspector-options .field-ctl > :is(select, .row, .seg-wrap, .mantine-SegmentedControl-root, input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color'])) { flex: 1 1 0; width: auto; min-width: 0; max-width: none; }
+.inspector-options .field-ctl > .row > :is(select, input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color'])) { flex: 1 1 0; width: auto; min-width: 0; max-width: none; }
+.seg-wrap { display: block; min-width: 0; }
+/* (the choices side by side of a field: their labels not taken for the fields' labels) */
+.node .mantine-SegmentedControl-label:not(.radio):not(.slider):not(.row) { display: block; grid-template-columns: none; justify-items: normal; gap: 0; }
+/* the small tool buttons (ts-btn) as the Mantine icons, not bold; a curve's axes as narrow as their 12 px text needs */
+:where(.inspector-options, .big-view, .image-editor, .dlg) .ts-btn { font-weight: 400; }
+.inspector-options .curve-axes select { width: 44px; }
+/* (lists side by side on a line: the room shared by what they show) */
+.inspector-options .field-ctl > select, .inspector-options .field-ctl > .row > select { flex: 1 1 auto; }
+/* the welcome window: its buttons and its list of examples as the Mantine ones, a size larger (the window's main
+   actions) */
+.welcome-actions button { font-weight: 600; background-color: var(--input); padding: 0 14px; height: 32px; }
+.welcome-actions button:hover { background-color: color-mix(in srgb, var(--accent) 8%, var(--input)); }
+.welcome-examples select { height: 32px; padding: 0 28px 0 12px; font-weight: 600; background-color: var(--input); background-position: right 9px center; background-size: 12px 12px; }
+/* (the same for the controls on a line of a two-column form) */
+.inspector-options .col-form > .row > :is(select, .seg-wrap, .mantine-SegmentedControl-root) { flex: 1 1 auto; min-width: 0; max-width: none; }
+.inspector-options .col-form > .row > input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']) { flex: 1 1 0; width: auto; min-width: 48px; max-width: none; }
+/* the buttons inside the nodes on the canvas (their tools: Zoom, Pan, Points …): the same look, their sizes kept */
+:where(.react-flow__node) button { font-size: 12px; font-weight: 600; background-color: var(--input); }
+:where(.react-flow__node) button:hover { background-color: color-mix(in srgb, var(--accent) 8%, var(--input)); }
+:where(.react-flow__node) button:disabled:hover { background-color: var(--input); }
+/* the image editor's panels: a list alone on its line as wide as the panel, as in the options panel */
+.image-editor :is(.ie-side, .ie-steps) .row > select:only-child, .image-editor .ie-params > .row > select { flex: 1 1 auto; min-width: 0; }
+
+/* ---- Set column values (a Workbook's column given by a formula): the window, the formula's editor, its menus; ƒ by the
+   column's letter and its cells tinted ---- */
+.fx-shade { position: fixed; inset: 0; z-index: 2500; background: rgb(0 0 0 / 0.35); display: grid; place-items: center; padding: 16px; }
+.fx-dlg { width: min(560px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column; box-shadow: 0 16px 48px rgb(0 0 0 / 0.3); }
+.fx-head { display: flex; align-items: baseline; gap: 10px; padding: 12px 14px 8px; border-bottom: 1px solid var(--border); font-size: var(--fs-title); }
+.fx-head .muted { font-size: var(--fs-small); }
+.fx-body { padding: 10px 14px; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+.fx-foot { padding: 10px 14px 12px; border-top: 1px solid var(--border); }
+.fx-editor { display: flex; flex-direction: column; gap: 6px; }
+.fx-text textarea { font-family: var(--mono); font-size: 12.5px; }
+.fx-cols { display: flex; flex-wrap: wrap; gap: 4px; }
+:is(.props-panel, body) .fx-col { display: inline-flex; align-items: center; gap: 4px; max-width: 170px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--input); color: var(--text); font-size: 11.5px; font-weight: 400; min-height: 0; }
+:is(.props-panel, body) .fx-col:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+.fx-col b { color: var(--accent); }
+.fx-rows .prop-row:first-child { margin-top: 0; }
+.fx-out { display: flex; flex-direction: column; gap: 4px; }
+.fx-preview { border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.fx-preview th { color: var(--muted); font-weight: 400; text-align: right; padding: 1px 8px 1px 0; }
+.fx-preview td { text-align: right; padding: 1px 6px; border-left: 1px solid var(--border); min-width: 90px; }
+.fx-menu .fx-group { margin-top: 6px; }
+.fx-group-name { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; padding: 4px 4px 2px; }
+:is(.props-panel, body) .fx-item { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; padding: 5px 6px; border: none; border-radius: 6px; background: transparent; text-align: left; color: var(--text); font-weight: 400; min-height: 0; box-shadow: none; }
+:is(.props-panel, body) .fx-item:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+:is(.props-panel, body) .fx-item.shown { cursor: default; }
+:is(.props-panel, body) .fx-item.shown:hover { background: transparent; }
+.fx-item code { font-family: var(--mono); font-size: 12px; color: color-mix(in srgb, var(--accent) 70%, var(--text)); }
+.fx-what { font-size: 11.5px; line-height: 1.35; }
+.fx-example { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.fx-row-menu { display: flex; flex-direction: column; gap: 6px; }
+.fx-row-line { display: flex; align-items: center; gap: 6px; }
+.fx-row-line > .list-field, .fx-row-line > .num-field { flex: 1; min-width: 0; }
+.fx-word { flex: none; color: var(--muted); font-size: 11.5px; }
+.fx-preview-text { display: block; margin-top: 4px; padding: 4px 6px; border-radius: 6px; background: var(--input); font-family: var(--mono); font-size: 12px; word-break: break-all; }
+.sheet-scroll th.col-letter .sheet-fx { margin-right: 3px; font-style: italic; font-weight: 700; color: var(--accent); cursor: help; }
+.sheet-scroll .fx-cell { background: color-mix(in srgb, var(--accent) 7%, var(--panel)); }
+.sheet-scroll th.fx-col-head { box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--accent) 60%, transparent); }

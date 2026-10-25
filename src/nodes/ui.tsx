@@ -6,6 +6,7 @@ import { nodeDisplayName } from '../nodeColors.ts';
 import type { AppNode } from '../types.ts';
 import { isMultiInput, PORT_COLORS, PORT_LABELS, targetAccepts, type PortType } from '../engine/ports.ts';
 import type { NodeResult } from '../engine/evaluate.ts';
+import { Choice } from '../ui/props.tsx';
 
 const num = (v: string) => (v === '' ? NaN : Number(v));
 
@@ -31,7 +32,16 @@ export function TextInput({ value, onChange, placeholder, className, title }: { 
   return <input className={`nodrag ${className ?? ''}`} type="text" value={value} placeholder={placeholder} title={title} spellCheck={false} onChange={(e) => onChange(e.target.value)} />;
 }
 
-export function Select<T extends string | number>({ value, options, onChange, title, className }: { value: T; options: [T, string][]; onChange: (v: T) => void; title?: string; className?: string }) {
+// seg: a few short choices that never change, shown side by side (as in the newer panels) in place of a list
+export function Select<T extends string | number>({ value, options, onChange, title, className, seg }: { value: T; options: [T, string][]; onChange: (v: T) => void; title?: string; className?: string; seg?: boolean }) {
+  if (seg) {
+    const pick = (s: string) => {
+      const o = options.find(([v]) => String(v) === s);
+      if (o) onChange(o[0]);
+    };
+    const c = <Choice value={String(value)} onChange={pick} options={options.map(([v, l]) => [String(v), l] as [string, string])} />;
+    return title ? <span className="seg-wrap" title={title}>{c}</span> : c;
+  }
   return (
     <select className={`nodrag ${className ?? ''}`} value={String(value)} title={title} onChange={(e) => {
         // a value not among the options (they changed meanwhile) is left out
@@ -69,9 +79,10 @@ export function Slider({ label, value, min, max, step, onChange, unit, title }: 
   );
 }
 
+// an option of its own (drawn as a switch where settings are made: App.css)
 export function Check({ label, value, onChange, title }: { label: string; value: boolean; onChange: (v: boolean) => void; title?: string }) {
   return (
-    <label className="radio" title={title}>
+    <label className="radio check" title={title}>
       <input className="nodrag" type="checkbox" checked={value} onChange={(e) => onChange(e.target.checked)} />
       {label}
     </label>

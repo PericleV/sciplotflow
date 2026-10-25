@@ -926,7 +926,7 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
         <Check label="Grid" title="Show the grid (only here: not drawn in the figure)" value={grid.show} onChange={(show) => set({ grid: { ...grid, show } })} />
         <Check label="Snap" title="Objects and points snapped to the grid (Alt while dragging: free)" value={grid.snap} onChange={(snap) => set({ grid: { ...grid, snap } })} />
         <NumInput className="tiny" min={0.01} step={0.5} value={grid.step} title="The grid's step" onChange={(v) => set({ grid: { ...grid, step: v > 0 ? v : 1 } })} />
-        <Select<'mm' | 'pt'>
+        <Select<'mm' | 'pt'> seg
           value={grid.unit}
           options={[
             ['mm', 'mm'],

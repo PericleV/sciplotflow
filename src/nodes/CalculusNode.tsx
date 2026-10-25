@@ -218,7 +218,7 @@ export function CalculusNodeView({ id, data }: NodeProps<CalculusNode>) {
       {!isInt ? (
         <div className="grid2">
           <Field label="Order">
-            <Select<1 | 2>
+            <Select<1 | 2> seg
               value={data.order}
               options={[
                 [1, '1st (dy/dx)'],
@@ -228,7 +228,7 @@ export function CalculusNodeView({ id, data }: NodeProps<CalculusNode>) {
             />
           </Field>
           <Field label="Method" title="Central: the mean of the slopes to the two neighbours (one slope at the ends). Savitzky–Golay: a polynomial fitted over a window of points around each one; smooths noisy data">
-            <Select<DiffMethod>
+            <Select<DiffMethod> seg
               value={data.method}
               options={[
                 ['central', 'central'],
@@ -288,7 +288,7 @@ export function CalculusNodeView({ id, data }: NodeProps<CalculusNode>) {
             }
           />
           <Field label="Ranges" title="Separate: the integral starts from 0 in every range; combined: it goes on from one range to the next (the gaps left out)">
-            <Select
+            <Select seg
               value={data.join}
               options={[
                 ['separate', 'separate'],

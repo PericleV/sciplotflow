@@ -280,7 +280,7 @@ export function ContourBody({ id, d, set, r, className, input, data }: { id: str
               onChange={(draw) => set({ draw })}
             />
             {(d.draw === 'heat' || d.draw === 'heatLines') && <Check label="Smooth" title="Bilinear between the points, instead of sharp cells" value={d.smooth} onChange={(smooth) => set({ smooth })} />}
-            <Select<NonNullable<ContourSpec['render']>>
+            <Select<NonNullable<ContourSpec['render']>> seg
               value={d.render ?? 'all'}
               title="All the cells, or fast: the grid averaged into fewer cells to draw (the outputs keep all the data)"
               options={[
@@ -373,7 +373,7 @@ export function ContourBody({ id, d, set, r, className, input, data }: { id: str
             <Fragment key={p.id}>
               <span>Profile {k + 1}</span>
               <span className="row wrap">
-                <Select<ContourProfile['along']>
+                <Select<ContourProfile['along']> seg
                   value={p.along}
                   title="A row: Z along X at a Y (the row output); a column: Z along Y at an X (the column output)"
                   options={[

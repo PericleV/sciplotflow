@@ -75,7 +75,7 @@ export function WaveletNodeView({ id, data }: NodeProps<WaveletNode>) {
           )}
           {m === 'cwt' && (
             <Field label="Significance" title="Against red noise (the lag-1 autocorrelation of the data: geophysics, slow drifts) or white noise, at a level">
-              <Select<WaveletData['noise']>
+              <Select<WaveletData['noise']> seg
                 value={data.noise}
                 options={[
                   ['red', 'red noise'],
@@ -113,7 +113,7 @@ export function WaveletNodeView({ id, data }: NodeProps<WaveletNode>) {
                   ]}
                   onChange={(rule) => set({ rule })}
                 />
-                <Select<WaveletData['thr']>
+                <Select<WaveletData['thr']> seg
                   value={data.thr}
                   options={[
                     ['soft', 'soft'],

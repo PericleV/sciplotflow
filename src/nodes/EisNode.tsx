@@ -1029,7 +1029,7 @@ export function EisNodeView({ id, data }: NodeProps<EisNode>) {
               <span>Frequency column</span>
               <Select<string> value={d.freq} options={colOpts(v?.cols.freq)} onChange={(freq) => set({ freq })} />
               <span>in</span>
-              <Select<EisData['freqUnit']>
+              <Select<EisData['freqUnit']> seg
                 value={d.freqUnit}
                 title="The column holds f (Hz) or the angular frequency ω = 2πf (rad/s)"
                 options={[
@@ -1108,7 +1108,7 @@ export function EisNodeView({ id, data }: NodeProps<EisNode>) {
             <>
               <div className="row wrap">
                 <Field label="Figure" title="The circuit's figure (the “circuit” output: to a Figure Drawing, an inset or a Merge): its page white or transparent">
-                  <Select<'white' | 'none'>
+                  <Select<'white' | 'none'> seg
                     value={d.circuitBg ?? 'white'}
                     options={[
                       ['white', 'white page'],

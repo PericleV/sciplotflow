@@ -267,7 +267,8 @@ export type PeakData = {
 // (auto: only if asked) — else only on Run (run: how many times it was pressed)
 // figs: the matplotlib figures made into Plots (Make Plot): the data of their axes given out (fig1, fig1_2 …)
 export type PythonData = { code: string; vars?: Record<string, string>; outs?: { name: string; kind: 'column' | 'scalar' | 'dataset' | 'matrix' }[]; hide?: string[]; auto?: boolean; run?: number; figs?: number[] };
-export type MathColData = { name: string; formula: string; rules?: RowRule[]; others?: 'formula' | 'nan' | 'value'; otherValue?: number; output?: 'column' | 'value'; errors?: string; complex?: boolean; part?: 're' | 'im' | 'abs' | 'arg' | 'deg' | 'db' };
+// seed: of the random values of the formula (rand() …): New random values changes it
+export type MathColData = { name: string; formula: string; rules?: RowRule[]; others?: 'formula' | 'nan' | 'value'; otherValue?: number; output?: 'column' | 'value'; errors?: string; complex?: boolean; part?: 're' | 'im' | 'abs' | 'arg' | 'deg' | 'db'; seed?: number };
 export type GenMode = 'linspace' | 'step' | 'formula' | 'random';
 export type GenColData = {
   name: string;

@@ -157,7 +157,7 @@ export function UnstackNodeView({ id, data }: NodeProps<UnstackNode>) {
               {data.cycleStart === 'value' && (
                 <>
                   <NumInput className="short" value={data.cycleAt ?? NaN} placeholder="value" onChange={(cycleAt) => set({ cycleAt: Number.isFinite(cycleAt) ? cycleAt : undefined })} />
-                  <Select<'up' | 'down'>
+                  <Select<'up' | 'down'> seg
                     value={data.cycleDir ?? 'up'}
                     options={[
                       ['up', 'going up'],
@@ -434,7 +434,7 @@ export function CombineNodeView({ id, data }: NodeProps<CombineNode>) {
           {stack && s.how === 'sortx' && (
             <>
               <Field label="Order">
-                <Select<'up' | 'down'>
+                <Select<'up' | 'down'> seg
                   value={s.desc ? 'down' : 'up'}
                   options={[
                     ['up', 'smallest first'],
@@ -444,7 +444,7 @@ export function CombineNodeView({ id, data }: NodeProps<CombineNode>) {
                 />
               </Field>
               <Field label="Same value" title="Rows with the same value: all kept, one row with the mean, or the first one">
-                <Select<CombineSettings['dup']>
+                <Select<CombineSettings['dup']> seg
                   value={s.dup}
                   options={[
                     ['all', 'keep all'],
@@ -458,7 +458,7 @@ export function CombineNodeView({ id, data }: NodeProps<CombineNode>) {
           )}
           {s.result === 'tables' && (
             <Field label="Match" title="The columns of the tables matched by their name (a missing one: empty cells) or by their place">
-              <Select<CombineSettings['match']>
+              <Select<CombineSettings['match']> seg
                 value={s.match}
                 options={[
                   ['name', 'by name'],

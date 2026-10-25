@@ -9,9 +9,9 @@ import { findColumn, fmtNum, type Column } from './table.ts';
 
 export type RowRange = { from: number; to: number }; // NaN: from the first / up to the last
 // A condition of a row: a column ('' = the X column, '#' = the row number, 1 … n) compared with a value (between: from
-// v to v2, both included), or empty / not empty
-export type RowOp = '<' | '<=' | '=' | '!=' | '>=' | '>' | 'between' | 'empty' | 'filled';
-export type RowCond = { col: string; op: RowOp; v?: number; v2?: number };
+// v to v2, both included; in: one of the values vs), or empty / not empty
+export type RowOp = '<' | '<=' | '=' | '!=' | '>=' | '>' | 'between' | 'in' | 'empty' | 'filled';
+export type RowCond = { col: string; op: RowOp; v?: number; v2?: number; vs?: number[] };
 // rule: the formula; conds: the conditions chosen, all of them true (join 'all') or any one (join 'any'); formula: the
 // formula used instead of the conditions (absent: when it is written and there are no conditions, as older projects);
 // pick: of the rows chosen, the odd or the even ones (by row number); also: a formula true on them too (on, alsoOn)
@@ -38,12 +38,13 @@ export const ROW_OPS: [RowOp, string][] = [
   ['>=', '≥'],
   ['>', '>'],
   ['between', 'between'],
+  ['in', 'is one of'],
   ['empty', 'is empty'],
   ['filled', 'is not empty'],
 ];
-const needs = (op: RowOp) => (op === 'empty' || op === 'filled' ? 0 : op === 'between' ? 2 : 1);
+const needs = (op: RowOp) => (op === 'empty' || op === 'filled' || op === 'in' ? 0 : op === 'between' ? 2 : 1);
 // a condition with what it needs (its values given)
-export const condReady = (c: RowCond) => (needs(c.op) < 1 || Number.isFinite(c.v)) && (needs(c.op) < 2 || Number.isFinite(c.v2));
+export const condReady = (c: RowCond) => (c.op === 'in' ? !!c.vs?.some(Number.isFinite) : (needs(c.op) < 1 || Number.isFinite(c.v)) && (needs(c.op) < 2 || Number.isFinite(c.v2)));
 // The conditions as a formula (x: the X column, a column named: its letter); null: a column not found
 export function condsFormula(conds: RowCond[], join: 'all' | 'any', x: Column | undefined, cols: Column[]): string | null {
   const parts: string[] = [];
@@ -53,7 +54,7 @@ export function condsFormula(conds: RowCond[], join: 'all' | 'any', x: Column | 
     const v = c.col === ROW_COL ? 'row' : c.col ? columnLetter(cols.indexOf(col!)) : 'x';
     const n = (a: number | undefined) => String(+(a ?? NaN).toPrecision(15));
     const one =
-      c.op === 'empty' ? `isnan(${v})` : c.op === 'filled' ? `(not isnan(${v}))` : c.op === 'between' ? `${v} >= ${n(Math.min(c.v!, c.v2!))} and ${v} <= ${n(Math.max(c.v!, c.v2!))}` : `${v} ${c.op === '=' ? '==' : c.op} ${n(c.v)}`;
+      c.op === 'empty' ? `isnan(${v})` : c.op === 'filled' ? `(not isnan(${v}))` : c.op === 'in' ? `isin(${v}, ${c.vs!.filter(Number.isFinite).map(n).join(', ')})` : c.op === 'between' ? `${v} >= ${n(Math.min(c.v!, c.v2!))} and ${v} <= ${n(Math.max(c.v!, c.v2!))}` : `${v} ${c.op === '=' ? '==' : c.op} ${n(c.v)}`;
     parts.push(conds.length > 1 && c.op === 'between' && join === 'any' ? `(${one})` : one);
   }
   return parts.join(join === 'any' ? ' or ' : ' and ');
@@ -84,6 +85,8 @@ function condTrue(c: RowCond, col: Column | null, i: number): boolean {
       return a > v;
     case 'between':
       return a >= Math.min(v, c.v2!) && a <= Math.max(v, c.v2!);
+    case 'in':
+      return c.vs!.some((b) => Number.isFinite(b) && Math.abs(a - b) <= 1e-12 * Math.max(1, Math.abs(b)));
   }
 }
 export const ROWSEL_ALL: RowSelect = { mode: 'all' };
@@ -177,7 +180,7 @@ function chosen(s: RowSelect, n: number, x: Column | undefined, cols: Column[]):
         const any = s.join === 'any';
         const rows = all().filter((i) => (any ? conds.some((c, k) => condTrue(c, used[k], i)) : conds.every((c, k) => condTrue(c, used[k], i))));
         const name = (k: number) => (conds[k].col === ROW_COL ? 'row' : conds[k].col ? used[k]!.name : 'x');
-        const said = conds.map((c, k) => (c.op === 'empty' ? `${name(k)} is empty` : c.op === 'filled' ? `${name(k)} is not empty` : c.op === 'between' ? `${name(k)} between ${fmtNum(c.v!, 6)} and ${fmtNum(c.v2!, 6)}` : `${name(k)} ${ROW_OPS.find(([o]) => o === c.op)![1]} ${fmtNum(c.v!, 6)}`));
+        const said = conds.map((c, k) => (c.op === 'empty' ? `${name(k)} is empty` : c.op === 'filled' ? `${name(k)} is not empty` : c.op === 'between' ? `${name(k)} between ${fmtNum(c.v!, 6)} and ${fmtNum(c.v2!, 6)}` : c.op === 'in' ? `${name(k)} is one of ${c.vs!.filter(Number.isFinite).map((b) => fmtNum(b, 6)).join(', ')}` : `${name(k)} ${ROW_OPS.find(([o]) => o === c.op)![1]} ${fmtNum(c.v!, 6)}`));
         return { rows, text: `where ${said.join(any ? ' or ' : ' and ')}` };
       }
       const src = s.rule?.trim();

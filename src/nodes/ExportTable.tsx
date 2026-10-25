@@ -105,7 +105,7 @@ export function ExportTable({ name, shown, book, value, onChange }: { name: stri
         )}
         <Field label="Header" title="The first line: the column names (with their units), or none; and a line with the designations (X, Y, ±Y …) under it">
           <span className="row wrap">
-            <Select<'names' | 'none'>
+            <Select<'names' | 'none'> seg
               value={o.header}
               options={[
                 ['names', 'the names'],
@@ -118,7 +118,7 @@ export function ExportTable({ name, shown, book, value, onChange }: { name: stri
         </Field>
         {!xlsx && (
           <Field label="Missing values" title="What an empty number is written as">
-            <Select<TableExport['missing']>
+            <Select<TableExport['missing']> seg
               value={o.missing}
               options={[
                 ['', 'empty'],
@@ -146,7 +146,7 @@ export function ExportTable({ name, shown, book, value, onChange }: { name: stri
         {!xlsx && (
           <Field label="Line ends" title="Windows (CR LF) or Unix / macOS (LF); a byte-order mark (BOM) makes Excel read the file as UTF-8 (°, µ, Å in the names)">
             <span className="row wrap">
-              <Select<'crlf' | 'lf'>
+              <Select<'crlf' | 'lf'> seg
                 value={o.lineEnd}
                 options={[
                   ['crlf', 'Windows'],

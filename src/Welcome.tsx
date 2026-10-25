@@ -170,7 +170,7 @@ export function Welcome(props: {
         {/* at the bottom of the window */}
         <div className="welcome-foot">
           <MadeBy />
-          <label className="radio welcome-check" title="Remembered in this browser. You can always open this window again from Help, Welcome.">
+          <label className="radio check welcome-check" title="Remembered in this browser. You can always open this window again from Help, Welcome.">
             <input
               type="checkbox"
               checked={atStart}

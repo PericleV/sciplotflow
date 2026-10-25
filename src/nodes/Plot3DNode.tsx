@@ -480,7 +480,7 @@ export function Plot3DNodeView({ id, data: d }: NodeProps<Plot3DNode>) {
                 <Field label="Every">
                   <NumInput className="tiny" min={0} step={1} value={d.mesh} placeholder={d.kind === 'wireframe' ? '1' : 'none'} onChange={(mesh) => set({ mesh: Math.max(0, Math.round(mesh) || 0) })} />
                 </Field>
-                <Select<NonNullable<Plot3DSpec['meshDir']>>
+                <Select<NonNullable<Plot3DSpec['meshDir']>> seg
                   value={d.meshDir ?? 'both'}
                   title="Its lines along X and Y, only along X, or only along Y"
                   options={[
@@ -630,7 +630,7 @@ export function Plot3DNodeView({ id, data: d }: NodeProps<Plot3DNode>) {
                 <Field label="Size">
                   <NumInput className="tiny" min={0.5} step={0.5} value={d.symbolSize} onChange={(symbolSize) => set({ symbolSize: Math.max(0.5, symbolSize || 4) })} />
                 </Field>
-                <Select<SymbolFill>
+                <Select<SymbolFill> seg
                   value={d.symbolFill}
                   options={[
                     ['filled', 'filled'],
@@ -736,7 +736,7 @@ export function Plot3DNodeView({ id, data: d }: NodeProps<Plot3DNode>) {
             <>
               <span title="The grid on the three walls or only on the floor; dashed lines halfway between its lines">Grid on</span>
               <span className="row wrap">
-                <Select<NonNullable<Plot3DSpec['gridWalls']>>
+                <Select<NonNullable<Plot3DSpec['gridWalls']>> seg
                   value={d.gridWalls ?? 'all'}
                   options={[
                     ['all', 'every wall'],

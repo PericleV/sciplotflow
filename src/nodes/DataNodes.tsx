@@ -16,6 +16,8 @@ import type { AppNode, ColumnsData, ColumnsNode, AutoExtractData, AutoExtractNod
 import { AutoText, Check, Field, InPort, Messages, NumInput, OutPort, Select, TextInput, ResultSummary } from './ui.tsx';
 import { RowRules } from './RowRules.tsx';
 import { RowsControls } from './RowsPanel.tsx';
+import { FormulaTools } from './FormulaEditor.tsx';
+import { useInsert } from './useInsert.ts';
 import type { RowSelect } from '../engine/rowsel.ts';
 import { NodeOptions } from './NodeOptions.tsx';
 import { Worksheet } from './Worksheet.tsx';
@@ -404,7 +406,7 @@ export function ExtractNodeView({ id, data }: NodeProps<ExtractNode>) {
       </Field>
       <div className="row">
         <Field label="Output" title="The rows chosen as a column, or one value of them">
-          <Select<'column' | 'value'> value={data.value ? 'value' : 'column'} options={[['column', 'column'], ['value', 'one value']]} onChange={(v) => updateNodeData(id, { value: v === 'value' })} />
+          <Select<'column' | 'value'> seg value={data.value ? 'value' : 'column'} options={[['column', 'column'], ['value', 'one value']]} onChange={(v) => updateNodeData(id, { value: v === 'value' })} />
         </Field>
         {data.value && (
           <Field label="Value" title="Of the rows chosen: the first, the last, or a statistic of them (the masked rows and the empty cells left out)">
@@ -464,6 +466,9 @@ export function MathColNodeView({ id, data }: NodeProps<MathColNode>) {
   const one = data.output === 'value';
   const preset = MATH_PRESETS.find((p) => p.formula === data.formula.trim() && p.name === data.name) ?? MATH_PRESETS.find((p) => p.formula === data.formula.trim());
   const withErr = !!data.errors?.trim();
+  // (ƒ Functions, Value from a row …: put in the formula at its cursor)
+  const formulaBox = useRef<HTMLTextAreaElement>(null);
+  const insertFormula = useInsert(formulaBox, data.formula, (formula) => set({ formula }));
   return (
     <div className="node node-mathcol">
       {Array.from({ length: count }, (_, k) => {
@@ -492,9 +497,17 @@ export function MathColNodeView({ id, data }: NodeProps<MathColNode>) {
       <NodeOptions>
         <div className="formula-row">
           <span className="muted">=</span>
-          <AutoText className="mono" value={data.formula} placeholder={one ? 'e.g. max(A) - min(A), mean(A)/mean(B)' : 'e.g. A*100, (A - B)/C, A/max(A)'} onChange={(formula) => set({ formula })} />
+          <AutoText className="mono" inputRef={formulaBox} value={data.formula} placeholder={one ? 'e.g. max(A) - min(A), mean(A)/mean(B)' : 'e.g. A*100, (A - B)/C, A/max(A)'} onChange={(formula) => set({ formula })} />
         </div>
-        <div className="hint">Of a whole column: mean(A), median, sd, sum, min, max, count, first, last (one column in the parentheses; empty and masked values left out). Functions of your own before the formula: f(t) = exp(-t/3); A*f(B).</div>
+        <FormulaTools columns={[...byPort.values()].map((i) => ({ letter: columnLetter(i.port), name: i.name }))} insert={insertFormula} />
+        <div className="hint">Of a whole column: mean(A), median, sd, sum, min, max, count, first, last (empty and masked values left out); of the rows where a condition is true: mean(A, B &gt; 0), first(A, between(B, 10, 20)); a row: at(A, 3). Functions of your own before the formula: f(t) = exp(-t/3); A*f(B).</div>
+        {/rand(n|int)?\s*\(/.test(data.formula) && (
+          <div className="row">
+            <button className="nodrag" title="Other random values (the same ones every time the formula is computed, until asked for new ones)" onClick={() => set({ seed: 1 + Math.floor(Math.random() * 1e9) })}>
+              New random values
+            </button>
+          </div>
+        )}
         <div className="row wrap">
           <Check label="Complex numbers" title="The formula in complex numbers: j the imaginary unit (i is the row): A + j*B, abs, arg, re, im, conj, exp, ln, sqrt, sin, cos, polar(r, θ) …; the inputs are real" value={!!data.complex} onChange={(complex) => set({ complex: complex || undefined })} />
           {data.complex && (
@@ -699,7 +712,7 @@ const ADD_KINDS: [ComputedKind, string][] = [
 
 // The formula of a column added in Columns: written with the letters of the list (A, B …) or [names], a letter put in
 // where the cursor is by a click; its first values or why not under it
-function ColumnFormula({ c, lines, inputs, result, setFormula }: { c: ComputedColumn; lines: ColumnLine[]; inputs: MathInput[]; result: NodeResult | undefined; setFormula: (stored: string) => void }) {
+function ColumnFormula({ c, lines, inputs, result, setFormula, newRandom }: { c: ComputedColumn; lines: ColumnLine[]; inputs: MathInput[]; result: NodeResult | undefined; setFormula: (stored: string) => void; newRandom: () => void }) {
   const ta = useRef<HTMLTextAreaElement>(null);
   const shown = formulaShown(c.formula ?? '', lines);
   const self = `=${c.id}`;
@@ -718,6 +731,7 @@ function ColumnFormula({ c, lines, inputs, result, setFormula }: { c: ComputedCo
     caret.current = a + ref.length;
     setFormula(formulaStored(shown.slice(0, a) + ref + shown.slice(b), lines));
   };
+  const insert = useInsert(ta, shown, (v) => setFormula(formulaStored(v, lines)));
   const line = lines.find((L) => L.from === self);
   const o = result?.outputs.out;
   const col = line && o?.t === 'dataset' ? o.v.columns.find((x) => x.name === line.name) : undefined;
@@ -749,7 +763,15 @@ function ColumnFormula({ c, lines, inputs, result, setFormula }: { c: ComputedCo
           </button>
         ))}
       </div>
-      <div className="hint">i the row, n the rows; abs sqrt exp log log10 sin cos …; mean(A) max(A) sum(A) … of a whole column.</div>
+      <FormulaTools columns={lines.flatMap((L, k) => (L.from === self ? [] : [{ letter: lineLetter(k), name: L.name }]))} insert={insert} />
+      {/rand(n|int)?\s*\(/.test(shown) && (
+        <div className="row">
+          <button className="nodrag" title="Other random values (the same ones every time the formula is computed, until asked for new ones)" onClick={newRandom}>
+            New random values
+          </button>
+        </div>
+      )}
+      <div className="hint">i the row, n the rows; abs sqrt exp log log10 sin cos …; mean(A) max(A) sum(A) … of a whole column; mean(A, B &gt; 0), first(A, between(B, 10, 20)), at(A, 3) of rows chosen.</div>
       {problem && line ? (
         <div className="hint err">{problem.slice(line.name.length + 4)}</div>
       ) : col && c.formula?.trim() ? (
@@ -1166,7 +1188,7 @@ export function ColumnsNodeView({ id, data: nodeData }: NodeProps<ColumnsNode>) 
                     onChange={(w) => w && place(c.id, w)}
                   />
                 </div>
-                {kind === 'formula' && <ColumnFormula c={c} lines={lines} inputs={inputs} result={r} setFormula={(formula) => setComputed(c.id, { formula })} />}
+                {kind === 'formula' && <ColumnFormula c={c} lines={lines} inputs={inputs} result={r} setFormula={(formula) => setComputed(c.id, { formula })} newRandom={() => setComputed(c.id, { seed: 1 + Math.floor(Math.random() * 1e9) })} />}
                 {kind === 'value' && (
                   <Field label="Value" title="The same number in every row">
                     <NumInput className="short" value={c.value ?? NaN} onChange={(value) => setComputed(c.id, { value })} />

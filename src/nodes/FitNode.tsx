@@ -549,7 +549,7 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
             <div className="row wrap">
               <Field label="IRF" title="A column of the data (on its designated X), or the curve connected to the “irf” port">
                 <span className="row">
-                  <Select
+                  <Select seg
                     value={data.irfFrom ?? 'column'}
                     options={[
                       ['column', 'a column'],

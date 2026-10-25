@@ -2,6 +2,7 @@
 // (a column, a comparison, a value; all of them true or any one), the formula optional (the conditions written as one
 // when it is turned on).
 import { ActionIcon, Button, TextInput, Tooltip } from '@mantine/core';
+import { useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import type { NodeResult } from '../engine/evaluate.ts';
 import { condReady, condsFormula, ROW_COL, ROW_OPS, usesFormula, type RowCond, type RowRange, type RowSelect } from '../engine/rowsel.ts';
@@ -10,6 +11,28 @@ import { Choice, ListField, NumField, Row, Toggle } from '../ui/props.tsx';
 
 const NO_RANGE: RowRange = { from: NaN, to: NaN };
 const FORMULA_HINT = (hasX: boolean) => `A condition, true on the rows used: ${hasX ? 'x (the X column), ' : ''}the columns A, B, C … (their letters), row (the row number, 1 … n; also i), n; < > <= >= == !=, % (row % 2 == 0: the even rows), and, or, not, mod, isnan …`;
+
+// the values of “is one of”, typed with commas or spaces between them (2, 5, 7); the text kept as typed while it is
+// typed
+function ValuesField({ value, onChange }: { value: number[]; onChange: (vs: number[]) => void }) {
+  const [draft, setDraft] = useState(() => value.join(', '));
+  const read = (t: string) => t.split(/[\s,;]+/).filter(Boolean).map(Number);
+  // (changed from elsewhere: shown as it is now)
+  const shown = read(draft).filter(Number.isFinite).join() === value.join() ? draft : value.join(', ');
+  return (
+    <TextInput
+      className="grow"
+      value={shown}
+      placeholder="2, 5, 7"
+      aria-label="Values"
+      onChange={(e) => {
+        const t = e.currentTarget.value;
+        setDraft(t);
+        onChange(read(t).filter(Number.isFinite));
+      }}
+    />
+  );
+}
 
 // Where: the conditions, or the formula
 export function WhereConds({ value, onChange, names, hasX }: { value: RowSelect; onChange: (v: RowSelect) => void; names: string[]; hasX: boolean }) {
@@ -56,7 +79,7 @@ export function WhereConds({ value, onChange, names, hasX }: { value: RowSelect;
                 <span className="where-op">
                   <ListField value={c.op} options={ROW_OPS} onChange={(op) => setCond(k, { op })} label="Comparison" />
                 </span>
-                {c.op !== 'empty' && c.op !== 'filled' && <NumField value={c.v ?? NaN} placeholder="value" onChange={(v) => setCond(k, { v })} />}
+                {c.op === 'in' ? <ValuesField value={c.vs ?? []} onChange={(vs) => setCond(k, { vs })} /> : c.op !== 'empty' && c.op !== 'filled' && <NumField value={c.v ?? NaN} placeholder="value" onChange={(v) => setCond(k, { v })} />}
                 {c.op === 'between' && (
                   <>
                     <span className="where-word">and</span>

@@ -2436,6 +2436,36 @@ function digiImage(): string {
 
 
 
+// A calibration in a Workbook whose last two columns are formulas (Set column values): D the absorbance minus the blank
+// (the row where the concentration is 0), E the concentration of the unknowns only (the rows without one), from the slope
+// of the standards and their dilution.
+function workbookFormulasExample(): Project {
+  const b = builder();
+  const text = 'Conc (mM)\tAbs\tDilution\n0\t0.041\t1\n0.5\t0.112\t1\n1\t0.186\t1\n2\t0.329\t1\n4\t0.618\t1\n8\t1.195\t1\n\t0.402\t1\n\t0.287\t5\n';
+  const edits = {
+    addCols: 2,
+    cols: { 3: { name: 'Abs corrected' }, 4: { name: 'Conc found (mM)' } },
+    formulas: {
+      3: { formula: '[@o1] - first([@o1], [@o0] == 0)' },
+      4: { formula: '[@o3] / (sum([@o3], [@o0] > 0) / sum([@o0], [@o0] > 0)) * [@o2]', rows: { mode: 'rule' as const, conds: [{ col: 'Conc (mM)', op: 'empty' as const }] }, others: 'empty' as const },
+    },
+  };
+  const wb = add(b, 'book', 'fx-book', 0, 0, { ...WORKBOOK_DEFAULTS, name: 'calibration', sheets: [{ name: 'Calibration', text, edits }] });
+  const p = add(
+    b,
+    'plot1d',
+    'fx-plot',
+    760,
+    0,
+    plot(
+      { label: 'standards', style: curve(1, { mode: 'scatter', symbol: 'circle', symbolSize: 4 }), cols: { x: 'Conc (mM)', y: 'Abs corrected' } },
+      { axes: { y: { ...AXES_STYLE_DEFAULTS.y, range: 'padded' }, sides: { ...AXES_STYLE_DEFAULTS.sides, bottom: side({ title: 'Concentration (mM)' }), left: side({ title: 'Absorbance, blank subtracted' }) } }, page: { name: 'calibration' } },
+    ),
+  );
+  link(b, wb, p, 'dataset');
+  return project(b, 'Workbook formulas: a blank subtracted, the unknowns found');
+}
+
 function digitizerExample(): Project {
   const b = builder();
   // calibrated on the axes (two ticks on each), the curve's points placed as clicks would (on whole pixels)
@@ -3449,6 +3479,10 @@ const ABOUT: Record<string, About> = {
     what: 'The scan of a two-colour microarray in the Image analysis node: every spot an ellipse with a ring of background around it, measured on the red and the green channel; the net signals, their ratio and log2 ratio in a Workbook (Selections, Spots, Summary by replicate).',
     try: ['Analyze: pick a spot, change its ring (gap, width) or its background (a region drawn, the global one).', 'Stamp: pick a spot, then click elsewhere: a copy centred on the bright pixels there.', 'Look at the Spots sheet: log2 ratio R/G about −2.5 … +2.5 from gene 1 to gene 6.'],
   },
+  'Workbook formulas: a blank subtracted, the unknowns found': {
+    what: 'A Workbook whose columns D and E are formulas (ƒ by their letters, Set column values): D is the absorbance minus the blank, taken from the row where the concentration is 0 (first(B, A == 0)); E is the concentration of the two unknowns, set only on the rows where A is empty, from the slope of the standards (sum(D, A > 0) / sum(A, A > 0)) and the dilution.',
+    try: ['Change the blank (B1) or an absorbance: D and E are computed again.', 'Right-click the letter D ▸ Edit formula: ƒ Functions lists every function with an example; Value from a row… writes first(…), at(…), mean(…) for you.', 'Right-click a letter ▸ Insert column with formula, e.g. B * rand(0.98, 1.02), then New random values.'],
+  },
   'Digitizer: values read off the image of a graph': {
     what: 'The image of a graph calibrated on its axes and its curve’s points placed (as clicks on whole pixels): the values read lie on the curve the image was drawn from.',
     try: ['Open the Digitizer: drag a point, or add some with clicks.', 'Let it find the curve by its colour: Auto (by colour).', 'Open an image of your own (a figure of a paper).'],
@@ -3694,6 +3728,7 @@ const LIST: { group: string; name: string; desc: string; make: () => Project }[]
   { group: 'Images', name: 'Particles: clusters cut apart, shapes named, their sizes', desc: 'Image analysis: the particles of a mask as selections (touching ones cut apart), named by their shape (circle, triangle, square …), measured (area, perimeter, Feret, ellipse, circularity, corners, nearest neighbours), in a Workbook and a Plot.', make: particlesExample },
   { group: 'Images', name: 'Trainable classifier: textured particles a threshold misses', desc: 'Image analysis: a random forest taught by a few lines drawn on particles and on the ground (as ImageJ’s Trainable Weka Segmentation) finds grainy particles a threshold cannot; their length and width in a Plot.', make: classifierExample },
   { group: 'Images', name: 'Microarray spots: signal over a ring of background, red / green ratio', desc: 'Image analysis of a two-colour microarray scan: spots stamped as ellipses, a ring of background around each, measured on the red and green channels (net signal, SNR, ratio and log2 ratio, a summary by replicate) in a Workbook.', make: microarrayExample },
+  { group: 'Data preparation', name: 'Workbook formulas: a blank subtracted, the unknowns found', desc: 'Set column values in a Workbook: a column minus the value of another row (the blank), and the unknowns found only on their own rows from the slope of the standards and their dilution; computed again whenever a cell changes.', make: workbookFormulasExample },
   { group: 'Data preparation', name: 'Digitizer: values read off the image of a graph', desc: 'The image of a published graph, calibrated on its axes, the points of its curve placed; the values read compared with the curve it was drawn from.', make: digitizerExample },
   { group: 'Phase diagrams', name: 'Cu-Ni phase diagram: Lever rule & dual components (wt.% Ni and wt.% Cu)', desc: 'The image of a Cu-Ni phase diagram calibrated on its axes, the liquidus and solidus clicked as splines, the regions L, α + L, α they close, and the lever rule at a point: the compositions and amounts of the liquid and the solid.', make: phaseDigitizerExample },
   { group: 'Phase diagrams', name: 'Pb-Sn eutectic: phases, amounts and microconstituents of a 40 wt% Sn alloy', desc: 'A Pb–Sn diagram read off its image: the lever rule at 150 °C (the arms coloured), the alloy cooled from 300 °C with the primary α and the eutectic, the compositions in wt% and at%.', make: pbSnExample },

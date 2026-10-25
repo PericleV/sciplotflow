@@ -116,7 +116,7 @@ export function PhaseNodeView({ id, data }: NodeProps<PhaseDiagramNode>) {
             <NumInput className="short" step={0.5} value={data.omegaS1 ?? 0} onChange={(omegaS1) => set({ omegaS1, preset: undefined })} />
           </Field>
           <Field label="Unit" title="The temperatures in °C or K">
-            <Select<PhaseDiagramData['unit']>
+            <Select<PhaseDiagramData['unit']> seg
               value={data.unit}
               options={[
                 ['C', '°C'],

@@ -348,7 +348,7 @@ export function ParticlesPanel(p: {
       <div className="ie-params">
         <span className="ie-label">From</span>
         <span className="row">
-          <Select<'mask' | 'rays'>
+          <Select<'mask' | 'rays'> seg
             value={opts.method ?? 'mask'}
             title="The particles of the mask (a threshold, a trainable classifier), cut apart if asked; or seeds and rays: a seed in every particle (the mask's centres when there is one, else the bright or dark blobs of the image at their size), from each 32 rays stopped at the first edge: touching particles found one by one, a dark gap between them or not"
             options={[
@@ -360,7 +360,7 @@ export function ParticlesPanel(p: {
           {opts.method === 'rays' && (
             <>
               <NumInput className="short" min={0} value={opts.size && opts.size > 0 ? +(opts.size * k).toPrecision(6) : NaN} placeholder="auto" title={`The particles' diameter (${u}): empty, from the mask (a Threshold in the steps); needed without a mask`} onChange={(v) => set({ size: v > 0 ? v / k : undefined })} />
-              <Select<string> value={opts.light === false ? 'dark' : 'light'} title="The particles brighter or darker than the ground" options={[['light', 'bright'], ['dark', 'dark']]} onChange={(v) => set({ light: v === 'dark' ? false : undefined })} />
+              <Select<string> seg value={opts.light === false ? 'dark' : 'light'} title="The particles brighter or darker than the ground" options={[['light', 'bright'], ['dark', 'dark']]} onChange={(v) => set({ light: v === 'dark' ? false : undefined })} />
             </>
           )}
         </span>

@@ -116,7 +116,7 @@ export function BoxViolinNodeView({ id, data: d }: NodeProps<BoxViolinNode>) {
             <>
               <span>Violin</span>
               <span className="row wrap">
-                <Select<BoxSpec['bandwidth']>
+                <Select<BoxSpec['bandwidth']> seg
                   value={d.bandwidth}
                   title="The width of the Gaussian kernel"
                   options={[
@@ -181,7 +181,7 @@ export function BoxViolinNodeView({ id, data: d }: NodeProps<BoxViolinNode>) {
           </span>
           <span>Colours</span>
           <span className="row wrap">
-            <Select<BoxSpec['colorBy']>
+            <Select<BoxSpec['colorBy']> seg
               value={d.colorBy}
               options={[
                 ['series', 'by subgroup'],

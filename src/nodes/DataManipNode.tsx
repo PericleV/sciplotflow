@@ -644,7 +644,7 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
             </button>
           </div>
           <div className="row wrap manip-actions">
-            <Select
+            <Select seg
               value={d.axis}
               options={[
                 ['y', 'Y'],

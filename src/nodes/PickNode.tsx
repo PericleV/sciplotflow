@@ -71,7 +71,7 @@ export function PickNodeView({ id, data }: NodeProps<PickNode>) {
               <>
                 <TextInput className="grow mono" value={rule.value} placeholder={rule.kind === 'where' ? 'x > 0.4 and y < 0' : rule.kind === 'x' ? '0.5 · 0.2, 0.5 · 0:0.1:0.8' : '0'} onChange={(value) => setRule(k, { value })} />
                 {(rule.kind === 'x' || rule.kind === 'y') && (
-                  <Select<'all' | 'first' | 'last'>
+                  <Select<'all' | 'first' | 'last'> seg
                     value={rule.which ?? 'all'}
                     title="Which crossing: all, the first or the last (in row order)"
                     options={[

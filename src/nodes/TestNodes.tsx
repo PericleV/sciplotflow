@@ -114,7 +114,7 @@ export function NormNodeView({ id, data }: NodeProps<NormNode>) {
       <DataSection data={data} set={set} names={names} layouts={['columns', 'indexed']} />
       <div className="row">
         <Field label="Outliers" title="Grubbs: the value farthest from the mean (approximately normal data); Dixon's Q: 3 to 10 values">
-          <Select<NormData['outliers']>
+          <Select<NormData['outliers']> seg
             value={data.outliers}
             options={[
               ['none', 'no test'],

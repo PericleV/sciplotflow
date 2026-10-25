@@ -825,7 +825,7 @@ export function CanvasNodeView({ id, data }: NodeProps<CanvasNode>) {
           <PageControls page={page} set={(p) => set(p)} fixed={keep && fig ? `Size: ${fig.width} × ${fig.height} ${fig.unit}; from the Plots (Grid ▸ Size of the Plots: keep their sizes).` : undefined} />
           {keep && (
             <Field label="Unit" title="Of the gaps, the margin and the size shown">
-              <Select
+              <Select seg
                 value={data.unit}
                 options={[
                   ['mm', 'mm'],

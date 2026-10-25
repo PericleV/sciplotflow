@@ -72,7 +72,7 @@ export function FracNodeView({ id, data }: NodeProps<FracNode>) {
               <NumInput className="tiny" min={0} value={data.conc} onChange={(conc) => set({ conc })} />
             </Field>
             <Field label="Current in">
-              <Select<FracData['unit']>
+              <Select<FracData['unit']> seg
                 value={data.unit}
                 options={[
                   ['A', 'A'],
@@ -138,7 +138,7 @@ export function FrftNodeView({ id, data }: NodeProps<FrftNode>) {
                 <NumInput className="tiny" min={0} step={1} value={data.width} onChange={(width) => set({ width: Math.max(0, Math.round(width)) })} />
               </Field>
               <Field label="The band">
-                <Select<FrftData['keep']>
+                <Select<FrftData['keep']> seg
                   value={data.keep}
                   options={[
                     ['remove', 'taken out'],

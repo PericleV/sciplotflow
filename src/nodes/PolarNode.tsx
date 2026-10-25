@@ -50,7 +50,7 @@ export function PolarNodeView({ id, data: d }: NodeProps<PolarNode>) {
               <span>θ</span>
               <span className="row wrap">
                 <Select value={d.theta} options={[['', 'auto: the X designated'], ...cols]} onChange={(theta) => set({ theta })} />
-                <Select<PolarSpec['unit']>
+                <Select<PolarSpec['unit']> seg
                   value={d.unit}
                   options={[
                     ['deg', 'degrees'],
@@ -156,7 +156,7 @@ export function PolarNodeView({ id, data: d }: NodeProps<PolarNode>) {
           <span className="row wrap">
             <input className="nodrag color" type="color" value={d.gridColor || '#b0b0b0'} onChange={(e) => set({ gridColor: e.target.value })} />
             {radar && (
-              <Select<PolarSpec['gridShape']>
+              <Select<PolarSpec['gridShape']> seg
                 value={d.gridShape}
                 options={[
                   ['polygon', 'polygons'],
@@ -182,7 +182,7 @@ export function PolarNodeView({ id, data: d }: NodeProps<PolarNode>) {
                 <Field label="Size">
                   <NumInput className="tiny" min={0.5} step={0.5} value={d.symbolSize} onChange={(symbolSize) => set({ symbolSize: Math.max(0.5, symbolSize || 4) })} />
                 </Field>
-                <Select<SymbolFill>
+                <Select<SymbolFill> seg
                   value={d.symbolFill}
                   options={[
                     ['filled', 'filled'],

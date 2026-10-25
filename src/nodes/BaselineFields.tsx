@@ -73,7 +73,7 @@ export function BaselineFields(p: Props) {
         <Select<string> value={p.method} options={[...(p.before ?? []), ...BASE_LABELS]} onChange={p.onMethod} />
         {m === 'value' && p.onValue && <NumInput className="tiny" value={p.value ?? 0} onChange={(v) => p.onValue!(Number.isFinite(v) ? v : 0)} />}
         {m === 'points' && p.onInterp && (
-          <Select
+          <Select seg
             value={p.interp ?? 'linear'}
             title="The baseline through its points: straight segments, or a smooth (natural cubic) spline"
             options={[

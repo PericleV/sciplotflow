@@ -491,7 +491,7 @@ export function PickGraphView({
         >
           <Plus {...IC} /> Y
         </button>
-        <Select<PickSnap>
+        <Select<PickSnap> seg
           value={snap}
           title="Where a line lands: on the nearest data point (data), or at the exact mouse location (off). Alt: off while held"
           options={[

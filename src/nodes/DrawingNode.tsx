@@ -72,7 +72,7 @@ export function DrawingNodeView({ id, data }: NodeProps<DrawingNode>) {
         <Field label="Grid" title="The editor's grid: its step, shown, objects snapped to it">
           <span className="row wrap">
             <NumInput className="tiny" min={0.01} step={0.5} value={grid.step} onChange={(v) => set({ grid: { ...grid, step: v > 0 ? v : 1 } })} />
-            <Select<'mm' | 'pt'>
+            <Select<'mm' | 'pt'> seg
               value={grid.unit}
               options={[
                 ['mm', 'mm'],

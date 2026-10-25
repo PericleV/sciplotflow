@@ -114,7 +114,7 @@ export function PowerNodeView({ id, data }: NodeProps<PowerNode>) {
           <span>α</span>
           <NumInput className="short" value={data.alpha} step={0.01} min={0.0001} max={0.5} onChange={(alpha) => set({ alpha })} />
           <span>Sides</span>
-          <Select<PowerData['alt']>
+          <Select<PowerData['alt']> seg
             value={data.alt}
             options={[
               ['two-sided', 'two-sided'],

@@ -45,7 +45,46 @@ const FUNCS: Record<string, (...a: number[]) => number> = {
   if: (c, a, b) => (Number.isNaN(c) ? NaN : c ? a : b),
   // isnan(x): 1 for a missing value
   isnan: (x) => (Number.isNaN(x) ? 1 : 0),
+  // isin(x, a, b, c …): 1 when x is one of the values; between(x, low, high): 1 when low ≤ x ≤ high (either way round)
+  isin: (x, ...vs) => (Number.isNaN(x) ? NaN : vs.includes(x) ? 1 : 0),
+  between: (x, a, b) => (Number.isNaN(x) || Number.isNaN(a) || Number.isNaN(b) ? NaN : x >= Math.min(a, b) && x <= Math.max(a, b) ? 1 : 0),
+  // random values (see RANDOM below: the same in a row every time the formula is computed)
+  rand: () => NaN,
+  randn: () => NaN,
+  randint: () => NaN,
 };
+// rand(), rand(low, high): uniform; randn(), randn(mean, sd): normal; randint(low, high): a whole number, both ends
+// included. Each value is fixed by the formula's seed, the place of the call in the formula and the row (i): computed
+// again, a formula gives the same values; a new seed, others.
+const RANDOM = new Set(['rand', 'randn', 'randint']);
+// a number of 0 … 1 (not 0) from three whole numbers (a hash: the same three, the same number)
+function unit(seed: number, site: number, i: number): number {
+  let h = (Math.imul(seed | 0, 0x9e3779b1) ^ Math.imul(site + 1, 0x85ebca6b) ^ Math.imul(i + 1, 0xc2b2ae35)) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
+  h = Math.imul(h ^ (h >>> 15), 0x846ca68b);
+  h ^= h >>> 16;
+  return ((h >>> 0) + 0.5) / 4294967296;
+}
+// a random value of the kind f, at the call `site` of the formula, in row i, from its arguments
+function randomAt(f: string, seed: number, site: number, i: number, a: number[]): number {
+  if (f === 'randn') {
+    // (Box–Muller from two uniform values of the same row and call)
+    const z = Math.sqrt(-2 * Math.log(unit(seed, 2 * site, i))) * Math.cos(2 * Math.PI * unit(seed, 2 * site + 1, i));
+    return a.length >= 2 ? a[0] + a[1] * z : z;
+  }
+  const u = unit(seed, 2 * site, i);
+  if (f === 'randint') {
+    const [lo, hi] = [Math.ceil(Math.min(a[0], a[1])), Math.floor(Math.max(a[0], a[1]))];
+    return a.length < 2 || !(hi >= lo) ? NaN : lo + Math.min(hi - lo, Math.floor(u * (hi - lo + 1)));
+  }
+  return a.length >= 2 ? a[0] + (a[1] - a[0]) * u : u;
+}
+// a seed from a text (the formula itself, when none is given)
+export function seedOf(text: string): number {
+  let h = 2166136261;
+  for (let k = 0; k < text.length; k++) h = Math.imul(h ^ text.charCodeAt(k), 16777619);
+  return h >>> 0;
+}
 export const FUNCTION_NAMES = Object.keys(FUNCS);
 
 type Tok = { k: 'num'; v: number } | { k: 'id'; v: string } | { k: 'op'; v: string };
@@ -187,6 +226,10 @@ function parse(src: string, extra?: Record<string, unknown>, own?: Set<string>):
         }
         expect(')');
         if (t.v === 'if' && args.length !== 3) throw new Error('if needs three parts: if(condition, value when true, value when false)');
+        if (t.v === 'between' && args.length !== 3) throw new Error('between needs three parts: between(x, low, high)');
+        if (t.v === 'isin' && args.length < 2) throw new Error('isin needs the value and the values it may be: isin(x, 2, 5, 7)');
+        if ((t.v === 'rand' || t.v === 'randn') && args.length !== 0 && args.length !== 2) throw new Error(t.v === 'rand' ? 'rand() is between 0 and 1; rand(low, high) between two values' : 'randn() has the mean 0 and SD 1; randn(mean, sd) the ones given');
+        if (t.v === 'randint' && args.length !== 2) throw new Error('randint needs two parts: randint(low, high)');
         return { k: 'call', f: t.v, args };
       }
       if (t.v === 'pi') return { k: 'pi' };
@@ -280,10 +323,15 @@ function parseAll(src: string, extra?: Record<string, unknown>): { ast: Ast; nam
 type F = (v: Record<string, number>) => number;
 const truth = (x: number) => (Number.isNaN(x) ? NaN : x ? 1 : 0);
 
-// extra: more functions (Curve math: those of the curves, xmin(A) …), over the built-in ones of the same name
-export function compile(src: string, extra?: Record<string, (...a: number[]) => number>): Compiled | string {
+// extra: more functions (Curve math: those of the curves, xmin(A) …), over the built-in ones of the same name; seed:
+// of the random values (absent: from the formula's text)
+export function compile(src: string, extra?: Record<string, (...a: number[]) => number>, opts?: { seed?: number }): Compiled | string {
   const r = parseAll(src, extra);
   if (typeof r === 'string') return r;
+  const seed = opts?.seed ?? seedOf(src);
+  let sites = 0;
+  // (a formula computed without a row: its random values in the order asked)
+  let calls = 0;
   const build = (n: Ast): F => {
     switch (n.k) {
       case 'num':
@@ -358,6 +406,10 @@ export function compile(src: string, extra?: Record<string, (...a: number[]) => 
         // one, two or three arguments called directly (no array a row: a million rows several times faster)
         const fn = extra?.[n.f] ?? FUNCS[n.f];
         const args = n.args.map(build);
+        if (RANDOM.has(n.f) && !extra?.[n.f]) {
+          const [f, site] = [n.f, sites++];
+          return (v) => randomAt(f, seed, site, v.i ?? calls++, args.map((a) => a(v)));
+        }
         if (args.length === 1) {
           const [a] = args;
           return (v) => fn(a(v));
@@ -440,9 +492,12 @@ const CFUNCS: Record<string, (...a: Cx[]) => Cx> = {
 };
 export const COMPLEX_FUNCTION_NAMES = Object.keys(CFUNCS);
 // in complex numbers: j the imaginary unit (unless an input is named j); comparisons and logic on real values only
-export function compileComplex(src: string): CompiledCx | string {
+export function compileComplex(src: string, opts?: { seed?: number }): CompiledCx | string {
   const r = parseAll(src, CFUNCS);
   if (typeof r === 'string') return r;
+  const seed = opts?.seed ?? seedOf(src);
+  let sites = 0;
+  let calls = 0;
   const nan: Cx = [NaN, NaN];
   const toCx = (x: number | Cx | undefined): Cx => (x === undefined ? nan : typeof x === 'number' ? [x, 0] : x);
   type G = (v: Record<string, number | Cx>) => Cx;
@@ -497,6 +552,14 @@ export function compileComplex(src: string): CompiledCx | string {
       }
       case 'call': {
         const args = n.args.map(build);
+        if (RANDOM.has(n.f)) {
+          const [f, site] = [n.f, sites++];
+          return (v) => {
+            const xs = args.map((a) => a(v));
+            const i = v.i;
+            return xs.some((x) => x[1] !== 0) ? nan : [randomAt(f, seed, site, typeof i === 'number' ? i : calls++, xs.map((x) => x[0])), 0];
+          };
+        }
         const cf = CFUNCS[n.f];
         if (cf) return (v) => cf(...args.map((a) => a(v)));
         const rf = FUNCS[n.f];

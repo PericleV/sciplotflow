@@ -15,6 +15,7 @@ import { NodeOptions } from './NodeOptions.tsx';
 import { FigureView } from './FigureView.tsx';
 import { Check, Field, InPort, Messages, NumInput, OutPort, Select, TextInput } from './ui.tsx';
 import { Y_AUTO } from './xAuto.ts';
+import { Choice } from '../ui/props.tsx';
 
 export function PieNodeView({ id, data: d }: NodeProps<PieNode>) {
   const { updateNodeData } = useReactFlow<AppNode>();
@@ -77,7 +78,7 @@ export function PieNodeView({ id, data: d }: NodeProps<PieNode>) {
               <span className="row wrap">
                 <Select value={d.value} options={[['', 'none: count the rows'], ...cols]} onChange={(value) => set({ value })} />
                 {d.value && (
-                  <Select<PieSpec['stat']>
+                  <Select<PieSpec['stat']> seg
                     value={d.stat}
                     options={[
                       ['sum', 'sum'],
@@ -96,12 +97,8 @@ export function PieNodeView({ id, data: d }: NodeProps<PieNode>) {
         <summary>Pie</summary>
         <div className="col-form">
           <span>Kind</span>
-          <span className="row wrap">
-            {KINDS.map(([k, label, title]) => (
-              <button key={k} className={`nodrag${kind === k ? ' on' : ''}`} title={title} onClick={() => setKind(k)}>
-                {label}
-              </button>
-            ))}
+          <span className="row">
+            <Choice value={kind} onChange={setKind} options={KINDS} full={false} />
           </span>
           {kind === 'rings' && (
             <>
@@ -164,7 +161,7 @@ export function PieNodeView({ id, data: d }: NodeProps<PieNode>) {
             />
             {d.labels !== 'none' && (
               <>
-                <Select<PieSpec['labelPos']>
+                <Select<PieSpec['labelPos']> seg
                   value={d.labelPos}
                   title="Automatic: outside, on a leader line, when the slice is small or the label long"
                   options={[
@@ -187,7 +184,7 @@ export function PieNodeView({ id, data: d }: NodeProps<PieNode>) {
             <>
               <span>Centre</span>
               <span className="row wrap">
-                <Select<PieSpec['center']>
+                <Select<PieSpec['center']> seg
                   value={d.center}
                   title="In the hole"
                   options={[

@@ -459,8 +459,8 @@ export function MatCompNodeView({ id, data: d }: NodeProps<MatCompNode>) {
                       <NumInput className="tiny" step={1} value={s.k ?? 2} onChange={(k2) => setStep(s.id, { k: k2 })} />
                     </Field>
                   )}
-                  {s.op === 'rot90' && <Select<number> value={s.k ?? 1} options={[[1, '90° ⟲'], [2, '180°'], [3, '90° ⟳']]} onChange={(k2) => setStep(s.id, { k: k2 })} />}
-                  {s.op === 'flip' && <Select<'lr' | 'ud'> value={s.how ?? 'lr'} options={[['lr', '↔ left – right'], ['ud', '↕ up – down']]} onChange={(how) => setStep(s.id, { how })} />}
+                  {s.op === 'rot90' && <Select<number> seg value={s.k ?? 1} options={[[1, '90° ⟲'], [2, '180°'], [3, '90° ⟳']]} onChange={(k2) => setStep(s.id, { k: k2 })} />}
+                  {s.op === 'flip' && <Select<'lr' | 'ud'> seg value={s.how ?? 'lr'} options={[['lr', '↔ left – right'], ['ud', '↕ up – down']]} onChange={(how) => setStep(s.id, { how })} />}
                   {s.op === 'reshape' && (
                     <Field label="r × c" title="Row by row">
                       <NumInput className="tiny" min={1} step={1} value={s.r ?? NaN} onChange={(r2) => setStep(s.id, { r: r2 })} />×<NumInput className="tiny" min={1} step={1} value={s.c ?? NaN} onChange={(c) => setStep(s.id, { c })} />

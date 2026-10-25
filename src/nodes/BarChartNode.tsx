@@ -69,7 +69,7 @@ export function BarChartNodeView({ id, data: d }: NodeProps<BarChartNode>) {
               <Select value={d.sub} options={[['', 'none'], ...cols]} onChange={(sub) => set({ sub })} />
               <span>Bar, error</span>
               <span className="row wrap">
-                <Select<BarStat>
+                <Select<BarStat> seg
                   value={d.stat}
                   options={[
                     ['mean', 'mean'],
@@ -151,7 +151,7 @@ export function BarChartNodeView({ id, data: d }: NodeProps<BarChartNode>) {
           </span>
           <span>Colours</span>
           <span className="row wrap">
-            <Select<BarSpec['colorBy']>
+            <Select<BarSpec['colorBy']> seg
               value={d.colorBy}
               options={[
                 ['series', 'by series'],
@@ -175,7 +175,7 @@ export function BarChartNodeView({ id, data: d }: NodeProps<BarChartNode>) {
           <BarLookControls value={d.barLook} onChange={(barLook) => set({ barLook })} />
           <span>Error bars</span>
           <span className="row wrap">
-            <Select<BarSpec['errDir']>
+            <Select<BarSpec['errDir']> seg
               value={d.errDir}
               options={[
                 ['both', '±'],

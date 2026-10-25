@@ -12,6 +12,8 @@ import { convertInSheet, editCount, fillSeries, pasteSplitter, type SheetEdits, 
 import { cellText, ROLE_LABELS, roleOf, type ColumnRole, type Dataset } from '../engine/table.ts';
 import { maxOf } from '../engine/minmax.ts';
 import { Lock, X } from 'lucide-react';
+import { formulaOfKept, type ColFormula } from '../engine/sheetFormula.ts';
+import { FormulaWindow } from './FormulaWindow.tsx';
 import { IC } from './iconProps.ts';
 import { ask } from '../ui/dialogStore.ts';
 import { looksNumeric } from '../engine/convert.ts';
@@ -46,7 +48,8 @@ export type RowLayout = { onHide: (rows: number[]) => void; onMove: (from: numbe
 // look / onLook: how it is drawn (the node's width, the table's height, the rows' height, the columns' widths), changed by
 // dragging the table's corner, the border under a row number, the border right of a column letter (double-click: the
 // column fits its values)
-export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain, onRole, layout, rowLayout, look, onLook }: { dataset: Dataset; map?: SheetMap; edits: SheetEdits | undefined; onEdits: (e: SheetEdits) => void; readOnly?: boolean; plain?: boolean; rowLayout?: RowLayout; onRole?: (j: number, role: ColumnRole) => void; layout?: SheetLayout; look?: SheetLook; onLook?: (l: SheetLook) => void }) {
+// formulas: its own columns can be given by a formula (a Workbook: Set column values), on the sheet of that name
+export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain, onRole, layout, rowLayout, look, onLook, formulas }: { dataset: Dataset; map?: SheetMap; edits: SheetEdits | undefined; onEdits: (e: SheetEdits) => void; readOnly?: boolean; plain?: boolean; rowLayout?: RowLayout; onRole?: (j: number, role: ColumnRole) => void; layout?: SheetLayout; look?: SheetLook; onLook?: (l: SheetLook) => void; formulas?: { sheet: string } }) {
   // (while a border or the corner is dragged: the look shown, kept when the mouse is let go)
   const [live, setLive] = useState<SheetLook | null>(null);
   const lk = live ?? look ?? {};
@@ -88,6 +91,12 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   const lockedCol = (c: number) => reads[c] < 0;
   // a column of its own locked by hand (right-click its letter): its name and values kept, not deleted (moved: yes)
   const userLocked = (c: number) => reads[c] >= 0 && !!e.locked?.includes(reads[c]);
+  // a column of its own given by a formula (Set column values): its cells not typed in
+  const formulaOf = (c: number): ColFormula | undefined => (formulas && reads[c] >= 0 ? e.formulas?.[reads[c]] : undefined);
+  // every column's key, as the formulas name them (o<n>: of its own table; with inputs, the layout's)
+  const colKeys = cols.map((_, c) => (layout ? (layout.keys[c] ?? `#${c}`) : reads[c] >= 0 ? `o${reads[c]}` : `#${c}`));
+  // the column whose formula is being written (its place as read)
+  const [fxFor, setFxFor] = useState<number | null>(null);
   // its own columns whose text looks like numbers: proposed under the table (converted when asked: conv, the columns)
   const proposed = cols.flatMap((c, j) => {
     if (reads[j] < 0 || !c.text) return [];
@@ -96,14 +105,14 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   });
   const [conv, setConv] = useState<number[] | null>(null);
   const [later, setLater] = useState(false);
-  const locked = (r: number, c: number) => lockedCol(c) || userLocked(c) || r >= nOwn;
+  const locked = (r: number, c: number) => lockedCol(c) || userLocked(c) || !!formulaOf(c) || r >= nOwn;
   // a column moved or left out: of its own table, or (with inputs) any
   const canArrange = (c: number) => (layout ? c < layout.keys.length : !lockedCol(c));
   const canRemove = (c: number) => canArrange(c) && !userLocked(c);
-  // a change asked of a locked column: said under the table for a moment
-  const [lockNote, setLockNote] = useState(false);
-  const noteLocked = () => {
-    setLockNote(true);
+  // a change asked of a locked column (or one given by a formula): said under the table for a moment
+  const [lockNote, setLockNote] = useState<false | 'lock' | 'formula'>(false);
+  const noteLocked = (why: 'lock' | 'formula' = 'lock') => {
+    setLockNote(why);
     window.setTimeout(() => setLockNote(false), 2500);
   };
   // the columns of its own chosen locked, or all unlocked when they all are
@@ -165,6 +174,21 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
     order.splice(at, 0, map.baseCols + (e.addCols ?? 0));
     onEdits({ ...e, addCols: (e.addCols ?? 0) + 1, order });
     setSel({ r0: 0, c0: at, r1: Math.max(0, n - 1), c1: at });
+  };
+  // a column right of the one chosen, its formula window open (its place as read: the next new one)
+  const insertFormulaCol = (at: number) => {
+    const place = layout ? (given ? given.baseCols + (e.addCols ?? 0) : 0) : map.baseCols + (e.addCols ?? 0);
+    insertCol(at);
+    setFxFor(place);
+  };
+  // a column's values written in its cells, as typed (Once, or a formula taken off), its formula not kept
+  const writeOnce = (place: number, values: Float64Array) => {
+    const cells = { ...e.cells };
+    const rowAt = (r: number) => (r < nOwn ? map.rows[r] : map.baseRows + (e.addRows ?? 0) + (r - nOwn));
+    for (let r = 0; r < values.length; r++) cells[`${rowAt(r)}:${place}`] = Number.isFinite(values[r]) ? String(+values[r].toPrecision(15)) : '';
+    const more = Math.max(0, values.length - nOwn);
+    const { [place]: _gone, ...rest } = e.formulas ?? {};
+    onEdits({ ...e, cells, formulas: Object.keys(rest).length ? rest : undefined, ...(more ? { addRows: (e.addRows ?? 0) + more } : {}) });
   };
   const removeRows = (rs: number[]) => {
     const list = rs.filter((r) => r < n && rowGone(r));
@@ -344,6 +368,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   };
   const start = (r: number, c: number, typed?: string) => {
     if (userLocked(c) && r < nOwn) noteLocked();
+    else if (formulaOf(c)) noteLocked('formula');
     if (locked(r, c)) return;
     setEditing({ r, c });
     setSel({ r0: r, c0: c, r1: r, c1: c });
@@ -496,7 +521,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
     table.forEach((t, i) =>
       t.forEach((v, j) => {
         const c = colAt(c0 + j);
-        if (c >= 0 && !(c0 + j < cols.length && userLocked(c0 + j))) cells[`${rowAt(r0 + i)}:${c}`] = v.trim();
+        if (c >= 0 && !(c0 + j < cols.length && (userLocked(c0 + j) || formulaOf(c0 + j)))) cells[`${rowAt(r0 + i)}:${c}`] = v.trim();
       }),
     );
     onEdits({ ...e, cells, ...(moreRows ? { addRows: (e.addRows ?? 0) + moreRows } : {}), ...(moreCols ? { addCols: (e.addCols ?? 0) + moreCols } : {}) });
@@ -567,7 +592,14 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
         if (lo.c > 0) items.push({ label: 'Move column left', run: () => moveCol(lo.c, lo.c - 1) });
         if (lo.c < cols.length - 1) items.push({ label: 'Move column right', run: () => moveCol(lo.c, lo.c + 1) });
       }
-      if (nc === 1 && !lockedCol(lo.c) && !userLocked(lo.c) && cols[lo.c]?.text) items.push({ label: 'Convert to numbers…', run: () => setConv([lo.c]) });
+      if (nc === 1 && !lockedCol(lo.c) && !userLocked(lo.c) && cols[lo.c]?.text && !formulaOf(lo.c)) items.push({ label: 'Convert to numbers…', run: () => setConv([lo.c]) });
+      // (a Workbook: a column of its own given by a formula, or a new one)
+      if (formulas && nc === 1 && reads[lo.c] >= 0 && !userLocked(lo.c)) {
+        const at = reads[lo.c];
+        if (formulaOf(lo.c)) items.push({ label: 'Edit formula…', run: () => setFxFor(at) }, { label: 'Remove formula (keep the values)', run: () => writeOnce(at, cols[lo.c].values) });
+        else items.push({ label: 'Set column values (formula)…', run: () => setFxFor(at) });
+      }
+      if (formulas && canAddCol && !readOnly && nc === 1) items.push({ label: 'Insert column with formula…', run: () => insertFormulaCol(hi.c + 1) });
       // (a column of its own locked: its name and values kept)
       const own = span(lo.c, hi.c).filter((c) => reads[c] >= 0);
       if (own.length) items.push({ label: own.every(userLocked) ? `Unlock ${own.length === 1 ? 'column' : `${own.length} columns`}` : `Lock ${own.length === 1 ? 'column' : `${own.length} columns`}`, run: () => toggleLock(own) });
@@ -599,7 +631,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
               {cols.map((_c, j) => (
                 <th
                   key={j}
-                  className={`col-letter${userLocked(j) || (lockedCol(j) && !readOnly) ? ' locked-col' : ''}${chosenCols.includes(j) ? ' sel' : ''}${dropAt === j && moving !== null && moving !== j ? (moving < j ? ' drop-after' : ' drop-before') : ''}`}
+                  className={`col-letter${userLocked(j) || (lockedCol(j) && !readOnly) ? ' locked-col' : ''}${formulaOf(j) ? ' fx-col-head' : ''}${chosenCols.includes(j) ? ' sel' : ''}${dropAt === j && moving !== null && moving !== j ? (moving < j ? ' drop-after' : ' drop-before') : ''}`}
                   title={canArrange(j) ? 'Select the whole column (Shift: up to this one); drag it to move the column; right-click: insert, delete, move' : 'Select the whole column (Shift: up to this one)'}
                   onClick={(ev) => selCols(j, ev.shiftKey, ev.ctrlKey || ev.metaKey)}
                   onContextMenu={(ev) => openMenu(ev, 'col', 0, j)}
@@ -626,6 +658,11 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
                   }}
                 >
                   {userLocked(j) && (<span className="sheet-lock" aria-label="locked"><Lock {...IC} /></span>)}
+                  {formulaOf(j) && (
+                    <span className="sheet-fx" title={`${columnLetter(j)} = ${formulaOfKept(formulaOf(j)!.formula, cols, colKeys)}${formulaOf(j)!.rows && formulaOf(j)!.rows!.mode !== 'all' ? ' (on the rows chosen)' : ''}. Computed again when its columns change; right-click ▸ Edit formula`}>
+                      ƒ
+                    </span>
+                  )}
                   {columnLetter(j)}({ROLE_LABELS[roleOf(cols, j)]})
                   {onLook && <span className="col-grip" title="Drag: the column's width; double-click: it fits its values" onPointerDown={(ev) => dragCol(ev, j)} onClick={(ev) => ev.stopPropagation()} onDoubleClick={(ev) => (ev.stopPropagation(), fitCol(j))} />}
                   {canRemove(j) && (
@@ -727,7 +764,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
                       style={wide(j)}
                       data-r={r}
                       data-c={j}
-                      className={`${!locked(r, j) && edited(r, j) ? 'edited' : ''}${userLocked(j) || (lockedCol(j) && !readOnly) ? ' locked-col' : ''}${isSel(r, j) ? ' sel' : ''}${inFill(r, j) ? ' fill-preview' : ''}${showHandle && hi && r === hi.r && j === hi.c ? ' fill-at' : ''}`}
+                      className={`${!locked(r, j) && edited(r, j) ? 'edited' : ''}${userLocked(j) || (lockedCol(j) && !readOnly) ? ' locked-col' : ''}${formulaOf(j) ? ' fx-cell' : ''}${isSel(r, j) ? ' sel' : ''}${inFill(r, j) ? ' fill-preview' : ''}${showHandle && hi && r === hi.r && j === hi.c ? ' fill-at' : ''}`}
                       onMouseDown={(ev) => {
                         if (ev.button !== 0) return;
                         dragging.current = true;
@@ -756,7 +793,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
         </table>
       </div>
       {onLook && <span className="sheet-grip nodrag" title="Drag: the node's width and the table's height" onPointerDown={dragCorner} />}
-      {lockNote && <div className="msg warn sheet-lock-note">Locked column: right-click its letter ▸ Unlock column to change it.</div>}
+      {lockNote && <div className="msg warn sheet-lock-note">{lockNote === 'formula' ? 'This column is given by a formula: right-click its letter ▸ Edit formula, or Remove formula to type in it.' : 'Locked column: right-click its letter ▸ Unlock column to change it.'}</div>}
       <div className="row wrap sheet-foot">
         {rowsEditable || (layout && !readOnly) ? (
           <>
@@ -811,6 +848,17 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
         />
       ) : (
         !later && proposed.length > 0 && <ConvertProposal ds={dataset} cols={proposed} onOpen={() => setConv(proposed.map((q) => q.c))} onLater={() => setLater(true)} />
+      )}
+      {formulas && fxFor !== null && reads.includes(fxFor) && (
+        <FormulaWindow
+          columns={cols}
+          keys={colKeys}
+          sheet={formulas.sheet}
+          j={reads.indexOf(fxFor)}
+          given={e.formulas?.[fxFor]}
+          onSave={(f, once) => (once ? writeOnce(fxFor, once) : onEdits({ ...e, formulas: { ...e.formulas, [fxFor]: f } }))}
+          onClose={() => setFxFor(null)}
+        />
       )}
       {menu &&
         items.length > 0 &&

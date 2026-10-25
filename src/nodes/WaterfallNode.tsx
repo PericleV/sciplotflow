@@ -203,7 +203,7 @@ export function WaterfallNodeView({ id, data: d }: NodeProps<WaterfallNode>) {
                 <Field label="Size">
                   <NumInput className="tiny" min={0.5} step={0.5} value={d.symbolSize} onChange={(symbolSize) => set({ symbolSize: Math.max(0.5, symbolSize || 3) })} />
                 </Field>
-                <Select<SymbolFill>
+                <Select<SymbolFill> seg
                   value={d.symbolFill}
                   options={[
                     ['filled', 'filled'],

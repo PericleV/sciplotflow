@@ -260,6 +260,7 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
           look={data.look}
           onLook={(look) => set({ look })}
           onRole={kinds[k] !== 'own' ? (j, role) => setRole(names[k], ds.columns[j]?.name, role) : undefined}
+          formulas={!viewOnly && k < own.length ? { sheet: names[k] ?? '' } : undefined}
           plain
         />
       )}

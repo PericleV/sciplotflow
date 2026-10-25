@@ -5,6 +5,7 @@ import { columnLetter, parseCsv, parseNumber, type CsvOptions } from './csv.ts';
 import { column, withUnit, type Column, type ColumnRole, type Dataset } from './table.ts';
 import { maxOf } from './minmax.ts';
 import { toNumbers, type ToNumberRules } from './convert.ts';
+import type { ColFormula } from './sheetFormula.ts';
 
 export type SheetEdits = {
   cells?: Record<string, string>; // "row:col" → the cell as typed
@@ -17,6 +18,8 @@ export type SheetEdits = {
   order?: number[]; // the columns (by their place as read) in the order shown — moved with the mouse; others after them
   rowOrder?: number[]; // the rows (by their place as read) in the order shown — a row inserted between; others after them
   locked?: number[]; // the columns (by their place as read) locked: their name and values not changed, not deleted
+  // the columns (by their place as read) given by a formula (a Workbook's own table: Set column values)
+  formulas?: Record<string, ColFormula>;
 };
 // How the worksheet of an Import or a Workbook is drawn: the node's width and the table's height (dragged at its corner),
 // the rows' height (one for all), every column's width (by its name). Pixels of the canvas; absent: the defaults.
@@ -25,9 +28,9 @@ export type SheetLook = { w?: number; h?: number; rowH?: number; cols?: Record<s
 export type SheetMap = { rows: number[]; cols: number[]; baseRows: number; baseCols: number };
 
 export const hasEdits = (e: SheetEdits | undefined) =>
-  !!e && (Object.keys(e.cells ?? {}).length > 0 || Object.keys(e.cols ?? {}).length > 0 || !!e.delRows?.length || !!e.delCols?.length || !!e.addRows || !!e.addCols || !!e.order?.length || !!e.rowOrder?.length);
+  !!e && (Object.keys(e.cells ?? {}).length > 0 || Object.keys(e.cols ?? {}).length > 0 || !!e.delRows?.length || !!e.delCols?.length || !!e.addRows || !!e.addCols || !!e.order?.length || !!e.rowOrder?.length || Object.keys(e.formulas ?? {}).length > 0);
 export const editCount = (e: SheetEdits | undefined) =>
-  !e ? 0 : Object.keys(e.cells ?? {}).length + Object.keys(e.cols ?? {}).length + (e.delRows?.length ?? 0) + (e.delCols?.length ?? 0) + (e.addRows ?? 0) + (e.addCols ?? 0) + (e.order?.length ? 1 : 0) + (e.rowOrder?.length ? 1 : 0);
+  !e ? 0 : Object.keys(e.cells ?? {}).length + Object.keys(e.cols ?? {}).length + (e.delRows?.length ?? 0) + (e.delCols?.length ?? 0) + (e.addRows ?? 0) + (e.addCols ?? 0) + (e.order?.length ? 1 : 0) + (e.rowOrder?.length ? 1 : 0) + Object.keys(e.formulas ?? {}).length;
 
 export type ColumnHead = { name?: string; role?: ColumnRole; unit?: string; comment?: string };
 const withHead = (c: Column, h: ColumnHead): Column => ({

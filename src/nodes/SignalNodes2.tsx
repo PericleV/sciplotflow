@@ -97,7 +97,7 @@ export function StepsNodeView({ id, data }: NodeProps<StepsNode>) {
           </Field>
           {!(data.method === 'binseg' && data.count > 0) && (
             <Field label="Penalty" title="What a change must gain to be kept. BIC (the usual), AIC (more changes), or a factor of your own (larger: fewer changes); scaled by the noise σ² found from the differences of neighbours">
-              <Select<StepsData['penalty']>
+              <Select<StepsData['penalty']> seg
                 value={data.penalty}
                 options={[
                   ['bic', 'BIC'],
@@ -175,7 +175,7 @@ export function EventsNodeView({ id, data }: NodeProps<EventsNode>) {
             <NumInput className="tiny" min={0} value={data.after} placeholder="auto" onChange={(after) => set({ after })} />
           </Field>
           <Field label="Spread">
-            <Select<EventsData['spread']>
+            <Select<EventsData['spread']> seg
               value={data.spread}
               options={[
                 ['sd', 'SD'],

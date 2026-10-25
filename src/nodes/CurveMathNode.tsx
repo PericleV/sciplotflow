@@ -555,7 +555,7 @@ function OpFields({ o, k, set, adding, setAdding }: { o: CurveOpData; k: number;
       {(o.op === 'dxAtY' || o.op === 'dyAtX') && <ValueList o={o} k={k} set={set} adding={adding} setAdding={setAdding} />}
       {o.op === 'dxAtY' && (
         <Field label="Crossing" title="A curve may cross a Y more than once (a loop, a peak): the first, the last, or every one (paired in order)">
-          <Select
+          <Select seg
             value={o.crossing}
             options={[
               ['first', 'the first'],
@@ -576,7 +576,7 @@ function OpFields({ o, k, set, adding, setAdding }: { o: CurveOpData; k: number;
             </span>
           </Field>
           <Field label="Give" title="Along A, in the order measured">
-            <Select
+            <Select seg
               value={o.crossing}
               options={[
                 ['all', 'every one'],

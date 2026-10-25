@@ -208,7 +208,7 @@ export function SurvivalNodeView({ id, data }: NodeProps<SurvivalNode>) {
             onChange={(test) => set({ test })}
           />
           <span>Interval</span>
-          <Select<SurvivalData['ci']>
+          <Select<SurvivalData['ci']> seg
             value={data.ci}
             title="The interval of S(t) from Greenwood's variance: on the log–log scale (within 0 … 1, the usual), log or plain"
             options={[

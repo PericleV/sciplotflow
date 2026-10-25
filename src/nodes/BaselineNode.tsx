@@ -86,7 +86,7 @@ export function BaselineNodeView({ id, data }: NodeProps<BaselineNode>) {
           </Field>
           {!bg && (
             <Field label="Outside the ranges" title="With ranges drawn: the points outside them left as they are, or left out (empty)">
-              <Select<BaselineData['outside']>
+              <Select<BaselineData['outside']> seg
                 value={data.outside}
                 options={[
                   ['empty', 'left out'],

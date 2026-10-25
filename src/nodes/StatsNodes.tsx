@@ -26,7 +26,7 @@ export function RowSelectControls({ value, onChange, hasX, result }: { value: Ro
     <div className="rowsel">
       <div className="row">
         <Field label="Rows" title="The rows used: all, ranges, a list, or where conditions are true">
-          <Select<RowSelect['mode']>
+          <Select<RowSelect['mode']> seg
             value={v.mode}
             options={[
               ['all', 'all'],
@@ -165,7 +165,7 @@ export function StatsNodeView({ id, data }: NodeProps<StatsNode>) {
           <TextInput value={data.pcts ?? ''} placeholder="e.g. 10, 50, 90" onChange={(pcts) => set({ pcts: pcts.trim() ? pcts : undefined })} />
         </Field>
         <Field label="CI of mean" title="The confidence interval of the mean (from t, N − 1): its low and high ends, two outputs">
-          <Select<number>
+          <Select<number> seg
             value={data.ci ?? 0}
             options={[
               [0, 'none'],
@@ -196,7 +196,7 @@ export function StatsNodeView({ id, data }: NodeProps<StatsNode>) {
           <NodeOptions>
           <div className="row">
             <Field label="±Y in the dataset" title="The error designated ±Y next to the mean in the dataset output (a quick plot draws it as error bars)">
-              <Select<'sd' | 'se'>
+              <Select<'sd' | 'se'> seg
                 value={data.err ?? 'sd'}
                 options={[
                   ['sd', 'SD'],
