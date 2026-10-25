@@ -4,7 +4,7 @@
 // one for every node pinned (the pin: it stays while other nodes are clicked, so several can be seen at once); a section
 // holds its node's options (NodeOptions draws them there). Its width is dragged at its left edge and kept. Above them,
 // the data inspected (Inspect: a node's outputs, or what a connection carries), each pinned or closed apart.
-import { Fragment, useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { useLeaving } from './useLeaving.ts';
 import { nodeColor, nodeDisplayName } from './nodeColors.ts';
 import { setSlot } from './nodes/inspectorStore.ts';
@@ -40,7 +40,7 @@ function save(s: State) {
   }
 }
 
-function Section({ node, pinned, onPin }: { node: AppNode; pinned: boolean; onPin: (on: boolean) => void }) {
+function Section({ node, pinned, onPin, top }: { node: AppNode; pinned: boolean; onPin: (on: boolean) => void; top?: ReactNode }) {
   const [open, setOpen] = useState(true);
   // where the node draws its options
   const body = useRef<HTMLDivElement>(null);
@@ -61,6 +61,7 @@ function Section({ node, pinned, onPin }: { node: AppNode; pinned: boolean; onPi
           <PinIcon />
         </button>
       </div>
+      {open && top && <div className="node inspector-options inspector-top">{top}</div>}
       {open && <div ref={body} className="inspector-body" />}
     </section>
   );
@@ -133,10 +134,7 @@ export function Inspector({ current, pinned, onPin, paneClicks = 0, nodeClicks =
               <DataSection key={`${t.kind}-${t.id}`} target={t} results={data.results} nodes={data.nodes} edges={data.edges} onPin={(on) => data.onPin(t, on)} onClose={() => data.onClose(t)} />
             ))}
             {sections.map((n) => (
-              <Fragment key={n.id}>
-                {top?.(n)}
-                <Section node={n} pinned={pinned.some((p) => p.id === n.id)} onPin={(on) => onPin(n.id, on)} />
-              </Fragment>
+              <Section key={n.id} node={n} pinned={pinned.some((p) => p.id === n.id)} onPin={(on) => onPin(n.id, on)} top={top?.(n)} />
             ))}
             {!sections.length && !data?.targets.length && <div className="muted palette-empty">Click a node: its options appear here.</div>}
           </div>

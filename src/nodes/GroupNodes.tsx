@@ -329,7 +329,7 @@ export function BatchFileBar({
 // where it can, else gives nothing for that file)
 export function BatchStepBar({ unit, shown, each, skipped, ownCount, total, onEach, onSkip }: { unit: 'file' | 'column'; shown?: string; each: boolean; skipped: boolean; ownCount: number; total: number; onEach: (on: boolean) => void; onSkip: (on: boolean) => void }) {
   return (
-    <div className="batch-step">
+    <div className="batch-step-bar">
       <span className="row wrap">
         <span className="muted">In the batch:</span>
         <Select<'all' | 'each'>
