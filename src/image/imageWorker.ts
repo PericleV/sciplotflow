@@ -12,7 +12,7 @@ import { cropRaster, histogram, luminance, shrinkRaster, unpackPixels, type Crop
 import { measureInputs, measureRois, type MeasureSpec } from './measure.ts';
 import { fillPolygon, polygonArea, wand, type Pt, type Roi } from './roi.ts';
 import { findParticles, PARTICLE_DEFAULTS, type ParticleOpts } from './particles.ts';
-import { findLike, fitBox, MATCH_DEFAULTS, type Match, type MatchOpts } from './match.ts';
+import { dropLikeRejected, findLike, fitBox, matchFeatures, MATCH_DEFAULTS, MATCH_TUNING, overlapOf, placeLike, type Match, type MatchOpts } from './match.ts';
 import { fitRegular, snapToEdges, type Fitted, type RegularShape } from './refine.ts';
 import { clickOutline, RAYS_DEFAULTS, seedsAndRays } from './rays.ts';
 import { spectrum } from './fft2d.ts';
@@ -40,11 +40,16 @@ export type ParticlesReply = { type: 'particles'; outlines: Pt[][]; found: numbe
 // Find like this: the models (each its centre and the radius of its disc, in the part analysed; box: a rectangle or
 // ellipse whose edges are fitted — its sides and turn), on the last image of the steps that is not a mask; every match
 // the model it is like (its place in the list)
-// poly: its outline (in the part analysed), for a context other than the disc
+// poly: its outline (in the part analysed), for a context other than the disc; outer: the margin drawn around it (in the
+// part analysed); rejected: the places of its particles left out by hand, those like them dropped
 // opts: its own settings (over those of the request)
-export type MatchModel = { cx: number; cy: number; R: number; box?: { w: number; h: number; angle: number }; poly?: Pt[]; opts?: Partial<MatchOpts> };
-export type MatchRequest = { type: 'match'; steps: ImgStep[]; crop?: Crop; train?: TrainExample[]; models: MatchModel[]; opts: Partial<MatchOpts> };
-export type MatchReply = { type: 'match'; matches: (Match & { model: number; w?: number; h?: number })[] };
+export type MatchModel = { cx: number; cy: number; R: number; box?: { w: number; h: number; angle: number }; poly?: Pt[]; outer?: Pt[]; rejected?: { x: number; y: number; angle: number; scale: number }[]; opts?: Partial<MatchOpts> };
+// image: the step whose image is compared (absent: the last that is not a mask); inside: the edges fitted only inside the
+// margin drawn
+export type MatchRequest = { type: 'match'; steps: ImgStep[]; crop?: Crop; train?: TrainExample[]; models: MatchModel[]; opts: Partial<MatchOpts>; image?: string; inside?: boolean };
+// ms: how long the search took; note: what to say about it (the image chosen a mask …)
+// (x0, y0: the place the search found, before the edges were fitted; f: its features, for the classifier of Review)
+export type MatchReply = { type: 'match'; matches: (Match & { model: number; w?: number; h?: number; x0?: number; y0?: number; f?: number[] })[]; ms: number; dropped: number; note?: string };
 // Refine: the particles' outlines (in the part analysed), each made the regular shape most like it among those chosen,
 // snapped to the edges of the last image of the steps that is not a mask if asked; null: none fits
 export type RefineRequest = { type: 'refine'; steps: ImgStep[]; crop?: Crop; train?: TrainExample[]; outlines: Pt[][]; shapes: RegularShape[]; snap: boolean };
@@ -242,22 +247,65 @@ async function particles(m: ParticlesRequest) {
 async function match(m: MatchRequest) {
   await imageRun;
   if (!kept) return;
+  const t0 = performance.now();
   const b = basesFor({ seq: latest, steps: m.steps, upTo: 0, lut: 'gray', ...(m.crop ? { crop: m.crop } : {}) });
   const out = await run(m.steps, m.steps.length, 'full', b.full, 1, () => false, true, m.train);
-  const img = [...(out?.outs ?? [])].reverse().find((x) => x.kind !== 'mask') ?? b.full;
+  // (the image of the step chosen, unless it is a mask; else the last that is not one)
+  const at = m.image ? m.steps.findIndex((s) => s.id === m.image) : -1;
+  const chosen = at >= 0 ? out?.outs[at] : undefined;
+  const note = chosen?.kind === 'mask' ? 'the step chosen gives a mask: compared on the last image that is not one' : at < 0 && m.image ? 'the step chosen is not there any more: compared on the last image that is not a mask' : undefined;
+  const img = (chosen && chosen.kind !== 'mask' ? chosen : undefined) ?? [...(out?.outs ?? [])].reverse().find((x) => x.kind !== 'mask') ?? b.full;
   const g = img.ch.length === 1 ? img.ch[0] : luminance(img);
-  // (every model's matches; where several models found the same particle, the most alike kept)
-  const all = m.models.flatMap((md, k) => findLike(g, img.w, img.h, md.cx, md.cy, md.R, { ...MATCH_DEFAULTS, ...m.opts, ...md.opts }, md.poly).map((f) => ({ ...f, model: k })));
-  all.sort((a, b) => b.score - a.score);
-  const best: typeof all = [];
-  for (const f of all) if (!best.some((q) => Math.hypot(q.x - f.x, q.y - f.y) < 0.75 * Math.min(m.models[q.model].R, m.models[f.model].R))) best.push(f);
-  const matches = best.map((f) => {
-    const box = m.models[f.model].box;
-    if (!box) return f;
-    const fb = fitBox(g, img.w, img.h, f.x, f.y, box.angle + f.angle, box.w * f.scale, box.h * f.scale);
-    return { ...f, x: fb.x, y: fb.y, w: fb.w, h: fb.h };
+  // (every model's matches, those like a place left out by hand dropped; where several models found the same particle,
+  // the most alike kept)
+  let dropped = 0;
+  const all = m.models.flatMap((md, k) => {
+    const o = { ...MATCH_DEFAULTS, ...m.opts, ...md.opts };
+    const found = findLike(g, img.w, img.h, md.cx, md.cy, md.R, o, md.poly, md.outer);
+    const kept2 = md.rejected?.length ? dropLikeRejected(g, img.w, img.h, found, md.rejected, md.R, o, md.cx, md.cy, md.poly, md.outer) : found;
+    dropped += found.length - kept2.length;
+    return kept2.map((f) => ({ ...f, model: k }));
   });
-  post({ type: 'match', matches } satisfies MatchReply);
+  all.sort((a, b) => b.score - a.score);
+  const reach = m.opts.reach ?? MATCH_TUNING.reach;
+  // (two models finding the same particle: closer than reach, or their outlines overlapping, as asked)
+  const outline = (q: (typeof all)[number]) => {
+    const md = m.models[q.model];
+    return md.poly ? placeLike(md.poly, md.cx, md.cy, q.angle, q.scale, q.x, q.y) : null;
+  };
+  const same = (q: (typeof all)[number], f: (typeof all)[number]) => {
+    if (m.opts.separate !== 'overlap') return Math.hypot(q.x - f.x, q.y - f.y) < reach * Math.min(m.models[q.model].R, m.models[f.model].R);
+    const [a, b] = [outline(q), outline(f)];
+    return a && b ? overlapOf(a, b) > (m.opts.overlap ?? MATCH_TUNING.overlap) : Math.hypot(q.x - f.x, q.y - f.y) < 0.25 * Math.min(m.models[q.model].R, m.models[f.model].R);
+  };
+  const best: typeof all = [];
+  for (const f of all) if (!best.some((q) => same(q, f))) best.push(f);
+  // (every place its features, against its model)
+  const feats = new Map<(typeof all)[number], number[]>();
+  m.models.forEach((md, k) => {
+    const mine = best.filter((f) => f.model === k);
+    if (!mine.length) return;
+    const fs = matchFeatures(g, img.w, img.h, md.cx, md.cy, md.R, { ...MATCH_DEFAULTS, ...m.opts, ...md.opts }, mine, md.poly, md.outer);
+    mine.forEach((f, i) => feats.set(f, fs[i]));
+  });
+  const matches = best.map((f) => {
+    const md = m.models[f.model];
+    const box = md.box;
+    const ff = feats.get(f);
+    if (!box) return { ...f, ...(ff ? { f: ff } : {}) };
+    // (only inside the margin drawn: how far it reaches from the centre along the box's two sides)
+    const t = (box.angle * Math.PI) / 180;
+    const limit: [number, number] | undefined =
+      m.inside && md.outer && md.outer.length >= 3
+        ? [0, 1].map((ax) => {
+            const [ux, uy] = ax === 0 ? [Math.cos(t), Math.sin(t)] : [-Math.sin(t), Math.cos(t)];
+            return f.scale * Math.max(...md.outer!.map(([x, y]) => Math.abs((x - md.cx) * ux + (y - md.cy) * uy)));
+          }) as [number, number]
+        : undefined;
+    const fb = fitBox(g, img.w, img.h, f.x, f.y, box.angle + f.angle, box.w * f.scale, box.h * f.scale, limit);
+    return { ...f, x: fb.x, y: fb.y, w: fb.w, h: fb.h, x0: f.x, y0: f.y, ...(ff ? { f: ff } : {}) };
+  });
+  post({ type: 'match', matches, ms: Math.round(performance.now() - t0), dropped, ...(note ? { note } : {}) } satisfies MatchReply);
 }
 async function refine(m: RefineRequest) {
   await imageRun;

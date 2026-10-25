@@ -7,7 +7,8 @@ import { applySteps, type ImgStep } from './steps.ts';
 import { measureInputs, measureRois, measureSpec, type MeasureResult, type MeasureSpec } from './measure.ts';
 import { trainingExamples } from './classify.ts';
 import type { ParticleOpts } from './particles.ts';
-import type { MatchOpts, MatchModelSpec } from './match.ts';
+import type { MatchExample, MatchOpts, MatchModelSpec, MatchRejected } from './match.ts';
+import type { LearnMethod } from './learn.ts';
 import type { RegularShape } from './refine.ts';
 import { analyzeNetwork, NETWORK_DEFAULTS, type NetworkResult, type NetworkSpec } from './network.ts';
 import { arrange, ARRANGE_DEFAULTS, type ArrangeResult, type ArrangeSpec } from './arrangement.ts';
@@ -46,8 +47,13 @@ export type ImageAnalysisData = {
   // edges or not
   // layers: the layers of the particles estimated whenever they are found
   particles?: Partial<ParticleOpts> & { group?: string; shapes?: RegularShape[]; snap?: boolean; layers?: boolean };
-  // Find like this: its turns, sizes, least similarity; the edges fitted; models: the list of models, each its settings
-  match?: Partial<MatchOpts> & { fit?: boolean; models?: MatchModelSpec[] };
+  // Find like this: its turns, sizes, least similarity; the edges fitted (inside: only inside the margin drawn); models:
+  // the list of models, each its settings; image: the step whose image is compared (absent: the last that is not a
+  // mask); useRejected: the particles left out in Review kept (rejected: their places, pixels of the original, by the
+  // model they were found by) and the places like them dropped; learn: the classifier of Review (method; examples:
+  // the particles said good or not; pmin: the least probability kept); truth: the group of the particles marked as true
+  // (Accuracy)
+  match?: Partial<MatchOpts> & { fit?: boolean; inside?: boolean; models?: MatchModelSpec[]; outer?: Pt[]; image?: string; useRejected?: boolean; rejected?: MatchRejected[]; learn?: boolean; method?: LearnMethod | 'auto'; examples?: MatchExample[]; pmin?: number; truth?: string };
   // Structure: the network of the mask (its skeleton's ligaments, junctions, pores) and the changes by hand
   network?: NetworkSpec;
   // Arrangement: how the particles lie (their neighbours, Delaunay, Voronoi, clusters, g(r), Ripley's L)

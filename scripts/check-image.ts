@@ -1,12 +1,14 @@
 // The checks of the Image analysis node's algorithms against scikit-image / scipy (scripts/fixtures/image-ref.py →
 // image-ref.json), and properties where there is no reference (skeleton, watershed, the ImageJ thresholds).
 import { readFileSync } from 'node:fs';
+import { fitMethod, learn, looAccuracy } from '../src/image/learn.ts';
+import { accuracyOf } from '../src/image/accuracy.ts';
 import { cropRaster, dataBarRows, gaussian, gaussianWide, packPixels, quantile, shrinkRaster, unpackPixels, type Raster } from '../src/image/raster.ts';
 import { semScale } from '../src/image/load.ts';
 import { measureRois, measureSpec, valueStats, feret, lineProfile } from '../src/image/measure.ts';
 import { nearRoi, offsetDistance, offsetOutline, ringMask, roiMask, traceOutline, wand, polygonArea, type Pt, type Roi } from '../src/image/roi.ts';
 import { alignment, findParticles, groupLikeExamples, minAreaRect, PARTICLE_DEFAULTS, shapeFeatures, shapeName, tracedPerimeter } from '../src/image/particles.ts';
-import { findLike, fitBox, MATCH_DEFAULTS } from '../src/image/match.ts';
+import { dropLikeRejected, FEATURE_NAMES, findLike, fitBox, matchFeatures, MATCH_DEFAULTS, MATCH_PRESETS, MATCH_TUNING, overlapOf } from '../src/image/match.ts';
 import { fitRegular, REGULAR_SHAPES, snapToEdges } from '../src/image/refine.ts';
 import { clickOutline, RAYS_DEFAULTS, seedsAndRays } from '../src/image/rays.ts';
 import { estimateLayers } from '../src/image/layers.ts';
@@ -1063,6 +1065,170 @@ export function checkImage(ok: Ok) {
     const sq: Roi = { id: 'a', name: 'a', kind: 'polygon', pts: [[0, 0], [10, 0], [10, 10], [0, 10]], train: 'object' };
     const ln: Roi = { id: 'b', name: 'b', kind: 'polyline', pts: [[20, 0], [30, 0]], width: 4, train: 'edge' };
     ok(Math.abs(polygonArea(off) - 196) < 1e-6 && nearRoi(sq, [5, 5], 1) && nearRoi(sq, [11.5, 5], 1) && !nearRoi(sq, [14, 5], 1) && nearRoi(ln, [25, 2.5], 1) && !nearRoi(ln, [25, 5], 1) && Math.abs(offsetDistance(sq.pts!, [13, 5]) - 3) < 1e-9, 'the dashed line around a model (a square 2 px out: 14 × 14); the eraser over an area, near its edge, on a stroke of its width');
+    // a margin drawn by hand: drawn as the ring of 8 px, the same particles as alike as with it
+    const outer = offsetOutline(poly, 8);
+    const dr = findLike(c, t.w, t.h, tpl.cx, tpl.cy, 1, { ...MATCH_DEFAULTS, sizes: 0.2, context: 'drawn', min: 0.2 }, poly, outer);
+    const drScore = (q: (typeof t.truth)[number]) => dr.find((m) => Math.hypot(m.x - q.cx, m.y - q.cy) < 0.4 * q.side!)?.score ?? 0;
+    const dLone = t.truth.filter((q) => q.cluster === undefined).map(drScore);
+    const dIn = t.truth.filter((q) => q.cluster !== undefined).map(drScore);
+    ok(hits(dr).length >= 0.9 * t.truth.length && Math.min(...dLone) > 0.95 && Math.max(...dIn) < 0.9, `Find like this, a margin drawn by hand (a line 8 px out, its corners square: ${hits(dr).length} of ${t.truth.length} found, the ring ${hits(al).length}): the cubes on their own ${Math.min(...dLone).toFixed(2)} or more alike, those in clusters ${Math.max(...dIn).toFixed(2)} at most`);
+    // a margin drawn only on one side of the particle: what is outside it is not compared (a neighbour there ignored)
+    const half = offsetOutline(poly, 1.5);
+    const dh = findLike(c, t.w, t.h, tpl.cx, tpl.cy, 1, { ...MATCH_DEFAULTS, sizes: 0.2, context: 'drawn' }, poly, half);
+    ok(hits(dh).length === t.truth.length, `Find like this, a margin drawn tight (as only the particle): every cube found (${hits(dh).length} of ${t.truth.length})`);
+    // the places like one left out by hand dropped: one cube of a cluster left out, those like it go, every cube on its own stays
+    const R8 = 0.5 * Math.hypot(tpl.side!, tpl.side!) + 8;
+    const firstCl = al.find((m) => t.truth.some((q) => q.cluster !== undefined && Math.hypot(m.x - q.cx, m.y - q.cy) < 0.4 * q.side!))!;
+    const kept = dropLikeRejected(c, t.w, t.h, al, [firstCl], R8, { ...MATCH_DEFAULTS, sizes: 0.2, context: 'alone', ring: 8 }, tpl.cx, tpl.cy, poly);
+    const keptLone = t.truth.filter((q) => q.cluster === undefined).every((q) => kept.some((m) => Math.hypot(m.x - q.cx, m.y - q.cy) < 0.4 * q.side!));
+    const clBefore = hits(al).filter((q) => q.cluster !== undefined).length;
+    const clAfter = hits(kept).filter((q) => q.cluster !== undefined).length;
+    // (left out at a place a pixel off: the same cube still dropped)
+    const near = (f: { x: number; y: number }[]) => f.some((m) => Math.hypot(m.x - firstCl.x, m.y - firstCl.y) < 2);
+    const shifted = dropLikeRejected(c, t.w, t.h, al, [{ ...firstCl, x: firstCl.x + 1, y: firstCl.y - 1 }], R8, { ...MATCH_DEFAULTS, sizes: 0.2, context: 'alone', ring: 8 }, tpl.cx, tpl.cy, poly);
+    ok(keptLone && clAfter <= clBefore / 2 && !near(kept) && !near(shifted) && dropLikeRejected(c, t.w, t.h, al, [], R8, { ...MATCH_DEFAULTS, sizes: 0.2, context: 'alone', ring: 8 }, tpl.cx, tpl.cy, poly).length === al.length, `Find like this ▸ Review: a cube in a cluster left out, the places like it dropped (in clusters ${clBefore} → ${clAfter}), every cube on its own kept`);
+  }
+  // Find like this, the finer settings: as before when not given; the least distance between two places; more turns and
+  // sizes (Precise) find the same cubes; the brightness counted, a dimmed cube is less alike; the edges looked for only
+  // inside the margin
+  {
+    const t = cubesImage();
+    const c = Float32Array.from(t.px);
+    const tpl = t.truth.find((q) => q.cluster === undefined)!;
+    const R = 0.5 * Math.hypot(tpl.side!, tpl.side!);
+    const hits = (f: { x: number; y: number }[]) => t.truth.filter((q) => f.some((m) => Math.hypot(m.x - q.cx, m.y - q.cy) < 0.4 * q.side!));
+    const base = findLike(c, t.w, t.h, tpl.cx, tpl.cy, R, { ...MATCH_DEFAULTS, sizes: 0.2 });
+    const same = findLike(c, t.w, t.h, tpl.cx, tpl.cy, R, { ...MATCH_DEFAULTS, sizes: 0.2, ...MATCH_TUNING });
+    const sameAll = same.length === base.length && same.every((m, i) => m.x === base[i].x && m.y === base[i].y && m.score === base[i].score);
+    const far = findLike(c, t.w, t.h, tpl.cx, tpl.cy, R, { ...MATCH_DEFAULTS, sizes: 0.2, reach: 2.5 });
+    const precise = findLike(c, t.w, t.h, tpl.cx, tpl.cy, R, { ...MATCH_DEFAULTS, sizes: 0.2, ...MATCH_PRESETS.precise });
+    const fast = findLike(c, t.w, t.h, tpl.cx, tpl.cy, R, { ...MATCH_DEFAULTS, sizes: 0.2, ...MATCH_PRESETS.fast });
+    ok(sameAll && far.length < base.length / 2 && hits(precise).length === t.truth.length && hits(fast).length >= t.truth.length - 2, `Find like this, the finer settings: as before when given as they are; reach 2.5 (${far.length} of ${base.length}); Precise ${hits(precise).length}, Fast ${hits(fast).length} of ${t.truth.length}`);
+    // (a cube on its own dimmed: its contrast against the ground a third)
+    const dim = t.truth.find((q) => q.cluster === undefined && q !== tpl)!;
+    const bg = [...c].sort((a, b) => a - b)[c.length >> 1];
+    const d = Float32Array.from(c);
+    for (let y = Math.floor(dim.cy - dim.side!); y <= dim.cy + dim.side!; y++)
+      for (let x = Math.floor(dim.cx - dim.side!); x <= dim.cx + dim.side!; x++) if (Math.hypot(x - dim.cx, y - dim.cy) < 0.75 * dim.side!) d[y * t.w + x] = bg + (d[y * t.w + x] - bg) / 3;
+    const scoreAt = (f: { x: number; y: number; score: number }[]) => f.find((m) => Math.hypot(m.x - dim.cx, m.y - dim.cy) < 0.4 * dim.side!)?.score ?? 0;
+    const plain = findLike(d, t.w, t.h, tpl.cx, tpl.cy, R, { ...MATCH_DEFAULTS, sizes: 0.2, min: 0.1 });
+    const bright = findLike(d, t.w, t.h, tpl.cx, tpl.cy, R, { ...MATCH_DEFAULTS, sizes: 0.2, min: 0.1, brightness: true });
+    const others = t.truth.filter((q) => q.cluster === undefined && q !== dim).map((q) => bright.find((m) => Math.hypot(m.x - q.cx, m.y - q.cy) < 0.4 * q.side!)?.score ?? 0);
+    ok(scoreAt(plain) > 0.9 && scoreAt(bright) < 0.5 && Math.min(...others) > 0.8, `Find like this, the brightness counted: a cube dimmed to a third ${scoreAt(plain).toFixed(2)} → ${scoreAt(bright).toFixed(2)}, the others on their own ${Math.min(...others).toFixed(2)} or more`);
+    // the edges looked for only inside the margin: as wide as the side or more, the cube's side found as before
+    const p = base.find((m) => Math.hypot(m.x - dim.cx, m.y - dim.cy) < 0.4 * dim.side!)!;
+    const turn = -tpl.angle! + p.angle;
+    const free = fitBox(c, t.w, t.h, p.x, p.y, turn, p.scale * tpl.side!, p.scale * tpl.side!);
+    const lim = fitBox(c, t.w, t.h, p.x, p.y, turn, p.scale * tpl.side!, p.scale * tpl.side!, [0.6 * tpl.side!, 0.6 * tpl.side!]);
+    ok(Math.abs(lim.w - dim.side!) / dim.side! < 0.04 && Math.abs(lim.w - free.w) < 0.5, `Find like this ▸ edges only inside the margin: the side ${lim.w.toFixed(2)} (unlimited ${free.w.toFixed(2)}, true ${dim.side})`);
+  }
+  // Find like this ▸ Compare: by the values, by the edges (the direction of the outline), or both. Every other cube made
+  // hollow (its inside dark, its outline the same): by the edges most are found, by the values few; strong noise: by the
+  // values (and both) every cube, by the edges fewer; none wrong. The first search through the FFT: the same places.
+  {
+    const t = cubesImage();
+    const tpl = t.truth.find((q) => q.cluster === undefined)!;
+    const R = 0.5 * Math.hypot(tpl.side!, tpl.side!);
+    let seed = 7;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    const gauss = () => Math.sqrt(-2 * Math.log(rnd() + 1e-12)) * Math.cos(2 * Math.PI * rnd());
+    const hollow = t.truth.filter((q, j) => q !== tpl && j % 2 === 0);
+    const dh = Float32Array.from(t.px);
+    for (const q of hollow) {
+      const th = (-q.angle! * Math.PI) / 180;
+      const hs = q.side! / 2 - 3;
+      for (let y = Math.floor(q.cy - q.side!); y <= q.cy + q.side!; y++)
+        for (let x = Math.floor(q.cx - q.side!); x <= q.cx + q.side!; x++) {
+          const [u, v] = [(x - q.cx) * Math.cos(th) + (y - q.cy) * Math.sin(th), -(x - q.cx) * Math.sin(th) + (y - q.cy) * Math.cos(th)];
+          if (Math.abs(u) < hs && Math.abs(v) < hs) dh[y * t.w + x] = 60 + 10 * gauss();
+        }
+    }
+    const dn = Float32Array.from(t.px, (v) => v + 45 * gauss());
+    const near = (m: { x: number; y: number }, q: (typeof t.truth)[number]) => Math.hypot(m.x - q.cx, m.y - q.cy) < 0.4 * q.side!;
+    const run = (d: Float32Array, compare: 'brightness' | 'edges' | 'both', min: number) => {
+      const f = findLike(d, t.w, t.h, tpl.cx, tpl.cy, R, { ...MATCH_DEFAULTS, sizes: 0.2, compare, min });
+      return { all: t.truth.filter((q) => f.some((m) => near(m, q))).length, hollow: hollow.filter((q) => f.some((m) => near(m, q))).length, wrong: f.filter((m) => !t.truth.some((q) => near(m, q))).length };
+    };
+    const hb = run(dh, 'brightness', 0.45);
+    const he = run(dh, 'edges', 0.45);
+    const nb = run(dn, 'brightness', 0.4);
+    const nboth = run(dn, 'both', 0.4);
+    const ne = run(dn, 'edges', 0.4);
+    const pe = run(Float32Array.from(t.px), 'edges', 0.5);
+    ok(he.hollow >= 15 && hb.hollow <= 6 && he.wrong + hb.wrong === 0 && nb.all === t.truth.length && nboth.all >= t.truth.length - 2 && ne.all < nb.all && nb.wrong + nboth.wrong + ne.wrong === 0 && pe.all === t.truth.length && pe.wrong === 0, `Find like this ▸ Compare: hollow cubes found by the edges ${he.hollow}, by the values ${hb.hollow} of ${hollow.length}; strong noise: by the values ${nb.all}, both ${nboth.all}, the edges ${ne.all} of ${t.truth.length}; a clean image by the edges ${pe.all}; none wrong`);
+    // (the first search through the FFT or directly: the same places, the same similarities)
+    const a = (-tpl.angle! * Math.PI) / 180;
+    const hs = tpl.side! / 2;
+    const poly = ([[-hs, -hs], [hs, -hs], [hs, hs], [-hs, hs]] as [number, number][]).map(([u, v]): [number, number] => [tpl.cx + u * Math.cos(a) - v * Math.sin(a), tpl.cy + u * Math.sin(a) + v * Math.cos(a)]);
+    const c = Float32Array.from(t.px);
+    const same = (['brightness', 'edges', 'both'] as const).flatMap((compare) =>
+      [undefined, 'cluster' as const].map((context) => {
+        const o = { ...MATCH_DEFAULTS, sizes: 0, step: 10, coarse: 8, compare, context };
+        const d = findLike(c, t.w, t.h, tpl.cx, tpl.cy, R, { ...o, fft: false }, poly);
+        const f = findLike(c, t.w, t.h, tpl.cx, tpl.cy, R, { ...o, fft: true }, poly);
+        return d.length > 40 && d.length === f.length && d.every((m, i) => Math.abs(m.x - f[i].x) < 1e-9 && Math.abs(m.y - f[i].y) < 1e-9 && Math.abs(m.score - f[i].score) < 1e-6);
+      }),
+    );
+    ok(same.every(Boolean), `Find like this, the first search through the FFT: the same places as directly (values, edges, both; a disc and only the particle): ${same.join(', ')}`);
+  }
+  // Find like this ▸ Review ▸ Learn from my choices: logistic regression, LDA and k-NN as scikit-learn's (on standardized
+  // features: the probabilities, the leave-one-out accuracies); the forest, the same every time, right on most; auto the
+  // most accurate; none with fewer than 3 examples of a kind. Accuracy: precision, recall and F1 against marked ones.
+  {
+    const ref = JSON.parse(readFileSync(new URL('./fixtures/learn-ref.json', import.meta.url), 'utf8')) as { X: number[][]; y: number[]; Xt: number[][]; prob: Record<string, number[]>; loo: Record<string, number> };
+    const worst = (['logistic', 'lda', 'knn'] as const).map((m) => {
+      const f = fitMethod(m, ref.X, ref.y);
+      return Math.max(...ref.Xt.map((x, i) => Math.abs(f(x) - ref.prob[m][i])), Math.abs(looAccuracy(m, ref.X, ref.y) - ref.loo[m]));
+    });
+    const forest = looAccuracy('forest', ref.X, ref.y);
+    const f1 = fitMethod('forest', ref.X, ref.y);
+    const f2 = fitMethod('forest', ref.X, ref.y);
+    const L = learn(ref.X, ref.y, 'auto');
+    const best = L ? Math.max(...Object.values(L.accuracy)) : NaN;
+    const few = learn(ref.X.slice(0, 4), [1, 1, 0, 1], 'auto');
+    ok(
+      worst.every((d) => d < 1e-6) && forest >= 0.7 && ref.Xt.every((x) => f1(x) === f2(x)) && !!L && L.accuracy[L.method] === best && Math.abs(L.importance.reduce((s, v) => s + v, 0) - 1) < 1e-9 && L.importance[0] === Math.max(...L.importance) && few === null,
+      `Review ▸ learn: logistic, LDA, k-NN as scikit-learn (largest difference ${Math.max(...worst).toExponential(1)}); forest right on ${(forest * 100).toFixed(0)} %; auto ${L?.method} (${(best * 100).toFixed(0)} %), the first feature counts most; fewer than 3 of a kind: none`,
+    );
+    const sq = (x: number, y: number, s = 10): Pt[] => [[x, y], [x + s, y], [x + s, y + s], [x, y + s]];
+    const truth = [sq(0, 0), sq(20, 0), sq(40, 0), sq(0, 20)];
+    // (two right, one twice over the same, one beside, one far out of the area marked)
+    const found = [sq(1, 1), sq(21, 2), sq(22, 3), sq(30, 25), sq(500, 500)];
+    const a = accuracyOf(truth, found)!;
+    ok(a.tp === 2 && a.fp === 2 && a.fn === 2 && Math.abs(a.precision - 0.5) < 1e-12 && Math.abs(a.recall - 0.5) < 1e-12 && Math.abs(a.f1 - 0.5) < 1e-12 && accuracyOf([], found) === null, `Accuracy: 2 right of 4 found in the area marked, 2 of the 4 true ones missed: precision ${a.precision}, recall ${a.recall}, F1 ${a.f1}`);
+  }
+  // Find like this ▸ Separate by overlap: rods side by side (their centres 10 px apart, closer than 0.75 of their
+  // radius) are two particles by their outlines, one by the distance; every place found its features
+  {
+    const [w, h] = [260, 140];
+    const c = new Float32Array(w * h).fill(40);
+    let seed = 3;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    for (let i = 0; i < c.length; i++) c[i] += 6 * (rnd() - 0.5);
+    const rod = (cx: number, cy: number, a: number) => {
+      const t = (a * Math.PI) / 180;
+      for (let y = 0; y < h; y++)
+        for (let x = 0; x < w; x++) {
+          const [u, v] = [(x + 0.5 - cx) * Math.cos(t) + (y + 0.5 - cy) * Math.sin(t), -(x + 0.5 - cx) * Math.sin(t) + (y + 0.5 - cy) * Math.cos(t)];
+          if (Math.abs(u) < 4 && Math.abs(v) < 20) c[y * w + x] = 200;
+        }
+    };
+    const truth: [number, number][] = [];
+    rod(30, 70, 0);
+    for (const [x, y, a] of [[90, 40, 0], [170, 45, 20], [110, 105, -15], [210, 100, 0]] as const) {
+      const t = (a * Math.PI) / 180;
+      const [ox, oy] = [5 * Math.cos(t), 5 * Math.sin(t)];
+      rod(x - ox, y - oy, a);
+      rod(x + ox, y + oy, a);
+      truth.push([x - ox, y - oy], [x + ox, y + oy]);
+    }
+    const poly: [number, number][] = [[26, 50], [34, 50], [34, 90], [26, 90]];
+    const find = (separate: 'distance' | 'overlap') => findLike(c, w, h, 30, 70, Math.hypot(4, 20), { ...MATCH_DEFAULTS, symmetry: 180, sizes: 0, separate, context: 'cluster', coarse: 11 }, poly);
+    const hit = (f: { x: number; y: number }[]) => truth.filter(([x, y]) => f.some((m) => Math.hypot(m.x - x, m.y - y) < 3)).length;
+    const [byDist, byOver] = [find('distance'), find('overlap')];
+    const feats = matchFeatures(c, w, h, 30, 70, Math.hypot(4, 20), { ...MATCH_DEFAULTS, symmetry: 180, sizes: 0, context: 'cluster' }, byOver, poly);
+    const sq = overlapOf([[0, 0], [10, 0], [10, 10], [0, 10]], [[5, 0], [15, 0], [15, 10], [5, 10]]);
+    ok(hit(byOver) === truth.length && hit(byDist) <= truth.length / 2 + 1 && Math.abs(sq - 0.5) < 0.06 && feats.length === byOver.length && feats.every((f) => f.length === FEATURE_NAMES.length && f.every(Number.isFinite)) && feats.every((f, i) => Math.abs(f[0] - byOver[i].score) < 0.05), `Find like this ▸ Separate by overlap: rods side by side ${hit(byOver)} of ${truth.length} (by the distance ${hit(byDist)}); two squares half over each other ${sq.toFixed(2)}; the features of every place found`);
   }
   // the classifier on nanocubes touching (a gap of a pixel): three outlined, the edges made from their outlines, the
   // objects split by the edges — every cube apart, its size; without edges the clusters stay whole; where it hesitates

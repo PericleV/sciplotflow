@@ -28,6 +28,7 @@ export type Roi = {
   hand?: boolean; // a particle found then changed by hand (Refine leaves it as it is)
   shape?: string; // the regular shape it was made by Refine (circle, square …)
   layer?: number; // the layer it lies in (1: nothing on it), estimated (Layers)
+  score?: number; // found by Find like this: how alike the model it is (0 … 1)
   bg?: RoiBg;
 };
 export type Pt = [number, number];

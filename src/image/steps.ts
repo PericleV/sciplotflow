@@ -13,6 +13,8 @@ import { classifyPixels, edgeClassOf, splitByEdges, uncertainty, type TrainExamp
 
 export type StepGroup = 'Tone' | 'Colour' | 'Noise' | 'Background' | 'Frequency' | 'Edges' | 'Texture' | 'Morphology' | 'Threshold';
 export const STEP_GROUPS: StepGroup[] = ['Tone', 'Colour', 'Noise', 'Background', 'Frequency', 'Edges', 'Texture', 'Morphology', 'Threshold'];
+// a group as the menu names it (the steps that make the mask of the objects: Find the objects)
+export const STEP_GROUP_LABELS: Partial<Record<StepGroup, string>> = { Threshold: 'Find the objects' };
 
 // A parameter: a number (in pixels, % or the image's values — NaN: automatic), a choice, a tick, or a curve's points
 export type Param =

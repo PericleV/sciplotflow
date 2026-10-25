@@ -12,15 +12,17 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEven
 import { createPortal } from 'react-dom';
 import { useReactFlow } from '@xyflow/react';
 import type { AppNode, ImageAnalysisData } from '../types.ts';
-import { STEP_DEFS, STEP_GROUPS, newStep, stepClasses, type ImgStep, type StepDef, type StepKind } from '../image/steps.ts';
+import { STEP_DEFS, STEP_GROUP_LABELS, STEP_GROUPS, newStep, stepClasses, type ImgStep, type StepDef, type StepKind } from '../image/steps.ts';
 import { cropBox, cropRaster, dataBarRows, luminance, unpackPixels, type Crop } from '../image/raster.ts';
 import { unitText } from '../image/node.ts';
 import type { CentreReply, ImgReply, ImgRequest, MatchReply, MatchRequest, MeasureReply, MeasureRequest, ParticlesReply, ParticlesRequest, RaysReply, RefineReply, RefineRequest, SpectrumReply, SpectrumRequest, SpotReply, SpotRequest, ValueReply, WandReply } from '../image/imageWorker.ts';
-import { MATCH_DEFAULTS, placeLike, type MatchOpts } from '../image/match.ts';
+import { MATCH_DEFAULTS, MATCH_PRESETS, MATCH_TUNING, placeLike, type MatchOpts } from '../image/match.ts';
 import { trainingExamples } from '../image/classify.ts';
 import { groupLikeExamples, PARTICLE_DEFAULTS, SHAPE_COLORS, shapeFeatures, shapeName, type ParticleOpts } from '../image/particles.ts';
 import { ClassifierEditor, type PaintTool } from './ClassifierEditor.tsx';
-import { EDGE_BAND, type Match, type MatchModelSpec } from '../image/match.ts';
+import { EDGE_BAND, type Match, type MatchExample, type MatchModelSpec, type MatchRejected } from '../image/match.ts';
+import { learn } from '../image/learn.ts';
+import { accuracyOf, type AccuracyResult } from '../image/accuracy.ts';
 import { REGULAR_SHAPES, type RegularShape } from '../image/refine.ts';
 import { estimateLayers } from '../image/layers.ts';
 import { offsetDistance, offsetOutline } from '../image/roi.ts';
@@ -28,7 +30,7 @@ import { classColor } from '../image/classify.ts';
 import { isArea, moveRoi, nearRoi, roiCentre, roiOutline, TOOL_HINTS, type Pt, type Roi, type RoiKind, type RoiTool } from '../image/roi.ts';
 import { measureSpec, roiPerimeter, type MeasureSpec } from '../image/measure.ts';
 import type { Workbook } from '../engine/table.ts';
-import { MeasurePanel, ParticlesPanel, RoiOverlay, RoiPanel } from './RoiManager.tsx';
+import { Fold, MeasurePanel, ParticlesPanel, RoiOverlay, RoiPanel } from './RoiManager.tsx';
 import { NetworkOverlay, NetworkPanel, type NetTool } from './NetworkPanel.tsx';
 import { ArrangeOverlay, ArrangePanel } from './ArrangePanel.tsx';
 import { LatticePanel, RingsOverlay, SpotsOverlay } from './LatticePanel.tsx';
@@ -295,13 +297,73 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const setPart = (p: Partial<ParticleOpts> & { group?: string; shapes?: RegularShape[]; snap?: boolean; layers?: boolean }) => set({ particles: { ...data.particles, ...p } });
   const [partMsg, setPartMsg] = useState('');
   // Find like this: its options
-  const matchOpts: MatchOpts & { fit: boolean; models?: MatchModelSpec[] } = { ...MATCH_DEFAULTS, fit: true, ...data.match };
-  const setMatch = (p: Partial<MatchOpts> & { fit?: boolean; models?: MatchModelSpec[] }) => set({ match: { ...data.match, ...p } });
+  type MatchData = NonNullable<ImageAnalysisData['match']>;
+  const matchOpts: MatchOpts & MatchData & { fit: boolean } = { ...MATCH_DEFAULTS, fit: true, ...data.match };
+  const setMatch = (p: Partial<MatchData>) => set({ match: { ...data.match, ...p } });
   // the list of models (those whose selection is still there), each with its own settings
   const modelList = (data.match?.models ?? []).filter((m) => rois.some((r) => r.id === m.roi));
   const setModels = (models: MatchModelSpec[]) => setMatch({ models: models.length ? models : undefined });
   // a model's settings: its own over those of all
-  const specOf = (rid: string): MatchModelSpec => ({ roi: rid, context: matchOpts.context, ring: matchOpts.ring, symmetry: matchOpts.symmetry, sizes: matchOpts.sizes, ...modelList.find((m) => m.roi === rid) });
+  const specOf = (rid: string): MatchModelSpec => ({ roi: rid, context: matchOpts.context, ring: matchOpts.ring, ...(data.match?.outer ? { outer: data.match.outer } : {}), symmetry: matchOpts.symmetry, sizes: matchOpts.sizes, ...modelList.find((m) => m.roi === rid) });
+  // the margin drawn around a model: its own (offsets from its centre), else the dashed line of the ground around it,
+  // thinned to points that can be dragged; kept as offsets from the model's centre (it follows the model when moved)
+  const outerOf = (t: Roi, sp: MatchModelSpec): Pt[] => {
+    const [cx, cy] = roiCentre(t);
+    if (sp.outer && sp.outer.length >= 3) return sp.outer.map(([u, v]): Pt => [cx + u, cy + v]);
+    const off = offsetOutline(roiOutline(t), Math.max(EDGE_BAND, sp.ring ?? 6));
+    const every = Math.max(1, Math.ceil(off.length / 24));
+    return off.filter((_, i) => i % every === 0);
+  };
+  const setOuter = (t: Roi, pts: Pt[] | undefined) => {
+    const [cx, cy] = roiCentre(t);
+    const outer = pts?.map(([x, y]): Pt => [+(x - cx).toFixed(2), +(y - cy).toFixed(2)]);
+    if (modelList.some((m) => m.roi === t.id)) setModels(modelList.map((m) => (m.roi === t.id ? { ...m, outer } : m)));
+    else setMatch({ outer });
+  };
+  // the margin's points shown with handles (dragged; a double-click takes one off; those between the points add one)
+  const [editMargin, setEditMargin] = useState(false);
+  // Review ▸ Learn from my choices: the examples (the particles said good or not, by their places, with their features),
+  // the classifier learnt from them (none with fewer than 3 of a kind), the probability of every place of the last search
+  const examples = useMemo(() => data.match?.examples ?? [], [data.match?.examples]);
+  const learnt = useMemo(() => (data.match?.learn && examples.length ? learn(examples.map((e) => e.f), examples.map((e) => (e.good ? 1 : 0)), data.match?.method ?? 'auto') : null), [data.match?.learn, data.match?.method, examples]);
+  const pmin = data.match?.pmin ?? 0.5;
+  // (what placing the particles needs of it, kept current for the answers of the worker)
+  const learnRef = useRef<{ examples: MatchExample[]; prob: ((f: number[]) => number) | null; pmin: number } | null>(null);
+  learnRef.current = data.match?.learn ? { examples, prob: learnt?.predict ?? null, pmin } : null;
+  // the example at a place found (within a pixel and a half)
+  const labelAt = (q: { x: number; y: number; x0?: number; y0?: number }, list: MatchExample[]) => list.find((e) => Math.hypot(e.x - ((q.x0 ?? q.x) + ox), e.y - ((q.y0 ?? q.y) + oy)) < 1.5);
+  // the examples or the classifier changed: the particles of the last search placed again
+  const learnKey = `${data.match?.learn ? 1 : 0}|${learnt?.method ?? ''}|${pmin}|${examples.length}|${examples.filter((e) => e.good).length}`;
+  useEffect(() => {
+    if (lastMatch.current) placeMatches(matchOpts.min, rejected);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [learnKey]);
+  // Show the unsure ones: the places the classifier is least sure of (their probability nearest ½), not said yet
+  const [unsure, setUnsure] = useState(false);
+  const unsureOf = () => {
+    const lm = lastMatch.current;
+    if (!unsure || !learnt || !lm) return [];
+    return lm.list
+      .map((q, i) => ({ i, d: q.f ? Math.abs(learnt.predict(q.f) - 0.5) : 9, said: !!labelAt(q, examples) }))
+      .filter((x) => !x.said && x.d < 9)
+      .sort((a, b) => a.d - b.d)
+      .slice(0, 5)
+      .map((x) => x.i);
+  };
+  // Accuracy: the particles found against those marked as true (a group of selections), in the part they cover
+  const [acc, setAcc] = useState<AccuracyResult | null>(null);
+  const truthGroup = data.match?.truth ?? 'truth';
+  const checkAccuracy = () => {
+    const truth = rois.filter((r) => r.group === truthGroup && isArea(r) && !r.auto).map(roiOutline);
+    const found = rois.filter((r) => r.auto && r.group !== truthGroup && isArea(r)).map(roiOutline);
+    const a = accuracyOf(truth, found);
+    setAcc(a);
+    if (!a) setPartMsg(`Accuracy: mark the true particles first (selections in the group “${truthGroup}”)`);
+  };
+  // Advanced: the preset the settings are (custom: changed by hand), how many settings are not as they are by default
+  const tuned = { step: matchOpts.step, tried: matchOpts.tried ?? MATCH_TUNING.tried, coarse: matchOpts.coarse ?? MATCH_TUNING.coarse, candidates: matchOpts.candidates ?? MATCH_TUNING.candidates };
+  const matchPreset = (Object.entries(MATCH_PRESETS).find(([, v]) => v.step === tuned.step && v.tried === tuned.tried && v.coarse === tuned.coarse && v.candidates === tuned.candidates)?.[0] as string | undefined) ?? 'custom';
+  const advancedChanged = [!!matchOpts.compare, matchOpts.step !== MATCH_DEFAULTS.step, matchOpts.tried !== undefined, matchOpts.coarse !== undefined, matchOpts.candidates !== undefined, matchOpts.edge !== undefined, matchOpts.max !== MATCH_DEFAULTS.max, !!matchOpts.brightness, !!matchOpts.image].filter(Boolean).length;
   const MODEL_COLORS = ['#30d158', '#0a84ff', '#ff9f0a', '#bf5af2', '#ff453a', '#64d2ff', '#ffd60a'];
   // (the models of the last search, their matches turned into selections when they come)
   const models = useRef<Roi[]>([]);
@@ -485,7 +547,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const pendingStamp = useRef(new Map<string, Roi>());
   // Find like this: every match found (down to a floor of similarity, so the least kept is changed live), the models, the
   // matches left out by a click (by their place in the list); review: a click on a particle found leaves it out (or back)
-  const lastMatch = useRef<{ seq: string; list: (Match & { model: number; w?: number; h?: number })[]; ms: Roi[]; specs: MatchModelSpec[] } | null>(null);
+  const lastMatch = useRef<{ seq: string; list: (Match & { model: number; w?: number; h?: number; x0?: number; y0?: number; f?: number[] })[]; ms: Roi[]; specs: MatchModelSpec[]; took?: number; dropped?: number; note?: string } | null>(null);
   const [rejected, setRejected] = useState<number[]>([]);
   const [review, setReview] = useState(false);
   const MATCH_FLOOR = 0.3;
@@ -514,7 +576,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       if (!ms.length) return;
       // (the models' own matches left out: they stay as they are)
       const list = m.matches.filter((q) => !ms.some((t) => Math.hypot(q.x + ox - roiCentre(t)[0], q.y + oy - roiCentre(t)[1]) < 0.5 * modelRadius(t)));
-      lastMatch.current = { seq: Date.now().toString(36), list, ms, specs: modelSpecs.current };
+      lastMatch.current = { seq: Date.now().toString(36), list, ms, specs: modelSpecs.current, took: m.ms, dropped: m.dropped, ...(m.note ? { note: m.note } : {}) };
       setRejected([]);
       const placed = placeMatches(matchOpts.min, []);
       if (data.particles?.layers) layersFor(placed);
@@ -558,7 +620,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     const spec = lastMatch.current?.specs[q.model];
     const listed = modelList.findIndex((m) => m.roi === spec?.roi);
     const color = listed >= 0 ? MODEL_COLORS[listed % MODEL_COLORS.length] : t.color;
-    const base = { id: `m${seq}-${i}`, name: '', group: spec?.group?.trim() || partGroup, auto: true, ...(color ? { color } : {}) };
+    const base = { id: `m${seq}-${i}`, name: '', group: spec?.group?.trim() || partGroup, auto: true, score: +q.score.toFixed(4), ...(color ? { color } : {}) };
     if (t.box) return { ...base, kind: t.kind, box: [q.x + ox, q.y + oy, q.w ?? t.box[2] * q.scale, q.h ?? t.box[3] * q.scale], angle: (t.angle ?? 0) + q.angle };
     return { ...base, kind: 'polygon', pts: placeLike(roiOutline(t), tx, ty, q.angle, q.scale, q.x + ox, q.y + oy) };
   };
@@ -566,12 +628,19 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const placeMatches = (min: number, out: number[]): Roi[] => {
     const lm = lastMatch.current;
     if (!lm) return [];
-    const keep = lm.list.map((q, i) => ({ q, i })).filter(({ q, i }) => q.score >= min && !out.includes(i));
+    // (learning: those said not good left out, and those the classifier finds less probable than asked)
+    const lr = learnRef.current;
+    const bad = lr ? lm.list.flatMap((q, i) => (labelAt(q, lr.examples)?.good === false ? [i] : [])) : [];
+    out = lr ? bad : out;
+    const keepIt = (q: (typeof lm.list)[number]) => (lr?.prob && q.f ? lr.prob(q.f) >= lr.pmin : q.score >= min);
+    const keep = lm.list.map((q, i) => ({ q, i })).filter(({ q, i }) => keepIt(q) && !out.includes(i));
     const names = particleNames(keep.length);
     const found = keep.map(({ q, i }, k) => ({ ...matchRoi(q, i, lm.seq, lm.ms), name: names[k] }));
     updateNodeData(id, (n) => ({ rois: [...((n.data as ImageAnalysisData).rois ?? []).filter((r) => !r.auto), ...found] }));
-    const below = lm.list.filter((q) => q.score < min).length;
-    setPartMsg(`${found.length} like ${lm.ms.length === 1 ? lm.ms[0].name : `the ${lm.ms.length} models`}${out.length ? `, ${out.length} left out by hand` : ''}${below ? ` (${below} less alike than ${min})` : ''}`);
+    const below = lm.list.filter((q) => !keepIt(q)).length;
+    const took = lm.took === undefined ? '' : ` · ${lm.took < 1000 ? `${lm.took} ms` : `${(lm.took / 1000).toFixed(1)} s`}`;
+    const likeOut = lm.dropped ? `, ${lm.dropped} like those left out dropped` : '';
+    setPartMsg(`${found.length} like ${lm.ms.length === 1 ? lm.ms[0].name : `the ${lm.ms.length} models`}${out.length ? `, ${out.length} left out by hand` : ''}${likeOut}${below ? ` (${below} ${lr?.prob ? `less probable than ${lr.pmin}` : `less alike than ${min}`})` : ''}${took}${lm.note ? `; ${lm.note}` : ''}`);
     return found;
   };
   // the least similarity changed: the particles found again from the matches already there
@@ -579,8 +648,21 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     setMatch({ min });
     placeMatches(min, rejected);
   };
-  // a particle found left out (or one left out put back) by a click while reviewing
+  // a particle found left out (or one left out put back) by a click while reviewing; learning: said not good, good,
+  // then neither (an example of the classifier, by its place, with its features)
   const toggleMatch = (i: number) => {
+    const lm = lastMatch.current;
+    if (matchOpts.learn && lm) {
+      const q = lm.list[i];
+      if (!q) return;
+      const had = labelAt(q, examples);
+      const rest = examples.filter((e) => e !== had);
+      // (one the classifier left out as less probable: the first click says it is good)
+      const dropped = !had && !!learnt && !!q.f && learnt.predict(q.f) < pmin;
+      const next: MatchExample[] = had?.good === false ? [...rest, { ...had, good: true }] : had ? rest : [...rest, { roi: lm.specs[q.model]?.roi ?? '', x: +((q.x0 ?? q.x) + ox).toFixed(2), y: +((q.y0 ?? q.y) + oy).toFixed(2), good: dropped, f: q.f ?? [] }];
+      setMatch({ examples: next.length ? next : undefined });
+      return;
+    }
     const out = rejected.includes(i) ? rejected.filter((x) => x !== i) : [...rejected, i];
     setRejected(out);
     placeMatches(matchOpts.min, out);
@@ -598,10 +680,10 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const modelsOf = (t: Roi) => (t.group ? rois.filter((r) => r.group === t.group && isArea(r) && !r.auto && !r.train && r.role !== 'background') : [t]);
   // the settings of every model of the last search (the list's own, else those of all)
   const modelSpecs = useRef<MatchModelSpec[]>([]);
-  const findWith = (ms: Roi[], specs: MatchModelSpec[] = ms.map((r) => specOf(r.id))) => {
+  const findWith = (ms: Roi[], specs: MatchModelSpec[] = ms.map((r) => specOf(r.id)), rejectedAll: MatchRejected[] = []) => {
     models.current = ms;
     modelSpecs.current = specs;
-    const { fit, models: _list, ...opts } = matchOpts;
+    const { fit, inside, models: _list, outer: _outer, image, useRejected: _use, rejected: _rej, ...opts } = matchOpts;
     const q: MatchRequest = {
       type: 'match',
       steps,
@@ -612,20 +694,47 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
         const sp = specs[j] ?? specOf(r.id);
         const shaped = (sp.context ?? 'disc') !== 'disc';
         const own = { context: sp.context ?? 'disc', ...(sp.ring !== undefined ? { ring: sp.ring } : {}), ...(sp.symmetry ? { symmetry: sp.symmetry } : {}), ...(sp.sizes !== undefined ? { sizes: sp.sizes } : {}) };
-        return { cx: cx - ox, cy: cy - oy, R: modelRadius(r), ...(fit && r.box ? { box: { w: r.box[2], h: r.box[3], angle: r.angle ?? 0 } } : {}), ...(shaped ? { poly: roiOutline(r).map(([x, y]): Pt => [x - ox, y - oy]) } : {}), opts: own };
+        const rej = rejectedAll.filter((q) => q.roi === sp.roi).map((q) => ({ x: q.x - ox, y: q.y - oy, angle: q.angle, scale: q.scale }));
+        return {
+          cx: cx - ox,
+          cy: cy - oy,
+          R: modelRadius(r),
+          ...(fit && r.box ? { box: { w: r.box[2], h: r.box[3], angle: r.angle ?? 0 } } : {}),
+          ...(shaped || opts.separate === 'overlap' ? { poly: roiOutline(r).map(([x, y]): Pt => [x - ox, y - oy]) } : {}),
+          ...(sp.context === 'drawn' ? { outer: outerOf(r, sp).map(([x, y]): Pt => [x - ox, y - oy]) } : {}),
+          ...(rej.length ? { rejected: rej } : {}),
+          opts: own,
+        };
       }),
       // (every match down to a floor: the least similarity is then changed live)
       opts: { ...opts, min: Math.min(opts.min, MATCH_FLOOR) },
+      ...(image ? { image } : {}),
+      ...(inside ? { inside: true } : {}),
     };
     setPartMsg('finding…');
     worker.current?.postMessage(q);
   };
+  // the particles left out in Review (kept with those of the searches before) when they are to be used: the places like
+  // them dropped
+  const rejectedNow = (): MatchRejected[] => {
+    const lm = lastMatch.current;
+    if (!lm || !matchOpts.useRejected) return [];
+    return rejected.flatMap((i) => {
+      const q = lm.list[i];
+      const roi = q ? lm.specs[q.model]?.roi : undefined;
+      // (the place the search found, not the one the edges were fitted to: as the next search finds it)
+      return q && roi ? [{ roi, x: +((q.x0 ?? q.x) + ox).toFixed(2), y: +((q.y0 ?? q.y) + oy).toFixed(2), angle: q.angle, scale: q.scale }] : [];
+    });
+  };
   const findLikePicked = () => {
+    const now = rejectedNow();
+    const all = matchOpts.useRejected ? [...(data.match?.rejected ?? []), ...now] : [];
+    if (now.length) setMatch({ rejected: all });
     // (the list of models when there is one; else the selection picked, with its group)
-    if (modelList.length) return findWith(modelList.map((m) => rois.find((r) => r.id === m.roi)!), modelList.map((m) => specOf(m.roi)));
+    if (modelList.length) return findWith(modelList.map((m) => rois.find((r) => r.id === m.roi)!), modelList.map((m) => specOf(m.roi)), all);
     const t = rois.find((r) => r.id === sel && isArea(r) && !r.train);
     if (!t) return setPartMsg('pick a selection around one particle first');
-    findWith(modelsOf(t));
+    findWith(modelsOf(t), undefined, all);
   };
   // the selection picked added to the list of models, with the settings of all
   const addModel = () => {
@@ -1184,6 +1293,42 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
         </svg>
       );
     }
+    if (context === 'drawn' && pickedSpec) {
+      const pts = outerOf(modelPicked, pickedSpec);
+      // a point dragged (i: its place; list: the points with it, a new one put in between too)
+      const dragOuter = (e: RPointerEvent, i: number, list: Pt[]) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const move = (m: PointerEvent) => setOuter(modelPicked, list.map((q, j) => (j === i ? toOrig(imgAt(m)) : q)));
+        const up = () => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+      };
+      return (
+        <svg className="ie-overlay ie-context" width={W} height={H}>
+          <polygon points={P(pts)} />
+          {editMargin &&
+            pts.map((q, i) => {
+              const n = pts[(i + 1) % pts.length];
+              const mid: Pt = [(q[0] + n[0]) / 2, (q[1] + n[1]) / 2];
+              return (
+                <circle key={`m${i}`} className="ie-context-handle mid" cx={(mid[0] - ox) * k} cy={(mid[1] - oy) * k} r={3.5} onPointerDown={(e) => dragOuter(e, i + 1, [...pts.slice(0, i + 1), mid, ...pts.slice(i + 1)])}>
+                  <title>Drag: a new point of the margin</title>
+                </circle>
+              );
+            })}
+          {editMargin &&
+            pts.map((q, i) => (
+              <circle key={`p${i}`} className="ie-context-handle" cx={(q[0] - ox) * k} cy={(q[1] - oy) * k} r={5} onPointerDown={(e) => dragOuter(e, i, pts)} onDoubleClick={(e) => (e.stopPropagation(), pts.length > 3 && setOuter(modelPicked, pts.filter((_, j) => j !== i)))}>
+                <title>Drag: the margin compared around the particle; double-click: this point taken off</title>
+              </circle>
+            ))}
+        </svg>
+      );
+    }
     const d = context === 'alone' ? Math.max(EDGE_BAND, pickedSpec?.ring ?? 6) : EDGE_BAND;
     const off = offsetOutline(roiOutline(modelPicked), d);
     const top = off.reduce((a, b) => (b[1] < a[1] ? b : a), off[0]);
@@ -1194,14 +1339,49 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       </svg>
     );
   })();
-  const rejectedLayer = !onOriginal && review && lastMatch.current && rejected.length > 0 && (
+  const badNow = matchOpts.learn && lastMatch.current ? lastMatch.current.list.flatMap((q, i) => (labelAt(q, examples)?.good === false ? [i] : [])) : rejected;
+  const goodNow = matchOpts.learn && lastMatch.current ? lastMatch.current.list.flatMap((q, i) => (labelAt(q, examples)?.good ? [i] : [])) : [];
+  // (learning: those the classifier left out as less probable, not said yet: shown faint while reviewing, to be said good)
+  const droppedNow = matchOpts.learn && learnt && lastMatch.current ? lastMatch.current.list.flatMap((q, i) => (q.f && learnt.predict(q.f) < pmin && !labelAt(q, examples) ? [i] : [])) : [];
+  const P = (pts: Pt[]) => pts.map(([x, y]) => `${((x - ox) * k).toFixed(1)},${((y - oy) * k).toFixed(1)}`).join(' ');
+  const unsureIdx = unsureOf();
+  const labelsLayer =
+    !onOriginal && lastMatch.current && (goodNow.length > 0 || unsureIdx.length > 0) ? (
+      <svg className="ie-overlay ie-labels" width={W} height={H}>
+        {goodNow.map((i) => {
+          const lm = lastMatch.current!;
+          const q = lm.list[i];
+          return q ? (
+            <text key={`g${i}`} className="good" x={(q.x + ox - ox) * k} y={(q.y + oy - oy) * k} textAnchor="middle" dominantBaseline="central">
+              ✓
+            </text>
+          ) : null;
+        })}
+        {unsureIdx.map((i) => {
+          const lm = lastMatch.current!;
+          const q = lm.list[i];
+          return q ? (
+            <polygon key={`u${i}`} className="unsure" points={P(roiOutline(matchRoi(q, i, lm.seq, lm.ms)))}>
+              <title>The classifier is unsure of this one: click it while reviewing</title>
+            </polygon>
+          ) : null;
+        })}
+      </svg>
+    ) : null;
+  const rejectedLayer = !onOriginal && review && lastMatch.current && badNow.length + droppedNow.length > 0 && (
     <svg className="ie-overlay ie-rejected" width={W} height={H}>
-      {rejected.map((i) => {
+      {badNow.map((i) => {
         const lm = lastMatch.current!;
         const q = lm.list[i];
         if (!q) return null;
         const pts = roiOutline(matchRoi(q, i, lm.seq, lm.ms));
-        return <polygon key={i} data-rejected={i} points={pts.map(([x, y]) => `${((x - ox) * k).toFixed(1)},${((y - oy) * k).toFixed(1)}`).join(' ')}><title>Left out: click to put it back</title></polygon>;
+        return <polygon key={i} data-rejected={i} points={P(pts)}><title>{matchOpts.learn ? 'Said not good: click to say it is good' : 'Left out: click to put it back'}</title></polygon>;
+      })}
+      {droppedNow.map((i) => {
+        const lm = lastMatch.current!;
+        const q = lm.list[i];
+        if (!q) return null;
+        return <polygon key={`d${i}`} className="dropped" data-rejected={i} points={P(roiOutline(matchRoi(q, i, lm.seq, lm.ms)))}><title>Left out as less probable: click to say it is good</title></polygon>;
       })}
     </svg>
   );
@@ -1220,6 +1400,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
         {roiLayer}
         {contextLayer}
         {rejectedLayer}
+        {labelsLayer}
       </>
     );
   const cmpButton = (m: Cmp, label: string, title: string) => (
@@ -1310,15 +1491,15 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
             <select
               className="nodrag grow"
               value=""
-              title="Add an adjustment or any other step (after the one shown, else at the end)"
+              title="Add a step: an adjustment of the image, or one that finds the objects (a threshold, the trainable classifier); after the one shown, else at the end"
               onChange={(e) => {
                 if (e.target.value) add(e.target.value as StepKind);
                 e.target.value = '';
               }}
             >
-              <option value="">+ Adjust…</option>
+              <option value="">+ Add a step…</option>
               {addOptions.map(([g, items]) => (
-                <optgroup key={g} label={g}>
+                <optgroup key={g} label={STEP_GROUP_LABELS[g as keyof typeof STEP_GROUP_LABELS] ?? g}>
                   {items.map(([kind, d]) => (
                     <option key={kind} value={kind} title={d.title}>
                       {d.label}
@@ -1371,7 +1552,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
               </div>
             );
           })}
-          {!steps.length && <div className="hint">Adjust: add steps to prepare the image (tone and colour, noise, background, edges, texture), then a threshold or a trainable classifier (a mask) and its morphology. Each works on what the steps above give.</div>}
+          {!steps.length && <div className="hint">Add a step: prepare the image (tone and colour, noise, background, edges, texture), then a threshold or a trainable classifier (a mask) and its morphology. Each works on what the steps above give.</div>}
         </div>
         <div className="ie-split-bar nodrag" title="Drag: the width of the steps (double-click: as it was)" onPointerDown={(e) => dragPanel(e, 0)} onDoubleClick={() => setPanelWidth(0, PANELS[0])} />
         <div
@@ -1579,6 +1760,34 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
             duplicate={duplicate}
             clearAll={() => void ask(`Remove all ${rois.length} selections?`, { ok: 'Remove' }).then((y) => y && (setRois([]), setSel(null)))}
           />
+          {(() => {
+            // the trainable classifier of the steps, here too (it stays a step: its place in the order matters)
+            const cls = steps.find((st) => st.kind === 'classify');
+            return (
+              <Fold id="pixel-classifier" title="Pixel classifier" aside={cls ? `${stepClasses(cls, rois).length} classes${cls.on ? '' : ' · off'}` : 'none'}>
+                {cls ? (
+                  <>
+                    <div className="hint">The trainable classifier, a step of the list on the left (in Find the objects): it learns the classes from what you draw, and makes the mask the particles are found in.</div>
+                    <ClassifierEditor s={cls} set={(patch) => setStep(cls.id, { p: { ...cls.p, ...(patch as ImgStep['p']) } })} rois={rois} sel={sel} setRois={setRois} note={reply?.notes[cls.id]} hist={reply?.stepHist[cls.id]} paint={paint} setPaint={setPaint} tool={paintTool} setTool={setPaintTool} brush={brush} setBrush={setBrush} />
+                    <div className="row">
+                      <button className="nodrag" title="Show the image up to this step (its card on the left)" onClick={() => setUpTo(cls.id)}>
+                        Open its step
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="hint">A classifier of the pixels (as ImageJ’s Trainable Weka Segmentation): draw examples of the particles, the ground and their edges; it makes the mask the particles are found in.</div>
+                    <div className="row">
+                      <button className="nodrag" title="Add the trainable classifier as a step (at the end of the list on the left)" onClick={() => add('classify')}>
+                        + Add a pixel classifier
+                      </button>
+                    </div>
+                  </>
+                )}
+              </Fold>
+            );
+          })()}
           <ParticlesPanel
             opts={partOpts}
             set={setPart}
@@ -1611,6 +1820,43 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
             setReview={setReview}
             canMore={!!lastMatch.current && rois.some((r) => r.auto)}
             findMore={findMore}
+            pickedContext={pickedSpec?.context}
+            editMargin={editMargin}
+            setEditMargin={setEditMargin}
+            resetMargin={() => modelPicked && setOuter(modelPicked, undefined)}
+            scores={lastMatch.current?.list.map((q) => q.score) ?? []}
+            fit={matchOpts.fit}
+            inside={matchOpts.inside}
+            setInside={(on) => setMatch({ inside: on || undefined })}
+            negCount={(data.match?.rejected?.length ?? 0) + (matchOpts.useRejected ? rejected.length : 0)}
+            clearRejected={() => setMatch({ rejected: undefined })}
+            useRejected={matchOpts.useRejected}
+            setUseRejected={(on) => setMatch({ useRejected: on || undefined })}
+            preset={matchPreset}
+            setPreset={(name) => setMatch(name === 'balanced' ? { step: MATCH_DEFAULTS.step, tried: undefined, coarse: undefined, candidates: undefined } : MATCH_PRESETS[name])}
+            changed={advancedChanged}
+            resetAdvanced={() => setMatch({ compare: undefined, step: MATCH_DEFAULTS.step, tried: undefined, coarse: undefined, candidates: undefined, edge: undefined, max: MATCH_DEFAULTS.max, brightness: undefined, image: undefined })}
+            steps={steps.map((st, j): [string, string] => [st.id, `after ${j + 1}. ${STEP_DEFS[st.kind]?.label ?? st.kind}`])}
+            image={matchOpts.image}
+            setImage={(image) => setMatch({ image })}
+            learnOn={!!matchOpts.learn}
+            setLearn={(on) => setMatch({ learn: on || undefined })}
+            method={matchOpts.method ?? 'auto'}
+            setMethod={(method) => setMatch({ method: method === 'auto' ? undefined : method })}
+            goodCount={examples.filter((e) => e.good).length}
+            badCount={examples.filter((e) => !e.good).length}
+            learnt={learnt}
+            probs={learnt && lastMatch.current ? lastMatch.current.list.map((q) => (q.f ? learnt.predict(q.f) : 0)) : null}
+            pmin={pmin}
+            setPmin={(v) => setMatch({ pmin: v === 0.5 ? undefined : v })}
+            unsure={unsure}
+            setUnsure={setUnsure}
+            clearExamples={() => setMatch({ examples: undefined })}
+            truth={truthGroup}
+            setTruth={(g) => setMatch({ truth: g === 'truth' ? undefined : g })}
+            groups={[...new Set(rois.filter((r) => !r.auto && r.group).map((r) => r.group!))]}
+            check={checkAccuracy}
+            acc={acc}
             refine={refineParticles}
             shapes={data.particles?.shapes ?? REGULAR_SHAPES}
             setShapes={(shapes) => setPart({ shapes: shapes.length === REGULAR_SHAPES.length ? undefined : shapes })}

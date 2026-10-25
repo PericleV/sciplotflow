@@ -1675,6 +1675,7 @@ input[type='checkbox'], input[type='radio'] { box-shadow: none; }
 .ie-context polygon, .ie-context circle { fill: none; stroke: #ffd60a; stroke-width: 1.2; stroke-dasharray: 5 3; }
 .ie-context .ie-context-handle { pointer-events: all; fill: #ffd60a; stroke: #000; stroke-dasharray: none; cursor: ew-resize; }
 .ie-rejected polygon { fill: rgba(255, 69, 58, 0.12); stroke: #ff453a; stroke-width: 1; stroke-dasharray: 2 2; cursor: pointer; pointer-events: all; }
+.ie-rejected polygon.dropped { fill: rgba(160, 160, 160, 0.08); stroke: #9a9a9a; }
 /* Find like this: the list of models, each a card with its settings */
 .image-editor .ie-models { display: flex; flex-direction: column; gap: 4px; }
 .image-editor .ie-model { border: 1px solid var(--border); border-radius: 5px; padding: 3px 5px; display: flex; flex-direction: column; gap: 3px; }
@@ -1908,3 +1909,30 @@ input[type='checkbox']:disabled, input[type='radio']:disabled { cursor: default;
 .sheet-scroll th.col-letter .sheet-fx { margin-right: 3px; font-style: italic; font-weight: 700; color: var(--accent); cursor: help; }
 .sheet-scroll .fx-cell { background: color-mix(in srgb, var(--accent) 7%, var(--panel)); }
 .sheet-scroll th.fx-col-head { box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--accent) 60%, transparent); }
+
+/* Find like this (Image analysis ▸ Objects): its sections folded or not, what each holds on its title; the
+   similarities of the places found, on a histogram, the least kept a line on it; the margin drawn, its points */
+.image-editor .ie-fold { border: 1px solid var(--border); border-radius: 6px; margin-top: 4px; }
+.image-editor .ie-fold-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 6px; border: none; border-radius: 6px; background: transparent; box-shadow: none; font-weight: 600; text-align: left; min-height: 0; }
+.image-editor .ie-fold-head:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.image-editor .ie-fold-head.fixed { cursor: default; padding-left: 8px; }
+.image-editor .ie-fold-head.fixed:hover { background: transparent; }
+.image-editor .ie-fold-aside { margin-left: auto; font-weight: 400; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; }
+.image-editor .ie-fold-body { display: flex; flex-direction: column; gap: 6px; padding: 2px 8px 8px; }
+.image-editor .ie-score-hist { display: flex; flex-direction: column; gap: 2px; }
+.image-editor .ie-score-hist svg { width: 100%; height: auto; cursor: ew-resize; touch-action: none; }
+.image-editor .ie-score-hist rect { fill: color-mix(in srgb, var(--muted) 55%, transparent); }
+.image-editor .ie-score-hist rect.kept { fill: var(--accent); }
+.image-editor .ie-score-hist line.least { stroke: var(--text); stroke-width: 1.5; stroke-dasharray: 3 2; }
+.image-editor .ie-score-hist text { fill: var(--muted); font-size: 8px; }
+.ie-context .ie-context-handle.mid { opacity: 0.7; }
+.ie-context .ie-context-handle.mid:hover { opacity: 1; }
+/* Find like this ▸ Review ▸ Learn from my choices: what each feature counts (bars); over the image, the particles said
+   good (✓) and those the classifier is unsure of (outlined) */
+.image-editor .ie-learn { display: flex; flex-direction: column; gap: 6px; padding-left: 8px; border-left: 2px solid color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.image-editor .ie-importance { display: flex; flex-direction: column; gap: 2px; }
+.image-editor .ie-imp-row { display: grid; grid-template-columns: 70px minmax(0, 1fr); align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+.image-editor .ie-imp-bar { display: block; height: 7px; min-width: 1px; border-radius: 2px; background: var(--accent); }
+.ie-labels { pointer-events: none; }
+.ie-labels text.good { fill: #30d158; font-size: 14px; font-weight: 700; paint-order: stroke; stroke: #000; stroke-width: 2px; }
+.ie-labels polygon.unsure { fill: rgba(255, 214, 10, 0.12); stroke: #ffd60a; stroke-width: 2; stroke-dasharray: 5 3; }
