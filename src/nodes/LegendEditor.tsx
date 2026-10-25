@@ -6,6 +6,8 @@ import { plainText } from '../figure/draw.ts';
 import { LEGEND_SHADOW, LEGEND_STYLE_DEFAULTS, legendBoxPatch, type Anchor, type Curve, type LegendEntry } from '../figure/spec.ts';
 import type { PlotLegend } from '../types.ts';
 import { RichInput } from './fields.tsx';
+import { PageTextContext } from '../ui/pageText.ts';
+import { useContext } from 'react';
 import { AnchorField, Choice, ColorField, LayerRow, OpacityField, PictureGrid, Row, Section, Sections, SliderField, ShadowRows, TextStyleRows, Toggle, WidthField } from '../ui/props.tsx';
 import { GradientRows } from '../ui/GradientRows.tsx';
 import { DASH_PICS } from '../ui/dashPics.tsx';
@@ -17,6 +19,9 @@ const ownKeys = (e: React.KeyboardEvent) => {
 
 export function LegendEditor({ value, onChange, curves }: { value: PlotLegend | undefined; onChange: (p: Partial<PlotLegend>) => void; curves: Curve[] }) {
   const d = { ...LEGEND_STYLE_DEFAULTS, ...value, show: !!value?.show };
+  // (the size of its text: its own, else the figure's)
+  const page = useContext(PageTextContext);
+  const fontSize = d.text?.size ?? page?.size ?? 8;
   const set = onChange;
   const num = (v: number, min = 0) => Math.max(min, Number.isFinite(v) ? v : min);
   // its box: an older look (a line, a shadow, rounded) read as a box (b), and written so at its first change
@@ -219,6 +224,12 @@ export function LegendEditor({ value, onChange, curves }: { value: PlotLegend | 
             )}
             <Row label="Sample line" hint="The length of the line drawn before each text">
               <SliderField value={d.lineLen} onChange={(v) => set({ lineLen: num(v) })} min={0} max={40} step={1} unit="pt" />
+            </Row>
+            <Row label="Sample height" hint="The height of a filled sample (a bar, an area, a colour scale); auto: 0.7 of the font size">
+              <SliderField value={d.sampleH ?? Math.round(fontSize * 0.7 * 10) / 10} auto={d.sampleH === undefined} onChange={(v) => set({ sampleH: v > 0 ? v : undefined })} min={1} max={30} step={0.5} unit="pt" />
+            </Row>
+            <Row label="Gap" hint="Between the sample and its text; auto: half the font size">
+              <SliderField value={d.sampleGap ?? Math.round(fontSize * 0.5 * 10) / 10} auto={d.sampleGap === undefined} onChange={(v) => set({ sampleGap: Number.isFinite(v) && v >= 0 ? v : undefined })} min={0} max={20} step={0.5} unit="pt" />
             </Row>
             <Row label="Padding" hint="The room inside the frame">
               <SliderField value={d.padding} onChange={(v) => set({ padding: num(v) })} min={0} max={15} step={0.5} unit="pt" />

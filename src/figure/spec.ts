@@ -275,8 +275,13 @@ export type ThreeBar = { x: number; y: number; z0: number; z1: number; dx: numbe
 // bias: drawn so much nearer than it is (contour lines on a surface: over its cells); a marked line's heads at its two
 // ends (their size, pt), its opacity, a closed one's fill (area), its projections on the floor and the back walls
 export type Head3D = 'none' | 'arrow' | 'open' | 'bar';
-export type ThreeLine = { pts: P3[]; color: string; width: number; dash: Dash; planar: boolean; fill?: { color: string; opacity: number }; bias?: number; heads?: [Head3D, Head3D]; headSize?: number; opacity?: number; area?: { color: string; opacity: number }; proj?: { floor?: boolean; x?: boolean; y?: boolean } };
-export type ThreePoints = { pts: P3[]; colors: string[]; symbol: SymbolShape; size: number; fill: SymbolFill; edge: number; drop: boolean; depthShade: boolean };
+// place: a mark drawn in front of the data or behind it (absent: by its depth, with them)
+export type ThreeLine = { pts: P3[]; color: string; width: number; dash: Dash; planar: boolean; fill?: { color: string; opacity: number }; bias?: number; heads?: [Head3D, Head3D]; headSize?: number; opacity?: number; area?: { color: string; opacity: number }; proj?: { floor?: boolean; x?: boolean; y?: boolean }; place?: 'front' | 'back' };
+export type ThreePoints = { pts: P3[]; colors: string[]; symbol: SymbolShape; size: number; fill: SymbolFill; edge: number; drop: boolean; depthShade: boolean; place?: 'front' | 'back' };
+// an axis of a 3D plot, its own look (absent: as before): its values every `step` or about `count`, their format and
+// decimals, shown or not, their text; its title's text and how much farther it is (pt); the ticks out, in or none and
+// their length (pt); reversed (from the highest value to the lowest)
+export type Axis3D = { step?: number; count?: number; format?: LabelFormat; decimals?: number; labels?: boolean; labelText?: TextStyle; titleText?: TextStyle; titleGap?: number; ticks?: 'out' | 'in' | 'none'; tickLen?: number; reverse?: boolean };
 // a flat map at a height z (a layer of 3D stacked maps): cells between the edges xe (nx + 1) and ye (ny + 1), a value
 // each (v[j·nx + i], NaN: empty), coloured when drawn by the curve's colour map over its colour range (so a Merge can
 // give its panels one scale); its opacity
@@ -306,7 +311,9 @@ export type ThreeScene = {
   walls?: { mode: 'lines' | 'max'; every: number; color: string };
   projOpacity?: number;
   // texts in the box (the labels of the marks): where, what, their colour and size (0: the figure's)
-  labels?: { at: P3; text: string; color: string; size: number }[];
+  labels?: { at: P3; text: string; color: string; size: number; place?: 'front' | 'back' }[];
+  // the axes X, Y, Z: their own look (absent: as before)
+  axes?: (Axis3D | undefined)[];
   // stacked maps: the layers, and the values outside the colour range hidden (else drawn in its end colours)
   planes?: ThreePlane[];
   outside?: 'clamp' | 'hide';
@@ -486,6 +493,8 @@ export type LegendSpec = Placed & {
   padding: number; // pt
   spacing: number; // line spacing, × font size
   lineLen: number; // pt, the sample line
+  sampleH?: number; // pt, the height of a filled sample (a bar, an area, a colour scale); absent: 0.7 of the font size
+  sampleGap?: number; // pt, between the sample and its text; absent: half the font size
   auto?: boolean; // placed by itself inside the frame where it covers the least of the data (x, y, anchor found)
 };
 // A fill going from its colour to a second one, as a shape's gradient (src/figure/gradient.ts): linear or radial, placed
@@ -946,6 +955,8 @@ export const SHAPE_DEFAULTS: ShapeSpec = {
   textStyle: {},
 };
 export const TEXT_SPEC_DEFAULTS: TextSpec = { text: 'Text', coords: 'percent', x: 50, y: 50, anchor: 'c', rotation: 0, style: {}, box: 'none', boxColor: '#ffffff', borderColor: '#000000', borderWidth: 0.5, padding: 2, attach: '', z: 2 };
+// the id of the colour bar a node places by itself (its settings, once edited, an annotation of this id)
+export const AUTO_BAR = 'auto-colorbar';
 export const COLORBAR_DEFAULTS: ColorbarSpec = { x: 88, y: 10, length: 70, thickness: 6, orientation: 'vertical', title: '', text: {}, frameWidth: 0.5, ticks: 5, attach: '', z: 2 };
 
 // Full styles from what a node stores (older projects: fewer fields).

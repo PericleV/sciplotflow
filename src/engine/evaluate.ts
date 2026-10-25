@@ -82,7 +82,7 @@ import { baseParams, buildModel, peakAt, peaksModel, percentResults, shapeSize, 
 import { findSpec, runFits, totalStats, type FitParamSpec, type FitRunData, type RunResult, parseLinks } from './fit.ts';
 import { compare, compareTable, modelName, yorkRuns, type Scored } from './fitcompare.ts';
 import { parseRowHandle, rowHandle } from './ports.ts';
-import { hasGrad, type GradFill, AXIS_DEFAULTS, COLORBAR_DEFAULTS, SIDE_DEFAULTS, curveStyle, axesStyle, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, toPt, type Annotation, type AxesFig, type AxesStyle, type AxisSpec, type Curve, type CurveStyle, type Figure, type FigureBox, type LegendEntry, type LegendSpec, type LengthUnit, type Placement, type ShapeSpec, type TextDefaults, resolveText, type Side, INSET_DEFAULTS, insetBackground, scaledSize } from '../figure/spec.ts';
+import { hasGrad, type GradFill, AXIS_DEFAULTS, AUTO_BAR, COLORBAR_DEFAULTS, type ColorbarSpec, SIDE_DEFAULTS, curveStyle, axesStyle, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, toPt, type Annotation, type AxesFig, type AxesStyle, type AxisSpec, type Curve, type CurveStyle, type Figure, type FigureBox, type LegendEntry, type LegendSpec, type LengthUnit, type Placement, type ShapeSpec, type TextDefaults, resolveText, type Side, INSET_DEFAULTS, insetBackground, scaledSize } from '../figure/spec.ts';
 import { CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, DRAWING_DEFAULTS, MATRIX_PLOT_DEFAULTS, PLOT_PAGE_DEFAULTS } from '../defaults.ts';
 import { figurePng, imageFigure, imageMatrix, imageMeasurements, imageNetwork, networkSheets, imageArrangement, arrangementSheets, radialSheet, latticeSheets, surfaceSheets, textureSheets, processImage, type LatticeView, type SurfaceView, type TextureView, scaleBarPlace, type ImageAnalysisData } from '../image/node.ts';
 import type { NetworkResult } from '../image/network.ts';
@@ -1314,7 +1314,7 @@ function contourNode(n: { id: string; data: ContourData }, inputs: Inputs): Out 
   if (typeof r === 'string') return { errors: [r], view: { available } };
   warnings.push(...r.warnings);
   // the colour bar (unless the lines alone, coloured by the map, say it)
-  const annotations = d.colorbar && d.draw !== 'lines' ? [...(d.annotations ?? []), { id: 'auto-colorbar', type: 'colorbar' as const, spec: { ...COLORBAR_DEFAULTS, x: 103, y: 0, length: 100, title: d.zTitle || names.z } }] : d.annotations;
+  const annotations = autoBar(d.annotations, !!(d.colorbar && d.draw !== 'lines'), { x: 103, y: 0, length: 100, title: d.zTitle || names.z });
   const insetFigs = (inputs.get('insets') ?? []).flatMap((i) => (i.value?.t === 'figure' ? [i.value.v] : []));
   const { figure, legendCurves } = plotFigure({ id: n.id, data: { label: '', style: {}, axes: d.axes, legend: d.legend, annotations, page: d.page, insets: d.insets } }, [...r.curves, ...overlayCurves(inputs, 0, {}, warnings)], warnings, insetFigs);
   return {
@@ -1392,7 +1392,7 @@ function contourFields(n: { id: string; data: ContourData }, all: Column[], avai
       curves.push({ key: `vec:${k}`, label: 'vector', noLegend: true, series: { name: 'vector', x: column(X.name, Float64Array.from(s.x)), y: column(Y.name, Float64Array.from(s.y)) }, style: curveStyle({ mode: 'line', color, lineWidth: d.vecWidth ?? 0.75, arrowEnd: 'triangle', arrowSize: Math.max(2, 2 + 2 * (d.vecWidth ?? 0.75)) }) }),
     );
   }
-  const annotations = r && d.colorbar && d.draw !== 'lines' ? [...(d.annotations ?? []), { id: 'auto-colorbar', type: 'colorbar' as const, spec: { ...COLORBAR_DEFAULTS, x: 103, y: 0, length: 100, title: d.zTitle || zName } }] : d.annotations;
+  const annotations = autoBar(d.annotations, !!(r && d.colorbar && d.draw !== 'lines'), { x: 103, y: 0, length: 100, title: d.zTitle || zName });
   const insetFigs = (inputs.get('insets') ?? []).flatMap((i) => (i.value?.t === 'figure' ? [i.value.v] : []));
   const { figure, legendCurves } = plotFigure({ id: n.id, data: { label: '', style: {}, axes: d.axes, legend: d.legend, annotations, page: d.page, insets: d.insets } }, [...curves, ...overlayCurves(inputs, 0, {}, warnings)], warnings, insetFigs);
   return {
@@ -1465,7 +1465,7 @@ function contourMatrix(id: string, d: ContourData & MatrixPlotSpec, M: Matrix, i
   if (typeof r === 'string') return { errors: [r], view: { matrix: matInfo(M) } };
   warnings.push(...r.warnings);
   const curves = [...r.curves, ...cellCurves(g, r, d, names, warnings)];
-  const annotations = d.colorbar && d.draw !== 'lines' ? [...(d.annotations ?? []), { id: 'auto-colorbar', type: 'colorbar' as const, spec: { ...COLORBAR_DEFAULTS, x: 103, y: 0, length: 100, title: d.zTitle || names.z } }] : d.annotations;
+  const annotations = autoBar(d.annotations, !!(d.colorbar && d.draw !== 'lines'), { x: 103, y: 0, length: 100, title: d.zTitle || names.z });
   const insetFigs = (inputs.get('insets') ?? []).flatMap((i) => (i.value?.t === 'figure' ? [i.value.v] : []));
   const axes = matrixAxes(d.axes, d, M, read.order);
   const { figure, legendCurves } = plotFigure({ id, data: { label: '', style: {}, axes, legend: d.legend, annotations, page: d.page, insets: d.insets } }, curves, warnings, insetFigs);
@@ -1616,7 +1616,7 @@ function ternaryNode(n: { id: string; data: TernaryData }, inputs: Inputs): Out 
   if (typeof r === 'string') return { errors: [r], view: { available } };
   const warnings = [...r.warnings];
   // coloured by a column: its colour bar at the right
-  const annotations = V ? [...(d.annotations ?? []), { id: 'auto-colorbar', type: 'colorbar' as const, spec: { ...COLORBAR_DEFAULTS, x: 103, y: 0, length: 100, title: V.name } }] : d.annotations;
+  const annotations = autoBar(d.annotations, !!(V), { x: 103, y: 0, length: 100, title: V?.name ?? '' });
   const insetFigs = (inputs.get('insets') ?? []).flatMap((i) => (i.value?.t === 'figure' ? [i.value.v] : []));
   const { figure, legendCurves } = plotFigure({ id: n.id, data: { label: '', style: {}, axes: noAxes(d.axes), legend: d.legend, annotations, page: d.page, insets: d.insets } }, r.curves, warnings, insetFigs);
   return { outputs: { figure: { t: 'figure', v: figure } }, warnings: [...new Set(warnings)], view: { available, figure, legendCurves } };
@@ -1657,7 +1657,7 @@ function waterfallNode(n: { id: string; data: WaterfallData }, inputs: Inputs): 
   if (typeof r === 'string') return { errors: [r], view: { available } };
   const warnings = [...r.warnings];
   // the colour bar of the swept value (curves coloured by the map)
-  const annotations = d.colorbar && r.colorRange ? [...(d.annotations ?? []), { id: 'auto-colorbar', type: 'colorbar' as const, spec: { ...COLORBAR_DEFAULTS, x: 103, y: 0, length: 100, title: d.zTitle || zz.title || 'Z' } }] : d.annotations;
+  const annotations = autoBar(d.annotations, !!(d.colorbar && r.colorRange), { x: 103, y: 0, length: 100, title: d.zTitle || zz.title || 'Z' });
   const insetFigs = (inputs.get('insets') ?? []).flatMap((i) => (i.value?.t === 'figure' ? [i.value.v] : []));
   const { figure, legendCurves } = plotFigure({ id: n.id, data: { label: '', style: {}, axes: d.axes, legend: d.legend, annotations, page: d.page, insets: d.insets } }, r.curves, warnings, insetFigs);
   return { outputs: { figure: { t: 'figure', v: figure }, data: { t: 'dataset', v: r.data } }, warnings: [...new Set(warnings)], view: { available, figure, legendCurves } };
@@ -1749,7 +1749,7 @@ function plot3dNode(n: { id: string; data: Plot3DData }, inputs: Inputs): Out {
   warnings.push(...r.warnings);
   r.curves[0].three!.node = n.id;
   const zName = input.kind === 'curves' ? input.names.y : input.kind === 'points' && input.names.c ? input.names.c : input.names.z;
-  const annotations = d.colorbar && r.colorRange ? [...(d.annotations ?? []), { id: 'auto-colorbar', type: 'colorbar' as const, spec: { ...COLORBAR_DEFAULTS, x: 94, y: 18, length: 64, title: (input.kind === 'curves' ? d.titleY : input.kind === 'points' && input.names.c ? '' : d.titleZ) || zName } }] : d.annotations;
+  const annotations = autoBar(d.annotations, !!(d.colorbar && r.colorRange), { x: 94, y: 18, length: 64, title: (input.kind === 'curves' ? d.titleY : input.kind === 'points' && input.names.c ? '' : d.titleZ) || zName });
   const insetFigs = (inputs.get('insets') ?? []).flatMap((i) => (i.value?.t === 'figure' ? [i.value.v] : []));
   const { figure, legendCurves } = plotFigure({ id: n.id, data: { label: '', style: {}, axes: noAxes(d.axes), legend: d.legend, annotations, page: d.page, insets: d.insets } }, r.curves, warnings, insetFigs);
   return { outputs: { figure: { t: 'figure', v: figure } }, warnings: [...new Set(warnings)], view: { available, figure, legendCurves } };
@@ -2186,7 +2186,7 @@ function layers3dNode(n: { id: string; data: Plot3DData }, inputs: Inputs): Out 
   if (typeof r === 'string') return { errors: [r], view: { available, layers: list, layerInputs } };
   warnings.push(...r.warnings);
   r.curves[0].three!.node = n.id;
-  const annotations = d.colorbar && r.colorRange ? [...(d.annotations ?? []), { id: 'auto-colorbar', type: 'colorbar' as const, spec: { ...COLORBAR_DEFAULTS, x: 94, y: 18, length: 64, title: d.barTitle || first.V.name } }] : d.annotations;
+  const annotations = autoBar(d.annotations, !!(d.colorbar && r.colorRange), { x: 94, y: 18, length: 64, title: d.barTitle || first.V.name });
   const insetFigs = (inputs.get('insets') ?? []).flatMap((i) => (i.value?.t === 'figure' ? [i.value.v] : []));
   const { figure, legendCurves } = plotFigure({ id: n.id, data: { label: '', style: {}, axes: noAxes(d.axes), legend: d.legend, annotations, page: d.page, insets: d.insets } }, r.curves, warnings, insetFigs);
   return { outputs: { figure: { t: 'figure', v: figure } }, warnings: [...new Set(warnings)], view: { available, figure, legendCurves, layers: list, layerInputs } };
@@ -2200,6 +2200,15 @@ const pageBackground = (b: string | undefined) => (b === 'none' ? 'none' : !b ||
 const pageGrad = (p: { background?: string; backgroundGrad?: GradFill }): { backgroundGrad?: GradFill } => (p.background !== 'none' && hasGrad(p.backgroundGrad) ? { backgroundGrad: p.backgroundGrad } : {});
 
 // The annotations kept in a Plot or a Merge, as drawn; a colour bar explains the first curve coloured by a map.
+// the colour bar placed by itself (Colour bar ticked): at its place and with its title, or as edited (an annotation of
+// its id: moved on the figure, or changed in the Annotate tab); not ticked: none, even edited
+function autoBar(items: AnnotationItem[] | undefined, on: boolean, spec: Partial<ColorbarSpec>): AnnotationItem[] | undefined {
+  const own = items?.find((it) => it.id === AUTO_BAR);
+  const rest = own ? items!.filter((it) => it !== own) : items;
+  if (!on) return rest;
+  const mine = own?.type === 'colorbar' ? own.spec : {};
+  return [...(rest ?? []), { ...own, id: AUTO_BAR, type: 'colorbar', spec: { ...COLORBAR_DEFAULTS, ...spec, ...mine, title: mine.title || spec.title || '' } }];
+}
 export function annotationsOf(items: AnnotationItem[] | undefined, node: string, curves: Curve[], warnings: string[]): Annotation[] {
   return (items ?? []).map((it): Annotation => {
     const base = { key: `${node}/${it.id}`, owner: { node, field: 'annotations' as const, item: it.id } };

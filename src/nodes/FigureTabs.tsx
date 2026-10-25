@@ -1,14 +1,14 @@
 // The figure tabs of a Plot (and of the nodes that make a whole figure the same way: Histogram): its insets port, Axes,
 // Legend, Annotate, Page (the frame placed automatically or by hand), Insets — the same editors for all of them.
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useNodesData, useReactFlow } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import { Choice, ColorField, OpacityField, PictureGrid, Row, Section, Sections, SliderField, Toggle, WidthField } from '../ui/props.tsx';
 import { DASH_PICS } from '../ui/dashPics.tsx';
 import { drawnLimits } from '../figure/drawnLimits.ts';
-import { INSET_DEFAULTS, type Curve, type InsetItem, type Placement } from '../figure/spec.ts';
+import { AUTO_BAR, INSET_DEFAULTS, type Curve, type InsetItem, type Placement } from '../figure/spec.ts';
 import { PLOT_PAGE_DEFAULTS } from '../defaults.ts';
-import type { AppNode, Plot1DData, PlotPage } from '../types.ts';
+import type { AnnotationItem, AppNode, Plot1DData, PlotPage } from '../types.ts';
 import { Tabs } from './fields.tsx';
 import { AxesEditor } from './AxesEditor.tsx';
 import { LegendEditor } from './LegendEditor.tsx';
@@ -24,8 +24,8 @@ export type FigureParts = Pick<Plot1DData, 'axes' | 'legend' | 'annotations' | '
 export const InsetsPort = () => <InPort label="insets" port="figure" id="insets" title="Other Plots (their “figure” output), drawn inside this one's frame: insets, placed in Insets, or dragged with Edit layout; with zoom, the part they show marked here" />;
 
 // port: the insets port drawn here, above the tabs (false: the node draws it — its tabs are in the options panel)
-// dataKinds: its axes can hold categories or times (a 1D plot)
-export function FigureTabs({ id, data, legendCurves, pos, port = true, dataKinds = false }: { id: string; data: FigureParts; legendCurves: Curve[]; pos: Placement | undefined; port?: boolean; dataKinds?: boolean }) {
+// dataKinds: its axes can hold categories or times (a 1D plot); axesEditor: its own Axes tab (a 3D plot's)
+export function FigureTabs({ id, data, legendCurves, pos, port = true, dataKinds = false, axesEditor }: { id: string; data: FigureParts; legendCurves: Curve[]; pos: Placement | undefined; port?: boolean; dataKinds?: boolean; axesEditor?: ReactNode }) {
   const { updateNodeData } = useReactFlow<AppNode>();
   const insetKeys = useInsetKeys(id);
   const [tab, setTab] = useState<PlotTab | null>(null);
@@ -40,6 +40,8 @@ export function FigureTabs({ id, data, legendCurves, pos, port = true, dataKinds
       setTab('legend');
       setShown({ seq });
     } else if (kind === 'ann') {
+      // the colour bar placed by itself: from now on its own settings, to change
+      if (rest === AUTO_BAR) editAutoBar();
       setTab('annotate');
       setShown({ item: rest, seq });
     } else if (kind === 'page') {
@@ -48,6 +50,16 @@ export function FigureTabs({ id, data, legendCurves, pos, port = true, dataKinds
     } else return;
     flashLater(seq);
   });
+  // the colour bar the node places by itself (Colour bar ticked): editable once made an item of the annotations
+  const fig0 = useNodeResult(id)?.outputs.figure;
+  const drawnBar = fig0?.t === 'figure' ? fig0.v.axes.flatMap((ax) => ax.annotations).find((a) => a.owner?.field === 'annotations' && a.owner.item === AUTO_BAR) : undefined;
+  const autoBar = !!drawnBar;
+  const barEdited = !!data.annotations?.some((it) => it.id === AUTO_BAR);
+  function editAutoBar() {
+    // (its place and length as drawn kept; its title still the data's until one is typed)
+    const at = drawnBar?.kind === 'colorbar' ? { x: drawnBar.bar.x, y: drawnBar.bar.y, length: drawnBar.bar.length } : {};
+    if (!data.annotations?.some((it) => it.id === AUTO_BAR)) updateNodeData(id, { annotations: [...(data.annotations ?? []), { id: AUTO_BAR, name: 'Colour bar (automatic)', type: 'colorbar', spec: at } as AnnotationItem] });
+  }
   const page: PlotPage = { ...PLOT_PAGE_DEFAULTS, ...data.page };
   const setPage = (p: Partial<PlotPage>) => updateNodeData(id, { page: { ...page, ...p } });
   // the axes as drawn: their limits and steps, shown where they are left automatic
@@ -68,9 +80,17 @@ export function FigureTabs({ id, data, legendCurves, pos, port = true, dataKinds
         onChange={(t) => setTab(tab === t ? null : t)}
       />
       <div data-flash={shown?.seq}>
-      {tab === 'axes' && <AxesEditor value={data.axes} dataKinds={dataKinds} limits={limits} show={shown?.axis ? { axis: shown.axis, seq: shown.seq } : undefined} onChange={(axes) => updateNodeData(id, { axes })} />}
+      {tab === 'axes' && axesEditor}
+      {tab === 'axes' && !axesEditor && <AxesEditor value={data.axes} dataKinds={dataKinds} limits={limits} show={shown?.axis ? { axis: shown.axis, seq: shown.seq } : undefined} onChange={(axes) => updateNodeData(id, { axes })} />}
       {tab === 'insets' && <InsetsEditor keys={insetKeys} items={data.insets ?? []} onChange={(insets) => updateNodeData(id, { insets })} />}
       {tab === 'legend' && <LegendEditor value={data.legend} curves={legendCurves} onChange={(p) => updateNodeData(id, { legend: { show: false, ...data.legend, ...p } })} />}
+      {tab === 'annotate' && autoBar && !barEdited && (
+        <div className="row wrap">
+          <button className="nodrag" title="The colour bar placed by itself (Colour bar ticked in the node) made an item of this list: its place, size, values and text changed here or by dragging it; removed from the list, it is placed by itself again" onClick={editAutoBar}>
+            Edit the colour bar
+          </button>
+        </div>
+      )}
       {tab === 'annotate' && <AnnotationsEditor items={data.annotations} where="frame" node={id} page={page} show={shown?.item ? { item: shown.item, seq: shown.seq } : undefined} onChange={(annotations) => updateNodeData(id, { annotations })} />}
       {tab === 'page' && (
         <div className="page-tab">

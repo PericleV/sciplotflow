@@ -18,6 +18,7 @@ import { compile } from '../engine/expr.ts';
 import { gradAttrs, inBox, linearEnds, radialPlace } from './gradient.ts';
 import { axesGeometry, axisNeeds, endLabels, labelReach, legendPlace, turnedExtent, validFor, type Box, type DrawnAxis, type Scale } from './axes.ts';
 import {
+  AUTO_BAR,
   resolveText,
   toPt,
   type Anchor,
@@ -133,7 +134,12 @@ function dragOf(key: string, owner: Owner | undefined, patch: (dx: number, dy: n
     };
   return {
     node: owner.node,
-    apply: (dx, dy, data, shift) => ({ annotations: ((data.annotations as AnnotationItem[] | undefined) ?? []).map((it) => (it.id === owner.item ? { ...it, spec: { ...it.spec, ...patch(dx, dy, shift) } } : it)) }),
+    apply: (dx, dy, data, shift) => {
+      const items = (data.annotations as AnnotationItem[] | undefined) ?? [];
+      // the colour bar placed by itself, moved: kept from now on as its own settings (an item of its id)
+      if (owner.item === AUTO_BAR && !items.some((it) => it.id === AUTO_BAR)) return { annotations: [...items, { id: AUTO_BAR, type: 'colorbar', spec: patch(dx, dy, shift) } as AnnotationItem] };
+      return { annotations: items.map((it) => (it.id === owner.item ? { ...it, spec: { ...it.spec, ...patch(dx, dy, shift) } } : it)) };
+    },
   };
 }
 const r1 = (v: number) => Math.round(v * 10) / 10;
@@ -1496,6 +1502,11 @@ function LegendBox(props: { lg: LegendSpec; box: Box; defaults: TextDefaults; pl
     </Draggable>
   );
 }
+// a rectangle with rounded corners (r), as a closed sub-path
+const roundRectPath = (x: number, y: number, w: number, h: number, r: number) =>
+  r > 0
+    ? `M${n2(x + r)},${n2(y)}H${n2(x + w - r)}A${n2(r)},${n2(r)} 0 0 1 ${n2(x + w)},${n2(y + r)}V${n2(y + h - r)}A${n2(r)},${n2(r)} 0 0 1 ${n2(x + w - r)},${n2(y + h)}H${n2(x + r)}A${n2(r)},${n2(r)} 0 0 1 ${n2(x)},${n2(y + h - r)}V${n2(y + r)}A${n2(r)},${n2(r)} 0 0 1 ${n2(x + r)},${n2(y)}Z`
+    : `M${n2(x)},${n2(y)}h${n2(w)}v${n2(h)}h${n2(-w)}Z`;
 function LegendDraw({ lg, box, defaults, place }: { lg: LegendSpec; box: Box; defaults: TextDefaults; place?: { x: number; y: number } }) {
   if (!lg.curves.length && !lg.title) return null;
   const L = legendLayout(lg, defaults);
@@ -1508,9 +1519,15 @@ function LegendDraw({ lg, box, defaults, place }: { lg: LegendSpec; box: Box; de
   const sh = B.shadow;
   return (
     <g>
-      {(B.grad || (sh && sh.blur > 0)) && (
+      {(B.grad || sh) && (
         <defs>
           {B.grad && <FillGradient id={`${bid}-g`} g={B.grad} from={B.fill} box={{ x: at.x, y: at.y, w: L.w, h: L.h }} />}
+          {sh && (
+            // the shadow only outside the box: as under a box filled white, though the box stays as it is (see-through)
+            <clipPath id={`${bid}-out`}>
+              <path clipRule="evenodd" d={`M${n2(at.x - 50)},${n2(at.y - 50)}h${n2(L.w + 100)}v${n2(L.h + 100)}h${n2(-L.w - 100)}Z${roundRectPath(at.x, at.y, L.w, L.h, rx)}`} />
+            </clipPath>
+          )}
           {sh && sh.blur > 0 && (
             <filter id={`${bid}-sh`} x={n2(at.x + sh.dx - 3 * sh.blur)} y={n2(at.y + sh.dy - 3 * sh.blur)} width={n2(L.w + 6 * sh.blur)} height={n2(L.h + 6 * sh.blur)} filterUnits="userSpaceOnUse">
               <feGaussianBlur stdDeviation={n2(sh.blur / 2)} />
@@ -1518,12 +1535,16 @@ function LegendDraw({ lg, box, defaults, place }: { lg: LegendSpec; box: Box; de
           )}
         </defs>
       )}
-      {sh && <rect {...rect} x={n2(at.x + sh.dx)} y={n2(at.y + sh.dy)} fill={sh.color} fillOpacity={sh.opacity} filter={sh.blur > 0 ? `url(#${bid}-sh)` : undefined} />}
+      {sh && (
+        <g clipPath={`url(#${bid}-out)`}>
+          <rect {...rect} x={n2(at.x + sh.dx)} y={n2(at.y + sh.dy)} fill={sh.color} fillOpacity={sh.opacity} filter={sh.blur > 0 ? `url(#${bid}-sh)` : undefined} />
+        </g>
+      )}
       {(B.fill || B.line) && <rect {...rect} fill={B.fill ? (B.grad ? `url(#${bid}-g)` : B.fill) : 'none'} fillOpacity={B.fill ? B.fillOpacity : undefined} stroke={B.line ? lg.frameColor : 'none'} strokeWidth={lg.frameWidth} strokeDasharray={B.line ? dashArray(lg.frameDash ?? 'solid', lg.frameWidth) : undefined} strokeOpacity={lg.frameOpacity ?? undefined} />}
       {lg.title && <RichText x={at.x + L.w / 2} y={at.y + lg.padding} text={lg.title} st={L.titleT} anchor="middle" valign="top" />}
       {L.curves.map((c, k) => {
         const { col, row } = L.cell(k);
-        const x0 = at.x + lg.padding + L.colW.slice(0, col).reduce((a, b) => a + b, 0) + col * L.gap * 1.5;
+        const x0 = at.x + lg.padding + L.colW.slice(0, col).reduce((a, b) => a + b, 0) + col * L.colGap;
         const cy = at.y + lg.padding + L.titleH + L.rowY[row] + L.t.size / 2;
         // its text: its first line beside the mark, the others under it
         const ty = cy + L.extra[k];
@@ -1531,7 +1552,7 @@ function LegendDraw({ lg, box, defaults, place }: { lg: LegendSpec; box: Box; de
         const color = legendColor(c);
         if (c.groupSpan && c.group?.color === 'map') {
           const stops = stopsOf(st.cmap, st.cmapColors);
-          const h = L.t.size * 0.6;
+          const h = L.sampleH * 0.86;
           const m = 8;
           return (
             <g key={`${c.key}-${k}`}>
@@ -1545,7 +1566,7 @@ function LegendDraw({ lg, box, defaults, place }: { lg: LegendSpec; box: Box; de
         if (c.bars || c.boxes) {
           const lk = { ...BAR_LOOK_DEFAULTS, ...(c.bars?.style ?? c.boxes?.look) };
           const pid = `lg-${lg.key}-${k}`.replace(/[^\w-]/g, '_');
-          const sw = { x: n2(x0), y: n2(cy - L.t.size * 0.35), width: n2(lg.lineLen), height: n2(L.t.size * 0.7), rx: lk.radius > 0 ? n2(Math.min(lk.radius, L.t.size * 0.35)) : undefined };
+          const sw = { x: n2(x0), y: n2(cy - L.sampleH / 2), width: n2(lg.lineLen), height: n2(L.sampleH), rx: lk.radius > 0 ? n2(Math.min(lk.radius, L.sampleH / 2)) : undefined };
           const fill = c.bars?.colors?.[0] || c.boxes?.items[0]?.fill || st.fillColor || color;
           const gp = c.bars?.look === 'step' ? null : gradPair(fill, c.bars?.colors2?.[0] || c.boxes?.items[0]?.fill2, lk);
           return (
@@ -1564,7 +1585,7 @@ function LegendDraw({ lg, box, defaults, place }: { lg: LegendSpec; box: Box; de
         }
         return (
           <g key={`${c.key}-${k}`}>
-            {(st.fill !== 'none' || (st.errStyle === 'band' && c.series.yErr)) && <rect x={n2(x0)} y={n2(cy - L.t.size * 0.35)} width={n2(lg.lineLen)} height={n2(L.t.size * 0.7)} fill={st.fill !== 'none' ? st.fillColor || color : st.errColor || color} fillOpacity={st.fillOpacity} />}
+            {(st.fill !== 'none' || (st.errStyle === 'band' && c.series.yErr)) && <rect x={n2(x0)} y={n2(cy - L.sampleH / 2)} width={n2(lg.lineLen)} height={n2(L.sampleH)} fill={st.fill !== 'none' ? st.fillColor || color : st.errColor || color} fillOpacity={st.fillOpacity} />}
             {hasLine(c) && <line x1={n2(x0)} x2={n2(x0 + lg.lineLen)} y1={n2(cy)} y2={n2(cy)} stroke={color} strokeWidth={c.widthValues ? ((st.widthMin ?? 0.5) + (st.widthMax ?? 3)) / 2 : st.lineWidth} strokeOpacity={st.lineOpacity} strokeDasharray={dashArray(st.dash, st.lineWidth)} />}
             {hasSymbols(c) && <Mark shape={st.symbol} size={c.sizeValues ? (st.sizeMin + st.sizeMax) / 2 : st.symbolSize} x={x0 + lg.lineLen / 2} y={cy} color={color} edge={st.edgeColor || color} fill={st.symbolFill} width={st.symbolEdge} />}
             <RichText x={x0 + lg.lineLen + L.gap} y={ty} text={c.label} st={L.t} valign="middle" />

@@ -6,7 +6,7 @@
 import { useContext, useId, type ReactNode } from 'react';
 import type { Box } from './axes.ts';
 import { mapColor, mapT, stopsOf } from './colors.ts';
-import { dashArray, symbolPath } from './draw.ts';
+import { dashArray, richMetrics, symbolPath } from './draw.ts';
 import { ThreeTurn } from './interactive.ts';
 import { RichText } from './render.tsx';
 import { resolveText, SIDE_DEFAULTS, type Curve, type P3, type TextDefaults, type ThreeScene } from './spec.ts';
@@ -47,10 +47,11 @@ function towardWhite(c: string, k: number): string {
   return `#${f(16)}${f(8)}${f(0)}`;
 }
 
-// the nice values of an axis between lo and hi (about n)
-function axisTicks(lo: number, hi: number, n: number): number[] {
+// the nice values of an axis between lo and hi (about n; or every `every`)
+function axisTicks(lo: number, hi: number, n: number, every?: number): number[] {
+  if (hi < lo) [lo, hi] = [hi, lo];
   if (!(hi > lo)) return [lo];
-  const step = niceStep(hi - lo, Math.max(2, n));
+  const step = every && every > 0 && (hi - lo) / every <= 200 ? every : niceStep(hi - lo, Math.max(2, n));
   const out: number[] = [];
   for (let k = Math.ceil(lo / step - 1e-9); k * step <= hi + step * 1e-9; k++) out.push(Math.abs(k * step) < step * 1e-9 ? 0 : k * step);
   return out;
@@ -70,12 +71,16 @@ export function ThreeView({ c, frame, defaults }: { c: Curve; frame: Box; defaul
   const back = [0, 1, 2].map((a) => (e3[a] > 0 ? -1 : 1));
   const front = back.map((b) => -b);
   const range = [S.range.x, S.range.y, S.range.z];
+  // (a reversed axis: its range from the highest to the lowest)
+  const lohi = range.map((r): [number, number] => [Math.min(r[0], r[1]), Math.max(r[0], r[1])]);
+  const AX = [0, 1, 2].map((a) => S.axes?.[a] ?? {});
   // the values of every axis (Z: the layers' own, when given)
-  const own = [undefined, S.yLabels, S.zLabels].map((L, a) => (L ? L.at.map((v, k) => ({ v, text: L.text[k] ?? '' })).filter((q) => q.v >= range[a][0] && q.v <= range[a][1]) : null));
-  const tk = range.map((r, a) => own[a]?.map((q) => q.v) ?? axisTicks(r[0], r[1], S.ticks));
+  const own = [undefined, S.yLabels, S.zLabels].map((L, a) => (L ? L.at.map((v, k) => ({ v, text: L.text[k] ?? '' })).filter((q) => q.v >= lohi[a][0] && q.v <= lohi[a][1]) : null));
+  const tk = range.map((r, a) => own[a]?.map((q) => q.v) ?? axisTicks(r[0], r[1], AX[a].count && AX[a].count > 1 ? Math.min(30, AX[a].count) : S.ticks, AX[a].step));
   const tn = tk.map((vs, a) => vs.map((v) => ((v - range[a][0]) / (range[a][1] - range[a][0] || 1)) * 2 - 1));
   // halfway between the values (the minor grid), inside the box
-  const half = tn.map((us, a) => {
+  const half = tn.map((us0, a) => {
+    const us = [...us0].sort((p, q) => p - q);
     const st = us.length > 1 ? us[1] - us[0] : 0;
     if (!(st > 0) || own[a]) return [];
     const out: number[] = [];
@@ -136,7 +141,7 @@ export function ThreeView({ c, frame, defaults }: { c: Curve; frame: Box; defaul
   // or their highest outline filled down to the floor
   if (S.walls) {
     const st = c.style;
-    const [lo, hi] = c.colorRange ?? S.range.z;
+    const [lo, hi] = c.colorRange ?? lohi[2];
     const tint = (v: number) => (Number.isFinite(v) ? mapColor(stopsOf(st.cmap, st.cmapColors), mapT(v, lo, hi, false, st.cmapReverse)) : S.walls!.color);
     const W = S.walls;
     // on the wall across axis a (x: 0 — the curves z(y); y: 1 — the curves z(x)), at its back side
@@ -202,7 +207,9 @@ export function ThreeView({ c, frame, defaults }: { c: Curve; frame: Box; defaul
   });
   // the data, from the farthest to the nearest (stacked maps: by height — exact for flat layers and the line pieces
   // between them —, from below when seen from above)
-  const prims: { d: number; h?: number; layer?: boolean; el: ReactNode }[] = [];
+  // (o: a mark in front of the data, 1, or behind them, −1)
+  const prims: { d: number; h?: number; layer?: boolean; o?: number; el: ReactNode }[] = [];
+  const order = (p?: 'front' | 'back') => (p === 'front' ? { o: 1 } : p === 'back' ? { o: -1 } : {});
   const light = unit([e3[0] - 0.4 * cam.e1[0] + 0.5 * cam.e2[0], e3[1] - 0.4 * cam.e1[1] + 0.5 * cam.e2[1], e3[2] - 0.4 * cam.e1[2] + 0.5 * cam.e2[2]]);
   // the layers: every cell coloured by the curve's map over its colour range (a Merge may give one range to all its
   // panels), the cells of one colour in one path
@@ -342,7 +349,7 @@ export function ThreeView({ c, frame, defaults }: { c: Curve; frame: Box; defaul
         ) : (
           <path key={k} d={`M${n2(bx + nx)},${n2(by + ny)}L${n2(tip[0])},${n2(tip[1])}L${n2(bx - nx)},${n2(by - ny)}${kind === 'open' ? '' : 'Z'}`} fill={kind === 'open' ? 'none' : l.color} stroke={l.color} strokeWidth={kind === 'open' ? l.width : 0.3} strokeOpacity={l.opacity} fillOpacity={l.opacity} strokeLinejoin="round" />
         );
-      prims.push({ d: tip[2] + 1e-6, el });
+      prims.push({ d: tip[2] + 1e-6, ...order(l.place), el });
     };
     if (l.heads) {
       headAt(q[q.length - 1], q[q.length - 2], l.heads[1], `lh${li}b`);
@@ -355,6 +362,7 @@ export function ThreeView({ c, frame, defaults }: { c: Curve; frame: Box; defaul
       prims.push({
         d: q.reduce((s, v) => s + v[2], 0) / q.length,
         h: fin.reduce((s, p) => s + hz(p), 0) / fin.length,
+        ...order(l.place),
         el: (
           <g key={`l${li}`}>
             {l.fill && <path d={`M${q.map(pt).join('L')}L${[...floor].reverse().map(pt).join('L')}Z`} fill={l.fill.color} fillOpacity={l.fill.opacity} stroke="none" />}
@@ -365,7 +373,7 @@ export function ThreeView({ c, frame, defaults }: { c: Curve; frame: Box; defaul
       });
     } else {
       const fin = l.pts.filter((p) => p.every(Number.isFinite));
-      for (let k = 0; k < q.length - 1; k++) prims.push({ d: (q[k][2] + q[k + 1][2]) / 2 + (l.bias ?? 0), h: (hz(fin[k]) + hz(fin[k + 1])) / 2, el: <path key={`l${li}-${k}`} d={`M${pt(q[k])}L${pt(q[k + 1])}`} {...stroke} strokeLinecap={l.dash === 'solid' ? 'round' : 'butt'} /> });
+      for (let k = 0; k < q.length - 1; k++) prims.push({ d: (q[k][2] + q[k + 1][2]) / 2 + (l.bias ?? 0), h: (hz(fin[k]) + hz(fin[k + 1])) / 2, ...order(l.place), el: <path key={`l${li}-${k}`} d={`M${pt(q[k])}L${pt(q[k + 1])}`} {...stroke} strokeLinecap={l.dash === 'solid' ? 'round' : 'butt'} /> });
     }
   });
   // symbols: fainter the farther they are (depth shade), a line down to the floor
@@ -379,6 +387,7 @@ export function ThreeView({ c, frame, defaults }: { c: Curve; frame: Box; defaul
       const open = s.fill === 'open';
       prims.push({
         d: q[2],
+        ...order(s.place),
         el: (
           <g key={`p${si}-${k}`} opacity={op < 1 ? +op.toFixed(3) : undefined}>
             {s.drop && <path d={`M${pt(q)}L${pt(P([p[0], p[1], fz]))}`} stroke={col} strokeWidth={0.4} strokeOpacity={0.6} />}
@@ -393,15 +402,15 @@ export function ThreeView({ c, frame, defaults }: { c: Curve; frame: Box; defaul
     if (!lb.at.every(Number.isFinite)) return;
     const q = P(lb.at);
     const st = resolveText({ color: lb.color, ...(lb.size > 0 ? { size: lb.size } : {}) }, defaults);
-    prims.push({ d: q[2] + 1e-3, el: <RichText key={`lb${k}`} x={q[0] + 3} y={q[1] - 3} text={lb.text} st={st} anchor="start" valign="bottom" /> });
+    prims.push({ d: q[2] + 1e-3, ...order(lb.place), el: <RichText key={`lb${k}`} x={q[0] + 3} y={q[1] - 3} text={lb.text} st={st} anchor="start" valign="bottom" /> });
   });
   if (S.planes?.length) {
     // by height; at the same height a line over the layer
     const up = S.elev >= 0 ? 1 : -1;
     const rank = (p: (typeof prims)[number]) => (p.h ?? 0) * up;
     const after = (p: (typeof prims)[number]) => (p.layer ? 0 : 1);
-    prims.sort((a, b) => rank(a) - rank(b) || after(a) - after(b) || a.d - b.d);
-  } else prims.sort((a, b) => a.d - b.d);
+    prims.sort((a, b) => (a.o ?? 0) - (b.o ?? 0) || rank(a) - rank(b) || after(a) - after(b) || a.d - b.d);
+  } else prims.sort((a, b) => (a.o ?? 0) - (b.o ?? 0) || a.d - b.d);
   parts.push(<g key="data">{prims.map((p) => p.el)}</g>);
   if (S.edges === 'all') parts.push(...edgesOf(false));
   // the axes: X and Y on the floor's front edges, Z on the vertical edge farthest to the left; their values and titles
@@ -413,15 +422,22 @@ export function ThreeView({ c, frame, defaults }: { c: Curve; frame: Box; defaul
     { a: 1, base: (u) => [front[0], u, back[2]] },
     { a: 2, base: (u) => [zl.ux, zl.uy, u] },
   ];
-  const tickLen = 3;
   for (const { a, base } of axes) {
+    // its own look: the ticks out, in or none and their length; its values shown or not, their format and text; its
+    // title's text and how much farther it is
+    const ax = AX[a];
+    const tickLen = ax.ticks === 'none' ? 0 : ax.tickLen !== undefined && ax.tickLen >= 0 ? ax.tickLen : 3;
+    const out = ax.ticks === 'in' ? 0 : tickLen;
+    const lt = ax.labelText ? resolveText(ax.labelText, t) : t;
+    const ht = ax.titleText ? resolveText(ax.titleText, tt) : tt;
+    const shown = ax.labels !== false;
     const mid = B(base(0));
     let dx = mid[0] - centre[0];
     let dy = mid[1] - centre[1];
     if (a === 2) [dx, dy] = [-1, 0];
     const l = Math.hypot(dx, dy) || 1;
     [dx, dy] = [dx / l, dy / l];
-    const labels = own[a] ? own[a].map((q) => q.text) : formatLabels(tk[a], false, SIDE_DEFAULTS).labels;
+    const labels = !shown ? [] : own[a] ? own[a].map((q) => q.text) : formatLabels(tk[a], false, { ...SIDE_DEFAULTS, ...(ax.format ? { format: ax.format } : {}), ...(ax.decimals !== undefined && ax.decimals >= 0 ? { decimals: ax.decimals } : {}) }).labels;
     const anchor = dx > 0.35 ? 'start' : dx < -0.35 ? 'end' : 'middle';
     const valign = dy > 0.35 ? 'top' : dy < -0.35 ? 'bottom' : 'middle';
     parts.push(
@@ -430,23 +446,24 @@ export function ThreeView({ c, frame, defaults }: { c: Curve; frame: Box; defaul
           const p = B(base(u));
           return (
             <g key={k}>
-              <path d={`M${pt(p)}l${n2(dx * tickLen)},${n2(dy * tickLen)}`} stroke="#000000" strokeWidth={0.6} />
-              <RichText x={p[0] + dx * (tickLen + 1.5)} y={p[1] + dy * (tickLen + 1.5)} text={labels[k] ?? ''} st={t} anchor={anchor} valign={valign} />
+              {tickLen > 0 && <path d={`M${pt(p)}l${n2((ax.ticks === 'in' ? -dx : dx) * tickLen)},${n2((ax.ticks === 'in' ? -dy : dy) * tickLen)}`} stroke="#000000" strokeWidth={0.6} />}
+              {shown && <RichText x={p[0] + dx * (out + 1.5)} y={p[1] + dy * (out + 1.5)} text={labels[k] ?? ''} st={lt} anchor={anchor} valign={valign} />}
             </g>
           );
         })}
       </g>,
     );
     // the title: beyond the values, along the axis (Z: upright)
-    const longest = Math.max(1, ...labels.map((s) => s.length));
-    const off = tickLen + 3 + (Math.abs(dx) > 0.5 ? longest * t.size * 0.55 : t.size * 1.1) + tt.size * 0.6;
+    // (their own text: measured in its font; else as always, so the figures made before stay as they were)
+    const widest = ax.labelText ? Math.max(lt.size * 0.55, ...labels.map((s) => richMetrics(s, lt).width)) : Math.max(1, ...labels.map((s) => s.length)) * t.size * 0.55;
+    const off = out + 3 + (!shown ? 0 : Math.abs(dx) > 0.5 ? widest : lt.size * 1.1) + ht.size * 0.6 + (ax.titleGap ?? 0);
     const p0 = B(base(-1));
     const p1 = B(base(1));
     let ang = (Math.atan2(p1[1] - p0[1], p1[0] - p0[0]) * 180) / Math.PI;
     if (ang > 90) ang -= 180;
     if (ang < -90) ang += 180;
     const rot = a === 2 ? -90 : Math.abs(ang) < 60 ? ang : 0;
-    if (S.titles[a]) parts.push(<RichText key={`t${a}`} x={mid[0] + dx * off} y={mid[1] + dy * off} text={S.titles[a]} st={tt} anchor="middle" valign="middle" rotate={rot} />);
+    if (S.titles[a]) parts.push(<RichText key={`t${a}`} x={mid[0] + dx * off} y={mid[1] + dy * off} text={S.titles[a]} st={ht} anchor="middle" valign="middle" rotate={rot} />);
   }
   // zoomed or moved: what leaves the frame cut at it
   const zoomed = !!S.cam && (S.cam.k !== 1 || !!S.cam.dx || !!S.cam.dy);

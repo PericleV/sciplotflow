@@ -37,7 +37,7 @@ import { describe, describeAll, extraStats } from '../src/engine/stats.ts';
 import { axisRange, formatLabels, inBreak, parseBreaks, ticks } from '../src/figure/ticks.ts';
 import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, axesStyle, CURVE_STYLE_DEFAULTS, SIDE_DEFAULTS, curveStyle, toPt, type AxesStyle, type Curve, type Figure, LEGEND_STYLE_DEFAULTS, TEXT_DEFAULTS, TEXT_SPEC_DEFAULTS, FONTS, type Annotation, COLORBAR_DEFAULTS, type ColorbarSpec, legendBox, legendBoxPatch, type LegendSpec } from '../src/figure/spec.ts';
 import { BUILTIN_STYLES, styledData } from '../src/nodes/styles.ts';
-import { parseRich, plainText, richMetrics } from '../src/figure/draw.ts';
+import { fontRatio, parseRich, plainText, richMetrics } from '../src/figure/draw.ts';
 import { mathFace, mathKey, setMathSizes } from '../src/math/sizes.ts';
 import { plotMapping, stuckLines } from '../src/engine/evaluate.ts';
 import { canvasFigure, collapseGroups, evaluateGraph, legendCurves, newCache, packCells, parseRows, plotRows, shapeSpec } from '../src/engine/evaluate.ts';
@@ -3498,6 +3498,12 @@ for (const ex of EXAMPLES) {
   const look = plot3d({ kind: 'grid', g, names }, { ...PLOT3D_DEFAULTS, kind: 'surface', resolution: 50, surfaceFill: 'none', meshBy: 'z', meshDir: 'x', mesh: 1, contours: 3, ceiling: 'map', wallProj: 'lines', curtain: true, backColor: '#ff0000', shine: 0.5 });
   const lk = typeof look === 'string' ? null : look.curves[0].three!;
   ok(!!lk && lk.surfaces[0].fill.every((f) => f === '') && lk.surfaces[0].mesh.colors?.length === 24 && lk.surfaces[0].mesh.dir === 'x' && lk.lines.filter((l) => l.bias).length > 0 && (lk.ceiling?.cells?.length ?? 0) === 24 && lk.walls?.mode === 'lines' && lk.lines.filter((l) => l.planar && l.fill).length === 4 && lk.surfaces[0].back === '#ff0000' && lk.surfaces[0].shine === 0.5, '3D: the surface hidden, the mesh by Z along X, contours on it, the ceiling, the walls, the curtain, the underside, the shine');
+  // the curtain like the surface (a piece of the edge each, in the colour of its top), the axes' own look (Z reversed:
+  // its range from the highest), a mark in front of the data
+  const cur = plot3d({ kind: 'grid', g, names }, { ...PLOT3D_DEFAULTS, kind: 'surface', resolution: 50, curtain: true, curtainBy: 'surface', axis3: { z: { reverse: true, step: 2 } }, marks: [{ id: 'm', type: 'point', x1: 1, y1: 1, z1: 3, x2: NaN, y2: NaN, z2: NaN, color: '#000000', width: 1, dash: 'solid', place: 'front', label: 'P' }] });
+  const cu3 = typeof cur === 'string' ? null : cur.curves[0].three!;
+  const walls3 = cu3?.lines.filter((l) => l.planar && l.fill) ?? [];
+  ok(!!cu3 && walls3.length === 2 * (5 + 3) && new Set(walls3.map((l) => l.color)).size > 2 && cu3.range.z.join() === '7,0' && cu3.axes?.[2]?.step === 2 && cu3.points.at(-1)?.place === 'front' && cu3.labels?.[0]?.place === 'front', '3D: the curtain coloured like the surface, a reversed Z axis, its own step, a mark in front of the data');
   // marks: an arrow (its head, its projections, its label), an upright rectangle with a fill, a point
   const mk = plot3d({ kind: 'grid', g, names }, {
     ...PLOT3D_DEFAULTS,
@@ -4232,6 +4238,23 @@ for (const ex of EXAMPLES) {
   const back = Mx.matrixDataset(typeof fd === 'string' ? Mx.identity(1) : fd.M);
   const g2 = gridFromMatrix(back.columns[0], back.columns.slice(1));
   ok(typeof g2 !== 'string' && g2.xs.join() === '400,410' && g2.ys.join() === '30,40,50', 'Matrix ▸ dataset: read back as a matrix by the Contour');
+  // the rows' Y and the columns' X given by hand, for any source: a range (to the last, or by a step), a list of numbers
+  // (fewer than the rows: the rest empty), names
+  const cu = (p: Partial<typeof base>, ds?: Dataset) => {
+    const r = Mx.makeMatrix({ ...base, ...p }, ds);
+    return typeof r === 'string' ? r : r;
+  };
+  const c1 = cu({ rowAt: '#custom', rowCustom: { mode: 'range', from: 0, to: 10, name: 'Time (s)' }, colAt: 'custom', colCustom: { mode: 'range', from: 400, step: 5 } });
+  const c2 = cu({ rowAt: '#custom', rowCustom: { list: '1; 2' }, colAt: 'custom', colCustom: { list: 'A, B, C', name: 'Sample' } });
+  const c3 = cu({ source: 'dataset', rowAt: '#custom', rowCustom: { list: '5, 6, 7' }, colAt: 'custom', colCustom: { mode: 'range', from: 1, to: 2 } }, map);
+  const c4 = cu({ rowAt: '#custom', rowCustom: { mode: 'range' } });
+  ok(
+    typeof c1 !== 'string' && c1.M.ys?.join() === '0,5,10' && c1.M.yName === 'Time (s)' && c1.M.xs?.join() === '400,405,410' && c1.M.xName === 'X' &&
+      typeof c2 !== 'string' && c2.M.ys?.length === 3 && Number.isNaN(c2.M.ys[2]) && c2.warnings.some((w) => w.includes('2 values for 3')) && c2.M.colNames?.join() === 'A,B,C' && !c2.M.xs && c2.M.xName === 'Sample' &&
+      typeof c3 !== 'string' && c3.M.ys?.join() === '5,6,7' && c3.M.xs?.join() === '1,1.5,2' && c3.M.cols === 3 &&
+      typeof c4 === 'string',
+    'Matrix: the rows’ Y and the columns’ X by hand (a range, a step, a list, names; typed and from a dataset)',
+  );
   // rearranging, element by element (broadcasting), reductions
   const A = Mx.newMatrix(2, 3, 'A', Float64Array.of(1, 2, 3, 4, 5, 6));
   ok(Array.from(Mx.rot90(A, 1).v).join() === '3,6,2,5,1,4' && Mx.rot90(A, 1).rows === 3 && Array.from(Mx.flip(A, 'lr').v).join() === '3,2,1,6,5,4' && Array.from(Mx.flip(A, 'ud').v).join() === '4,5,6,1,2,3', 'Matrix: rot90 and flips as numpy');
@@ -5043,6 +5066,13 @@ for (const ex of EXAMPLES) {
   const one = legendLayout({ ...lg, curves: [{ ...cs[0], label: 'fit' }] }, TEXT_DEFAULTS);
   const three = legendLayout({ ...lg, curves: [{ ...cs[0], label: 'fit\\\\a = 1\\\\b = 2' }] }, TEXT_DEFAULTS);
   ok(free.anchor === 'tr' && boxed.anchor !== 'tr' && three.h > one.h + 1.5 * TEXT_DEFAULTS.size && three.extra[0] > 0, `Legend: placed off a results box (${boxed.anchor}); an entry on three lines three lines high`);
+  // its text measured in its font (Courier wider, Times narrower, Arial as before); the sample's height and gap
+  const kg = { ...lg, curves: [{ ...cs[0], label: 'Below 3.5 kg' }] };
+  const wOf = (font: string) => legendLayout({ ...kg, text: { font } }, TEXT_DEFAULTS).w;
+  const [arial, courier, times] = [wOf(FONTS[0][0]), wOf("'Courier New', monospace"), wOf("'Times New Roman', Times, serif")];
+  const sized = legendLayout({ ...kg, sampleH: 20, sampleGap: 10 }, TEXT_DEFAULTS);
+  const plain = legendLayout(kg, TEXT_DEFAULTS);
+  ok(near(arial, plain.w) && courier > arial + 10 && times < arial && near(sized.w - plain.w, 10 - 0.5 * TEXT_DEFAULTS.size) && sized.rowH >= 21 && near(fontRatio('abc', 'Courier New'), 1800 / 1612), `Legend: text width by its font (Arial ${arial.toFixed(1)}, Courier ${courier.toFixed(1)}, Times ${times.toFixed(1)} pt); sample height and gap`);
 }
 
 {

@@ -1184,9 +1184,33 @@ export type MatSource = {
   // the columns' X (from the numbers in their names, or none)
   zs: string;
   rowSel?: RowSelect;
-  rowAt: string;
-  colAt: 'auto' | 'names' | 'index';
+  rowAt: string; // also '#custom': rowCustom
+  colAt: 'auto' | 'names' | 'index' | 'custom'; // custom: colCustom
+  // the rows' Y and the columns' X given by hand (any source): a list (numbers: coordinates; else names) or a range
+  rowCustom?: MatAxis;
+  colCustom?: MatAxis;
 };
+// a list of values (comma, semicolon or new line between them) or a range: from, to (spread evenly) or from, step; the
+// name of what they are (“Wavelength (nm)”)
+export type MatAxis = { mode?: 'list' | 'range'; list?: string; from?: number; to?: number; step?: number; name?: string };
+
+// the values of a MatAxis for n rows or columns: numbers, or names when one of the list is not a number; fewer than n:
+// the rest empty, more: the first n (a warning each)
+export function axisValues(a: MatAxis | undefined, n: number, what: string): { nums?: number[]; names?: string[]; warning?: string } | string {
+  if (a?.mode === 'range') {
+    const [from, to, step] = [a.from ?? NaN, a.to ?? NaN, a.step ?? NaN];
+    if (!Number.isFinite(from)) return `${what}: give the first value, then the last or the step.`;
+    if (Number.isFinite(step) && step !== 0) return { nums: Array.from({ length: n }, (_, i) => from + i * step) };
+    if (!Number.isFinite(to)) return `${what}: give the last value or the step.`;
+    return { nums: Array.from({ length: n }, (_, i) => (n === 1 ? from : from + (i * (to - from)) / (n - 1))) };
+  }
+  const items = (a?.list ?? '').split(/[,;\t\n]+/).map((t) => t.trim()).filter(Boolean);
+  if (!items.length) return `${what}: write the values (400, 410, 420 …) or choose a range.`;
+  const warning = items.length === n ? undefined : items.length < n ? `${what}: ${items.length} values for ${n}: the rest are empty.` : `${what}: ${items.length} values for ${n}: the first ${n} are used.`;
+  const nums = items.map((t) => Number(t.replace('−', '-')));
+  if (nums.every(Number.isFinite)) return { nums: Array.from({ length: n }, (_, i) => nums[i] ?? NaN), ...(warning ? { warning } : {}) };
+  return { names: Array.from({ length: n }, (_, i) => items[i] ?? ''), ...(warning ? { warning } : {}) };
+}
 
 // A small seeded generator (mulberry32, as Generate column's).
 function rng(seed: number) {
@@ -1223,6 +1247,28 @@ export function typedText(rows: number, cols: number, v: ArrayLike<number>): str
 
 const NUM_IN_NAME = /[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?/;
 export function makeMatrix(d: MatSource, ds: Dataset | undefined): { M: Matrix; warnings: string[] } | string {
+  const r = baseMatrix(d, ds);
+  if (typeof r === 'string') return r;
+  const { M, warnings } = r;
+  // the rows' Y and the columns' X given by hand: numbers their coordinates, else their names
+  if (d.rowAt === '#custom') {
+    const a = axisValues(d.rowCustom, M.rows, "The rows' Y");
+    if (typeof a === 'string') return a;
+    if (a.warning) warnings.push(a.warning);
+    if (a.nums) Object.assign(M, { ys: a.nums, yName: d.rowCustom?.name?.trim() || M.yName || 'Y', rowNames: undefined });
+    else Object.assign(M, { rowNames: a.names, ys: undefined, ...(d.rowCustom?.name?.trim() ? { yName: d.rowCustom.name.trim() } : {}) });
+  }
+  if (d.colAt === 'custom') {
+    const a = axisValues(d.colCustom, M.cols, "The columns' X");
+    if (typeof a === 'string') return a;
+    if (a.warning) warnings.push(a.warning);
+    if (a.nums) Object.assign(M, { xs: a.nums, xName: d.colCustom?.name?.trim() || M.xName || 'X', colNames: undefined });
+    else Object.assign(M, { colNames: a.names, xs: undefined, ...(d.colCustom?.name?.trim() ? { xName: d.colCustom.name.trim() } : {}) });
+  }
+  for (const k of ['xs', 'ys', 'rowNames', 'colNames', 'xName', 'yName'] as const) if (M[k] === undefined) delete M[k];
+  return { M, warnings };
+}
+function baseMatrix(d: MatSource, ds: Dataset | undefined): { M: Matrix; warnings: string[] } | string {
   const name = d.name.trim();
   const warnings: string[] = [];
   if (d.source === 'typed') {
@@ -1234,8 +1280,8 @@ export function makeMatrix(d: MatSource, ds: Dataset | undefined): { M: Matrix; 
   if (d.source === 'dataset') {
     if (!ds) return 'Connect a dataset.';
     const all = ds.columns;
-    const rowCol = d.rowAt === '-' ? undefined : d.rowAt ? all.find((c) => c.name === d.rowAt) : all.find((_, j) => roleOf(all, j) === 'x');
-    if (d.rowAt && d.rowAt !== '-' && !rowCol) return `No column “${d.rowAt}” in the dataset.`;
+    const rowCol = d.rowAt === '-' || d.rowAt === '#custom' ? undefined : d.rowAt ? all.find((c) => c.name === d.rowAt) : all.find((_, j) => roleOf(all, j) === 'x');
+    if (d.rowAt && d.rowAt !== '-' && d.rowAt !== '#custom' && !rowCol) return `No column “${d.rowAt}” in the dataset.`;
     const numeric = (c: Column) => c.values.some(Number.isFinite);
     let cols: Column[];
     if (d.zs.trim()) {

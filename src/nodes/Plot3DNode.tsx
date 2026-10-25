@@ -2,7 +2,7 @@
 // elevation, perspective, the box's proportions), the colours (by Z on a map with its bar, one colour, by group), the
 // look of every kind (shading, mesh, the floor's map or contour lines; bars; symbols, drop lines; lines, walls), the box
 // (walls, grid, edges, titles); every group / curve its own look (⚙); the figure with the same tabs as a Plot.
-import { Fragment, useState } from 'react';
+import { useState } from 'react';
 import { useNodeConnections, useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import { columnLetter } from '../engine/csv.ts';
@@ -19,10 +19,11 @@ import type { Pick3D } from './Figure3DPick.tsx';
 import type { PickPlane } from './figure3d.ts';
 import { DASHES, SYMBOLS } from './figureOptions.ts';
 import { FigureTabs, InsetsPort } from './FigureTabs.tsx';
+import { Axes3DEditor } from './Axes3DEditor.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
 import { FigureView } from './FigureView.tsx';
 import { HideControls } from './HideControls.tsx';
-import { Check, Field, InPort, Messages, NumInput, OutPort, Select, TextInput } from './ui.tsx';
+import { Check, Field, InPort, Messages, NumInput, OutPort, Select, Slider, TextInput } from './ui.tsx';
 import { xAutoLabel, Y_AUTO } from './xAuto.ts';
 import { Pencil, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
@@ -59,6 +60,8 @@ export function Plot3DNodeView({ id, data: d }: NodeProps<Plot3DNode>) {
   const layered = d.kind === 'layers';
   const byMap = layered || d.colorBy === 'z' || d.colorBy === 'column';
   const swatches = (fig?.axes[0]?.curves ?? []).filter((c) => /^3d:\d+$/.test(c.key));
+  // the titles drawn (the data's names when not typed): shown as the Axes tab's placeholders
+  const threeNames = (fig?.axes[0]?.curves.find((c) => c.three)?.three?.titles ?? ['', '', '']) as [string, string, string];
   const num = (v: number, lo: number, hi: number, dflt: number) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : dflt);
   // stacked maps: A (the dataset port), then B, C … — a new one when the last is used
   const conns = useNodeConnections({ handleType: 'target' });
@@ -602,13 +605,26 @@ export function Plot3DNodeView({ id, data: d }: NodeProps<Plot3DNode>) {
               <span title="The surface's four edges filled down to the floor (a curtain)">Curtain</span>
               <span className="row wrap">
                 <Check label="Shown" value={!!d.curtain} onChange={(curtain) => set({ curtain: curtain || undefined })} />
-                {d.curtain && (
-                  <>
-                    <OptColor value={d.curtainColor ?? ''} none="auto" onChange={(curtainColor) => set({ curtainColor: curtainColor || undefined })} />
-                    <NumInput className="tiny" min={0.05} max={1} step={0.05} value={d.curtainOpacity ?? 0.6} title="Its opacity" onChange={(v) => set({ curtainOpacity: Number.isFinite(v) ? v : undefined })} />
-                  </>
+                {d.curtain && d.colorBy !== 'single' && (
+                  <Select<'one' | 'surface'>
+                    seg
+                    value={d.curtainBy === 'surface' ? 'surface' : 'one'}
+                    title="One colour, or the colours of the surface's edge continued down"
+                    options={[
+                      ['one', 'one colour'],
+                      ['surface', 'like the surface'],
+                    ]}
+                    onChange={(v) => set({ curtainBy: v === 'surface' ? 'surface' : undefined })}
+                  />
                 )}
+                {d.curtain && (d.curtainBy !== 'surface' || d.colorBy === 'single') && <OptColor value={d.curtainColor ?? ''} none="auto" onChange={(curtainColor) => set({ curtainColor: curtainColor || undefined })} />}
               </span>
+              {d.curtain && (
+                <>
+                  <span />
+                  <Slider label="Opacity" title="The curtain's opacity" min={0.05} max={1} step={0.05} value={d.curtainOpacity ?? 0.6} onChange={(v) => set({ curtainOpacity: Math.min(1, Math.max(0.05, v)) })} />
+                </>
+              )}
             </>
           )}
           {d.kind === 'bars' && (
@@ -704,27 +720,8 @@ export function Plot3DNodeView({ id, data: d }: NodeProps<Plot3DNode>) {
         </div>
       </details>
       <details>
-        <summary>Box and axes</summary>
+        <summary title="The axes themselves (titles, limits, values, ticks, reversed): the Axes tab under the figure">Box</summary>
         <div className="col-form">
-          {(['x', 'y', 'z'] as const).map((ax) => {
-            const key = `${ax}Lim` as const;
-            const l = d[key];
-            const end = (k: 0 | 1, v: number) => {
-              const nl: [number | null, number | null] = [l?.[0] ?? null, l?.[1] ?? null];
-              nl[k] = Number.isFinite(v) ? v : null;
-              set({ [key]: nl[0] === null && nl[1] === null ? undefined : nl });
-            };
-            return (
-              <Fragment key={ax}>
-                <span title={`The ${ax.toUpperCase()} axis from – to (empty: the data's); what is outside the box is cut. Also: Zoom and Rescale ${ax === 'z' ? '' : ax.toUpperCase()} above the figure`}>{ax.toUpperCase()} limits</span>
-                <span className="row">
-                  <NumInput className="short" value={l?.[0] ?? NaN} placeholder="auto" onChange={(v) => end(0, v)} />
-                  <span>–</span>
-                  <NumInput className="short" value={l?.[1] ?? NaN} placeholder="auto" onChange={(v) => end(1, v)} />
-                </span>
-              </Fragment>
-            );
-          })}
           <span title="The three walls at the back, their grid">Walls</span>
           <span className="row wrap">
             <OptColor value={d.panes} none="none" title="Their colour" onChange={(panes) => set({ panes })} />
@@ -789,14 +786,8 @@ export function Plot3DNodeView({ id, data: d }: NodeProps<Plot3DNode>) {
             ]}
             onChange={(edges) => set({ edges })}
           />
-          <span title="Empty: the data's names">Titles X, Y, Z</span>
-          <span className="row wrap">
-            <TextInput value={d.titleX} placeholder="X: auto" onChange={(titleX) => set({ titleX })} />
-            <TextInput value={d.titleY} placeholder="Y: auto" onChange={(titleY) => set({ titleY })} />
-            <TextInput value={d.titleZ} placeholder="Z: auto" onChange={(titleZ) => set({ titleZ })} />
-          </span>
-          <span>Values</span>
-          <Field label="About" title="About this many values on every axis">
+          <span title="Each axis its own: the Axes tab under the figure">Values</span>
+          <Field label="About" title="About this many values on every axis (each its own in the Axes tab)">
             <NumInput className="tiny" min={2} max={12} step={1} value={d.ticks} onChange={(ticks) => set({ ticks: Math.min(12, Math.max(2, Math.round(ticks) || 5)) })} />
           </Field>
         </div>
@@ -932,6 +923,17 @@ export function Plot3DNodeView({ id, data: d }: NodeProps<Plot3DNode>) {
                       <Field label="Opacity">
                         <NumInput className="tiny" min={0} max={1} step={0.1} value={m.opacity ?? 1} onChange={(v) => setMark(k, { opacity: Number.isFinite(v) && v < 1 ? Math.max(0, v) : undefined })} />
                       </Field>
+                      <Field label="Place" title="Drawn by its depth with the data (hidden by what is in front of it), in front of the data (always seen), or behind them">
+                        <Select<NonNullable<Mark3D['place']>>
+                          value={m.place ?? 'depth'}
+                          options={[
+                            ['depth', 'in depth'],
+                            ['front', 'in front of the data'],
+                            ['back', 'behind the data'],
+                          ]}
+                          onChange={(place) => setMark(k, { place: place === 'depth' ? undefined : place })}
+                        />
+                      </Field>
                       {isLine && (
                         <Field label="Heads" title="At its start and at its end; their size (pt)">
                           <span className="row">
@@ -979,7 +981,7 @@ export function Plot3DNodeView({ id, data: d }: NodeProps<Plot3DNode>) {
       </NodeOptions>
       {fig && <FigureView pick3d={pick3d} fig={fig} width={600} page={page} setPage={(p) => set({ page: { ...page, ...p } })} layoutTitle="Move and resize the frame with the mouse (it is then placed by hand: Page ▸ Frame; Shift keeps its shape). Off: the legend and the annotations move." />}
       <NodeOptions>
-        <FigureTabs id={id} data={d} legendCurves={r?.view.legendCurves ?? []} pos={fig?.axes[0]?.style.pos} port={false} />
+        <FigureTabs id={id} data={d} legendCurves={r?.view.legendCurves ?? []} pos={fig?.axes[0]?.style.pos} port={false} axesEditor={<Axes3DEditor d={d} set={set} names={threeNames} />} />
         <Messages result={r} />
       </NodeOptions>
       <InsetsPort />

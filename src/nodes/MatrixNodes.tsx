@@ -6,7 +6,7 @@ import { useNodeConnections, useReactFlow, type NodeProps } from '@xyflow/react'
 import { useNodeResult } from '../engine/engine.ts';
 import type { MatrixInfo } from '../engine/evaluate.ts';
 import { columnLetter } from '../engine/csv.ts';
-import { fmtCell, numberB, OP_GROUPS, OP_LABEL, stepName, stepParts, takesB, partHandle, type Along, type ElemFn, type MatGen, type MatOp, type MatSource, type MatStep, type NormKind, type ReduceFn } from '../engine/matrix.ts';
+import { fmtCell, numberB, OP_GROUPS, OP_LABEL, stepName, stepParts, takesB, partHandle, type Along, type ElemFn, type MatAxis, type MatGen, type MatOp, type MatSource, type MatStep, type NormKind, type ReduceFn } from '../engine/matrix.ts';
 import { maxOf } from '../engine/minmax.ts';
 import type { AppNode, MatCompData, MatCompNode, MatrixNode } from '../types.ts';
 import { ColumnsPicker } from './ColumnsPicker.tsx';
@@ -165,6 +165,47 @@ function MatrixCells({ text, onChange }: { text: string; onChange: (t: string) =
 }
 
 // ---- Matrix ----
+// the rows' Y or the columns' X given by hand: a list (numbers: their coordinates; else their names) or a range
+function MatAxisEditor({ value, onChange, of }: { value: MatAxis | undefined; onChange: (v: MatAxis) => void; of: 'rows' | 'columns' }) {
+  const a = value ?? {};
+  const set = (p: Partial<MatAxis>) => onChange({ ...a, ...p });
+  const range = a.mode === 'range';
+  return (
+    <>
+      <span />
+      <span className="row wrap">
+        <Select<'list' | 'range'>
+          seg
+          value={range ? 'range' : 'list'}
+          title={`A list of values, one for each of the ${of}, or a range spread over them`}
+          options={[
+            ['list', 'List'],
+            ['range', 'Range'],
+          ]}
+          onChange={(mode) => set({ mode: mode === 'list' ? undefined : mode })}
+        />
+        {range ? (
+          <>
+            <Field label="From">
+              <NumInput className="short" value={a.from ?? NaN} onChange={(from) => set({ from: Number.isFinite(from) ? from : undefined })} />
+            </Field>
+            <Field label="to" title={`The last value: the ${of} spread evenly from the first to it (empty: by the step)`}>
+              <NumInput className="short" value={a.to ?? NaN} placeholder="or a step" onChange={(to) => set({ to: Number.isFinite(to) ? to : undefined })} />
+            </Field>
+            <Field label="step" title="The step from one to the next (it wins over the last value)">
+              <NumInput className="short" value={a.step ?? NaN} placeholder="auto" onChange={(step) => set({ step: Number.isFinite(step) ? step : undefined })} />
+            </Field>
+          </>
+        ) : (
+          <TextInput className="grow" value={a.list ?? ''} placeholder={of === 'rows' ? '0, 5, 10, 15 or A, B, C' : '400, 410, 420 or Sample 1, Sample 2'} title={`One for each of the ${of}, separated by commas, semicolons or new lines: numbers are their coordinates (for the plots), other texts their names`} onChange={(list) => set({ list: list || undefined })} />
+        )}
+      </span>
+      <span>Its name</span>
+      <TextInput value={a.name ?? ''} placeholder={of === 'rows' ? 'Y, e.g. Time (s)' : 'X, e.g. Wavelength (nm)'} title="What the values are, with their unit: the axis title on the plots" onChange={(name) => set({ name: name || undefined })} />
+    </>
+  );
+}
+
 export function MatrixNodeView({ id, data: d }: NodeProps<MatrixNode>) {
   const { updateNodeData } = useReactFlow<AppNode>();
   const r = useNodeResult(id);
@@ -271,9 +312,10 @@ export function MatrixNodeView({ id, data: d }: NodeProps<MatrixNode>) {
             <Select
               value={d.rowAt}
               title="The Y of every row (kept by the matrix: Contour ▸ Matrix ▸ Axes from ▸ X and Y)"
-              options={[['', 'auto: the column designated X'], ['-', 'none (the row numbers)'], ...names.map((x): [string, string] => [x, x])]}
+              options={[['', 'auto: the column designated X'], ['-', 'none (the row numbers)'], ['#custom', 'custom: a list or a range'], ...names.map((x): [string, string] => [x, x])]}
               onChange={(rowAt) => set({ rowAt })}
             />
+            {d.rowAt === '#custom' && <MatAxisEditor value={d.rowCustom} of="rows" onChange={(rowCustom) => set({ rowCustom })} />}
             <span>Columns' X</span>
             <Select<MatSource['colAt']>
               value={d.colAt}
@@ -281,9 +323,37 @@ export function MatrixNodeView({ id, data: d }: NodeProps<MatrixNode>) {
                 ['auto', 'auto: the numbers in their names, if all have one'],
                 ['names', 'the numbers in their names (R 400 nm → 400)'],
                 ['index', 'none (the column numbers)'],
+                ['custom', 'custom: a list or a range'],
               ]}
               onChange={(colAt) => set({ colAt })}
             />
+            {d.colAt === 'custom' && <MatAxisEditor value={d.colCustom} of="columns" onChange={(colCustom) => set({ colCustom })} />}
+          </>
+        )}
+        {d.source !== 'dataset' && (
+          <>
+            <span>Rows' Y</span>
+            <Select<string>
+              value={d.rowAt === '#custom' ? '#custom' : '-'}
+              title="The Y of every row (kept by the matrix: Contour ▸ Matrix ▸ Axes from ▸ X and Y), or their names"
+              options={[
+                ['-', 'none (the row numbers)'],
+                ['#custom', 'custom: a list or a range'],
+              ]}
+              onChange={(rowAt) => set({ rowAt })}
+            />
+            {d.rowAt === '#custom' && <MatAxisEditor value={d.rowCustom} of="rows" onChange={(rowCustom) => set({ rowCustom })} />}
+            <span>Columns' X</span>
+            <Select<string>
+              value={d.colAt === 'custom' ? 'custom' : 'index'}
+              title="The X of every column, or their names"
+              options={[
+                ['index', 'none (the column numbers)'],
+                ['custom', 'custom: a list or a range'],
+              ]}
+              onChange={(colAt) => set({ colAt: colAt as MatSource['colAt'] })}
+            />
+            {d.colAt === 'custom' && <MatAxisEditor value={d.colCustom} of="columns" onChange={(colCustom) => set({ colCustom })} />}
           </>
         )}
       </div>

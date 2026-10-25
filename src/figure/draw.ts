@@ -159,7 +159,40 @@ export function runMath(r: Run, st: ResolvedText) {
 }
 // The height of a line: a formula taller than the text makes room for itself.
 export const lineHeightOf = (lines: Run[][], st: ResolvedText) => Math.max(st.size * 1.2, ...lines.flatMap((l) => l.filter((r) => r.math).map((r) => { const m = runMath(r, st); return m.h + m.d + 0.25 * st.size; })));
-export const textRunWidth = (r: Run, st: ResolvedText) => [...r.t].reduce((b, ch) => b + charEm(ch), 0) * runSize(r, st.size) * (r.bold || st.bold ? 1.07 : 1);
+// The width of a text in another font than Arial / Helvetica: the estimate above (made for them, kept as it is) times
+// how much wider the text is in that font: from the widths of the standard PDF fonts (Adobe's AFM, 1/1000 em) for the
+// printable ASCII: Helvetica, Times, Courier (every one 600); Calibri, Verdana, Cambria, Georgia scaled from them
+const HELV = [278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, 1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556, 333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584];
+const TIMES = [250, 333, 408, 500, 500, 833, 778, 180, 333, 333, 500, 564, 250, 333, 250, 278, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 278, 278, 564, 564, 564, 444, 921, 722, 667, 667, 722, 611, 556, 722, 722, 333, 389, 722, 611, 889, 722, 722, 556, 722, 667, 556, 611, 722, 722, 944, 722, 722, 611, 333, 278, 333, 469, 500, 333, 444, 500, 444, 500, 444, 333, 500, 500, 278, 278, 500, 278, 778, 500, 500, 500, 500, 333, 389, 278, 500, 500, 722, 500, 500, 444, 480, 200, 480, 541];
+type Face = { table: number[] | 600; k: number };
+export function fontFace(font: string): Face | null {
+  const f = font.split(',')[0].replace(/['"]/g, '').trim().toLowerCase();
+  if (/courier|mono|consol|menlo/.test(f)) return { table: 600, k: 1 };
+  if (/times/.test(f)) return { table: TIMES, k: 1 };
+  if (/cambria|caladea/.test(f)) return { table: TIMES, k: 1.08 };
+  if (/georgia/.test(f)) return { table: TIMES, k: 1.14 };
+  if (/verdana/.test(f)) return { table: HELV, k: 1.14 };
+  if (/calibri|carlito/.test(f)) return { table: HELV, k: 0.9 };
+  if (f === 'serif') return { table: TIMES, k: 1 };
+  return null; // Arial, Helvetica, any other sans-serif: the estimate as it is
+}
+const afm = (t: number[] | 600, ch: string) => {
+  const c = ch.charCodeAt(0);
+  return t === 600 ? 600 : c >= 32 && c <= 126 ? t[c - 32] : 556;
+};
+// how much wider a text is in the font than in Helvetica (1: the same)
+export function fontRatio(text: string, font: string | undefined): number {
+  const face = font ? fontFace(font) : null;
+  if (!face || !text) return 1;
+  let mine = 0;
+  let helv = 0;
+  for (const ch of text) {
+    mine += afm(face.table, ch);
+    helv += afm(HELV, ch);
+  }
+  return helv > 0 ? (mine / helv) * face.k : 1;
+}
+export const textRunWidth = (r: Run, st: ResolvedText) => [...r.t].reduce((b, ch) => b + charEm(ch), 0) * runSize(r, st.size) * (r.bold || st.bold ? 1.07 : 1) * fontRatio(r.t, r.font ?? st.font);
 export function richMetrics(text: string, st: ResolvedText): { widths: number[]; width: number; lines: number; lineHeight: number } {
   const lines = parseRich(text);
   const widths = lines.map((l) => l.reduce((a, r) => a + (r.math ? runMath(r, st).w : textRunWidth(r, st)), 0));

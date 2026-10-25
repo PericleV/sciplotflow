@@ -11,7 +11,7 @@ import { coarsen, contourLines, type Grid } from './contour.ts';
 import { hiddenBy, type HideSpec } from './hide.ts';
 import { maxOf, minOf } from './minmax.ts';
 import { mapColor, mapT, stopsOf } from '../figure/colors.ts';
-import { curveStyle, PALETTE, type ColorMapName, type Curve, type Dash, type ElementLook, type Head3D, type P3, type SymbolFill, type SymbolShape, type ThreeLine, type ThreePlane, type ThreePoints, type ThreeScene } from '../figure/spec.ts';
+import { curveStyle, PALETTE, type ColorMapName, type Curve, type Dash, type ElementLook, type Head3D, type P3, type SymbolFill, type SymbolShape, type Axis3D, type ThreeLine, type ThreePlane, type ThreePoints, type ThreeScene } from '../figure/spec.ts';
 
 export type Plot3DKind = 'surface' | 'wireframe' | 'bars' | 'scatter' | 'lines' | 'waterfall' | 'layers';
 // A layer of stacked maps: its name, its height (NaN: the group's value, else 1, 2, 3 …), shown or not, its opacity. In
@@ -48,6 +48,7 @@ export type Mark3D = {
   label?: string;
   labelSize?: number;
   proj?: { floor?: boolean; x?: boolean; y?: boolean };
+  place?: 'depth' | 'front' | 'back'; // drawn by its depth with the data (absent), in front of them, or behind them
 };
 export type Plot3DSpec = {
   kind: Plot3DKind;
@@ -165,6 +166,9 @@ export type Plot3DSpec = {
   curtain?: boolean;
   curtainColor?: string;
   curtainOpacity?: number;
+  curtainBy?: 'surface'; // its colours those of the surface's edge, continued down (absent: one colour)
+  // the axes X, Y, Z: their own look (Axes tab)
+  axis3?: { x?: Axis3D; y?: Axis3D; z?: Axis3D };
   // the limits of the axes (an end null / absent: the data's); what is outside the box cut
   xLim?: [number | null, number | null];
   yLim?: [number | null, number | null];
@@ -247,7 +251,9 @@ function markLines(marks: Mark3D[] | undefined, zr: [number, number], cuts: numb
   const out: ThreeLine[] = [];
   for (const m of marks ?? []) {
     const color = m.color || '#000000';
+    const place = m.place === 'front' || m.place === 'back' ? { place: m.place } : {};
     const look = {
+      ...place,
       color,
       width: m.width > 0 ? m.width : 0.8,
       dash: m.dash || 'dash',
@@ -256,11 +262,11 @@ function markLines(marks: Mark3D[] | undefined, zr: [number, number], cuts: numb
     };
     const z1 = Number.isFinite(m.z1) ? m.z1 : zr[0];
     const z2 = Number.isFinite(m.z2) ? m.z2 : zr[1];
-    const label = (at: P3) => m.label?.trim() && (scene.labels ??= []).push({ at, text: m.label, color, size: m.labelSize && m.labelSize > 0 ? m.labelSize : 0 });
+    const label = (at: P3) => m.label?.trim() && (scene.labels ??= []).push({ at, text: m.label, color, size: m.labelSize && m.labelSize > 0 ? m.labelSize : 0, ...place });
     if (m.type === 'point') {
       const p: P3 = [m.x1, m.y1, z1];
       if (!p.every(Number.isFinite)) continue;
-      scene.points.push({ pts: [p], colors: [color], symbol: m.symbol ?? 'circle', size: m.size && m.size > 0 ? m.size : 4, fill: 'filled', edge: 0.5, drop: !!m.drop, depthShade: false });
+      scene.points.push({ pts: [p], colors: [color], symbol: m.symbol ?? 'circle', size: m.size && m.size > 0 ? m.size : 4, fill: 'filled', edge: 0.5, drop: !!m.drop, depthShade: false, ...place });
       if (look.proj) out.push({ ...look, planar: false, pts: [p, p], width: 0 });
       label(p);
       continue;
@@ -318,6 +324,7 @@ export function plot3d(data: Plot3DInput, d: Plot3DSpec): { curves: Curve[]; col
     grid: d.gridColor,
     ...(d.gridWalls === 'floor' ? { gridWalls: [false, false, true] as [boolean, boolean, boolean] } : {}),
     ...(d.gridMinor ? { gridMinor: true } : {}),
+    ...(d.axis3 ? { axes: [d.axis3.x, d.axis3.y, d.axis3.z] } : {}),
     edges: d.edges,
     edgeColor: '#000000',
     ...(d.cam && d.cam.k > 0 && (d.cam.k !== 1 || d.cam.dx || d.cam.dy) ? { cam: { k: d.cam.k, dx: d.cam.dx || 0, dy: d.cam.dy || 0 } } : {}),
@@ -404,7 +411,17 @@ export function plot3d(data: Plot3DInput, d: Plot3DSpec): { curves: Curve[]; col
       if (d.curtain) {
         const color = d.curtainColor || (d.colorBy === 'single' ? d.color || '#4878d0' : mapColor(stops, 0.5));
         const opacity = d.curtainOpacity !== undefined && d.curtainOpacity > 0 ? Math.min(1, d.curtainOpacity) : 0.6;
-        const edge = (pts: P3[]) => scene.lines.push({ pts, color, width: 0.5, dash: 'solid', planar: true, fill: { color, opacity } });
+        // like the surface: every piece of the edge in the colour of its top (as the cells above it), continued down
+        const bySurface = d.curtainBy === 'surface' && d.colorBy !== 'single';
+        const edge = (pts: P3[]) => {
+          if (!bySurface) return void scene.lines.push({ pts, color, width: 0.5, dash: 'solid', planar: true, fill: { color, opacity } });
+          for (let k = 0; k < pts.length - 1; k++) {
+            const top = (pts[k][2] + pts[k + 1][2]) / 2;
+            if (!Number.isFinite(top)) continue;
+            const c = mapColor(stops, tOf(top));
+            scene.lines.push({ pts: [pts[k], pts[k + 1]], color: c, width: 0.5, dash: 'solid', planar: true, fill: { color: c, opacity } });
+          }
+        };
         edge(g.xs.map((x, i): P3 => [x, g.ys[0], g.z[i]]));
         edge(g.xs.map((x, i): P3 => [x, g.ys[ny - 1], g.z[(ny - 1) * nx + i]]));
         edge(g.ys.map((y, j): P3 => [g.xs[0], y, g.z[j * nx]]));
@@ -530,6 +547,10 @@ export function plot3d(data: Plot3DInput, d: Plot3DSpec): { curves: Curve[]; col
   clipScene(scene, d);
   // the lines and rectangles marked (cut at the layers' heights)
   scene.lines.push(...markLines(d.marks, scene.range.z, (scene.planes ?? []).map((p) => p.z), scene));
+  // a reversed axis: its range from the highest to the lowest (the box drawn the other way along it)
+  if (d.axis3?.x?.reverse) scene.range.x = [scene.range.x[1], scene.range.x[0]];
+  if (d.axis3?.y?.reverse) scene.range.y = [scene.range.y[1], scene.range.y[0]];
+  if (d.axis3?.z?.reverse) scene.range.z = [scene.range.z[1], scene.range.z[0]];
   const layered = data.kind === 'layers';
   const colorRange = zr && (layered || (d.colorBy !== 'single' && d.colorBy !== 'group')) ? zr : null;
   const main: Curve = {
