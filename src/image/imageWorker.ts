@@ -8,7 +8,7 @@
 // selections and the particles of the mask (on all the steps, once the image shown is done; given up when a newer
 // image is asked for), the wand's outline, the centre of a spot stamped: asked apart. The examples of a trainable
 // classifier come with the steps.
-import { cropRaster, histogram, luminance, shrinkRaster, unpackPixels, type Crop, type ImgPixels, type Raster } from './raster.ts';
+import { cropRaster, dataBarApart, histogram, luminance, shrinkRaster, unpackPixels, type Crop, type ImgPixels, type Raster } from './raster.ts';
 import { measureInputs, measureRois, type MeasureSpec } from './measure.ts';
 import { fillPolygon, polygonArea, wand, type Pt, type Roi } from './roi.ts';
 import { findParticles, PARTICLE_DEFAULTS, type ParticleOpts } from './particles.ts';
@@ -19,7 +19,7 @@ import { spectrum } from './fft2d.ts';
 import { refineSpot } from './lattice.ts';
 // the last spectrum's magnitudes (a spot clicked on it found on them)
 let lastSpectrum: { mag: Float32Array; N: number } | null = null;
-import type { TrainExample } from './classify.ts';
+import { trainKeyOf, type TrainExample } from './classify.ts';
 import type { Workbook } from '../engine/table.ts';
 import { applyStep, STEP_DEFS, type ImgStep } from './steps.ts';
 import { toRGBA, type Lut } from './render.ts';
@@ -74,6 +74,10 @@ export type CentreRequest = { type: 'centre'; poly: Pt[]; dark: boolean; id: str
 export type CentreReply = { type: 'centre'; id: string; dx: number; dy: number };
 // what comes into a step: its range, and its histograms for the steps drawn on them (gray [its values]; RGB
 // [luminance, R, G, B]; others: none)
+// how far a long piece of work is (the page shows it over the image): of: the work (the image's steps at full size, the
+// particles, Find like this, Refine); what it is doing; done of total when they can be counted; step: the step being
+// computed (its id)
+export type ProgressReply = { type: 'progress'; of: 'image' | 'particles' | 'match' | 'refine'; stage: string; done?: number; total?: number; step?: string };
 export type StepHist = { lo: number; hi: number; h: Float64Array[] };
 export type ImgReply = {
   type: 'image';
@@ -121,9 +125,10 @@ function basesFor(q: ImgRequest): NonNullable<typeof bases> {
 // the steps up to upTo on one size: from the last result kept that is still the same; null when it is no longer
 // wanted (a newer request came); outs: the image after every step
 type Run = { r: Raster; prev: Raster; outs: Raster[]; notes: Record<string, string>; errors: Record<string, string>; stepHist: Record<string, StepHist> };
-async function run(steps: ImgStep[], upTo: number, size: 'full' | 'small', base: Raster, scale: number, stale: () => boolean, keep = true, train: TrainExample[] = []): Promise<Run | null> {
+// (of: the work it is part of, told of every step computed at full size)
+async function run(steps: ImgStep[], upTo: number, size: 'full' | 'small', base: Raster, scale: number, stale: () => boolean, keep = true, train: TrainExample[] = [], of?: ProgressReply['of']): Promise<Run | null> {
   // (a trainable classifier's key: its examples too)
-  const trainKey = JSON.stringify(train);
+  const trainKey = trainKeyOf(train);
   const kept = stages[size];
   const outs: Raster[] = [];
   const notes: Record<string, string> = {};
@@ -159,6 +164,7 @@ async function run(steps: ImgStep[], upTo: number, size: 'full' | 'small', base:
     kept.length = k;
     let st: Stage = { key, r };
     if (s.on && s.kind in STEP_DEFS) {
+      if (of && size === 'full') post({ type: 'progress', of, stage: `step ${k + 1} of ${upTo}: ${STEP_DEFS[s.kind].label}`, done: k, total: upTo, step: s.id } satisfies ProgressReply);
       const out = applyStep(r, s, scale, { train, under });
       if (typeof out === 'string') st = { key, r, error: out };
       else st = { key, r: out.r, ...(out.note ? { note: out.note } : {}) };
@@ -185,7 +191,7 @@ async function answer(q: ImgRequest) {
       await new Promise((res) => setTimeout(res, 250));
       if (q.seq !== latest) return;
     }
-    const out = await run(q.steps, q.upTo, size, base, scale, () => q.seq !== latest, !!q.keep, q.train);
+    const out = await run(q.steps, q.upTo, size, base, scale, () => q.seq !== latest, !!q.keep, q.train, 'image');
     if (!out || q.seq !== latest) return;
     const { r, prev, notes, errors, stepHist } = out;
     const show = (x: Raster) => (x.kind === 'mask' && q.overlay ? toRGBA(x, { under: base, lut: q.lut, color: q.overlay.color, alpha: q.overlay.alpha }) : toRGBA(x, { lut: q.lut, lo: q.lo, hi: q.hi }));
@@ -220,7 +226,8 @@ async function particles(m: ParticlesRequest) {
   await imageRun;
   if (!kept) return;
   const b = basesFor({ seq: latest, steps: m.steps, upTo: 0, lut: 'gray', ...(m.crop ? { crop: m.crop } : {}) });
-  const out = await run(m.steps, m.steps.length, 'full', b.full, 1, () => false, true, m.train);
+  const out = await run(m.steps, m.steps.length, 'full', b.full, 1, () => false, true, m.train, 'particles');
+  post({ type: 'progress', of: 'particles', stage: m.opts.method === 'rays' ? 'seeds and rays' : 'the particles of the mask' } satisfies ProgressReply);
   const mask = out ? measureInputs(b.full, out.outs, m.steps, 'original').mask : null;
   // seeds and rays: on the last image of the steps that is not a mask (its seeds from the mask when there is one)
   if (m.opts.method === 'rays') {
@@ -249,19 +256,26 @@ async function match(m: MatchRequest) {
   if (!kept) return;
   const t0 = performance.now();
   const b = basesFor({ seq: latest, steps: m.steps, upTo: 0, lut: 'gray', ...(m.crop ? { crop: m.crop } : {}) });
-  const out = await run(m.steps, m.steps.length, 'full', b.full, 1, () => false, true, m.train);
+  const out = await run(m.steps, m.steps.length, 'full', b.full, 1, () => false, true, m.train, 'match');
   // (the image of the step chosen, unless it is a mask; else the last that is not one)
   const at = m.image ? m.steps.findIndex((s) => s.id === m.image) : -1;
   const chosen = at >= 0 ? out?.outs[at] : undefined;
   const note = chosen?.kind === 'mask' ? 'the step chosen gives a mask: compared on the last image that is not one' : at < 0 && m.image ? 'the step chosen is not there any more: compared on the last image that is not a mask' : undefined;
-  const img = (chosen && chosen.kind !== 'mask' ? chosen : undefined) ?? [...(out?.outs ?? [])].reverse().find((x) => x.kind !== 'mask') ?? b.full;
+  const img0 = (chosen && chosen.kind !== 'mask' ? chosen : undefined) ?? [...(out?.outs ?? [])].reverse().find((x) => x.kind !== 'mask') ?? b.full;
+  // (the data bar of an electron microscope under the image, when it was not cut: left out — its dark band and white
+  // text, next to the ground, look like a particle's edge; only the places whose compared area is above it)
+  const bar = dataBarApart(b.full);
+  const img = bar ? { ...img0, h: img0.h - bar, ch: img0.ch.map((c) => c.subarray(0, img0.w * (img0.h - bar))) } : img0;
   const g = img.ch.length === 1 ? img.ch[0] : luminance(img);
   // (every model's matches, those like a place left out by hand dropped; where several models found the same particle,
   // the most alike kept)
   let dropped = 0;
   const all = m.models.flatMap((md, k) => {
     const o = { ...MATCH_DEFAULTS, ...m.opts, ...md.opts };
-    const found = findLike(g, img.w, img.h, md.cx, md.cy, md.R, o, md.poly, md.outer);
+    const of = m.models.length > 1 ? `model ${k + 1} of ${m.models.length}: ` : '';
+    const found = findLike(g, img.w, img.h, md.cx, md.cy, md.R, o, md.poly, md.outer, (stage, done, total) =>
+      post({ type: 'progress', of: 'match', stage: `${of}${stage === 'first' ? 'the first search, on the image shrunk' : 'the candidates looked at closely'}`, done, total } satisfies ProgressReply),
+    );
     const kept2 = md.rejected?.length ? dropLikeRejected(g, img.w, img.h, found, md.rejected, md.R, o, md.cx, md.cy, md.poly, md.outer) : found;
     dropped += found.length - kept2.length;
     return kept2.map((f) => ({ ...f, model: k }));
@@ -280,6 +294,7 @@ async function match(m: MatchRequest) {
   };
   const best: typeof all = [];
   for (const f of all) if (!best.some((q) => same(q, f))) best.push(f);
+  post({ type: 'progress', of: 'match', stage: 'what each particle found is like (for Review)' } satisfies ProgressReply);
   // (every place its features, against its model)
   const feats = new Map<(typeof all)[number], number[]>();
   m.models.forEach((md, k) => {
@@ -305,16 +320,22 @@ async function match(m: MatchRequest) {
     const fb = fitBox(g, img.w, img.h, f.x, f.y, box.angle + f.angle, box.w * f.scale, box.h * f.scale, limit);
     return { ...f, x: fb.x, y: fb.y, w: fb.w, h: fb.h, x0: f.x, y0: f.y, ...(ff ? { f: ff } : {}) };
   });
-  post({ type: 'match', matches, ms: Math.round(performance.now() - t0), dropped, ...(note ? { note } : {}) } satisfies MatchReply);
+  const said = [note, bar ? `the data bar under the image (${bar} px) left out` : ''].filter(Boolean).join('; ');
+  post({ type: 'match', matches, ms: Math.round(performance.now() - t0), dropped, ...(said ? { note: said } : {}) } satisfies MatchReply);
 }
 async function refine(m: RefineRequest) {
   await imageRun;
   if (!kept) return;
   const b = basesFor({ seq: latest, steps: m.steps, upTo: 0, lut: 'gray', ...(m.crop ? { crop: m.crop } : {}) });
-  const out = await run(m.steps, m.steps.length, 'full', b.full, 1, () => false, true, m.train);
+  const out = await run(m.steps, m.steps.length, 'full', b.full, 1, () => false, true, m.train, 'refine');
   const img = [...(out?.outs ?? [])].reverse().find((x) => x.kind !== 'mask') ?? b.full;
   const g = img.ch.length === 1 ? img.ch[0] : luminance(img);
-  const fits = m.outlines.map((o) => {
+  let told = 0;
+  const fits = m.outlines.map((o, i) => {
+    if (performance.now() - told > 100) {
+      told = performance.now();
+      post({ type: 'progress', of: 'refine', stage: 'the shapes fitted', done: i, total: m.outlines.length } satisfies ProgressReply);
+    }
     const f = fitRegular(o, m.shapes);
     return f && m.snap ? snapToEdges(f, g, img.w, img.h) : f;
   });

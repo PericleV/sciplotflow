@@ -6,13 +6,18 @@
 import { gaussian, luminance, type Raster } from './raster.ts';
 import { hessianEigen, varianceFilter } from './filters.ts';
 import { fillPolygon, isArea, roiOutline, type Pt, type Roi } from './roi.ts';
+import { trainBoosted, trainMlp, type PixelModel } from './pixelModels.ts';
 
 // the colours of the classes (their examples drawn in them)
 export const CLASS_COLORS = ['#ff453a', '#0a84ff', '#30d158', '#ffd60a', '#bf5af2', '#ff9f0a', '#64d2ff'];
 export const classColor = (classes: string[], c: string) => CLASS_COLORS[Math.max(0, classes.indexOf(c)) % CLASS_COLORS.length];
 // an example: its class, its outline (an area) or its line (pixels along it, `width` across), in pixels of the image
 // classified
-export type TrainExample = { cls: string; pts: Pt[]; line: boolean; width: number };
+// px: pixels painted (their indices in the part analysed, pw wide) instead of an outline or a line; key: what tells them
+// apart
+export type TrainExample = { cls: string; pts: Pt[]; line: boolean; width: number; px?: Int32Array; pw?: number; key?: string };
+// the examples as a key (the pixels painted by their key: not every index)
+export const trainKeyOf = (ex: TrainExample[]) => JSON.stringify(ex, (k, v: unknown) => (k === 'px' ? undefined : v));
 
 // The examples among the selections (those given a class), in pixels of the part analysed (its corner at ox, oy of the
 // original): an area, or a line (any other: its points joined) 3 px wide unless it says
@@ -76,6 +81,19 @@ export function pixelFeatures(r: Raster, scale = 1): { names: string[]; f: Float
   return { names, f };
 }
 
+// The features of an image kept for the next examples: they do not depend on them, and are most of the time a training
+// takes (the two last images: the preview and the full size the editor computes in turn). Kept by the image's own
+// arrays (the steps before give the same arrays while they do not change) and the scale
+const featureCache: { key: Float32Array[]; scale: number; out: ReturnType<typeof pixelFeatures> }[] = [];
+export function featuresOf(r: Raster, scale = 1): ReturnType<typeof pixelFeatures> {
+  const hit = featureCache.find((e) => e.scale === scale && e.key.length === r.ch.length && e.key.every((c, j) => c === r.ch[j]));
+  if (hit) return hit.out;
+  const out = pixelFeatures(r, scale);
+  featureCache.unshift({ key: r.ch, scale, out });
+  featureCache.length = Math.min(featureCache.length, 2);
+  return out;
+}
+
 // Edges made from the outlines of the objects: the pixels just outside every area example of the class `from` (within
 // `ring` px of it, inside none of them) — the ring around a particle outlined, and the gap where two outlined ones touch
 export function edgeRing(ex: TrainExample[], from: string, ring: number, w: number, h: number): number[] {
@@ -84,6 +102,15 @@ export function edgeRing(ex: TrainExample[], from: string, ring: number, w: numb
   const inside = new Uint8Array(w * h);
   let [x0, y0, x1, y1] = [w, h, -1, -1];
   for (const e of areas) {
+    // (painted: its pixels)
+    if (e.px) {
+      for (const i of e.px) {
+        const [gx, gy] = [i % w, Math.floor(i / w)];
+        inside[i] = 1;
+        [x0, y0, x1, y1] = [Math.min(x0, gx), Math.min(y0, gy), Math.max(x1, gx), Math.max(y1, gy)];
+      }
+      continue;
+    }
     const win = fillPolygon(e.pts, w, h);
     for (let y = 0; y < win.h; y++)
       for (let x = 0; x < win.w; x++)
@@ -123,6 +150,10 @@ export function examplePixels(ex: TrainExample[], w: number, h: number, auto?: {
   for (const e of ex) {
     const list = out.get(e.cls) ?? [];
     out.set(e.cls, list);
+    if (e.px) {
+      for (const i of e.px) if (i < w * h) list.push(i);
+      continue;
+    }
     if (!e.line) {
       const win = fillPolygon(e.pts, w, h);
       for (let y = 0; y < win.h; y++) for (let x = 0; x < win.w; x++) if (win.m[y * win.w + x]) list.push((win.y0 + y) * w + win.x0 + x);
@@ -174,7 +205,9 @@ export type Forest = { trees: Tree[]; classes: string[]; nf: number };
 
 // trained on the samples (x[f][s]: feature f of sample s; y: their classes): trees on bootstrap samples, at every node
 // √F features tried at 8 thresholds each (values of samples there) — the split that lowers the Gini impurity most
-export function trainForest(x: Float32Array[], y: Uint8Array, classes: string[], o: { trees: number; depth: number; minLeaf: number; seed: number }): Forest {
+// extra: extremely randomized trees (Geurts, Ernst and Wehenkel 2006): every tree on all the samples, at every node √F
+// features each tried at one threshold drawn between their least and largest value there
+export function trainForest(x: Float32Array[], y: Uint8Array, classes: string[], o: { trees: number; depth: number; minLeaf: number; seed: number; extra?: boolean }): Forest {
   const nf = x.length;
   const nc = classes.length;
   const ns = y.length;
@@ -184,7 +217,7 @@ export function trainForest(x: Float32Array[], y: Uint8Array, classes: string[],
   for (let t = 0; t < o.trees; t++) {
     const cap = 2 * ns + 1;
     const tr: Tree = { feat: new Int32Array(cap).fill(-1), thr: new Float32Array(cap), left: new Int32Array(cap), right: new Int32Array(cap), prob: new Float32Array(cap * nc), size: 0 };
-    const idx = Int32Array.from({ length: ns }, () => Math.floor(rnd() * ns));
+    const idx = Int32Array.from({ length: ns }, (_, s) => (o.extra ? s : Math.floor(rnd() * ns)));
     const counts = new Float64Array(nc);
     const cl = new Float64Array(nc);
     const grow = (from: number, to: number, depth: number): number => {
@@ -200,8 +233,16 @@ export function trainForest(x: Float32Array[], y: Uint8Array, classes: string[],
         for (let m = 0; m < mtry; m++) {
           const f = Math.floor(rnd() * nf);
           const xf = x[f];
-          for (let q = 0; q < 8; q++) {
-            const th = xf[idx[from + Math.floor(rnd() * n)]];
+          let [lo, hi] = [Infinity, -Infinity];
+          if (o.extra)
+            for (let i = from; i < to; i++) {
+              const v = xf[idx[i]];
+              if (v < lo) lo = v;
+              if (v > hi) hi = v;
+            }
+          if (o.extra && !(hi > lo)) continue;
+          for (let q = 0; q < (o.extra ? 1 : 8); q++) {
+            const th = o.extra ? lo + rnd() * (hi - lo) : xf[idx[from + Math.floor(rnd() * n)]];
             cl.fill(0);
             let nl = 0;
             for (let i = from; i < to; i++) {
@@ -270,11 +311,16 @@ export function predictForest(forest: Forest, f: Float32Array[], n: number): Flo
 // The classes of the examples (in the order first met), the forest trained on at most `perClass` pixels of each, the
 // share of the votes for every class at every pixel; null with fewer than two classes of examples. auto: edges made
 // from the outlines (examplePixels)
-export function classifyPixels(r: Raster, ex: TrainExample[], o: { trees: number; scale?: number; perClass?: number; seed?: number; auto?: { from: string; to: string; ring: number } }): { classes: string[]; prob: Float32Array[]; samples: number[] } | null {
+// method: the learner (the random forest, extremely randomized trees, gradient boosted trees, a small neural network, or
+// auto: the most often right)
+export type PixelMethod = 'forest' | 'extra' | 'boost' | 'mlp';
+export const PIXEL_METHODS: PixelMethod[] = ['forest', 'extra', 'boost', 'mlp'];
+export const PIXEL_LABELS: Record<PixelMethod, string> = { forest: 'random forest', extra: 'extra trees', boost: 'boosted trees', mlp: 'neural network' };
+export function classifyPixels(r: Raster, ex: TrainExample[], o: { trees: number; scale?: number; perClass?: number; seed?: number; auto?: { from: string; to: string; ring: number }; method?: PixelMethod | 'auto' }): { classes: string[]; prob: Float32Array[]; samples: number[]; method: PixelMethod; accuracy?: Partial<Record<PixelMethod, number>> } | null {
   const px = examplePixels(ex, r.w, r.h, o.auto);
   const classes = [...px.keys()].filter((c) => (px.get(c)?.length ?? 0) > 0);
   if (classes.length < 2) return null;
-  const { f } = pixelFeatures(r, o.scale ?? 1);
+  const { f } = featuresOf(r, o.scale ?? 1);
   const rnd = rng(o.seed ?? 7);
   const per = o.perClass ?? 3000;
   const sample: number[] = [];
@@ -299,8 +345,50 @@ export function classifyPixels(r: Raster, ex: TrainExample[], o: { trees: number
     for (let s = 0; s < sample.length; s++) v[s] = c[sample[s]];
     return v;
   });
-  const forest = trainForest(x, Uint8Array.from(lab), classes, { trees: Math.max(1, Math.round(o.trees)), depth: 14, minLeaf: 2, seed: o.seed ?? 7 });
-  return { classes, prob: predictForest(forest, f, r.w * r.h), samples };
+  const y = Uint8Array.from(lab);
+  const nc = classes.length;
+  const trees = Math.max(1, Math.round(o.trees));
+  const seed = o.seed ?? 7;
+  const train = (m: PixelMethod, xs: Float32Array[], ys: Uint8Array): PixelModel => {
+    if (m === 'boost') return trainBoosted(xs, ys, nc, trees);
+    if (m === 'mlp') return trainMlp(xs, ys, nc, seed);
+    const forest = trainForest(xs, ys, classes, { trees, depth: 14, minLeaf: 2, seed, extra: m === 'extra' });
+    return { predict: (fs, n) => predictForest(forest, fs, n) };
+  };
+  // (auto: every method trained on three quarters of the samples, the one most often right on the quarter kept out —
+  // the mean of the classes' parts right —; then trained on all of them)
+  let method: PixelMethod = o.method && o.method !== 'auto' ? o.method : 'forest';
+  let accuracy: Partial<Record<PixelMethod, number>> | undefined;
+  if (o.method === 'auto') {
+    const out = Array.from({ length: y.length }, (_, s) => s).filter((s) => s % 4 === 0);
+    const kept = Array.from({ length: y.length }, (_, s) => s).filter((s) => s % 4 !== 0);
+    const part = (idx: number[]) => x.map((c) => Float32Array.from(idx, (s) => c[s]));
+    const [xk, xo] = [part(kept), part(out)];
+    const yk = Uint8Array.from(kept, (s) => y[s]);
+    accuracy = {};
+    for (const m of PIXEL_METHODS) {
+      const pr = train(m, xk, yk).predict(xo, out.length);
+      const [right, all] = [new Float64Array(nc), new Float64Array(nc)];
+      out.forEach((s, i) => {
+        let best = 0;
+        for (let c = 1; c < nc; c++) if (pr[c][i] > pr[best][i]) best = c;
+        all[y[s]]++;
+        if (best === y[s]) right[y[s]]++;
+      });
+      let acc = 0;
+      let k = 0;
+      for (let c = 0; c < nc; c++)
+        if (all[c]) {
+          acc += right[c] / all[c];
+          k++;
+        }
+      accuracy[m] = k ? acc / k : 0;
+      if (accuracy[m]! > accuracy[method]! || accuracy[method] === undefined) method = m;
+    }
+  }
+  const n = r.w * r.h;
+  const prob = train(method, x, y).predict(f, n);
+  return { classes, prob, samples, method, ...(accuracy ? { accuracy } : {}) };
 }
 
 // ---- what is made of the votes ----

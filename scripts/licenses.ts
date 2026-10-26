@@ -40,6 +40,20 @@ for (const [file, name, what] of FOLLOWED) {
   const text = readFileSync(join(root, 'scripts', 'licenses', file), 'utf8').trim();
   items.push(`${'='.repeat(78)}\n${name}: code followed closely in places: ${what}\n${'-'.repeat(78)}\n${text}\n`);
 }
-const head = `Third-party software in ${own.name}\n\nThe app is built with the open-source packages below; each is under its own licence, whose full text follows. At\nthe end: the Python libraries whose code parts of the app follow closely, with their notices.\nWhat is loaded only when a Python script runs (Pyodide, numpy, scipy, pandas, matplotlib …), the colour palettes\nand the example data are listed in THIRD_PARTY_NOTICES.md (in the project's sources).\n\n`;
+// the neural networks served with the app (public/models: Segment anything in Image analysis), downloaded only when
+// used: their sources, licences and what was changed
+const MODELS: [string, string][] = [
+  ['MobileSAM (models/mobilesam-encoder.onnx, models/mobilesam-decoder.onnx)', `Zhang et al., Faster Segment Anything: Towards Lightweight SAM for Mobile Applications (arXiv:2306.14289), https://github.com/ChaoningZhang/MobileSAM, built on Segment Anything (Meta AI). Converted to ONNX for this app. Apache License 2.0:
+
+${readFileSync(join(root, 'scripts', 'licenses', 'mobilesam.txt'), 'utf8').trim()}`],
+  ['micro-sam vit_t_em_organelles (models/microsam-em-tiny-encoder.onnx, models/microsam-em-tiny-decoder.onnx)', 'Archit A., Pape C. et al., Segment Anything for Microscopy (doi:10.1101/2023.08.21.554208), https://github.com/computational-cell-analytics/micro-sam. Weights from Zenodo, doi:10.5281/zenodo.11110950 (BioImage.IO model greedy-whale), by Anwai Archit and Constantin Pape. Changed: converted to ONNX (the image encoder and the mask decoder separately). Licence: Creative Commons Attribution 4.0 International (CC BY 4.0), https://creativecommons.org/licenses/by/4.0/'],
+];
+for (const [name, text] of MODELS) items.push(`${'='.repeat(78)}
+Model: ${name}
+${'-'.repeat(78)}
+${text}
+`);
+const head = `Third-party software in ${own.name}\n\nThe app is built with the open-source packages below; each is under its own licence, whose full text follows. At\nthe end: the Python libraries whose code parts of the app follow closely, with their notices, and the neural networks
+served with the app (downloaded only when Segment anything is used).\nWhat is loaded only when a Python script runs (Pyodide, numpy, scipy, pandas, matplotlib …), the colour palettes\nand the example data are listed in THIRD_PARTY_NOTICES.md (in the project's sources).\n\n`;
 writeFileSync(join(root, 'public', 'THIRD_PARTY_LICENSES.txt'), head + items.join('\n'));
-console.log(`${items.length - FOLLOWED.length} packages and ${FOLLOWED.length} followed libraries written to public/THIRD_PARTY_LICENSES.txt`);
+console.log(`${items.length - FOLLOWED.length - MODELS.length} packages, ${FOLLOWED.length} followed libraries and ${MODELS.length} models written to public/THIRD_PARTY_LICENSES.txt`);

@@ -13,15 +13,19 @@ import { createPortal } from 'react-dom';
 import { useReactFlow } from '@xyflow/react';
 import type { AppNode, ImageAnalysisData } from '../types.ts';
 import { STEP_DEFS, STEP_GROUP_LABELS, STEP_GROUPS, newStep, stepClasses, type ImgStep, type StepDef, type StepKind } from '../image/steps.ts';
-import { cropBox, cropRaster, dataBarRows, luminance, unpackPixels, type Crop } from '../image/raster.ts';
+import { cropBox, cropRaster, dataBarApart, dataBarRows, luminance, unpackPixels, type Crop } from '../image/raster.ts';
 import { unitText } from '../image/node.ts';
-import type { CentreReply, ImgReply, ImgRequest, MatchReply, MatchRequest, MeasureReply, MeasureRequest, ParticlesReply, ParticlesRequest, RaysReply, RefineReply, RefineRequest, SpectrumReply, SpectrumRequest, SpotReply, SpotRequest, ValueReply, WandReply } from '../image/imageWorker.ts';
+import type { CentreReply, ImgReply, ImgRequest, MatchReply, MatchRequest, MeasureReply, MeasureRequest, ParticlesReply, ParticlesRequest, ProgressReply, RaysReply, RefineReply, RefineRequest, SpectrumReply, SpectrumRequest, SpotReply, SpotRequest, ValueReply, WandReply } from '../image/imageWorker.ts';
 import { MATCH_DEFAULTS, MATCH_PRESETS, MATCH_TUNING, placeLike, type MatchOpts } from '../image/match.ts';
-import { trainingExamples } from '../image/classify.ts';
+import { trainingExamples, trainKeyOf } from '../image/classify.ts';
+import { classIndex, clearClass, decodePaint, emptyPaint, encodePaint, paintCounts, paintDisc, paintExamples, paintFill, paintSegment, type Box, type PaintLayer } from '../image/paint.ts';
 import { groupLikeExamples, PARTICLE_DEFAULTS, SHAPE_COLORS, shapeFeatures, shapeName, type ParticleOpts } from '../image/particles.ts';
 import { ClassifierEditor, type PaintTool } from './ClassifierEditor.tsx';
-import { EDGE_BAND, type Match, type MatchExample, type MatchModelSpec, type MatchRejected } from '../image/match.ts';
-import { learn } from '../image/learn.ts';
+import { EDGE_BAND, MATCH_TUNING as TUNING, type Match, type MatchExample, type MatchModelSpec, type MatchRejected } from '../image/match.ts';
+import { chooseMethod, enoughToLearn, LEARN_METHODS, learnWith, type LearnChoice, type LearnMethod } from '../image/learn.ts';
+import { outOf, particleFeatures } from '../image/review.ts';
+import { ReviewPanel } from './ReviewPanel.tsx';
+import type { LearnReply, LearnRequest } from '../image/learnWorker.ts';
 import { accuracyOf, type AccuracyResult } from '../image/accuracy.ts';
 import { REGULAR_SHAPES, type RegularShape } from '../image/refine.ts';
 import { estimateLayers } from '../image/layers.ts';
@@ -30,7 +34,11 @@ import { classColor } from '../image/classify.ts';
 import { isArea, moveRoi, nearRoi, roiCentre, roiOutline, TOOL_HINTS, type Pt, type Roi, type RoiKind, type RoiTool } from '../image/roi.ts';
 import { measureSpec, roiPerimeter, type MeasureSpec } from '../image/measure.ts';
 import type { Workbook } from '../engine/table.ts';
-import { Fold, MeasurePanel, ParticlesPanel, RoiOverlay, RoiPanel } from './RoiManager.tsx';
+import { Fold, MeasurePanel, ParticlesPanel, RoiOverlay, RoiPanel, ToolOptions } from './RoiManager.tsx';
+import { BusyCard, MethodCards, TaskSteps, type Job } from './ImageTasks.tsx';
+import { SAM_CACHE, SAM_DEFAULTS, SAM_ENGINE, SAM_MODELS, thinOutline, type SamModel } from '../image/sam.ts';
+import type { SamReply, SamRequest } from '../image/samWorker.ts';
+import { FIND_METHODS, TASK_ORDER, TASKS, taskLabel, taskOf, type FindMethod, type Task } from '../image/tasks.ts';
 import { NetworkOverlay, NetworkPanel, type NetTool } from './NetworkPanel.tsx';
 import { ArrangeOverlay, ArrangePanel } from './ArrangePanel.tsx';
 import { LatticePanel, RingsOverlay, SpotsOverlay } from './LatticePanel.tsx';
@@ -48,7 +56,7 @@ import { COLOR_MAPS } from '../figure/colors.ts';
 import { CurvesEditor } from './CurvesEditor.tsx';
 import { ParamField, ThresholdEditor } from './ImageParams.tsx';
 import { Check, NumInput, Select } from './ui.tsx';
-import { ArrowDown, ArrowUp, Circle, Crop as CropIcon, Crosshair, Hand, Maximize, Minus, Pentagon, PenTool, Plus, Ruler, Slash, Spline, Square, Stamp, Sun, Triangle, Wand, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Circle, Crop as CropIcon, Crosshair, Hand, Maximize, Minus, MousePointerClick, SquareDashedMousePointer, Pentagon, PenTool, Plus, Ruler, Slash, Spline, Square, Stamp, Sun, Triangle, Wand, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
 
 const LUTS = Object.entries(COLOR_MAPS).map(([k, v]): [Lut, string] => [k as Lut, v.label]);
@@ -115,7 +123,9 @@ function snapToBar(g: Float32Array, w: number, h: number, lo: number, hi: number
 
 type Cmp = 'edited' | 'original' | 'side' | 'split';
 // (brush, eraser: the trainable classifier's strokes and their eraser, with a class picked; its Fill is the freehand tool)
-type Tool = 'pan' | 'scale' | 'crop' | 'brush' | 'eraser' | RoiTool;
+// (sam, sambox: Segment anything asked by a click, by a box)
+// (sammodel: the model of Find like this picked with Segment anything)
+type Tool = 'pan' | 'scale' | 'crop' | 'brush' | 'eraser' | 'sam' | 'sambox' | 'sammodel' | RoiTool;
 // the selection tools of the toolbar
 const ROI_TOOLS: [RoiTool, typeof Square, string][] = [
   ['rect', Square, 'Rectangle'],
@@ -189,6 +199,18 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     set({ tab: t === 'image' ? undefined : t });
     if (t === 'structure') setTool('pan');
   };
+  // the task (its steps on the left; All tools: the panels of before, as tabs) and its step open
+  const task: Task = taskOf(data);
+  const taskStep = Math.max(0, Math.min(3, data.stage ?? 0));
+  const setTask = (t: Task) => {
+    set({ task: t, stage: undefined });
+    if (t === 'network') setTool('pan');
+  };
+  const setStage = (k: number) => set({ stage: k || undefined });
+  // (what the panels of before drew over the image, by the task: the network, the rings, the arrangement)
+  const vtab: SideTab = task === 'all' ? tab : ({ particles: 'objects', spots: 'objects', network: 'structure', lattice: 'lattice', surface: 'surface' } as const)[task];
+  // (the selection tools of a task: its own, or all of them)
+  const [moreTools, setMoreTools] = useState(false);
   // (the calibration: the size of a pixel and its unit; none: pixels)
   const calK = data.cal && data.cal.size > 0 ? data.cal.size : 1;
   const calU = data.cal && data.cal.size > 0 ? unitText(data.cal.unit) : 'px';
@@ -256,7 +278,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const [tool, setTool] = useState<Tool>('pan');
   // the class of the trainable classifier painted (whatever is drawn meanwhile is an example of it) and the brush's width
   const [paint, setPaintCls] = useState<string | null>(null);
-  const [brush, setBrush] = useState(4);
+  const [brush, setBrush] = useState(12);
   // how the classifier's examples are drawn: filled outlines, strokes, or taken away
   const [paintTool, setPaintToolState] = useState<PaintTool>('fill');
   const [zoom, setZoom] = useState(0);
@@ -280,8 +302,10 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const base = useMemo(() => (full ? cropRaster(full, crop ?? undefined) : null), [full, crop?.join()]); // eslint-disable-line react-hooks/exhaustive-deps
   const fullGray = useMemo(() => (full ? (full.ch.length === 1 ? full.ch[0] : luminance(full)) : null), [full]);
   const barRows = useMemo(() => (full ? dataBarRows(full) : 0), [full]);
+  // (a data bar clearly apart from the image above it: the one Next speaks of)
+  const barApart = useMemo(() => (full ? dataBarApart(full) : 0), [full]);
   const onOriginal = tool === 'scale' || tool === 'crop';
-  const roiTool = tool in TOOL_HINTS || tool === 'brush' || tool === 'eraser';
+  const roiTool = tool in TOOL_HINTS || tool === 'brush' || tool === 'eraser' || tool === 'sambox';
   // the corner of the part analysed in the original (the selections' places are in the original's pixels)
   const [ox, oy] = crop ? [crop[0], crop[1]] : [0, 0];
   // the steps give a mask (its coverage measured)
@@ -289,8 +313,19 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const measuring = rois.length > 0 || masks;
   // the examples of a trainable classifier (in the part analysed), sent with the steps when one is on
   const classifying = steps.some((s) => s.on && s.kind === 'classify');
-  const train = useMemo(() => (classifying ? trainingExamples(rois, ox, oy) : []), [classifying, rois, ox, oy]);
-  const trainKey = JSON.stringify(train);
+  const trainAll = useMemo(() => (classifying ? [...trainingExamples(rois, ox, oy), ...paintExamples(data.paint, crop)] : []), [classifying, rois, ox, oy, data.paint, crop?.join()]); // eslint-disable-line react-hooks/exhaustive-deps
+  // (Live update off: the examples of the last update, until Update now)
+  const [liveTrain, setLiveTrain] = useState(true);
+  const frozen = useRef(trainAll);
+  const [, setFrozenAt] = useState(0);
+  if (liveTrain) frozen.current = trainAll;
+  const train = frozen.current;
+  const trainKey = trainKeyOf(train);
+  const trainPending = !liveTrain && trainKeyOf(trainAll) !== trainKey;
+  const updateTrain = () => {
+    frozen.current = trainAll;
+    setFrozenAt((n) => n + 1);
+  };
   // the particles: how they are found, the group they go in, what the last search found
   const partOpts: ParticleOpts = { ...PARTICLE_DEFAULTS, ...data.particles };
   const partGroup = data.particles?.group ?? 'particles';
@@ -325,7 +360,40 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   // Review ▸ Learn from my choices: the examples (the particles said good or not, by their places, with their features),
   // the classifier learnt from them (none with fewer than 3 of a kind), the probability of every place of the last search
   const examples = useMemo(() => data.match?.examples ?? [], [data.match?.examples]);
-  const learnt = useMemo(() => (data.match?.learn && examples.length ? learn(examples.map((e) => e.f), examples.map((e) => (e.good ? 1 : 0)), data.match?.method ?? 'auto') : null), [data.match?.learn, data.match?.method, examples]);
+  // (how often each method is right, and so the method Auto takes, worked out off the page — a fit for every example left
+  // out, for every method —; the page fits the one chosen on all the examples)
+  const [choice, setChoice] = useState<LearnChoice | null>(null);
+  const learnWorker = useRef<Worker | null>(null);
+  const learnSeq = useRef(0);
+  useEffect(() => {
+    const y = examples.map((e) => (e.good ? 1 : 0));
+    if (!data.match?.learn || !enoughToLearn(y)) return;
+    const X = examples.map((e) => e.f);
+    const method = data.match?.method ?? 'auto';
+    const seq = ++learnSeq.current;
+    if (!learnWorker.current)
+      try {
+        learnWorker.current = new Worker(new URL('../image/learnWorker.ts', import.meta.url), { type: 'module' });
+      } catch {
+        learnWorker.current = null;
+      }
+    const w = learnWorker.current;
+    if (!w) return setChoice(chooseMethod(X, y, method));
+    w.onmessage = (ev: MessageEvent<LearnReply>) => {
+      if (ev.data.seq === learnSeq.current) setChoice(ev.data.choice);
+    };
+    w.postMessage({ seq, X, y, method } satisfies LearnRequest);
+  }, [data.match?.learn, data.match?.method, examples]);
+  useEffect(() => () => learnWorker.current?.terminate(), []);
+  const learnt = useMemo(() => {
+    const y = examples.map((e) => (e.good ? 1 : 0));
+    if (!data.match?.learn || !enoughToLearn(y)) return null;
+    const method = data.match?.method ?? 'auto';
+    // (until the worker answers: the method asked for, or the one Auto chose last, with the accuracies last known)
+    const m = method !== 'auto' ? method : (choice?.method ?? 'logistic');
+    const accuracy = choice?.accuracy ?? (Object.fromEntries(LEARN_METHODS.map((k) => [k, NaN])) as Record<LearnMethod, number>);
+    return learnWith(examples.map((e) => e.f), y, { method: m, accuracy });
+  }, [data.match?.learn, data.match?.method, examples, choice]);
   const pmin = data.match?.pmin ?? 0.5;
   // (what placing the particles needs of it, kept current for the answers of the worker)
   const learnRef = useRef<{ examples: MatchExample[]; prob: ((f: number[]) => number) | null; pmin: number } | null>(null);
@@ -355,7 +423,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const truthGroup = data.match?.truth ?? 'truth';
   const checkAccuracy = () => {
     const truth = rois.filter((r) => r.group === truthGroup && isArea(r) && !r.auto).map(roiOutline);
-    const found = rois.filter((r) => r.auto && r.group !== truthGroup && isArea(r)).map(roiOutline);
+    const found = rois.filter((r) => r.auto && !r.out && r.group !== truthGroup && isArea(r)).map(roiOutline);
     const a = accuracyOf(truth, found);
     setAcc(a);
     if (!a) setPartMsg(`Accuracy: mark the true particles first (selections in the group “${truthGroup}”)`);
@@ -386,22 +454,72 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const [fullSeq, setFullSeq] = useState(0);
   // the answers that need this render's state (a wand's outline, a stamp centred, the measurements)
   const onAnswer = useRef<(m: MeasureReply | WandReply | RaysReply | SpectrumReply | SpotReply | CentreReply | ParticlesReply | MatchReply | RefineReply) => void>(() => {});
+  // a long piece of work (shown over the image), the time now (its clock), when the image's work started
+  const [job, setJob] = useState<Job | null>(null);
+  const [now, setNow] = useState(0);
+  const imgT0 = useRef(0);
+  const busyRef = useRef(false);
+  busyRef.current = busy;
+  const jobOn = !!job;
   useEffect(() => {
+    if (!jobOn) return;
+    const t = setInterval(() => setNow(performance.now()), 200);
+    return () => clearInterval(t);
+  }, [jobOn]);
+  type FromWorker = ImgReply | ValueReply | MeasureReply | WandReply | RaysReply | SpectrumReply | SpotReply | CentreReply | ParticlesReply | MatchReply | RefineReply | ProgressReply;
+  const onWorker = useRef<(m: FromWorker) => void>(() => {});
+  onWorker.current = (m) => {
+    if (m.type === 'value') return setVals(m);
+    // (how far: the work running told; the image's steps at full size shown as a work of their own)
+    if (m.type === 'progress')
+      return setJob((j) => (j && j.of === m.of ? { ...j, stage: m.stage, done: m.done, total: m.total, step: m.step } : !j && m.of === 'image' && busyRef.current ? { of: 'image', label: 'Computing the image', stage: m.stage, done: m.done, total: m.total, step: m.step, t0: imgT0.current } : j));
+    if (m.type === 'particles' || m.type === 'match' || m.type === 'refine') setJob((j) => (j?.of === m.type ? null : j));
+    if (m.type !== 'image') return onAnswer.current(m);
+    if (m.seq !== seq.current) return;
+    setReply(m);
+    // (a preview first: still computing the full size)
+    if (m.scale === 1) {
+      setBusy(false);
+      setFullSeq((n) => n + 1);
+      setJob((j) => (j?.of === 'image' ? null : j));
+    }
+  };
+  // (a new worker: the image sent to it again)
+  const [gen, setGen] = useState(0);
+  const startWorker = () => {
     const w = new Worker(new URL('../image/imageWorker.ts', import.meta.url), { type: 'module' });
+    w.onmessage = (e: MessageEvent<FromWorker>) => onWorker.current(e.data);
     worker.current = w;
-    w.onmessage = (e: MessageEvent<ImgReply | ValueReply | MeasureReply | WandReply | RaysReply | SpectrumReply | SpotReply | CentreReply | ParticlesReply | MatchReply | RefineReply>) => {
-      if (e.data.type === 'value') return setVals(e.data);
-      if (e.data.type !== 'image') return onAnswer.current(e.data);
-      if (e.data.seq !== seq.current) return;
-      setReply(e.data);
-      // (a preview first: still computing the full size)
-      if (e.data.scale === 1) {
-        setBusy(false);
-        setFullSeq((n) => n + 1);
-      }
-    };
-    return () => w.terminate();
+    sentId.current = null;
+  };
+  useEffect(() => {
+    startWorker();
+    return () => worker.current?.terminate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Cancel: the worker stopped (and made again); the image's steps: the one being computed turned off, else it would
+  // start again at once
+  const cancelWork = () => {
+    const j = job;
+    if (j?.of === 'sam') {
+      samW.current?.terminate();
+      samW.current = null;
+      samLoaded.current = null;
+      samRead.current = '';
+      samWait.current?.fail(new Error('cancelled'));
+      samWait.current = null;
+      setJob(null);
+      setPartMsg('cancelled');
+      return;
+    }
+    worker.current?.terminate();
+    startWorker();
+    setGen((g) => g + 1);
+    setBusy(false);
+    setJob(null);
+    if (j?.of === 'image' && j.step) setStep(j.step, { on: false });
+    setPartMsg(j?.of === 'image' ? 'stopped: the step being computed turned off' : 'cancelled');
+  };
   const upToIndex = upTo === '__none' ? 0 : upTo ? steps.findIndex((s) => s.id === upTo) + 1 : steps.length;
   useEffect(() => {
     const w = worker.current;
@@ -413,12 +531,13 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
         q.id = data.pixelsId ?? 'img';
         sentId.current = data.pixelsId ?? 'img';
       }
+      if (!busyRef.current) imgT0.current = performance.now();
       setBusy(true);
       w.postMessage(q);
     }, 40);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [steps, upToIndex, lut, overlay, data.pixels, data.pixelsId, data.figure?.overlay, data.figure?.alpha, crop?.join(), needBefore, before, measuring, trainKey]);
+  }, [steps, upToIndex, lut, overlay, data.pixels, data.pixelsId, data.figure?.overlay, data.figure?.alpha, crop?.join(), needBefore, before, measuring, trainKey, gen]);
   // the measurements: asked when the selections or what is measured change, and after every full-size image (the
   // steps or the crop changed)
   useEffect(() => {
@@ -512,7 +631,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     const im = onOriginal ? full : base;
     return [((e.clientX - r.left) / r.width) * (im?.w ?? 1), ((e.clientY - r.top) / r.height) * (im?.h ?? 1)];
   };
-  const drag = useRef<{ x: number; y: number; pan: [number, number]; kind: 'pan' | 'line' | 'crop' | 'split' | 'draw' | 'move' | 'handle' | 'erase'; at?: [number, number]; roi?: Roi; handle?: string } | null>(null);
+  const drag = useRef<{ x: number; y: number; pan: [number, number]; kind: 'pan' | 'line' | 'crop' | 'split' | 'draw' | 'move' | 'handle' | 'erase' | 'paint'; at?: [number, number]; roi?: Roi; handle?: string } | null>(null);
   // ---- the selections: drawn, picked, moved, edited ----
   const toOrig = (p: Pt): Pt => [p[0] + ox, p[1] + oy];
   const nextName = (taken: Roi[] = rois) => `R${1 + taken.reduce((m, r) => Math.max(m, Number(/^R(\d+)$/.exec(r.name)?.[1] ?? 0)), 0)}`;
@@ -520,9 +639,10 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   // the classifier (its classes give the examples painted their colour)
   const classifier = steps.find((s) => s.kind === 'classify');
   const toolOf = (t: PaintTool): Tool => (t === 'fill' ? 'freehand' : t);
-  const setPaint = (c: string | null) => {
+  // (t: the tool it is started with — a tool button pressed before a class was picked)
+  const setPaint = (c: string | null, t: PaintTool = paintTool) => {
     setPaintCls(c);
-    if (c) setTool(toolOf(paintTool));
+    if (c) setTool(toolOf(t));
     else if (tool === 'brush' || tool === 'eraser' || (paint && tool === 'freehand')) setTool('pan');
     setDraft(null);
   };
@@ -530,12 +650,101 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     setPaintToolState(t);
     if (paint) setTool(toolOf(t));
   };
+  // ---- the paint of the classifier: every pixel of the original its class (the brush, the eraser, the fill), drawn over
+  // the image in the colours of the classes, kept in the node when a stroke ends ----
+  // (the layer holds the paint kept as layerRle; a stroke kept is pending until the node's data has it — a render of
+  // the data before it, while strokes follow fast, does not undo it; a paint that comes otherwise, an undo, another
+  // image, is the layer's again)
+  const layerRef = useRef<PaintLayer | null>(null);
+  const layerRle = useRef<string | undefined>(data.paint?.rle);
+  const pendingPaint = useRef<{ rle?: string } | null>(null);
+  if (pendingPaint.current) {
+    if (data.paint?.rle === pendingPaint.current.rle) pendingPaint.current = null;
+  } else if (data.paint?.rle !== layerRle.current) {
+    layerRef.current = null;
+    layerRle.current = data.paint?.rle;
+  }
+  const layerNow = (): PaintLayer | null => {
+    if (!full) return null;
+    if (!layerRef.current || layerRef.current.w !== full.w || layerRef.current.h !== full.h) {
+      layerRef.current = data.paint && data.paint.w === full.w && data.paint.h === full.h ? decodePaint(data.paint) : emptyPaint(full.w, full.h);
+      layerRle.current = data.paint?.rle;
+    }
+    return layerRef.current;
+  };
+  const paintCanvases = useRef(new Set<HTMLCanvasElement>());
+  const paintClasses = classifier ? stepClasses(classifier, rois) : [];
+  // the paint of a box of the original (absent: all of the part analysed) drawn on the canvases over the image
+  const drawPaint = (box?: Box) => {
+    const l = layerNow();
+    if (!l || !base) return;
+    const rgb = l.classes.map((c) => {
+      const hex = classColor(paintClasses, c).replace('#', '');
+      return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
+    });
+    const [bx0, by0, bx1, by1] = box ? [Math.max(0, box[0] - ox), Math.max(0, box[1] - oy), Math.min(base.w - 1, box[2] - ox), Math.min(base.h - 1, box[3] - oy)] : [0, 0, base.w - 1, base.h - 1];
+    if (bx1 < bx0 || by1 < by0) return;
+    const [bw, bh] = [bx1 - bx0 + 1, by1 - by0 + 1];
+    const img = new ImageData(bw, bh);
+    for (let y = 0; y < bh; y++)
+      for (let x = 0; x < bw; x++) {
+        const v = l.px[(y + by0 + oy) * l.w + x + bx0 + ox];
+        if (!v || !rgb[v - 1]) continue;
+        const o = (y * bw + x) * 4;
+        [img.data[o], img.data[o + 1], img.data[o + 2], img.data[o + 3]] = [rgb[v - 1][0], rgb[v - 1][1], rgb[v - 1][2], 115];
+      }
+    for (const c of paintCanvases.current) {
+      if (c.width !== base.w || c.height !== base.h) {
+        c.width = base.w;
+        c.height = base.h;
+        if (box) return drawPaint();
+      }
+      c.getContext('2d')!.putImageData(img, bx0, by0);
+    }
+  };
+  const paintRef = (c: HTMLCanvasElement | null) => {
+    if (!c) return;
+    paintCanvases.current.add(c);
+    requestAnimationFrame(() => drawPaint());
+  };
+  useEffect(() => {
+    for (const c of [...paintCanvases.current]) if (!c.isConnected) paintCanvases.current.delete(c);
+    drawPaint();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.paint, full, crop?.join(), paintClasses.join()]);
+  // the paint kept in the node (none painted: none kept)
+  const commitPaint = () => {
+    const l = layerNow();
+    if (!l) return;
+    const st = l.px.some((v) => v > 0) ? encodePaint(l) : undefined;
+    layerRle.current = st?.rle;
+    pendingPaint.current = { rle: st?.rle };
+    set({ paint: st });
+  };
+  const painted = useMemo(() => (data.paint ? paintCounts(decodePaint(data.paint)) : {}), [data.paint]);
+  const clearPaint = (cls: string) => {
+    const l = layerNow();
+    if (!l) return;
+    clearClass(l, cls);
+    drawPaint();
+    commitPaint();
+  };
+  // the value a stroke paints (the class's number; the eraser: 0)
+  const strokeVal = useRef(0);
   // the examples of the classifier under the eraser at q (pixels of the original)
   const eraseAt = (q: Pt) => {
     const gone = rois.filter((r) => r.train && nearRoi(r, q, brush / 2));
     if (gone.length) setRois(rois.filter((r) => !gone.includes(r)));
   };
   const commit = (r0: Roi) => {
+    // (Fill while a class is painted: its inside painted)
+    const l = paint && classifier && r0.kind === 'freehand' && !rois.some((x) => x.id === r0.id) ? layerNow() : null;
+    if (l && paint && r0.pts && r0.pts.length >= 3) {
+      drawPaint(paintFill(l, r0.pts, classIndex(l, paint)));
+      commitPaint();
+      setDraft(null);
+      return;
+    }
     // (a new selection while a class is painted: an example of it)
     const painted = paint && classifier && !rois.some((x) => x.id === r0.id);
     const r = painted ? { ...r0, train: paint, color: classColor(stepClasses(classifier, rois), paint), group: undefined } : r0;
@@ -712,6 +921,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       ...(inside ? { inside: true } : {}),
     };
     setPartMsg('finding…');
+    setJob({ of: 'match', label: 'Find like this', stage: 'the image steps', t0: performance.now() });
     worker.current?.postMessage(q);
   };
   // the particles left out in Review (kept with those of the searches before) when they are to be used: the places like
@@ -742,13 +952,20 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     if (!t || modelList.some((m) => m.roi === t.id)) return;
     setModels([...modelList, { roi: t.id, context: matchOpts.context ?? 'disc', ring: matchOpts.ring, symmetry: matchOpts.symmetry, sizes: matchOpts.sizes }]);
   };
-  // again, with the particles found as models too: the least alike of them (they differ most from the first model)
+  // again, with particles found as models too: of the surer half (as alike as the median of those found or more, not
+  // cut by the image's edge), the least alike — they differ most from the first model; the least alike of all, near
+  // the least similarity, are the doubtful ones, and as models they find more of their own mistakes
   const findMore = () => {
     const lm = lastMatch.current;
     if (!lm) return;
-    const found = rois.filter((r) => r.auto && r.id.startsWith(`m${lm.seq}-`));
+    const inImage = (r: Roi) => !base || roiOutline(r).every(([x, y]) => x >= ox && y >= oy && x <= ox + base.w && y <= oy + base.h);
+    const found = rois.filter((r) => r.auto && r.id.startsWith(`m${lm.seq}-`) && inImage(r));
     const score = (r: Roi) => lm.list[Number(r.id.split('-')[1])]?.score ?? 1;
-    const more = [...found].sort((a, b) => score(a) - score(b)).slice(0, 4);
+    const median = found.map(score).sort((a, b) => a - b)[found.length >> 1] ?? 1;
+    const more = found
+      .filter((r) => score(r) >= median)
+      .sort((a, b) => score(a) - score(b))
+      .slice(0, 4);
     // (each with the settings of the model it was found by)
     const specOf2 = (r: Roi) => ({ ...lm.specs[lm.list[Number(r.id.split('-')[1])]?.model ?? 0], roi: r.id });
     findWith([...lm.ms, ...more.map((r) => ({ ...r, auto: undefined }))], [...lm.specs, ...more.map(specOf2)]);
@@ -769,18 +986,282 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   // the same particles (by their ids, kept while it works)
   const refining = useRef<string[]>([]);
   const refineParticles = (alsoHand: boolean) => {
-    const list = rois.filter((r) => r.auto && (alsoHand || !r.hand));
+    const list = rois.filter((r) => r.auto && !r.out && (alsoHand || !r.hand));
     if (!list.length) return setPartMsg('find particles first');
     refining.current = list.map((r) => r.id);
     const q: RefineRequest = { type: 'refine', steps, ...(crop ? { crop } : {}), ...(train.length ? { train } : {}), outlines: list.map((r) => roiOutline(r).map(([x, y]): Pt => [x - ox, y - oy])), shapes: data.particles?.shapes ?? REGULAR_SHAPES, snap: data.particles?.snap ?? true };
     setPartMsg('refining…');
+    setJob({ of: 'refine', label: 'Refining the shapes', t0: performance.now() });
     worker.current?.postMessage(q);
   };
   const findParticles = () => {
     const q: ParticlesRequest = { type: 'particles', steps, ...(crop ? { crop } : {}), ...(train.length ? { train } : {}), opts: partOpts };
     setPartMsg('finding…');
+    setJob({ of: 'particles', label: 'Finding the particles', t0: performance.now() });
     worker.current?.postMessage(q);
   };
+  // the way the particles are found (Particles ▸ Find): the one picked, else from what the node holds
+  const thrStep = steps.find((q) => q.kind === 'threshold' || q.kind === 'localthreshold');
+  const clsStep = steps.find((q) => q.kind === 'classify');
+  const findM: FindMethod = data.find ?? (data.particles?.method === 'rays' ? 'rays' : data.match?.models?.length || rois.some((r) => r.auto && r.id.startsWith('m')) ? 'like' : clsStep && !thrStep ? 'classifier' : 'threshold');
+  // ---- Segment anything: its worker (made when first used), the model it loaded, the image it read ----
+  // (a setting back to its default is kept as undefined: those left out, not put over the defaults)
+  const samSpec = { ...SAM_DEFAULTS, model: 'general' as SamModel, prompt: 'click' as 'click' | 'box' | 'all', ...Object.fromEntries(Object.entries(data.sam ?? {}).filter(([, v]) => v !== undefined)) };
+  const setSam = (p: NonNullable<ImageAnalysisData['sam']>) => set({ sam: { ...data.sam, ...p } });
+  const samW = useRef<Worker | null>(null);
+  const samWait = useRef<{ want: SamReply['type']; ok: (m: SamReply) => void; fail: (e: Error) => void } | null>(null);
+  const samLoaded = useRef<SamModel | null>(null);
+  const samRead = useRef('');
+  const [samCached, setSamCached] = useState<Partial<Record<SamModel, boolean>>>({});
+  const [samEngine, setSamEngine] = useState('');
+  const onSam = useRef<(m: SamReply) => void>(() => {});
+  onSam.current = (m) => {
+    if (m.type === 'progress') return setJob((j) => (j?.of === 'sam' ? { ...j, stage: m.stage, bytes: m.bytes, done: m.done, total: m.total } : j));
+    const w = samWait.current;
+    if (!w) return;
+    samWait.current = null;
+    if (m.type === 'error') w.fail(new Error(m.message));
+    else if (m.type === w.want) w.ok(m);
+  };
+  const samAsk = <T extends SamReply['type']>(q: SamRequest, want: T): Promise<Extract<SamReply, { type: T }>> =>
+    new Promise((ok, fail) => {
+      if (!samW.current) {
+        samW.current = new Worker(new URL('../image/samWorker.ts', import.meta.url), { type: 'module' });
+        samW.current.onmessage = (e: MessageEvent<SamReply>) => onSam.current(e.data);
+      }
+      samWait.current = { want, ok: ok as (m: SamReply) => void, fail };
+      samW.current.postMessage(q);
+    });
+  useEffect(() => () => samW.current?.terminate(), []);
+  // (the files of a model kept in this browser already: no download, nothing asked)
+  const samUrls = (m: SamModel) => [SAM_ENGINE.file, SAM_MODELS[m].encoder, SAM_MODELS[m].decoder].map((f) => new URL(f, document.baseURI).href);
+  const samIsCached = async (m: SamModel) => {
+    try {
+      const c = await caches.open(SAM_CACHE);
+      return (await Promise.all(samUrls(m).map((u) => c.match(u)))).every(Boolean);
+    } catch {
+      return false;
+    }
+  };
+  useEffect(() => {
+    if (data.find !== 'sam') return;
+    let live = true;
+    void samIsCached(samSpec.model).then((v) => live && setSamCached((c) => ({ ...c, [samSpec.model]: v })));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.find, samSpec.model]);
+  const samForget = async () => {
+    try {
+      const c = await caches.open(SAM_CACHE);
+      // (the engine kept while the other model still needs it)
+      const other: SamModel = samSpec.model === 'em' ? 'general' : 'em';
+      const keepEngine = await samIsCached(other);
+      await Promise.all(samUrls(samSpec.model).filter((_, i) => i > 0 || !keepEngine).map((u) => c.delete(u)));
+    } catch {
+      // (nothing kept)
+    }
+    setSamCached((c) => ({ ...c, [samSpec.model]: false }));
+  };
+  const samKey = `${data.pixelsId ?? 'img'}|${crop?.join() ?? ''}`;
+  // the model loaded (asked first when it is not kept in this browser) and the image read; false: not (said why)
+  const samReady = async (): Promise<boolean> => {
+    const model = samSpec.model;
+    const m = SAM_MODELS[model];
+    try {
+      if (samLoaded.current !== model) {
+        const kept = await samIsCached(model);
+        if (!kept) {
+          const mb = (b: number) => Math.round(b / 1048576);
+          const yes = await ask(`Download ${m.label} to find the particles? About ${mb(m.bytes + SAM_ENGINE.bytes)} MB (the model ${mb(m.bytes)} MB, the engine that runs it ${mb(SAM_ENGINE.bytes)} MB), from this site, once: kept in this browser for the next times. The image never leaves this computer. ${m.credit}.`, { ok: 'Download' });
+          if (!yes) return false;
+        }
+        setJob({ of: 'sam', label: kept ? `${m.label}: loading` : `Downloading ${m.label}`, t0: performance.now() });
+        const r = await samAsk({ type: 'load', model, base: new URL('./', document.baseURI).href }, 'ready');
+        samLoaded.current = model;
+        samRead.current = '';
+        setSamEngine(r.provider === 'webgpu' ? 'on the graphics card (WebGPU)' : r.provider === 'wasm' ? 'on the processor (WebAssembly)' : '');
+        setSamCached((c) => ({ ...c, [model]: true }));
+      }
+      if (samRead.current !== samKey && base) {
+        setJob({ of: 'sam', label: 'Segment anything', stage: 'reading the image (the encoder)', t0: performance.now() });
+        await samAsk({ type: 'encode', key: samKey, ch: base.ch, w: base.w, h: base.h, lo: base.lo, hi: base.hi }, 'encoded');
+        samRead.current = samKey;
+      }
+      setJob((j) => (j?.of === 'sam' ? null : j));
+      return true;
+    } catch (e) {
+      setJob((j) => (j?.of === 'sam' ? null : j));
+      if ((e as Error).message !== 'cancelled') setPartMsg(`Segment anything: ${(e as Error).message}`);
+      return false;
+    }
+  };
+  // the next name of a particle (P and the next number)
+  const nextParticle = () => `P${1 + rois.reduce((m, r) => Math.max(m, Number(/^P(\d+)$/.exec(r.name)?.[1] ?? 0)), 0)}`;
+  // a click (on the image analysed, its pixels): a particle; Shift-click: a part added to the last one, Alt-click: a
+  // part taken off it
+  const samObj = useRef<{ pts: [number, number, number][]; roi: string | null; name: string }>({ pts: [], roi: null, name: '' });
+  // Find like this ▸ Pick with SAM: a click on a good particle, its outline a selection picked as the model, compared
+  // with its margin (the outline widened by grow px, then edited as one drawn)
+  const samGrow = data.match?.grow ?? 6;
+  const samModelClick = async (p: Pt) => {
+    if (!(await samReady())) return;
+    try {
+      const r = await samAsk({ type: 'prompt', seq: 0, pts: [[p[0], p[1], 1]] }, 'mask');
+      if (!r.outline) return setPartMsg('Segment anything: nothing found there');
+      const roi = newRoi('polygon', { pts: thinOutline(r.outline.map(toOrig)) });
+      const [cx, cy] = roiCentre(roi);
+      const off = offsetOutline(roiOutline(roi), Math.max(0.5, samGrow));
+      const every = Math.max(1, Math.ceil(off.length / 24));
+      const outer = off.filter((_, i) => i % every === 0).map(([x, y]): Pt => [+(x - cx).toFixed(2), +(y - cy).toFixed(2)]);
+      putRoi(roi);
+      setSel(roi.id);
+      if (modelList.length) setModels([...modelList, { roi: roi.id, context: 'drawn', ring: samGrow, outer, symmetry: matchOpts.symmetry, sizes: matchOpts.sizes }]);
+      else setMatch({ context: 'drawn', outer, ring: samGrow });
+      setTool('pan');
+      setPartMsg(`${roi.name}: the model, from Segment anything (${(Math.min(1, r.score) * 100).toFixed(0)} % sure); its margin the outline + ${samGrow} px (Compared area: edit it). Then Find like this`);
+    } catch (e) {
+      setPartMsg(`Segment anything: ${(e as Error).message}`);
+    }
+  };
+  const samClick = async (p: Pt, mod: { shiftKey: boolean; altKey: boolean }) => {
+    if (!(await samReady())) return;
+    const more = (mod.shiftKey || mod.altKey) && !!samObj.current.roi && rois.some((r) => r.id === samObj.current.roi);
+    const cur = more ? samObj.current : { pts: [], roi: null, name: '' };
+    const pts: [number, number, number][] = [...cur.pts, [p[0], p[1], mod.altKey ? 0 : 1]];
+    try {
+      const r = await samAsk({ type: 'prompt', seq: 0, pts }, 'mask');
+      if (!r.outline) return setPartMsg('Segment anything: nothing found there');
+      samPut(r.outline, r.score, cur.roi, cur.name, pts);
+    } catch (e) {
+      setPartMsg(`Segment anything: ${(e as Error).message}`);
+    }
+  };
+  // a box drawn (pixels of the original): the particle in it
+  const samBoxFrom = async (b: [number, number, number, number]) => {
+    const [cx, cy, bw, bh] = b;
+    const box: [number, number, number, number] = [cx - bw / 2 - ox, cy - bh / 2 - oy, cx + bw / 2 - ox, cy + bh / 2 - oy];
+    if (!(await samReady())) return;
+    try {
+      const r = await samAsk({ type: 'prompt', seq: 0, pts: [], box }, 'mask');
+      if (!r.outline) return setPartMsg('Segment anything: nothing found in the box');
+      samPut(r.outline, r.score, null, '', []);
+    } catch (e) {
+      setPartMsg(`Segment anything: ${(e as Error).message}`);
+    }
+  };
+  const samPut = (outline: Pt[], score: number, rid: string | null, name0: string, pts: [number, number, number][]) => {
+    const id = rid ?? `s${Date.now().toString(36)}${(roiSeq++).toString(36)}`;
+    const name = name0 || nextParticle();
+    // (the model's guess of how good a mask is may pass 1 a little)
+    putRoi({ id, name, kind: 'traced', pts: outline.map(toOrig), group: partGroup, auto: true, score: +Math.min(1, score).toFixed(4) });
+    samObj.current = { pts, roi: id, name };
+    setPartMsg(`${name}: the model ${(Math.min(1, score) * 100).toFixed(0)} % sure of it${pts.length ? ' (Shift-click: a part added, Alt-click: a part taken off)' : ''}`);
+  };
+  // Everything: every particle, from a grid of points (those found before replaced)
+  const samAll = async () => {
+    if (!(await samReady()) || !base) return;
+    setJob({ of: 'sam', label: 'Segment anything: every particle', t0: performance.now() });
+    try {
+      const { perSide, iou, stability, nms, minArea, maxFrac, edges } = samSpec;
+      // (the data bar under the image, when not cut: no points on it)
+      const rows = !crop && barRows > 0 ? base.h - barRows : base.h;
+      const r = await samAsk({ type: 'everything', seq: 0, opts: { perSide, iou, stability, nms, minArea, maxFrac, edges }, rows }, 'masks');
+      setJob((j) => (j?.of === 'sam' ? null : j));
+      const names = particleNames(r.outlines.length);
+      const found: Roi[] = r.outlines.map((o, i) => ({ id: `s${Date.now().toString(36)}${i.toString(36)}`, name: names[i], kind: 'traced', pts: o.pts.map(toOrig), group: partGroup, auto: true, score: +Math.min(1, o.score).toFixed(4) }));
+      updateNodeData(id, (n) => ({ rois: [...((n.data as ImageAnalysisData).rois ?? []).filter((q) => !q.auto), ...found] }));
+      if (data.particles?.layers) layersFor(found);
+      setSel(null);
+      setPartMsg(`${found.length} particle${found.length === 1 ? '' : 's'} from ${r.tried} points · ${r.ms < 1000 ? `${r.ms} ms` : `${(r.ms / 1000).toFixed(1)} s`}`);
+    } catch (e) {
+      setJob((j) => (j?.of === 'sam' ? null : j));
+      if ((e as Error).message !== 'cancelled') setPartMsg(`Segment anything: ${(e as Error).message}`);
+    }
+  };
+  // ---- Review of the particles found by any way but Find like this (it has its own): a click leaves one out or puts it
+  // back; learning: said not good, good, neither; what was learnt and how sure Segment anything is leave others out ----
+  const rv = data.review ?? {};
+  const setRv = (p: NonNullable<ImageAnalysisData['review']>) => set({ review: { ...data.review, ...p } });
+  const genReview = task === 'particles' && findM !== 'like';
+  const [checking, setChecking] = useState(false);
+  const [unsureG, setUnsureG] = useState(false);
+  const autoRois = useMemo(() => rois.filter((r) => r.auto && isArea(r)), [rois]);
+  const grayBase = useMemo(() => (base ? (base.ch.length === 1 ? base.ch[0] : luminance(base)) : null), [base]);
+  // (what is known of every particle: made again when the particles or their outlines change, not when said or left out)
+  const autoKey = autoRois.map((r) => `${r.id}:${r.pts?.length ?? 0}:${r.pts?.[0]?.join() ?? ''}:${r.box?.join() ?? ''}`).join('|');
+  const feats = useMemo(() => {
+    if (!genReview || !grayBase || !base || !autoRois.length) return null;
+    const f = particleFeatures(autoRois.map((r) => roiOutline(r).map(([x, y]): Pt => [x - ox, y - oy])), grayBase, base.w, base.h, base.lo, base.hi, autoRois.map((r) => (r.id.startsWith('s') ? r.score : undefined)));
+    return new Map(autoRois.map((r, i) => [r.id, f[i]]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoKey, grayBase, genReview]);
+  const saidList = autoRois.filter((r) => r.said !== undefined && feats?.has(r.id));
+  const saidKey = `${saidList.map((r) => `${r.id}${r.said ? 1 : 0}`).join()}|${feats ? autoKey : ''}`;
+  // (how often each method is right, the method Auto takes: off the page, as Find like this's)
+  const [gChoice, setGChoice] = useState<LearnChoice | null>(null);
+  const gWorker = useRef<Worker | null>(null);
+  const gSeq = useRef(0);
+  useEffect(() => {
+    const y = saidList.map((r) => (r.said ? 1 : 0));
+    if (!rv.learn || !feats || !enoughToLearn(y)) return;
+    const X = saidList.map((r) => feats.get(r.id)!);
+    const method = rv.method ?? 'auto';
+    const seq = ++gSeq.current;
+    if (!gWorker.current)
+      try {
+        gWorker.current = new Worker(new URL('../image/learnWorker.ts', import.meta.url), { type: 'module' });
+      } catch {
+        gWorker.current = null;
+      }
+    const w = gWorker.current;
+    if (!w) return setGChoice(chooseMethod(X, y, method));
+    w.onmessage = (ev: MessageEvent<LearnReply>) => {
+      if (ev.data.seq === gSeq.current) setGChoice(ev.data.choice);
+    };
+    w.postMessage({ seq, X, y, method } satisfies LearnRequest);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rv.learn, rv.method, saidKey]);
+  useEffect(() => () => gWorker.current?.terminate(), []);
+  const gLearnt = useMemo(() => {
+    const y = saidList.map((r) => (r.said ? 1 : 0));
+    if (!rv.learn || !feats || !enoughToLearn(y)) return null;
+    const method = rv.method ?? 'auto';
+    const m = method !== 'auto' ? method : (gChoice?.method ?? 'logistic');
+    const accuracy = gChoice?.accuracy ?? (Object.fromEntries(LEARN_METHODS.map((q) => [q, NaN])) as Record<LearnMethod, number>);
+    return learnWith(saidList.map((r) => feats.get(r.id)!), y, { method: m, accuracy });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rv.learn, rv.method, saidKey, gChoice]);
+  const gProb = useMemo(() => (gLearnt && feats ? new Map([...feats].map(([rid, f]) => [rid, gLearnt.predict(f)])) : null), [gLearnt, feats]);
+  const gPmin = rv.pmin ?? 0.5;
+  const gSure = rv.sure ?? 0;
+  // (every particle left out or not, as said, clicked, learnt and how sure: changed only where it differs)
+  useEffect(() => {
+    if (!genReview) return;
+    const want = (r: Roi) => outOf(r, gProb?.get(r.id), gPmin, gSure);
+    if (!rois.some((r) => r.auto && want(r) !== r.out)) return;
+    updateNodeData(id, (n) => ({ rois: ((n.data as ImageAnalysisData).rois ?? []).map((r) => (r.auto && want(r) !== r.out ? { ...r, out: want(r) } : r)) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rois, gProb, gPmin, gSure, genReview]);
+  // a click while reviewing: learning, said not good, good, then neither; else left out, or put back (one left out by
+  // what was learnt or by how sure: kept, as said good)
+  const reviewClick = (r: Roi) => {
+    if (rv.learn) return putRoi({ ...r, said: r.said === undefined ? false : r.said === false ? true : undefined });
+    if (!r.out) putRoi({ ...r, out: 'hand', said: undefined });
+    else if (r.out === 'hand') putRoi({ ...r, out: undefined });
+    else putRoi({ ...r, said: true });
+  };
+  const unsureIds = useMemo(() => {
+    if (!unsureG || !gProb) return undefined;
+    return new Set(
+      autoRois
+        .filter((r) => r.said === undefined && gProb.has(r.id))
+        .sort((a, b) => Math.abs(gProb.get(a.id)! - 0.5) - Math.abs(gProb.get(b.id)! - 0.5))
+        .slice(0, 5)
+        .map((r) => r.id),
+    );
+  }, [unsureG, gProb, autoRois]);
   // the particles grouped (and coloured): by their shape, or like the examples (the particles given another group by
   // hand: their colour too)
   const shapes = () => new Map(rois.filter((r) => r.auto).map((r) => [r.id, shapeFeatures(r, roiOutline(r), roiPerimeter(r))]));
@@ -819,12 +1300,18 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     const w = worker.current;
     switch (tool) {
       case 'eraser':
-        eraseAt(q);
-        drag.current = { x: 0, y: 0, pan, kind: 'erase' };
-        return;
       case 'brush': {
-        // (a stroke: a line as wide as the brush, a point every pixel or so of the screen)
-        const r = newRoi('polyline', { pts: [q], width: brush });
+        // (a stroke on the paint: the class picked, or erased; an example drawn as a selection, as before, erased too)
+        const l = layerNow();
+        if (!l) return;
+        strokeVal.current = tool === 'brush' && paint ? classIndex(l, paint) : 0;
+        if (tool === 'eraser') eraseAt(q);
+        drawPaint(paintDisc(l, q[0], q[1], brush / 2, strokeVal.current));
+        drag.current = { x: 0, y: 0, pan, kind: 'paint', at: q };
+        return;
+      }
+      case 'sambox': {
+        const r = newRoi('rect', { box: [q[0], q[1], 0, 0], angle: 0 });
         setDraft(r);
         drag.current = { x: 0, y: 0, pan, kind: 'draw', at: q, roi: r };
         return;
@@ -970,6 +1457,11 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       // (reviewing the matches: a click on one found leaves it out, on one left out puts it back)
       const back = t.closest('[data-rejected]') as SVGElement | null;
       if (review && back) return toggleMatch(Number(back.dataset.rejected));
+      // (Review of the particles of any other way)
+      if (checking && genReview && rg) {
+        const r = rois.find((x) => x.id === rg.dataset.roi);
+        if (r?.auto) return reviewClick(r);
+      }
       if (review && rg && lastMatch.current && rg.dataset.roi?.startsWith(`m${lastMatch.current.seq}-`)) return toggleMatch(Number(rg.dataset.roi.split('-')[1]));
       if (tool === 'pan' && rg) {
         const r = rois.find((x) => x.id === rg.dataset.roi);
@@ -979,6 +1471,8 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
           return;
         }
       }
+      if (tool === 'sam') return void samClick(p, e);
+      if (tool === 'sammodel') return void samModelClick(p);
       if (roiTool) return roiDown(q, p);
     }
     if (tool === 'scale' && e.button === 0) {
@@ -1016,6 +1510,15 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     }
     if (!d) return;
     if (d.kind === 'erase') return eraseAt(toOrig(imgAt(e)));
+    if (d.kind === 'paint') {
+      const l = layerNow();
+      const q = toOrig(imgAt(e));
+      if (!l || !d.at) return;
+      drawPaint(paintSegment(l, d.at, q, brush / 2, strokeVal.current));
+      if (strokeVal.current === 0) eraseAt(q);
+      d.at = q;
+      return;
+    }
     if (d.kind === 'draw' || d.kind === 'move' || d.kind === 'handle') return roiMove(e, d);
     if (d.kind === 'split') {
       const v = view.current!.getBoundingClientRect();
@@ -1038,9 +1541,13 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const onUp = (e: RPointerEvent) => {
     const d = drag.current;
     drag.current = null;
-    if (d?.kind === 'draw' && draft && tool === 'brush' && draft.pts) {
-      // (a click of the brush: a dot)
-      commit(draft.pts.length > 1 ? draft : { ...draft, pts: [draft.pts[0], draft.pts[0]] });
+    if (d?.kind === 'paint') {
+      // (the stroke ended: kept, and the classifier learns from it)
+      commitPaint();
+    } else if (d?.kind === 'draw' && draft && tool === 'sambox') {
+      // (Box (SAM): the particle in the box, not a selection)
+      if (draft.box && draft.box[2] * k >= 3 && draft.box[3] * k >= 3) void samBoxFrom(draft.box);
+      setDraft(null);
     } else if (d?.kind === 'draw' && draft) {
       // (a click without a drag draws nothing)
       const big = draft.box ? draft.box[2] * k >= 3 && draft.box[3] * k >= 3 : draft.kind === 'freehand' ? (draft.pts?.length ?? 0) >= 3 : Math.hypot(draft.pts![1][0] - draft.pts![0][0], draft.pts![1][1] - draft.pts![0][1]) * k >= 3;
@@ -1202,12 +1709,14 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       else if (paint) setPaint(null);
       else if (tool !== 'pan') setTool('pan');
       else onClose();
+    } else if ((e.key === '[' || e.key === ']') && (tool === 'brush' || tool === 'eraser')) {
+      setBrush((b) => Math.min(100, Math.max(1, e.key === ']' ? Math.max(b + 1, Math.round(b * 1.25)) : Math.min(b - 1, Math.round(b / 1.25)))));
     } else if (/^[1-9]$/.test(e.key) && classifier && !e.ctrlKey && !e.metaKey && !e.altKey) {
       // (the classifier's classes: 1, 2, 3 … paints that one; again: stops)
       const c = stepClasses(classifier, rois)[Number(e.key) - 1];
       if (!c) return;
       setPaint(paint === c ? null : c);
-    } else if ((e.key === 'Delete' || e.key === 'Backspace') && tab === 'structure' && netSel) {
+    } else if ((e.key === 'Delete' || e.key === 'Backspace') && vtab === 'structure' && netSel) {
       const b = branchAt(net, netSel);
       if (b) addEdit('del', midOf(b));
       setNetSel(null);
@@ -1257,7 +1766,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       <rect x={cropShown[0] * k} y={cropShown[1] * k} width={cropShown[2] * k} height={cropShown[3] * k} className="ie-crop-rect" />
     </svg>
   );
-  const roiLayer = !onOriginal && shownRois.length > 0 && <RoiOverlay rois={shownRois} sel={sel} k={k} ox={ox} oy={oy} W={W} H={H} labels={labels} interactive={tool === 'pan'} rings={rings} />;
+  const roiLayer = !onOriginal && shownRois.length > 0 && <RoiOverlay rois={shownRois} sel={sel} k={k} ox={ox} oy={oy} W={W} H={H} labels={labels} interactive={tool === 'pan'} rings={rings} unsure={genReview ? unsureIds : undefined} whole={review || (checking && genReview)} />;
   // Find like this: around the selection picked, what is compared (a disc; the particle and its edge; the particle and
   // the ground out to the ring, whose handle drags it); the matches left out by hand, faint (a click puts one back)
   const modelPicked = !onOriginal && rois.find((r) => r.id === sel && isArea(r) && !r.train);
@@ -1339,6 +1848,44 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       </svg>
     );
   })();
+  // the margin of the model picked: its outline widened by px, thinned to points that can be dragged
+  const marginFromOutline = (px: number) => {
+    if (!modelPicked) return;
+    const off = offsetOutline(roiOutline(modelPicked), Math.max(0.5, px));
+    const every = Math.max(1, Math.ceil(off.length / 24));
+    setOuter(modelPicked, off.filter((_, i) => i % every === 0));
+  };
+  // every model of the list given the compared area of the one picked
+  const pickedListed = modelPicked ? modelList.find((m) => m.roi === modelPicked.id) : undefined;
+  const sameMarginForAll = pickedListed && modelList.length > 1 ? () => setModels(modelList.map((m) => ({ ...m, context: pickedListed.context, ring: pickedListed.ring, outer: pickedListed.outer }))) : undefined;
+  // the area compared around every particle found: its model's, turned, scaled and placed as the particle was found
+  const areaLayer = (() => {
+    const lm = lastMatch.current;
+    if (!data.match?.showArea || !lm || onOriginal) return null;
+    const regions = lm.ms.map((t, j) => {
+      const sp = lm.specs[j] ?? specOf(t.id);
+      const ctx = sp.context ?? 'disc';
+      const [cx, cy] = roiCentre(t);
+      const R = modelRadius(t);
+      const pts: Pt[] =
+        ctx === 'disc' ? Array.from({ length: 48 }, (_, a): Pt => [cx + R * Math.cos((a * Math.PI) / 24), cy + R * Math.sin((a * Math.PI) / 24)])
+        : ctx === 'drawn' ? outerOf(t, sp)
+        : offsetOutline(roiOutline(t), ctx === 'alone' ? Math.max(EDGE_BAND, sp.ring ?? 6) : (matchOpts.edge ?? TUNING.edge));
+      return { pts, cx, cy };
+    });
+    const at = (pts: Pt[]) => pts.map(([x, y]) => `${((x - ox) * k).toFixed(1)},${((y - oy) * k).toFixed(1)}`).join(' ');
+    return (
+      <svg className="ie-overlay ie-context ie-areas" width={W} height={H}>
+        {rois
+          .filter((r) => r.auto && r.id.startsWith(`m${lm.seq}-`))
+          .map((r) => {
+            const q = lm.list[Number(r.id.split('-')[1])];
+            const g = q && regions[q.model];
+            return g ? <polygon key={r.id} points={at(placeLike(g.pts, g.cx, g.cy, q.angle, q.scale, (q.x0 ?? q.x) + ox, (q.y0 ?? q.y) + oy))} /> : null;
+          })}
+      </svg>
+    );
+  })();
   const badNow = matchOpts.learn && lastMatch.current ? lastMatch.current.list.flatMap((q, i) => (labelAt(q, examples)?.good === false ? [i] : [])) : rejected;
   const goodNow = matchOpts.learn && lastMatch.current ? lastMatch.current.list.flatMap((q, i) => (labelAt(q, examples)?.good ? [i] : [])) : [];
   // (learning: those the classifier left out as less probable, not said yet: shown faint while reviewing, to be said good)
@@ -1388,16 +1935,18 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   // (Structure: the network over the image, instead of the selections; the grain size's lines, the orientation)
   const texView = nodeRes?.view.texture;
   const layers =
-    tab === 'structure' ? (
+    vtab === 'structure' ? (
       <>
         {texView && !onOriginal && nodeRes && <TextureOverlay view={texView} spec={data.texture ?? {}} k={k} ox={ox} oy={oy} W={W} H={H} w={nodeRes.view.image?.w ?? 0} h={nodeRes.view.image?.h ?? 0} />}
         {net && !onOriginal && data.network?.on && <NetworkOverlay net={net} spec={data.network} k={k} ox={ox} oy={oy} W={W} H={H} tool={netTool} sel={netSel} eraseR={eraseR} onSelect={setNetSel} onEdit={addEdit} />}
       </>
     ) : (
       <>
-        {tab === 'lattice' && nodeRes?.view.lattice?.centre && nodeRes.view.lattice.rings && !onOriginal && <RingsOverlay centre={nodeRes.view.lattice.centre} rings={nodeRes.view.lattice.rings} labels={nodeRes.view.lattice.labels ?? []} k={k} ox={ox} oy={oy} W={W} H={H} />}
-        {tab === 'objects' && data.arrange?.on && (data.arrange.show ?? 'nearest') !== 'off' && nodeRes?.view.arrange && !onOriginal && <ArrangeOverlay res={nodeRes.view.arrange} spec={data.arrange} k={k} W={W} H={H} />}
+        {vtab === 'lattice' && nodeRes?.view.lattice?.centre && nodeRes.view.lattice.rings && !onOriginal && <RingsOverlay centre={nodeRes.view.lattice.centre} rings={nodeRes.view.lattice.rings} labels={nodeRes.view.lattice.labels ?? []} k={k} ox={ox} oy={oy} W={W} H={H} />}
+        {vtab === 'objects' && data.arrange?.on && (data.arrange.show ?? 'nearest') !== 'off' && nodeRes?.view.arrange && !onOriginal && <ArrangeOverlay res={nodeRes.view.arrange} spec={data.arrange} k={k} W={W} H={H} />}
+        {classifier && !onOriginal && <canvas ref={paintRef} className="ie-overlay ie-paint" style={{ width: W, height: H }} />}
         {roiLayer}
+        {areaLayer}
         {contextLayer}
         {rejectedLayer}
         {labelsLayer}
@@ -1409,81 +1958,52 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     </button>
   );
 
-  return createPortal(
-    <div className="image-editor nowheel" ref={root} tabIndex={-1} onKeyDown={key} onKeyUp={(e) => (e.key === 'b' || e.key === 'B') && setHeld(false)}>
-      <div className="ie-toolbar">
-        <b className="ellipsis">{data.name || 'image'}</b>
-        <span className="muted">
-          {base ? `${base.w} × ${base.h}` : ''}
-          {crop && full ? ` (of ${full.w} × ${full.h})` : ''}
-          {busy ? (reply && reply.scale < 1 ? ' · preview, computing the full size…' : ' · computing…') : ''}
-        </span>
-        <span className="grow" />
-        <span className="ie-group" title="Compare the result with the original (or with the image before the step shown)">
-          {cmpButton('edited', 'Edited', 'The result alone')}
-          {cmpButton('original', 'Original', 'The original alone (\\ switches; B: while held)')}
-          {cmpButton('side', 'Side by side', 'The original and the result side by side, moved and zoomed together (Y)')}
-          {cmpButton('split', 'Split', 'One image, the original on one side of a line, the result on the other: drag the line')}
-          {cmp === 'split' && (
-            <button className="nodrag" disabled={onOriginal} title="The line vertical or horizontal" onClick={() => setSplitDir(splitDir === 'v' ? 'h' : 'v')}>
-              {splitDir === 'v' ? '⇆' : '⇅'}
-            </button>
-          )}
-          <Select<'original' | 'prev'>
-            value={before}
-            title="Compared with the original, or with the image before the step shown (what that step changes)"
-            options={[
-              ['original', 'vs the original'],
-              ['prev', 'vs before the step'],
-            ]}
-            onChange={setBefore}
-          />
-        </span>
-        <span className="ie-group">
-          <button className={`nodrag${tool === 'pan' ? ' on' : ''}`} title="Move the image (drag); the wheel zooms" onClick={() => setTool('pan')}>
-            <Hand {...IC} />
-          </button>
-          <button className={`nodrag${tool === 'crop' ? ' on' : ''}`} title="Crop: the part of the original analysed (drag a rectangle on the original as it came; the data bar of a microscope cut off)" onClick={() => setTool(tool === 'crop' ? 'pan' : 'crop')}>
-            <CropIcon {...IC} /> Crop
-          </button>
-          <button className={`nodrag${tool === 'scale' ? ' on' : ''}`} title="Set the scale: draw a line along the scale bar of the original (Shift: straight; its ends found on the bar), then give its length" onClick={() => setTool(tool === 'scale' ? 'pan' : 'scale')}>
-            <Ruler {...IC} /> Scale
-          </button>
-        </span>
-        <span className="ie-group" title="Selections: draw on the image analysed">
-          {ROI_TOOLS.map(([t, Icon, label]) => (
-            <button
-              key={t}
-              className={`nodrag${tool === t ? ' on' : ''}`}
-              title={`${label}. ${TOOL_HINTS[t]}${t === 'stamp' && !rois.some((r) => r.id === sel && isArea(r)) ? ' Pick the selection to copy first.' : ''}`}
-              onClick={() => {
-                setTool(tool === t ? 'pan' : t);
-                setDraft(null);
-              }}
-            >
-              <Icon {...IC} />
-            </button>
-          ))}
-        </span>
-        <button className="nodrag" title="Zoom out (−)" onClick={() => zoomAt(0.8)}>
-          <Minus {...IC} />
-        </button>
-        <span className="muted ie-zoom">{Math.round(k * 100)} %</span>
-        <button className="nodrag" title="Zoom in (+)" onClick={() => zoomAt(1.25)}>
-          <Plus {...IC} />
-        </button>
-        <button className="nodrag" title="Fit the window (0)" onClick={() => (setZoom(0), setPan([0, 0]))}>
-          <Maximize {...IC} />
-        </button>
-        <button className="nodrag" title="1 image pixel = 1 screen pixel" onClick={() => setZoom(1)}>
-          1:1
-        </button>
-        <button className="nodrag ie-close" title="Close the editor (Esc); Ctrl+Z undoes" onClick={onClose}>
-          <X {...IC} />
-        </button>
-      </div>
-      <div className="ie-body" style={{ gridTemplateColumns: `${panels[0]}px 5px minmax(0, 1fr) 5px ${panels[1]}px` }}>
-        <div className="ie-steps">
+  // ---- the pieces of the panels: shown as the tabs of before (All tools), or in the steps of a task ----
+  const stepCard = (s: ImgStep, k: number) => {
+            const d = STEP_DEFS[s.kind];
+            const isShown = upTo && upTo !== '__none' ? s.id === upTo : upTo !== '__none' && k === steps.length - 1;
+            const err = reply?.errors[s.id];
+            const note = reply?.notes[s.id];
+            return (
+              <div key={s.id} className={`ie-step${isShown ? ' shown' : ''}${s.on ? '' : ' off'}${k >= upToIndex && upToIndex < steps.length ? ' after' : ''}`}>
+                <div className="row ie-step-head">
+                  <input className="nodrag" type="checkbox" checked={s.on} title="On (off: passed over)" onChange={(e) => setStep(s.id, { on: e.target.checked })} />
+                  <button className="nodrag ie-step-name grow" title={`${d?.title ?? ''} (click: show the image up to this step)`} onClick={() => setUpTo(upTo === s.id ? null : s.id)}>
+                    {k + 1}. {d?.label ?? s.kind}
+                  </button>
+                  <button className="nodrag ts-btn" title="Up" disabled={k === 0} onClick={() => move(k, -1)}>
+                    <ArrowUp {...IC} />
+                  </button>
+                  <button className="nodrag ts-btn" title="Down" disabled={k === steps.length - 1} onClick={() => move(k, 1)}>
+                    <ArrowDown {...IC} />
+                  </button>
+                  <button className="nodrag ts-btn" title="Remove this step" onClick={() => (setSteps(steps.filter((q) => q.id !== s.id)), upTo === s.id && setUpTo(null))}>
+                    <X {...IC} />
+                  </button>
+                </div>
+                {s.kind === 'curves' ? (
+                  <CurvesEditor p={s.p} rgb={(base?.ch.length ?? 1) === 3} hist={reply?.stepHist[s.id]} set={(key, v) => setStep(s.id, { p: { ...s.p, [key]: v } })} />
+                ) : s.kind === 'classify' ? (
+                  <ClassifierEditor s={s} set={(patch) => setStep(s.id, { p: { ...s.p, ...(patch as ImgStep['p']) } })} rois={rois} sel={sel} setRois={setRois} note={reply?.notes[s.id]} hist={reply?.stepHist[s.id]} paint={paint} setPaint={setPaint} tool={paintTool} setTool={setPaintTool} brush={brush} setBrush={setBrush} painted={painted} clearPaint={clearPaint} live={liveTrain} setLive={(on) => (setLiveTrain(on), on && updateTrain())} pending={trainPending} updateNow={updateTrain} />
+                ) : s.kind === 'threshold' ? (
+                  <ThresholdEditor p={s.p} hist={reply?.stepHist[s.id]} note={reply?.notes[s.id]} set={(patch) => setStep(s.id, { p: { ...s.p, ...(patch as ImgStep['p']) } })} />
+                ) : (
+                  d &&
+                  d.params.length > 0 && (
+                    <div className="ie-params">
+                      {d.params.map((q) => (
+                        <ParamField key={q.key} q={q} value={s.p[q.key]} hist={reply?.stepHist[s.id]} set={(v) => setStep(s.id, { p: { ...s.p, [q.key]: v as never } })} />
+                      ))}
+                    </div>
+                  )
+                )}
+                {note && s.kind !== 'threshold' && s.kind !== 'classify' && <div className="hint">{note}</div>}
+                {err && <div className="hint ie-err">{err}</div>}
+              </div>
+            );
+  };
+  const chain = (
+    <>
           <button className={`nodrag ie-step-head ie-original${upToIndex === 0 ? ' shown' : ''}`} title="Show the original image (the part analysed)" onClick={() => setUpTo(upTo === '__none' ? null : '__none')}>
             Original image
           </button>
@@ -1509,118 +2029,12 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
               ))}
             </select>
           </div>
-          {steps.map((s, k) => {
-            const d = STEP_DEFS[s.kind];
-            const isShown = upTo && upTo !== '__none' ? s.id === upTo : upTo !== '__none' && k === steps.length - 1;
-            const err = reply?.errors[s.id];
-            const note = reply?.notes[s.id];
-            return (
-              <div key={s.id} className={`ie-step${isShown ? ' shown' : ''}${s.on ? '' : ' off'}${k >= upToIndex && upToIndex < steps.length ? ' after' : ''}`}>
-                <div className="row ie-step-head">
-                  <input className="nodrag" type="checkbox" checked={s.on} title="On (off: passed over)" onChange={(e) => setStep(s.id, { on: e.target.checked })} />
-                  <button className="nodrag ie-step-name grow" title={`${d?.title ?? ''} (click: show the image up to this step)`} onClick={() => setUpTo(upTo === s.id ? null : s.id)}>
-                    {k + 1}. {d?.label ?? s.kind}
-                  </button>
-                  <button className="nodrag ts-btn" title="Up" disabled={k === 0} onClick={() => move(k, -1)}>
-                    <ArrowUp {...IC} />
-                  </button>
-                  <button className="nodrag ts-btn" title="Down" disabled={k === steps.length - 1} onClick={() => move(k, 1)}>
-                    <ArrowDown {...IC} />
-                  </button>
-                  <button className="nodrag ts-btn" title="Remove this step" onClick={() => (setSteps(steps.filter((q) => q.id !== s.id)), upTo === s.id && setUpTo(null))}>
-                    <X {...IC} />
-                  </button>
-                </div>
-                {s.kind === 'curves' ? (
-                  <CurvesEditor p={s.p} rgb={(base?.ch.length ?? 1) === 3} hist={reply?.stepHist[s.id]} set={(key, v) => setStep(s.id, { p: { ...s.p, [key]: v } })} />
-                ) : s.kind === 'classify' ? (
-                  <ClassifierEditor s={s} set={(patch) => setStep(s.id, { p: { ...s.p, ...(patch as ImgStep['p']) } })} rois={rois} sel={sel} setRois={setRois} note={reply?.notes[s.id]} hist={reply?.stepHist[s.id]} paint={paint} setPaint={setPaint} tool={paintTool} setTool={setPaintTool} brush={brush} setBrush={setBrush} />
-                ) : s.kind === 'threshold' ? (
-                  <ThresholdEditor p={s.p} hist={reply?.stepHist[s.id]} note={reply?.notes[s.id]} set={(patch) => setStep(s.id, { p: { ...s.p, ...(patch as ImgStep['p']) } })} />
-                ) : (
-                  d &&
-                  d.params.length > 0 && (
-                    <div className="ie-params">
-                      {d.params.map((q) => (
-                        <ParamField key={q.key} q={q} value={s.p[q.key]} hist={reply?.stepHist[s.id]} set={(v) => setStep(s.id, { p: { ...s.p, [q.key]: v as never } })} />
-                      ))}
-                    </div>
-                  )
-                )}
-                {note && s.kind !== 'threshold' && s.kind !== 'classify' && <div className="hint">{note}</div>}
-                {err && <div className="hint ie-err">{err}</div>}
-              </div>
-            );
-          })}
+          {steps.map((s, k) => stepCard(s, k))}
           {!steps.length && <div className="hint">Add a step: prepare the image (tone and colour, noise, background, edges, texture), then a threshold or a trainable classifier (a mask) and its morphology. Each works on what the steps above give.</div>}
-        </div>
-        <div className="ie-split-bar nodrag" title="Drag: the width of the steps (double-click: as it was)" onPointerDown={(e) => dragPanel(e, 0)} onDoubleClick={() => setPanelWidth(0, PANELS[0])} />
-        <div
-          className={`ie-view${tool !== 'pan' ? ' scale' : ''}${side ? ' side' : ''}`}
-          ref={view}
-          onWheel={(e) => zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX, e.clientY)}
-          onPointerDown={onDown}
-          onPointerMove={onMove}
-          onPointerUp={onUp}
-          onDoubleClick={onDouble}
-          onPointerLeave={() => setHover(null)}
-        >
-          {specOn ? (
-            <>
-              {stage(
-                canvasS,
-                spectrumImg ? `spectrum${(fft.log ?? true) ? ' (log)' : ''}, ${spectrumImg.N} × ${spectrumImg.N}` : 'spectrum: computing …',
-                spectrumImg && tab === 'lattice' && <SpotsOverlay spots={data.lattice?.spots ?? []} N={spectrumImg.N} k={k} pick onClick={(u, v) => worker.current?.postMessage({ type: 'spot', u, v } satisfies SpotRequest)} />,
-              )}
-              <canvas ref={canvas} hidden />
-              <canvas ref={canvasB} hidden />
-            </>
-          ) : onOriginal ? (
-            <>
-              {stage(canvasO, tool === 'crop' ? 'original: drag the part to analyse' : 'original: draw along the scale bar', tool === 'crop' ? cropRect : scaleLine)}
-              <canvas ref={canvas} hidden />
-              <canvas ref={canvasB} hidden />
-            </>
-          ) : mode === 'side' ? (
-            <>
-              <div className="ie-pane">{stage(canvasB, beforeLabel, layers)}</div>
-              <div className="ie-pane">{stage(canvas, 'edited', layers)}</div>
-            </>
-          ) : mode === 'split' ? (
-            <div className="ie-pane">
-              {stage(canvas, undefined, layers)}
-              <div className="ie-split-before" style={{ clipPath: splitDir === 'v' ? `inset(0 ${(1 - split) * 100}% 0 0)` : `inset(0 0 ${(1 - split) * 100}% 0)` }}>
-                {stage(canvasB)}
-              </div>
-              <div className={`ie-split-line ${splitDir}`} style={splitDir === 'v' ? { left: `${split * 100}%` } : { top: `${split * 100}%` }}>
-                <span className="ie-split-handle" title="Drag the line">
-                  {splitDir === 'v' ? '⇆' : '⇅'}
-                </span>
-              </div>
-              <span className="ie-pane-label left">{beforeLabel}</span>
-              <span className="ie-pane-label">edited</span>
-            </div>
-          ) : (
-            <div className="ie-pane">
-              {mode === 'original' ? stage(canvasB, beforeLabel, layers) : stage(canvas, undefined, layers)}
-              {mode === 'original' ? <canvas ref={canvas} hidden /> : <canvas ref={canvasB} hidden />}
-            </div>
-          )}
-          {onOriginal && hover && <canvas ref={loupe} className="ie-loupe" width={144} height={144} style={{ left: hover.sx + 18, top: hover.sy + 18 }} />}
-          {readout && <div className="ie-readout">{readout}</div>}
-        </div>
-        <div className="ie-split-bar nodrag" title="Drag: the width of the panels on the right (double-click: as it was)" onPointerDown={(e) => dragPanel(e, 1)} onDoubleClick={() => setPanelWidth(1, PANELS[1])} />
-        <div className="ie-side">
-          <div className="hint ellipsis ie-cal-line" title="The size of a pixel (Image ▸ Calibration)">{data.cal && data.cal.size > 0 ? `1 px = ${fmt(data.cal.size)} ${unitText(data.cal.unit)}` : 'not calibrated: the results in pixels'}</div>
-          <div className="ie-tabs">
-            {SIDE_TABS.map(([t, label, title]) => (
-              <button key={t} className={`nodrag${tab === t ? ' on' : ''}`} title={title} onClick={() => setTab(t)}>
-                {label}
-              </button>
-            ))}
-          </div>
-          {tab === 'image' && (
-            <>
+    </>
+  );
+  const histView = (
+    <>
           <div className="ie-section">Histogram{thr ? ' (into the threshold)' : upToIndex < steps.length ? ` (up to step ${upToIndex})` : ''}</div>
           <Histogram hist={sideHist?.h ?? null} lo={sideHist?.lo ?? 0} hi={sideHist?.hi ?? 1} marks={marks} />
           <div className="ie-section">View</div>
@@ -1655,6 +2069,10 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
             )}
           </div>
           <Check label="radial spectrum in the workbook" title="The spectrum's power averaged in rings, against the spatial frequency k and the distance d = 1/k (a sheet Radial spectrum), with the distance of its strongest peak: the period the image repeats most" value={!!fft.radial} onChange={(radial) => set({ fft: { ...data.fft, radial: radial || undefined } })} />
+    </>
+  );
+  const cropBlock = (
+    <>
           <div className="ie-section">Crop</div>
           <div className="hint">{crop ? `The part analysed: x ${crop[0]}, y ${crop[1]}, ${crop[2]} × ${crop[3]} px of ${full?.w} × ${full?.h}.` : 'The whole image is analysed.'}</div>
           <div className="row wrap">
@@ -1672,6 +2090,10 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
               </button>
             )}
           </div>
+    </>
+  );
+  const calBlock = (
+    <>
           <div className="ie-section">Calibration</div>
           <div className="hint">{data.cal && data.cal.size > 0 ? `1 px = ${fmt(data.cal.size)} ${unitText(data.cal.unit)} (${fmt(1 / data.cal.size)} px per ${unitText(data.cal.unit)})` : 'Not calibrated: the results in pixels.'}</div>
           <div className="hint">On the scale bar: Scale, draw a line along it (a loupe follows the mouse; its ends found on the bar), give its length.</div>
@@ -1735,11 +2157,17 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
               </button>
             )}
           </div>
-            </>
-          )}
-          {tab === 'objects' && (
-            <>
+    </>
+  );
+  const keysBlock = (
+    <>
+          <div className="ie-section">Keys</div>
+          <div className="hint">Wheel: zoom · drag: move · \ original / edited · Y side by side · B: the original while held · + − 0: zoom, fit · Esc: the drawing, then the tool off, then close · a selection picked: Delete removes it, Ctrl+D copies it, the arrows move it (Shift: by 10)</div>
+    </>
+  );
+  const roiPanel = (bare: boolean) => (
           <RoiPanel
+            bare={bare}
             rois={rois}
             sel={sel}
             setSel={setSel}
@@ -1760,35 +2188,15 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
             duplicate={duplicate}
             clearAll={() => void ask(`Remove all ${rois.length} selections?`, { ok: 'Remove' }).then((y) => y && (setRois([]), setSel(null)))}
           />
-          {(() => {
-            // the trainable classifier of the steps, here too (it stays a step: its place in the order matters)
-            const cls = steps.find((st) => st.kind === 'classify');
-            return (
-              <Fold id="pixel-classifier" title="Pixel classifier" aside={cls ? `${stepClasses(cls, rois).length} classes${cls.on ? '' : ' · off'}` : 'none'}>
-                {cls ? (
-                  <>
-                    <div className="hint">The trainable classifier, a step of the list on the left (in Find the objects): it learns the classes from what you draw, and makes the mask the particles are found in.</div>
-                    <ClassifierEditor s={cls} set={(patch) => setStep(cls.id, { p: { ...cls.p, ...(patch as ImgStep['p']) } })} rois={rois} sel={sel} setRois={setRois} note={reply?.notes[cls.id]} hist={reply?.stepHist[cls.id]} paint={paint} setPaint={setPaint} tool={paintTool} setTool={setPaintTool} brush={brush} setBrush={setBrush} />
-                    <div className="row">
-                      <button className="nodrag" title="Show the image up to this step (its card on the left)" onClick={() => setUpTo(cls.id)}>
-                        Open its step
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="hint">A classifier of the pixels (as ImageJ’s Trainable Weka Segmentation): draw examples of the particles, the ground and their edges; it makes the mask the particles are found in.</div>
-                    <div className="row">
-                      <button className="nodrag" title="Add the trainable classifier as a step (at the end of the list on the left)" onClick={() => add('classify')}>
-                        + Add a pixel classifier
-                      </button>
-                    </div>
-                  </>
-                )}
-              </Fold>
-            );
-          })()}
+  );
+  const particlesPanel = (part?: 'mask' | 'like' | 'check' | 'refine' | 'layers' | 'accuracy') => (
           <ParticlesPanel
+            part={part}
+            marginFromOutline={marginFromOutline}
+            sameMarginForAll={sameMarginForAll}
+            showArea={!!data.match?.showArea}
+            setShowArea={(on) => setMatch({ showArea: on || undefined })}
+            samPick={task === 'particles' || task === 'all' ? { on: tool === 'sammodel', toggle: () => setTool(tool === 'sammodel' ? 'pan' : 'sammodel'), grow: samGrow, setGrow: (grow) => setMatch({ grow: grow === 6 ? undefined : grow }) } : undefined}
             opts={partOpts}
             set={setPart}
             group={partGroup}
@@ -1869,6 +2277,8 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
               if (on) layersFor(rois.filter((r) => r.auto));
             }}
           />
+  );
+  const arrangePanel = (
           <ArrangePanel
             spec={data.arrange ?? {}}
             set={(a) => set({ arrange: { ...data.arrange, ...a } })}
@@ -1878,9 +2288,8 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
             k={calK}
             u={calU}
           />
-            </>
-          )}
-          {tab === 'structure' && (
+  );
+  const networkPanel = (
             <NetworkPanel
               net={net}
               error={netError}
@@ -1898,10 +2307,11 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
               toggle={toggleEdit}
               undo={undoEdit}
             />
-          )}
-          {tab === 'structure' && <TexturePanel spec={data.texture ?? {}} set={(p: Partial<TextureSpec>) => set({ texture: { ...data.texture, ...p } })} view={nodeRes?.view.texture} u={calU} />}
-          {tab === 'lattice' && (
+  );
+  const texturePanel = <TexturePanel spec={data.texture ?? {}} set={(p: Partial<TextureSpec>) => set({ texture: { ...data.texture, ...p } })} view={nodeRes?.view.texture} u={calU} />;
+  const latticePanel = (part?: 'spots' | 'fringes' | 'rings') => (
             <LatticePanel
+              part={part}
               spec={data.lattice ?? {}}
               set={setLattice}
               k={calK}
@@ -1913,9 +2323,10 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
               ringRows={nodeRes?.view.lattice?.ringRows}
               centre={nodeRes?.view.lattice?.centre}
             />
-          )}
-          {tab === 'surface' && (
+  );
+  const surfacePanel = (part?: 'heights' | 'areal' | 'profile' | 'step') => (
             <SurfacePanel
+              part={part}
               spec={data.surface ?? {}}
               set={setSurface}
               u={calU}
@@ -1924,12 +2335,657 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
               levelled={steps.some((q) => q.kind === 'level' && q.on)}
               level={levelIt}
             />
-          )}
-          {tab === 'results' && <MeasurePanel spec={spec} set={setSpec} steps={steps} rgb={(base?.ch.length ?? 1) === 3} rois={rois} book={book} sheet={sheet} setSheet={setSheet} pick={(name) => setSel(rois.find((r) => r.name === name)?.id ?? sel)} />}
-          {tab === 'image' && (
+  );
+  const measureOf = (part?: 'measure' | 'spots') => <MeasurePanel spec={spec} set={setSpec} steps={steps} rgb={(base?.ch.length ?? 1) === 3} rois={rois} book={book} sheet={sheet} setSheet={setSheet} pick={(name) => setSel(rois.find((r) => r.name === name)?.id ?? sel)} part={part} />;
+  const measurePanel = measureOf();
+  // the selection tools shown: all of them (All tools, More), else those of the task
+  const shownTools = task === 'all' || moreTools ? ROI_TOOLS : ROI_TOOLS.filter(([t]) => TASKS[task].tools.includes(t) || tool === t);
+  // ---- a task: its steps, the one open ----
+  const autoCount = rois.filter((r) => r.auto && !r.out).length;
+  const outCount = rois.filter((r) => r.auto && r.out).length;
+  const pickFind = (m: FindMethod) =>
+    set({ find: m, ...(m === 'rays' ? { particles: { ...data.particles, method: 'rays' as const } } : m !== 'like' && data.particles?.method === 'rays' ? { particles: { ...data.particles, method: undefined } } : {}) });
+  // (a mask made cleaner: a step of Morphology added at the end)
+  const MORPH = (Object.entries(STEP_DEFS) as [StepKind, StepDef][]).filter(([, d]) => d.group === 'Morphology');
+  const cleanMask = (
+    <div className="row">
+      <select
+        className="nodrag grow"
+        value=""
+        title="A step after the mask: holes filled, small bits taken off, touching ones cut apart (Morphology; at the end of the image steps)"
+        onChange={(e) => {
+          if (e.target.value) setSteps([...steps, newStep(e.target.value as StepKind, `s${Date.now().toString(36)}${(stepSeq++).toString(36)}`)]);
+          e.target.value = '';
+        }}
+      >
+        <option value="">+ Clean the mask…</option>
+        {MORPH.map(([kind, d]) => (
+          <option key={kind} value={kind} title={d.title}>
+            {d.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+  // the mask of a threshold or of the classifier: its step (as in the list of Prepare), or one added
+  const thresholdCard = thrStep ? (
+    <>
+      {stepCard(thrStep, steps.indexOf(thrStep))}
+      <div className="hint">A step of the image steps (Prepare): what comes before it is what it thresholds.</div>
+    </>
+  ) : (
+    <div className="row wrap">
+      <button className="nodrag" title="A Threshold step at the end of the image steps: one value for the whole image (Otsu, or another method)" onClick={() => add('threshold')}>
+        + Add a threshold
+      </button>
+      <button className="nodrag" title="A Local threshold step: a value for every place, from the pixels around it (an uneven ground)" onClick={() => add('localthreshold')}>
+        + Local threshold
+      </button>
+    </div>
+  );
+  const classifierCard = clsStep ? (
+    <>
+      <ClassifierEditor s={clsStep} set={(patch) => setStep(clsStep.id, { p: { ...clsStep.p, ...(patch as ImgStep['p']) } })} rois={rois} sel={sel} setRois={setRois} note={reply?.notes[clsStep.id]} hist={reply?.stepHist[clsStep.id]} paint={paint} setPaint={setPaint} tool={paintTool} setTool={setPaintTool} brush={brush} setBrush={setBrush} painted={painted} clearPaint={clearPaint} live={liveTrain} setLive={(on) => (setLiveTrain(on), on && updateTrain())} pending={trainPending} updateNow={updateTrain} />
+      <label className="row">
+        <input className="nodrag" type="checkbox" checked={clsStep.on} onChange={(e) => setStep(clsStep.id, { on: e.target.checked })} />
+        <span>on (a step of the image steps, in Prepare)</span>
+      </label>
+    </>
+  ) : (
+    <>
+      <div className="hint">A classifier of the pixels (as ImageJ’s Trainable Weka Segmentation): draw examples of the particles, the ground and their edges; it makes the mask the particles are found in.</div>
+      <div className="row">
+        <button className="nodrag" title="Add the trainable classifier as a step (at the end of the image steps)" onClick={() => add('classify')}>
+          + Add a pixel classifier
+        </button>
+      </div>
+    </>
+  );
+  const samModel = SAM_MODELS[samSpec.model];
+  const samCard = (
+    <>
+      <div className="ie-params">
+        <span className="ie-label">Model</span>
+        <Select<SamModel> value={samSpec.model} title={`${SAM_MODELS.em.label}: ${SAM_MODELS.em.title}. ${SAM_MODELS.general.label}: ${SAM_MODELS.general.title}`} options={(['general', 'em'] as SamModel[]).map((m): [SamModel, string] => [m, SAM_MODELS[m].label])} onChange={(model) => setSam({ model: model === 'general' ? undefined : model })} />
+        <span className="ie-label">Prompt</span>
+        <Select<'click' | 'box' | 'all'>
+          seg
+          value={samSpec.prompt}
+          title="How the model is asked: a click on a particle, a box around one, or every particle at once (a grid of points)"
+          options={[
+            ['click', 'Click'],
+            ['box', 'Box'],
+            ['all', 'Everything'],
+          ]}
+          onChange={(prompt) => {
+            setSam({ prompt: prompt === 'click' ? undefined : prompt });
+            setTool(prompt === 'click' ? 'sam' : prompt === 'box' ? 'sambox' : 'pan');
+          }}
+        />
+      </div>
+      <div className="hint">
+        {samCached[samSpec.model] ? `Kept in this browser${samEngine ? `; runs ${samEngine}` : ''}.` : `Not downloaded yet: about ${Math.round((samModel.bytes + SAM_ENGINE.bytes) / 1048576)} MB, once, asked first. The image never leaves this computer.`}
+      </div>
+      {samSpec.prompt === 'click' && (
+        <div className="row wrap">
+          <button className={`nodrag${tool === 'sam' ? ' on' : ''}`} title="The Point (SAM) tool: click a particle" onClick={() => setTool(tool === 'sam' ? 'pan' : 'sam')}>
+            <MousePointerClick {...IC} /> Point (SAM)
+          </button>
+          <span className="hint">Click a particle: its outline. Shift-click adds a part to it, Alt-click takes one off.</span>
+        </div>
+      )}
+      {samSpec.prompt === 'box' && (
+        <div className="row wrap">
+          <button className={`nodrag${tool === 'sambox' ? ' on' : ''}`} title="The Box (SAM) tool: drag a box around a particle" onClick={() => setTool(tool === 'sambox' ? 'pan' : 'sambox')}>
+            <SquareDashedMousePointer {...IC} /> Box (SAM)
+          </button>
+          <span className="hint">Drag a box around a particle: its outline.</span>
+        </div>
+      )}
+      {samSpec.prompt === 'all' && (
+        <>
+          <div className="ie-params">
+            <span className="ie-label">Points</span>
+            <Select<string> value={String(samSpec.perSide)} title="The grid of points the model is asked at (each point: the object under it); more, the small particles found too, slower" options={[16, 24, 32, 48].map((n): [string, string] => [String(n), `${n} × ${n}`])} onChange={(v) => setSam({ perSide: Number(v) === SAM_DEFAULTS.perSide ? undefined : Number(v) })} />
+            <span className="ie-label">Sure</span>
+            <span className="row" title="The least the model's own guess of how good a mask is (0 … 1): higher, fewer and better">
+              <NumInput className="tiny" min={0} max={1} step={0.02} value={samSpec.iou} onChange={(v) => setSam({ iou: Number.isFinite(v) && v !== SAM_DEFAULTS.iou ? Math.min(1, Math.max(0, v)) : undefined })} />
+              <span className="muted">stable</span>
+              <NumInput className="tiny" min={0} max={1} step={0.02} value={samSpec.stability} title="The least stability of a mask: how little it changes when its threshold moves (0 … 1)" onChange={(v) => setSam({ stability: Number.isFinite(v) && v !== SAM_DEFAULTS.stability ? Math.min(1, Math.max(0, v)) : undefined })} />
+            </span>
+            <span className="ie-label">Size ({calU}²)</span>
+            <span className="row">
+              <NumInput className="short" min={0} value={+(samSpec.minArea * calK * calK).toPrecision(6)} title="The least area kept" onChange={(v) => setSam({ minArea: Number.isFinite(v) && v >= 0 ? v / (calK * calK) : undefined })} />
+              <span className="muted">to</span>
+              <NumInput className="tiny" min={1} max={100} step={1} value={Math.round(samSpec.maxFrac * 100)} title="The largest kept, in % of the image (the ground or a whole cluster left out)" onChange={(v) => setSam({ maxFrac: Number.isFinite(v) && v > 0 ? Math.min(1, v / 100) : undefined })} />
+              <span className="muted">% of it</span>
+            </span>
+          </div>
+          <Check label="leave out those on the image's edge" title="Particles cut by the edge of the image left out (their size is not known)" value={samSpec.edges} onChange={(edges) => setSam({ edges: edges || undefined })} />
+          <div className="row wrap">
+            <button className="nodrag btn-run" title="Every particle found, from a grid of points (those found before replaced)" onClick={() => void samAll()}>
+              Segment all
+            </button>
+            <span className="muted">{partMsg}</span>
+          </div>
+        </>
+      )}
+      {samSpec.prompt !== 'all' && partMsg && <div className="muted">{partMsg}</div>}
+      <div className="hint">{samModel.credit}.</div>
+      {samCached[samSpec.model] && (
+        <div className="row">
+          <button className="nodrag" title="The model's files taken out of this browser (downloaded again when next used)" onClick={() => void samForget()}>
+            Remove it from this browser
+          </button>
+        </div>
+      )}
+    </>
+  );
+  const prepare = (
+    <>
+      {task === 'surface' && surfacePanel('heights')}
+      {cropBlock}
+      {calBlock}
+      <div className="ie-section">Image steps</div>
+      {chain}
+    </>
+  );
+  const pane = (() => {
+    if (task === 'all') return null;
+    if (taskStep === 0) return prepare;
+    if (task === 'particles') {
+      if (taskStep === 1)
+        return (
+          <MethodCards methods={FIND_METHODS} value={findM} onPick={pickFind}>
+            {findM === 'threshold' && (
+              <>
+                {thresholdCard}
+                {cleanMask}
+                {particlesPanel('mask')}
+              </>
+            )}
+            {findM === 'classifier' && (
+              <>
+                {classifierCard}
+                {cleanMask}
+                {particlesPanel('mask')}
+              </>
+            )}
+            {findM === 'like' && particlesPanel('like')}
+            {findM === 'sam' && samCard}
+            {findM === 'rays' && (
+              <>
+                <div className="hint">A seed in every particle (the mask's centres when the image steps make one, else the bright or dark blobs at their size), from each 32 rays stopped at the first edge. The Rays tool does it for one particle, with a click.</div>
+                {particlesPanel('mask')}
+              </>
+            )}
+          </MethodCards>
+        );
+      if (taskStep === 2)
+        return (
+          <>
+            <div className="row wrap">
+              <b>{autoCount} found</b>
+              {outCount > 0 && <span className="muted">· {outCount} left out</span>}
+              {partMsg && <span className="muted">· {partMsg}</span>}
+            </div>
+            {findM === 'like' ? (
+              particlesPanel('check')
+            ) : (
+              <>
+                <ReviewPanel
+                  reviewing={checking}
+                  setReviewing={(on) => {
+                    setChecking(on);
+                    if (on) setTool('pan');
+                  }}
+                  count={autoRois.length}
+                  out={{ hand: autoRois.filter((r) => r.out === 'hand').length, said: autoRois.filter((r) => r.out === 'said').length, learnt: autoRois.filter((r) => r.out === 'learnt').length, score: autoRois.filter((r) => r.out === 'score').length }}
+                  putBack={() => setRois(rois.map((r) => (r.out === 'hand' ? { ...r, out: undefined } : r)))}
+                  learnOn={!!rv.learn}
+                  setLearn={(on) => setRv({ learn: on || undefined })}
+                  method={rv.method ?? 'auto'}
+                  setMethod={(method) => setRv({ method: method === 'auto' ? undefined : method })}
+                  good={saidList.filter((r) => r.said).length}
+                  bad={saidList.filter((r) => !r.said).length}
+                  learnt={gLearnt}
+                  probs={gProb ? [...gProb.values()] : null}
+                  pmin={gPmin}
+                  setPmin={(v) => setRv({ pmin: v === 0.5 ? undefined : v })}
+                  unsure={unsureG}
+                  setUnsure={setUnsureG}
+                  forget={() => setRois(rois.map((r) => (r.said !== undefined ? { ...r, said: undefined } : r)))}
+                  scores={autoRois.filter((r) => r.id.startsWith('s') && r.score !== undefined).map((r) => r.score!)}
+                  sure={gSure}
+                  setSure={(v) => setRv({ sure: v <= 0.5 ? undefined : v })}
+                />
+                {particlesPanel('accuracy')}
+              </>
+            )}
+            {particlesPanel('refine')}
+          </>
+        );
+      return (
+        <>
+          {measurePanel}
+          {arrangePanel}
+          <Fold id="task-texture" title="Texture" aside="grain size, orientation, fractal">
+            {texturePanel}
+          </Fold>
+        </>
+      );
+    }
+    if (task === 'spots') {
+      if (taskStep === 1)
+        return (
+          <>
+            <div className="hint">Draw an ellipse (or a rectangle) on one spot, then with Stamp click every other spot: a copy of the one picked, centred on the bright pixels under it (Centre on, on the right). Give the spots of a replicate a group (New ones in group): the summary is by group.</div>
+            {roiPanel(true)}
+          </>
+        );
+      if (taskStep === 2)
+        return (
+          <>
+            <div className="hint">Every spot its own background, taken off its signal: pick a spot (step 2) and choose a ring around it (its gap and width), a region drawn, or the global one; Same for its group gives it to all of its group. A selection can itself be a region of background.</div>
+            {measureOf('spots')}
+          </>
+        );
+      return measureOf('measure');
+    }
+    if (task === 'network') {
+      if (taskStep === 1)
+        return (
+          <MethodCards methods={FIND_METHODS.filter(([m]) => m === 'threshold' || m === 'classifier')} value={findM === 'classifier' ? 'classifier' : 'threshold'} onPick={(m) => set({ find: m })}>
+            {findM === 'classifier' ? classifierCard : thresholdCard}
+            {cleanMask}
+          </MethodCards>
+        );
+      return taskStep === 2 ? networkPanel : texturePanel;
+    }
+    if (task === 'lattice') return latticePanel(taskStep === 1 ? 'spots' : taskStep === 2 ? 'fringes' : 'rings');
+    return surfacePanel(taskStep === 1 ? 'areal' : taskStep === 2 ? 'profile' : 'step');
+  })();
+  // what was done in each step of the task (its number marked)
+  const done: boolean[] =
+    task === 'particles' ? [!!data.cal || !!crop || steps.length > 0, autoCount > 0, examples.length > 0 || rois.some((r) => r.auto && r.shape) || !!acc, false]
+    : task === 'spots' ? [!!data.cal || !!crop || steps.length > 0, rois.some((r) => isArea(r) && !r.auto && !r.train && r.role !== 'background'), rois.some((r) => !!r.bg && r.bg.mode !== 'none') || !!spec.globalBg, false]
+    : task === 'network' ? [!!data.cal || !!crop, !!thrStep || !!clsStep, !!data.network?.on, !!(data.texture && Object.values(data.texture).some(Boolean))]
+    : task === 'lattice' ? [!!data.cal || !!crop, (data.lattice?.spots?.length ?? 0) > 0, !!data.lattice?.fringes, !!data.lattice?.saed]
+    : task === 'surface' ? [steps.some((q) => q.kind === 'level' && q.on), !!data.surface?.areal, !!data.surface?.profile, !!data.surface?.step]
+    : [];
+  // ---- the panel on the right of a task: what it found so far, what to do next ----
+  const summary = (() => {
+    if (task === 'particles') {
+      const ds = rois.filter((r) => r.auto && !r.out && isArea(r)).map((r) => {
+        const pts = roiOutline(r);
+        let a = 0;
+        for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) a += (pts[j][0] + pts[i][0]) * (pts[j][1] - pts[i][1]);
+        return 2 * Math.sqrt(Math.abs(a) / 2 / Math.PI) * calK;
+      });
+      const mean = ds.length ? ds.reduce((x, y) => x + y, 0) / ds.length : NaN;
+      const [lo, hi] = ds.length ? [Math.min(...ds), Math.max(...ds)] : [0, 1];
+      const bins = new Array<number>(12).fill(0);
+      for (const d of ds) bins[Math.min(11, Math.floor(((d - lo) / (hi - lo || 1)) * 12))]++;
+      const top = Math.max(1, ...bins);
+      const next =
+        !data.pixels ? ''
+        : barApart > 0 && !crop ? 'Cut the data bar under the image (step 1, Crop).'
+        : !data.cal ? 'Set the scale (step 1, Calibration): else the sizes are in pixels.'
+        : !autoCount ? 'Find the particles (step 2).'
+        : lastMatch.current && !examples.length && !rejected.length ? 'Check those found (step 3): Review leaves out the wrong ones.'
+        : 'Measure them (step 4): the sizes, the shapes, how they lie.';
+      return (
+        <>
+          <div className="ie-sum-label">Found</div>
+          <div className="ie-sum-value">{autoCount}</div>
+          {ds.length > 0 && (
             <>
-          <div className="ie-section">Keys</div>
+              <div className="muted">
+                mean d {+mean.toPrecision(3)} {calU} ({+lo.toPrecision(3)} to {+hi.toPrecision(3)})
+              </div>
+              <svg className="ie-sum-hist" viewBox="0 0 120 36" preserveAspectRatio="none" aria-label="The sizes of the particles found">
+                {bins.map((c, i) => (
+                  <rect key={i} x={i * 10 + 0.5} y={36 - (c / top) * 34} width={9} height={(c / top) * 34} />
+                ))}
+              </svg>
+              <div className="muted">their sizes (the diameter of a disc as large)</div>
+            </>
+          )}
+          {next && (
+            <>
+              <div className="ie-sum-label">Next</div>
+              <div className="hint">{next}</div>
+            </>
+          )}
+        </>
+      );
+    }
+    if (task === 'spots') {
+      const spots = rois.filter((r) => isArea(r) && !r.train && !r.out && r.role !== 'background');
+      const ringed = spots.filter((r) => r.bg && r.bg.mode !== 'none').length;
+      const regions = rois.filter((r) => r.role === 'background').length;
+      const groups = new Set(spots.map((r) => r.group ?? '')).size;
+      const next = !spots.length
+        ? 'Place the spots (step 2): an ellipse on one, then Stamp on the others.'
+        : !ringed
+          ? 'Give the spots a background (step 2: pick one, Background; Same for its group).'
+          : (base?.ch.length ?? 1) === 3 && spec.channels !== 'each'
+            ? 'Measure each channel and their ratio (step 4: Channels, each and a ratio).'
+            : 'Read the Spots sheet (step 4), or take it out of the node’s workbook.';
+      return (
+        <>
+          <div className="ie-sum-label">Spots</div>
+          <div className="ie-sum-value">{spots.length}</div>
+          <div className="muted">
+            {ringed} with a background of their own{groups > 1 ? ` · ${groups} groups` : ''}
+            {regions ? ` · ${regions} background region${regions === 1 ? '' : 's'}` : ''}
+          </div>
+          <div className="ie-sum-label">Next</div>
+          <div className="hint">{next}</div>
+        </>
+      );
+    }
+    if (task === 'network') {
+      const ligaments = net?.branches.filter((b) => b.type === 'junction').length ?? 0;
+      return (
+        <>
+          <div className="ie-sum-label">Network</div>
+          {net && data.network?.on ? (
+            <div className="muted">
+              {ligaments} ligaments · {net.nodes.filter((n) => n.degree >= 3).length} junctions · {net.pores.length} pores
+            </div>
+          ) : (
+            <div className="hint">{thrStep || clsStep ? 'Measure the network of the mask (step 3).' : 'Make a mask first (step 2): a threshold or the classifier.'}</div>
+          )}
+          {netError && <div className="hint ie-err">{netError}</div>}
+        </>
+      );
+    }
+    if (task === 'lattice') {
+      const sp = data.lattice?.spots ?? [];
+      return (
+        <>
+          <div className="ie-sum-label">Spots</div>
+          <div className="muted">{sp.length ? `${sp.length} picked (their d and angles: step 2)` : 'none yet: show the spectrum and click its spots (step 2)'}</div>
+          {(nodeRes?.view.lattice?.fringes?.length ?? 0) > 0 && <div className="muted">{nodeRes!.view.lattice!.fringes!.length} lines across the fringes</div>}
+          {(nodeRes?.view.lattice?.ringRows?.length ?? 0) > 0 && <div className="muted">{nodeRes!.view.lattice!.ringRows!.length} rings of the pattern</div>}
+        </>
+      );
+    }
+    const a = nodeRes?.view.surface?.areal?.[0];
+    const zu = data.surface?.zUnit ? ` ${data.surface.zUnit}` : '';
+    return (
+      <>
+        <div className="ie-sum-label">Roughness</div>
+        {a ? (
+          <div className="muted">
+            Sa {fmt(a.Sa)}
+            {zu} · Sq {fmt(a.Sq)}
+            {zu} · Sz {fmt(a.Sz)}
+            {zu}
+          </div>
+        ) : (
+          <div className="hint">{steps.some((q) => q.kind === 'level' && q.on) ? 'Measure it (step 2).' : 'Level the image first (step 1).'}</div>
+        )}
+      </>
+    );
+  })();
+  return createPortal(
+    <div className="image-editor nowheel" ref={root} tabIndex={-1} onKeyDown={key} onKeyUp={(e) => (e.key === 'b' || e.key === 'B') && setHeld(false)}>
+      <div className="ie-toolbar">
+        <b className="ellipsis">{data.name || 'image'}</b>
+        <span className="muted">
+          {base ? `${base.w} × ${base.h}` : ''}
+          {crop && full ? ` (of ${full.w} × ${full.h})` : ''}
+          {busy ? (reply && reply.scale < 1 ? ' · preview, computing the full size…' : ' · computing…') : ''}
+        </span>
+        <span className="ie-group ie-tasks" title="What you are doing: its steps on the left, in the order they are done; All tools: every panel, as before">
+          {TASK_ORDER.map((t) => (
+            <button key={t} className={`nodrag${task === t ? ' on' : ''}`} title={t === 'all' ? 'Every tool and panel at once (the image steps on the left, the panels as tabs on the right)' : TASKS[t].title} onClick={() => setTask(t)}>
+              {taskLabel(t)}
+            </button>
+          ))}
+        </span>
+        <span className="grow" />
+        <span className="ie-group" title="Compare the result with the original (or with the image before the step shown)">
+          {cmpButton('edited', 'Edited', 'The result alone')}
+          {cmpButton('original', 'Original', 'The original alone (\\ switches; B: while held)')}
+          {cmpButton('side', 'Side by side', 'The original and the result side by side, moved and zoomed together (Y)')}
+          {cmpButton('split', 'Split', 'One image, the original on one side of a line, the result on the other: drag the line')}
+          {cmp === 'split' && (
+            <button className="nodrag" disabled={onOriginal} title="The line vertical or horizontal" onClick={() => setSplitDir(splitDir === 'v' ? 'h' : 'v')}>
+              {splitDir === 'v' ? '⇆' : '⇅'}
+            </button>
+          )}
+          <Select<'original' | 'prev'>
+            value={before}
+            title="Compared with the original, or with the image before the step shown (what that step changes)"
+            options={[
+              ['original', 'vs the original'],
+              ['prev', 'vs before the step'],
+            ]}
+            onChange={setBefore}
+          />
+        </span>
+        <span className="ie-group">
+          <button className={`nodrag${tool === 'pan' ? ' on' : ''}`} title="Move the image (drag); the wheel zooms" onClick={() => setTool('pan')}>
+            <Hand {...IC} />
+          </button>
+          <button className={`nodrag${tool === 'crop' ? ' on' : ''}`} title="Crop: the part of the original analysed (drag a rectangle on the original as it came; the data bar of a microscope cut off)" onClick={() => setTool(tool === 'crop' ? 'pan' : 'crop')}>
+            <CropIcon {...IC} /> Crop
+          </button>
+          <button className={`nodrag${tool === 'scale' ? ' on' : ''}`} title="Set the scale: draw a line along the scale bar of the original (Shift: straight; its ends found on the bar), then give its length" onClick={() => setTool(tool === 'scale' ? 'pan' : 'scale')}>
+            <Ruler {...IC} /> Scale
+          </button>
+        </span>
+        <span className="ie-group" title="Selections: draw on the image analysed">
+          {shownTools.map(([t, Icon, label]) => (
+            <button
+              key={t}
+              className={`nodrag${tool === t ? ' on' : ''}`}
+              title={`${label}. ${TOOL_HINTS[t]}${t === 'stamp' && !rois.some((r) => r.id === sel && isArea(r)) ? ' Pick the selection to copy first.' : ''}`}
+              onClick={() => {
+                setTool(tool === t ? 'pan' : t);
+                setDraft(null);
+              }}
+            >
+              <Icon {...IC} />
+            </button>
+          ))}
+          {(task === 'particles' || task === 'all') &&
+            ([
+              ['sam', MousePointerClick, 'Point (SAM): click a particle, its outline found by Segment anything (Shift-click: a part added, Alt-click: a part taken off)'],
+              ['sambox', SquareDashedMousePointer, 'Box (SAM): drag a box around a particle, its outline found by Segment anything'],
+            ] as const).map(([t, Icon, title]) => (
+              <button key={t} className={`nodrag${tool === t ? ' on' : ''}`} title={title} onClick={() => (setTool(tool === t ? 'pan' : t), setDraft(null))}>
+                <Icon {...IC} />
+              </button>
+            ))}
+          {task !== 'all' && (
+            <button className={`nodrag${moreTools ? ' on' : ''}`} title={moreTools ? 'Only the tools of this task' : 'Every selection tool'} onClick={() => setMoreTools(!moreTools)}>
+              {moreTools ? 'Fewer' : 'More'}
+            </button>
+          )}
+        </span>
+        <button className="nodrag" title="Zoom out (−)" onClick={() => zoomAt(0.8)}>
+          <Minus {...IC} />
+        </button>
+        <span className="muted ie-zoom">{Math.round(k * 100)} %</span>
+        <button className="nodrag" title="Zoom in (+)" onClick={() => zoomAt(1.25)}>
+          <Plus {...IC} />
+        </button>
+        <button className="nodrag" title="Fit the window (0)" onClick={() => (setZoom(0), setPan([0, 0]))}>
+          <Maximize {...IC} />
+        </button>
+        <button className="nodrag" title="1 image pixel = 1 screen pixel" onClick={() => setZoom(1)}>
+          1:1
+        </button>
+        <button className="nodrag ie-close" title="Close the editor (Esc); Ctrl+Z undoes" onClick={onClose}>
+          <X {...IC} />
+        </button>
+      </div>
+      <div className="ie-body" style={{ gridTemplateColumns: `${panels[0]}px 5px minmax(0, 1fr) 5px ${panels[1]}px` }}>
+        <div className="ie-steps">
+          {task === 'all' ? (
+            chain
+          ) : (
+            <>
+              <TaskSteps steps={TASKS[task].steps} stage={taskStep} done={done} onPick={setStage} />
+              <div className="ie-task-pane">{pane}</div>
+            </>
+          )}
+        </div>
+        <div className="ie-split-bar nodrag" title="Drag: the width of the steps (double-click: as it was)" onPointerDown={(e) => dragPanel(e, 0)} onDoubleClick={() => setPanelWidth(0, PANELS[0])} />
+        <div
+          className={`ie-view${tool !== 'pan' ? ' scale' : ''}${side ? ' side' : ''}`}
+          ref={view}
+          onWheel={(e) => (e.altKey && (tool === 'brush' || tool === 'eraser') ? setBrush((b) => Math.min(100, Math.max(1, e.deltaY < 0 ? Math.max(b + 1, Math.round(b * 1.15)) : Math.min(b - 1, Math.round(b / 1.15))))) : zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX, e.clientY))}
+          onPointerDown={onDown}
+          onPointerMove={onMove}
+          onPointerUp={onUp}
+          onDoubleClick={onDouble}
+          onPointerLeave={() => setHover(null)}
+        >
+          {specOn ? (
+            <>
+              {stage(
+                canvasS,
+                spectrumImg ? `spectrum${(fft.log ?? true) ? ' (log)' : ''}, ${spectrumImg.N} × ${spectrumImg.N}` : 'spectrum: computing …',
+                spectrumImg && vtab === 'lattice' && <SpotsOverlay spots={data.lattice?.spots ?? []} N={spectrumImg.N} k={k} pick onClick={(u, v) => worker.current?.postMessage({ type: 'spot', u, v } satisfies SpotRequest)} />,
+              )}
+              <canvas ref={canvas} hidden />
+              <canvas ref={canvasB} hidden />
+            </>
+          ) : onOriginal ? (
+            <>
+              {stage(canvasO, tool === 'crop' ? 'original: drag the part to analyse' : 'original: draw along the scale bar', tool === 'crop' ? cropRect : scaleLine)}
+              <canvas ref={canvas} hidden />
+              <canvas ref={canvasB} hidden />
+            </>
+          ) : mode === 'side' ? (
+            <>
+              <div className="ie-pane">{stage(canvasB, beforeLabel, layers)}</div>
+              <div className="ie-pane">{stage(canvas, 'edited', layers)}</div>
+            </>
+          ) : mode === 'split' ? (
+            <div className="ie-pane">
+              {stage(canvas, undefined, layers)}
+              <div className="ie-split-before" style={{ clipPath: splitDir === 'v' ? `inset(0 ${(1 - split) * 100}% 0 0)` : `inset(0 0 ${(1 - split) * 100}% 0)` }}>
+                {stage(canvasB)}
+              </div>
+              <div className={`ie-split-line ${splitDir}`} style={splitDir === 'v' ? { left: `${split * 100}%` } : { top: `${split * 100}%` }}>
+                <span className="ie-split-handle" title="Drag the line">
+                  {splitDir === 'v' ? '⇆' : '⇅'}
+                </span>
+              </div>
+              <span className="ie-pane-label left">{beforeLabel}</span>
+              <span className="ie-pane-label">edited</span>
+            </div>
+          ) : (
+            <div className="ie-pane">
+              {mode === 'original' ? stage(canvasB, beforeLabel, layers) : stage(canvas, undefined, layers)}
+              {mode === 'original' ? <canvas ref={canvas} hidden /> : <canvas ref={canvasB} hidden />}
+            </div>
+          )}
+          {onOriginal && hover && <canvas ref={loupe} className="ie-loupe" width={144} height={144} style={{ left: hover.sx + 18, top: hover.sy + 18 }} />}
+          {readout && <div className="ie-readout">{readout}</div>}
+          {(tool === 'brush' || tool === 'eraser') && paint && hover && !onOriginal && (
+            <div className={`ie-brush-cursor${tool === 'eraser' ? ' erase' : ''}`} style={{ left: hover.sx, top: hover.sy, width: Math.max(4, brush * k), height: Math.max(4, brush * k), ...(tool === 'brush' ? { borderColor: classColor(paintClasses, paint) } : {}) }} />
+          )}
+          {job && now - job.t0 > (job.of === 'image' ? 1000 : 250) && (
+            <BusyCard job={job} now={now} cancel={cancelWork} cancelLabel={job.of === 'image' ? 'Stop' : 'Cancel'} cancelTitle={job.of === 'image' ? 'Stop: the step being computed turned off (turn it on again with other settings)' : 'Stop the search: nothing found is kept'} />
+          )}
+        </div>
+        <div className="ie-split-bar nodrag" title="Drag: the width of the panels on the right (double-click: as it was)" onPointerDown={(e) => dragPanel(e, 1)} onDoubleClick={() => setPanelWidth(1, PANELS[1])} />
+        <div className="ie-side">
+          <div className="hint ellipsis ie-cal-line" title="The size of a pixel (Image ▸ Calibration)">{data.cal && data.cal.size > 0 ? `1 px = ${fmt(data.cal.size)} ${unitText(data.cal.unit)}` : 'not calibrated: the results in pixels'}</div>
+          {task === 'all' ? (
+            <>
+              <div className="ie-tabs">
+                {SIDE_TABS.map(([t, label, title]) => (
+                  <button key={t} className={`nodrag${tab === t ? ' on' : ''}`} title={title} onClick={() => setTab(t)}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {tab === 'image' && (
+                <>
+                  {histView}
+                  {cropBlock}
+                  {calBlock}
+                </>
+              )}
+              {tab === 'objects' && (
+                <>
+                  {roiPanel(false)}
+          {(() => {
+            // the trainable classifier of the steps, here too (it stays a step: its place in the order matters)
+            const cls = steps.find((st) => st.kind === 'classify');
+            return (
+              <Fold id="pixel-classifier" title="Pixel classifier" aside={cls ? `${stepClasses(cls, rois).length} classes${cls.on ? '' : ' · off'}` : 'none'}>
+                {cls ? (
+                  <>
+                    <div className="hint">The trainable classifier, a step of the list on the left (in Find the objects): it learns the classes from what you draw, and makes the mask the particles are found in.</div>
+                    <ClassifierEditor s={cls} set={(patch) => setStep(cls.id, { p: { ...cls.p, ...(patch as ImgStep['p']) } })} rois={rois} sel={sel} setRois={setRois} note={reply?.notes[cls.id]} hist={reply?.stepHist[cls.id]} paint={paint} setPaint={setPaint} tool={paintTool} setTool={setPaintTool} brush={brush} setBrush={setBrush} painted={painted} clearPaint={clearPaint} live={liveTrain} setLive={(on) => (setLiveTrain(on), on && updateTrain())} pending={trainPending} updateNow={updateTrain} />
+                    <div className="row">
+                      <button className="nodrag" title="Show the image up to this step (its card on the left)" onClick={() => setUpTo(cls.id)}>
+                        Open its step
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="hint">A classifier of the pixels (as ImageJ’s Trainable Weka Segmentation): draw examples of the particles, the ground and their edges; it makes the mask the particles are found in.</div>
+                    <div className="row">
+                      <button className="nodrag" title="Add the trainable classifier as a step (at the end of the list on the left)" onClick={() => add('classify')}>
+                        + Add a pixel classifier
+                      </button>
+                    </div>
+                  </>
+                )}
+              </Fold>
+            );
+          })()}
+                  {particlesPanel()}
+                  {arrangePanel}
+                </>
+              )}
+              {tab === 'structure' && networkPanel}
+              {tab === 'structure' && texturePanel}
+              {tab === 'lattice' && latticePanel()}
+              {tab === 'surface' && surfacePanel()}
+              {tab === 'results' && measurePanel}
+              {tab === 'image' && keysBlock}
+            </>
+          ) : (
+            <>
+              <div className="ie-summary">{summary}</div>
+              {tool in TOOL_HINTS && (
+                <div className="ie-tool-opts">
+                  <ToolOptions tool={tool} wandTol={wandTol} setWandTol={setWandTol} raysOf={raysOf} setRaysOf={setRaysOf} centre={centre} setCentre={setCentre} />
+                </div>
+              )}
+              <Fold id="side-view" title="View and histogram" opened>
+                {histView}
+              </Fold>
+              {task !== 'spots' && (
+                <Fold id="side-selections" title="Selections" aside={rois.length ? `${rois.length}` : 'none'}>
+                  {roiPanel(true)}
+                </Fold>
+              )}
+              {task === 'particles' && autoCount > 0 && (
+                <Fold id="side-layers" title="Layers" aside={data.particles?.layers ? 'on' : undefined}>
+                  {particlesPanel('layers')}
+                </Fold>
+              )}
+              {task !== 'particles' && task !== 'spots' && (
+                <Fold id="side-measure" title="Measurements" aside="of the selections">
+                  {measurePanel}
+                </Fold>
+              )}
+              <Fold id="side-keys" title="Keys">
           <div className="hint">Wheel: zoom · drag: move · \ original / edited · Y side by side · B: the original while held · + − 0: zoom, fit · Esc: the drawing, then the tool off, then close · a selection picked: Delete removes it, Ctrl+D copies it, the arrows move it (Shift: by 10)</div>
+              </Fold>
             </>
           )}
         </div>

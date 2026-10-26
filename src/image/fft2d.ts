@@ -7,56 +7,97 @@
 
 export const nextPow2 = (n: number) => 2 ** Math.ceil(Math.log2(Math.max(1, n)));
 
+// the tables of an FFT of length n, made once: the bit-reversed order, and cos, sin of −2πk/n for k < n/2
+const tables = new Map<number, { rev: Uint32Array; cos: Float64Array; sin: Float64Array }>();
+function fftTables(n: number) {
+  let t = tables.get(n);
+  if (!t) {
+    const rev = new Uint32Array(n);
+    for (let i = 1, j = 0; i < n; i++) {
+      let bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      rev[i] = j;
+    }
+    const cos = new Float64Array(n >> 1);
+    const sin = new Float64Array(n >> 1);
+    for (let k = 0; k < n >> 1; k++) {
+      cos[k] = Math.cos((2 * Math.PI * k) / n);
+      sin[k] = -Math.sin((2 * Math.PI * k) / n);
+    }
+    tables.set(n, (t = { rev, cos, sin }));
+  }
+  return t;
+}
 // an FFT of length n (a power of two), in place; inverse: without the 1/n
 export function fft1(re: Float64Array, im: Float64Array, inverse: boolean) {
   const n = re.length;
-  for (let i = 1, j = 0; i < n; i++) {
-    let bit = n >> 1;
-    for (; j & bit; bit >>= 1) j ^= bit;
-    j ^= bit;
+  if (n < 2) return;
+  const { rev, cos, sin } = fftTables(n);
+  for (let i = 1; i < n; i++) {
+    const j = rev[i];
     if (i < j) {
-      [re[i], re[j]] = [re[j], re[i]];
-      [im[i], im[j]] = [im[j], im[i]];
+      const tr = re[i];
+      re[i] = re[j];
+      re[j] = tr;
+      const ti = im[i];
+      im[i] = im[j];
+      im[j] = ti;
     }
   }
+  const sg = inverse ? -1 : 1;
   for (let len = 2; len <= n; len <<= 1) {
-    const ang = ((inverse ? 2 : -2) * Math.PI) / len;
-    const [wr, wi] = [Math.cos(ang), Math.sin(ang)];
-    for (let i = 0; i < n; i += len) {
-      let [cr, ci] = [1, 0];
-      for (let k = 0; k < len / 2; k++) {
-        const [a, b] = [i + k, i + k + len / 2];
-        const tr = re[b] * cr - im[b] * ci;
-        const ti = re[b] * ci + im[b] * cr;
+    const half = len >> 1;
+    // (the twiddle of k in this stage: that of k · n / len in the tables)
+    const stride = n / len;
+    for (let i = 0; i < n; i += len)
+      for (let k = 0; k < half; k++) {
+        const wr = cos[k * stride];
+        const wi = sg * sin[k * stride];
+        const a = i + k;
+        const b = a + half;
+        const tr = re[b] * wr - im[b] * wi;
+        const ti = re[b] * wi + im[b] * wr;
         re[b] = re[a] - tr;
         im[b] = im[a] - ti;
         re[a] += tr;
         im[a] += ti;
-        [cr, ci] = [cr * wr - ci * wi, cr * wi + ci * wr];
       }
-    }
   }
 }
-// The 2D FFT of N × N values (rows then columns), in place; inverse: divided by N²
+// an N × N square turned over its diagonal, in place, in blocks (a column read along a row: the memory in order)
+function transpose(a: Float64Array, N: number) {
+  const B = 32;
+  for (let by = 0; by < N; by += B)
+    for (let bx = by; bx < N; bx += B)
+      for (let y = by; y < Math.min(by + B, N); y++)
+        for (let x = bx === by ? y + 1 : bx; x < Math.min(bx + B, N); x++) {
+          const p = y * N + x;
+          const q = x * N + y;
+          const t = a[p];
+          a[p] = a[q];
+          a[q] = t;
+        }
+}
+// The 2D FFT of N × N values (rows, then the columns as the rows of the square turned over), in place; inverse: divided
+// by N²
 export function fft2(re: Float64Array, im: Float64Array, N: number, inverse = false) {
-  const [r, i] = [new Float64Array(N), new Float64Array(N)];
-  for (let y = 0; y < N; y++) {
-    r.set(re.subarray(y * N, y * N + N));
-    i.set(im.subarray(y * N, y * N + N));
-    fft1(r, i, inverse);
-    re.set(r, y * N);
-    im.set(i, y * N);
-  }
-  for (let x = 0; x < N; x++) {
-    for (let y = 0; y < N; y++) [r[y], i[y]] = [re[y * N + x], im[y * N + x]];
-    fft1(r, i, inverse);
-    for (let y = 0; y < N; y++) [re[y * N + x], im[y * N + x]] = [r[y], i[y]];
-  }
-  if (inverse)
+  const rows = () => {
+    for (let y = 0; y < N; y++) fft1(re.subarray(y * N, y * N + N), im.subarray(y * N, y * N + N), inverse);
+  };
+  rows();
+  transpose(re, N);
+  transpose(im, N);
+  rows();
+  transpose(re, N);
+  transpose(im, N);
+  if (inverse) {
+    const k2 = 1 / (N * N);
     for (let k = 0; k < N * N; k++) {
-      re[k] /= N * N;
-      im[k] /= N * N;
+      re[k] *= k2;
+      im[k] *= k2;
     }
+  }
 }
 
 // The image padded into an N × N square (N ≥ its sides, a power of two): the mean taken off, a Hann window if asked;
@@ -68,20 +109,25 @@ function padded(c: Float32Array, w: number, h: number, hann: boolean, mirror: bo
   for (let k = 0; k < w * h; k++) mean += c[k];
   mean /= w * h || 1;
   const re = new Float64Array(N * N);
-  const win = (k: number, n: number) => (hann ? 0.5 - 0.5 * Math.cos((2 * Math.PI * (k + 0.5)) / n) : 1);
-  for (let y = 0; y < N; y++)
-    for (let x = 0; x < N; x++) {
-      let [sx, sy] = [x, y];
-      if (mirror) {
-        // (reflected: …, 1, 0 | 0, 1 … w − 1 | w − 1, w − 2 …)
-        const fold = (t: number, n: number) => {
-          const p = t % (2 * n);
-          return p < n ? p : 2 * n - 1 - p;
-        };
-        [sx, sy] = [fold(x, w), fold(y, h)];
-      } else if (x >= w || y >= h) continue;
-      re[y * N + x] = (c[sy * w + sx] - mean) * (mirror ? 1 : win(x, w) * win(y, h));
+  if (mirror) {
+    // (reflected: …, 1, 0 | 0, 1 … w − 1 | w − 1, w − 2 …; the source column and row of every place, once)
+    const fold = (t: number, n: number) => {
+      const p = t % (2 * n);
+      return p < n ? p : 2 * n - 1 - p;
+    };
+    const fx = Uint32Array.from({ length: N }, (_, x) => fold(x, w));
+    for (let y = 0; y < N; y++) {
+      const row = fold(y, h) * w;
+      for (let x = 0, o = y * N; x < N; x++) re[o + x] = c[row + fx[x]] - mean;
     }
+  } else {
+    const win = (k: number, n: number) => (hann ? 0.5 - 0.5 * Math.cos((2 * Math.PI * (k + 0.5)) / n) : 1);
+    const wx = Float64Array.from({ length: w }, (_, x) => win(x, w));
+    for (let y = 0; y < h; y++) {
+      const wy = win(y, h);
+      for (let x = 0; x < w; x++) re[y * N + x] = (c[y * w + x] - mean) * wx[x] * wy;
+    }
+  }
   return { re, im: new Float64Array(N * N), N, mean };
 }
 
@@ -100,21 +146,60 @@ export function spectrum(c: Float32Array, w: number, h: number, o: { log: boolea
   return { mag, N };
 }
 
-// a filter of the frequencies (fx, fy in cycles per pixel) applied to the image: its transform multiplied, back
+// A filter of the frequencies (fx, fy in cycles per pixel; the gain real and the same at −fx, −fy) applied to the image:
+// its transform multiplied, back. The image real, so its spectrum is known from half of it (X(−f) = X(f)*): the rows
+// transformed two at a time (one the real part, the other the imaginary), only the columns of fx ≥ 0 transformed, and
+// back the same way: half the work of a full 2D transform
 function filtered(c: Float32Array, w: number, h: number, gain: (fx: number, fy: number) => number, keepMean: boolean): Float32Array {
-  const { re, im, N, mean } = padded(c, w, h, false, true);
-  fft2(re, im, N);
-  for (let y = 0; y < N; y++)
-    for (let x = 0; x < N; x++) {
-      const fx = (x < N / 2 ? x : x - N) / N;
-      const fy = (y < N / 2 ? y : y - N) / N;
-      const g = gain(fx, fy);
-      re[y * N + x] *= g;
-      im[y * N + x] *= g;
+  const { re, N, mean } = padded(c, w, h, false, true);
+  const H = (N >> 1) + 1;
+  // (the half spectrum by columns: column k, row y at k·N + y)
+  const sr = new Float64Array(H * N);
+  const si = new Float64Array(H * N);
+  const zr = new Float64Array(N);
+  const zi = new Float64Array(N);
+  for (let y = 0; y < N; y += 2) {
+    zr.set(re.subarray(y * N, y * N + N));
+    zi.set(re.subarray((y + 1) * N, (y + 1) * N + N));
+    fft1(zr, zi, false);
+    // (A = (Z(k) + Z(−k)*) / 2 the row y, B = (Z(k) − Z(−k)*) / 2i the row y + 1)
+    for (let k = 0; k < H; k++) {
+      const nk = (N - k) % N;
+      sr[k * N + y] = (zr[k] + zr[nk]) / 2;
+      si[k * N + y] = (zi[k] - zi[nk]) / 2;
+      sr[k * N + y + 1] = (zi[k] + zi[nk]) / 2;
+      si[k * N + y + 1] = (zr[nk] - zr[k]) / 2;
     }
-  fft2(re, im, N, true);
+  }
+  for (let k = 0; k < H; k++) {
+    const [cr, ci] = [sr.subarray(k * N, k * N + N), si.subarray(k * N, k * N + N)];
+    fft1(cr, ci, false);
+    const fx = k / N;
+    for (let y = 0; y < N; y++) {
+      const g = gain(fx, (y < N / 2 ? y : y - N) / N);
+      cr[y] *= g;
+      ci[y] *= g;
+    }
+    fft1(cr, ci, true);
+  }
+  // (back along the rows, two at a time: Z = A + iB, its real part the row y, its imaginary part the row y + 1)
   const out = new Float32Array(w * h);
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out[y * w + x] = re[y * N + x] + (keepMean ? mean : 0);
+  const scale = 1 / (N * N);
+  const add = keepMean ? mean : 0;
+  for (let y = 0; y < Math.min(h + (h & 1), N); y += 2) {
+    for (let k = 0; k < N; k++) {
+      // (beyond the half kept: the conjugate of its mirror)
+      const p = (k < H ? k : N - k) * N + y;
+      const sg = k < H ? 1 : -1;
+      zr[k] = sr[p] - sg * si[p + 1];
+      zi[k] = sg * si[p] + sr[p + 1];
+    }
+    fft1(zr, zi, true);
+    for (let x = 0; x < w; x++) {
+      out[y * w + x] = zr[x] * scale + add;
+      if (y + 1 < h) out[(y + 1) * w + x] = zi[x] * scale + add;
+    }
+  }
   return out;
 }
 

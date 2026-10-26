@@ -23,12 +23,13 @@ export function SurfacePanel(p: {
   view?: SurfaceView;
   levelled: boolean; // a Level step on
   level: () => void; // a Level step added (a plane), shown
+  part?: 'heights' | 'areal' | 'profile' | 'step'; // one part (a step of the task Surface; areal: with the distributions); absent: all
 }) {
   const S = p.spec;
   const zu = S.zUnit ?? '';
   const Z = (v: number) => `${fmt(v)}${zu ? ` ${zu}` : ''}`;
   const units = Z_UNITS.some(([v]) => v === zu) ? Z_UNITS : [...Z_UNITS, [zu, zu] as [string, string]];
-  return (
+  const heights = (
     <>
       <div className="ie-section">Heights</div>
       <div className="row wrap">
@@ -44,7 +45,11 @@ export function SurfacePanel(p: {
           </button>
         </div>
       )}
-      <div className="ie-section">Roughness (ISO 25178)</div>
+    </>
+  );
+  const areal = (
+    <>
+      {!p.part && <div className="ie-section">Roughness (ISO 25178)</div>}
       <Check label="of the image and of every area selection" title="Sa, Sq (the mean and rms height), Sp, Sv, Sz (the highest peak, the deepest valley, both), Ssk, Sku (the skewness and kurtosis of the heights), Sdq (the rms slope), Sdr (the surface larger than flat, %); a sheet Roughness" value={!!S.areal} onChange={(areal) => p.set({ areal: areal || undefined })} />
       {S.areal &&
         p.view?.areal?.map((r) => (
@@ -53,7 +58,11 @@ export function SurfacePanel(p: {
             {Number.isFinite(r.Sdr) ? ` · Sdr ${fmt(r.Sdr, 3)} %` : ''}
           </div>
         ))}
-      <div className="ie-section">Profile roughness (ISO 4287)</div>
+    </>
+  );
+  const profile = (
+    <>
+      {!p.part && <div className="ie-section">Profile roughness (ISO 4287)</div>}
       <Check label="along every line selection" title="Ra, Rq, Rp, Rv, Rt, Rz (the mean of the largest height in five parts), Rsk, Rku of the profile from its mean line; a sheet Profile roughness" value={!!S.profile} onChange={(profile) => p.set({ profile: profile || undefined })} />
       {S.profile && (
         <>
@@ -73,6 +82,10 @@ export function SurfacePanel(p: {
           )}
         </>
       )}
+    </>
+  );
+  const dists = (
+    <>
       <div className="ie-section">Distributions</div>
       <div className="row wrap">
         <Check label="height histogram" title="The histogram of the heights with the material ratio (the Abbott–Firestone curve); a sheet Height histogram" value={!!S.hist} onChange={(hist) => p.set({ hist: hist || undefined })} />
@@ -85,7 +98,11 @@ export function SurfacePanel(p: {
           Correlation length {fmt(p.view.acf.lcorr)} {p.u} · Sal {fmt(p.view.acf.Sal)} {p.u} · Str {fmt(p.view.acf.Str, 3)}
         </div>
       )}
-      <div className="ie-section">Step height</div>
+    </>
+  );
+  const step = (
+    <>
+      {!p.part && <div className="ie-section">Step height</div>}
       {p.areas.length < 2 ? (
         <div className="hint">Draw two area selections: one on the upper level, one on the lower.</div>
       ) : (
@@ -103,7 +120,33 @@ export function SurfacePanel(p: {
           )}
         </>
       )}
-      <div className="hint">The matrix output carries the heights (in their unit): a Plot 3D draws them as a surface.</div>
+    </>
+  );
+  const plot3d = <div className="hint">The matrix output carries the heights (in their unit): a Plot 3D draws them as a surface.</div>;
+  if (p.part === 'heights')
+    return (
+      <>
+        {heights}
+        {plot3d}
+      </>
+    );
+  if (p.part === 'areal')
+    return (
+      <>
+        {areal}
+        {dists}
+      </>
+    );
+  if (p.part === 'profile') return profile;
+  if (p.part === 'step') return step;
+  return (
+    <>
+      {heights}
+      {areal}
+      {profile}
+      {dists}
+      {step}
+      {plot3d}
     </>
   );
 }

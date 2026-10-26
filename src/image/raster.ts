@@ -149,6 +149,17 @@ export function shrinkRaster(r: Raster, f: number): Raster {
 // The data bar an electron microscope writes under the image (its settings, the scale bar): the rows at the bottom
 // mostly of one value (its background), with no more than a few rows of the image's texture between them — their number
 // (0: none found; between 2 % and 40 % of the height)
+// The rows of a data bar as dataBarRows finds them, only when the bar stands apart from the image over it (its median
+// at least a tenth of the range away from that of the rows just above): a plain ground at an image's foot is not one
+export function dataBarApart(r: Raster): number {
+  const n = dataBarRows(r);
+  if (!n) return 0;
+  const g = r.ch.length === 1 ? r.ch[0] : luminance(r);
+  const top = r.h - n;
+  const med = (a: Float32Array) => Float32Array.from(a).sort()[a.length >> 1];
+  const above = med(g.subarray(Math.max(0, top - Math.ceil(0.05 * r.h)) * r.w, top * r.w));
+  return Math.abs(med(g.subarray(top * r.w, r.h * r.w)) - above) > 0.1 * (r.hi - r.lo) ? n : 0;
+}
 export function dataBarRows(r: Raster): number {
   const g = r.ch.length === 1 ? r.ch[0] : luminance(r);
   const tol = (r.hi - r.lo) * 0.012;

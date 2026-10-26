@@ -208,6 +208,22 @@ export function comparedRegion(o: MatchOpts, cx: number, cy: number, poly?: Pt[]
   return { inside: (x, y) => inPoly(poly, x, y) || distPoly(poly, x, y) <= extra, R: Math.max(...poly.map(([x, y]) => Math.hypot(x - cx, y - cy))) + extra + 1 };
 }
 
+// a region (inside(x, y)) read from a grid of a quarter of a pixel over the square of half side `reach` around (cx, cy):
+// the nearest node's answer (an eighth of a pixel off at most); outside the square, not in it; within: the region's
+// radius (farther from the centre, not in it)
+export function gridRegion(inside: (x: number, y: number) => boolean, cx: number, cy: number, reach: number, within = Infinity): (x: number, y: number) => boolean {
+  const q = 0.25;
+  const n = Math.ceil((2 * reach) / q) + 1;
+  const [x0, y0] = [cx - reach, cy - reach];
+  const grid = new Uint8Array(n * n);
+  // (beyond `within` of the centre — the region's own radius —: outside, not asked)
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) grid[j * n + i] = Math.hypot(x0 + i * q - cx, y0 + j * q - cy) <= within && inside(x0 + i * q, y0 + j * q) ? 1 : 0;
+  return (x, y) => {
+    const [i, j] = [Math.round((x - x0) / q), Math.round((y - y0) / q)];
+    return i >= 0 && j >= 0 && i < n && j < n && grid[j * n + i] === 1;
+  };
+}
+
 // ---- edges: the direction of the outline at every pixel ----
 
 // Sobel's gradient of an image (its edges held), and its direction as a unit vector (0 where the image is flat)
@@ -249,47 +265,58 @@ type Tpl = { dx: Int32Array; dy: Int32Array; v: Float32Array | null; m: number; 
 function template(c: Float32Array, w: number, h: number, g: Grad | null, cx: number, cy: number, dx0: Int32Array, dy0: Int32Array, a: number, s: number, inside: ((x: number, y: number) => boolean) | null): Tpl | null {
   const t = (a * Math.PI) / 180;
   const [co, si] = [Math.cos(t), Math.sin(t)];
-  const ox: number[] = [];
-  const oy: number[] = [];
-  const vals: number[] = [];
-  const gxs: number[] = [];
-  const gys: number[] = [];
-  for (let k = 0; k < dx0.length; k++) {
+  const n0 = dx0.length;
+  const ox = new Int32Array(n0);
+  const oy = new Int32Array(n0);
+  const vals = new Float64Array(n0);
+  const gxs = g ? new Float64Array(n0) : null;
+  const gys = g ? new Float64Array(n0) : null;
+  let n = 0;
+  let sum = 0;
+  for (let k = 0; k < n0; k++) {
     // (the particle there is the model turned by a: its point comes from the model's turned back)
     const [u, q] = [dx0[k] / s, dy0[k] / s];
     const [mx, my] = [cx + u * co + q * si, cy - u * si + q * co];
     if (inside && !inside(mx, my)) continue;
-    ox.push(dx0[k]);
-    oy.push(dy0[k]);
-    vals.push(at(c, w, h, mx, my));
+    ox[n] = dx0[k];
+    oy[n] = dy0[k];
+    sum += vals[n] = at(c, w, h, mx, my);
     if (g) {
       // (the model's gradient there, turned as the place is: ∇place = Mᵀ ∇model)
       const [gmx, gmy] = [at(g.gx, w, h, mx, my), at(g.gy, w, h, mx, my)];
-      gxs.push(co * gmx - si * gmy);
-      gys.push(si * gmx + co * gmy);
+      gxs![n] = co * gmx - si * gmy;
+      gys![n] = si * gmx + co * gmy;
     }
+    n++;
   }
-  const n = vals.length;
   if (n < 6) return null;
-  const m = vals.reduce((p, q) => p + q, 0) / n;
+  const m = sum / n;
   let ss = 0;
-  for (const x of vals) ss += (x - m) * (x - m);
-  const v = ss > 1e-9 ? Float32Array.from(vals, (x) => (x - m) / Math.sqrt(ss)) : null;
-  const ek: number[] = [];
-  const ex: number[] = [];
-  const ey: number[] = [];
-  if (g) {
-    const mags = gxs.map((x, k) => Math.hypot(x, gys[k]));
-    const thr = (Math.max(...mags) || 0) / 3;
-    mags.forEach((mg, k) => {
-      if (thr > 0 && mg >= thr) {
-        ek.push(k);
-        ex.push(gxs[k] / mg);
-        ey.push(gys[k] / mg);
-      }
-    });
+  for (let k = 0; k < n; k++) ss += (vals[k] - m) * (vals[k] - m);
+  let v: Float32Array | null = null;
+  if (ss > 1e-9) {
+    v = new Float32Array(n);
+    const sc = 1 / Math.sqrt(ss);
+    for (let k = 0; k < n; k++) v[k] = (vals[k] - m) * sc;
   }
-  return { dx: Int32Array.from(ox), dy: Int32Array.from(oy), v, m, sd: Math.sqrt(ss / n), full: !inside, ek: Int32Array.from(ek), ex: Float32Array.from(ex), ey: Float32Array.from(ey) };
+  // (the outline's points: where the model's gradient is a third of its strongest or more)
+  let [ek, ex, ey] = [new Int32Array(0), new Float32Array(0), new Float32Array(0)];
+  if (g) {
+    const mags = new Float64Array(n);
+    let max = 0;
+    for (let k = 0; k < n; k++) max = Math.max(max, (mags[k] = Math.hypot(gxs![k], gys![k])));
+    const thr = max / 3;
+    let ne = 0;
+    if (thr > 0) for (let k = 0; k < n; k++) if (mags[k] >= thr) ne++;
+    [ek, ex, ey] = [new Int32Array(ne), new Float32Array(ne), new Float32Array(ne)];
+    for (let k = 0, j = 0; j < ne; k++)
+      if (mags[k] >= thr) {
+        ek[j] = k;
+        ex[j] = gxs![k] / mags[k];
+        ey[j++] = gys![k] / mags[k];
+      }
+  }
+  return { dx: ox.slice(0, n), dy: oy.slice(0, n), v, m, sd: Math.sqrt(ss / n), full: !inside, ek, ex, ey };
 }
 
 export type MatchCompare = 'brightness' | 'edges' | 'both';
@@ -453,10 +480,14 @@ const circle = (cx: number, cy: number, r: number): Pt[] => Array.from({ length:
 // similarity; the best first. poly: the model's outline (pixels of the image) — with the context cluster or alone, only
 // it (and its edge, or the ground around it) is compared; with “overlap”, two places are one particle when their outlines
 // overlap; outer: the margin drawn around it (pixels of the image), with the context drawn: what is inside it is compared
-export function findLike(c: Float32Array, w: number, h: number, cx: number, cy: number, R0: number, o: MatchOpts, poly?: Pt[], outer?: Pt[]): Match[] {
+// progress: told how far it is (the first search: the sizes done of all; then the candidates looked at closely of all)
+export type MatchProgress = (stage: 'first' | 'refine', done: number, total: number) => void;
+export function findLike(c: Float32Array, w: number, h: number, cx: number, cy: number, R0: number, o: MatchOpts, poly?: Pt[], outer?: Pt[], progress?: MatchProgress): Match[] {
   const region = comparedRegion(o, cx, cy, poly, outer);
-  const inside = region?.inside ?? null;
   const R = region?.R ?? R0;
+  // (the region on a grid of a quarter of a pixel around the model, made once: every template asks it for thousands of
+  // points, at every turn and size — the outline itself asked each time cost most of the search)
+  const inside = region ? gridRegion(region.inside, cx, cy, (R / Math.max(0.5, 1 - o.sizes)) * 1.05 + 2, region.R) : null;
   const mode: MatchCompare = o.compare ?? 'brightness';
   const bright = !!o.brightness;
   // (shrunk so the model's disc is about `coarse` px in radius)
@@ -479,7 +510,8 @@ export function findLike(c: Float32Array, w: number, h: number, cx: number, cy: 
   const bestA = new Float32Array(sm.w * sm.h);
   const bestS = new Float32Array(sm.w * sm.h);
   let fi: FftImg | null = null;
-  for (const s of scales) {
+  for (const [si, s] of scales.entries()) {
+    progress?.('first', si, scales.length);
     const [dx, dy] = disc(Rs * s);
     const r = Math.ceil(Rs * s);
     const tpls = angles.map((a) => template(sm.c, sm.w, sm.h, gSm, cx / f, cy / f, dx, dy, a, s, inside ? (x, y) => inside(x * f, y * f) : null));
@@ -532,72 +564,120 @@ export function findLike(c: Float32Array, w: number, h: number, cx: number, cy: 
     if (!outlines.has(p)) outlines.set(p, placed(p));
     return overlapOf(outlines.get(m)!, outlines.get(p)!) > (o.overlap ?? MATCH_TUNING.overlap);
   };
-  // (refined at full size: the place within the shrinking, the turn within a step either side at 1°, the size within
-  // half its step)
+  // (refined from the image shrunk down to the full size, a level at a time, each about half the one before: at each,
+  // the place within the last level's pixel either side, the turn and the size within half the last level's step; at
+  // full size, every turn at 1° within a step either side. Only a few places, turns and sizes a level: the full size
+  // costs a few hundred comparisons a candidate, where every place × every turn of the shrinking cost thousands)
+  const plan: number[] = [];
+  for (let fl = f; fl > 1; ) plan.push((fl = fl > 3 ? Math.round(fl / 2) : 1));
+  if (!plan.length) plan.push(1);
+  const levels = new Map<number, { c: Float32Array; w: number; h: number; g: Grad | null }>([[f, { ...sm, g: gSm }]]);
+  const levelOf = (fl: number) => {
+    let L = levels.get(fl);
+    if (!L) {
+      const im = shrink(c, w, h, fl);
+      L = { ...im, g: mode === 'brightness' ? null : fl === 1 ? gFull : gradients(im.c, im.w, im.h) };
+      levels.set(fl, L);
+    }
+    return L;
+  };
+  const discs = new Map<string, Int32Array[]>();
+  const tpls = new Map<string, Tpl | null>();
+  const tplAt = (fl: number, a: number, s: number) => {
+    const key = `${fl}|${a}|${s.toFixed(5)}`;
+    if (!tpls.has(key)) {
+      const L = levelOf(fl);
+      const dk = `${fl}|${s.toFixed(5)}`;
+      if (!discs.has(dk)) discs.set(dk, disc((R * s) / fl));
+      const [dx, dy] = discs.get(dk)!;
+      tpls.set(key, template(L.c, L.w, L.h, L.g, cx / fl, cy / fl, dx, dy, a, s, inside ? (x, y) => inside(x * fl, y * fl) : null));
+    }
+    return tpls.get(key)!;
+  };
   const out: Match[] = [];
   const ds = nSizes > 1 ? o.sizes / (nSizes - 1) : 0;
-  const cache = new Map<string, Tpl | null>();
-  for (const i of cand) {
+  const keepAbove = o.min * (o.candidates ?? MATCH_TUNING.candidates);
+  const around = (v: number, d: number) => (d > 1e-6 ? [v - d, v, v + d].filter((q) => q > 0) : [v]);
+  let told = 0;
+  for (const [ci, i] of cand.entries()) {
     if (out.length >= o.max) break;
+    // (said at most every 100 ms)
+    if (progress && performance.now() - told > 100) {
+      told = performance.now();
+      progress('refine', ci, cand.length);
+    }
     const [x0, y0] = [((i % sm.w) + 0.5) * f, (Math.floor(i / sm.w) + 0.5) * f];
     // (a place found already very near: never two there)
     if (out.some((m) => Math.hypot(m.x - x0, m.y - y0) < (byOverlap ? 0.25 : 1) * reach)) continue;
     let m: Match = { x: x0, y: y0, angle: bestA[i], scale: bestS[i], score: -1 };
-    for (const s of ds ? [bestS[i] - ds, bestS[i], bestS[i] + ds] : [bestS[i]]) {
-      const [dx, dy] = disc(R * s);
-      const r = Math.ceil(R * s);
-      const fits = (x: number, y: number) => x >= r && y >= r && x < w - r && y < h - r;
-      const turns: { a: number; t: Tpl }[] = [];
-      for (let a = bestA[i] - step; a <= bestA[i] + step + 1e-9; a += 1) {
-        const key = `${a}|${s.toFixed(4)}`;
-        if (!cache.has(key)) cache.set(key, template(c, w, h, gFull, cx, cy, dx, dy, a, s, inside));
-        const t = cache.get(key);
-        if (t) turns.push({ a, t });
-      }
-      if (!turns.length) continue;
-      if (!inside) {
-        // (a disc: every place within the shrinking at every turn; the image's sums over the disc once a place)
-        for (let y = Math.floor(y0 - f); y <= Math.ceil(y0 + f); y++)
-          for (let x = Math.floor(x0 - f); x <= Math.ceil(x0 + f); x++) {
-            if (!fits(x, y)) continue;
+    // (the best of these places (± span pixels of a level, or the box given: x from, to, y from, to), turns and sizes,
+    // all together: m moved there; false when none fits. The turns on a grid of a quarter of a degree: their templates
+    // made once, for every candidate)
+    const search = (fl: number, span: number, turnsAt: number[], sizes: number[], box?: number[]) => {
+      const L = levelOf(fl);
+      const turns = [...new Set(turnsAt.map((a) => Math.round(a * 4) / 4))];
+      const [ix, iy] = [Math.round(m.x / fl - 0.5), Math.round(m.y / fl - 0.5)];
+      const [xa, xb, ya, yb] = box ?? [ix - span, ix + span, iy - span, iy + span];
+      let best: Match | null = null;
+      for (const s of sizes) {
+        const r = Math.ceil((R * s) / fl);
+        const ts = turns.flatMap((a) => {
+          const t = tplAt(fl, a, s);
+          return t ? [{ a, t }] : [];
+        });
+        if (!ts.length) continue;
+        // (a disc: the image's sums over it once a place, the same for every turn)
+        const [dx, dy] = discs.get(`${fl}|${s.toFixed(5)}`)!;
+        const sums = mode !== 'edges' && ts.some(({ t }) => t.full);
+        for (let y = ya; y <= yb; y++)
+          for (let x = xa; x <= xb; x++) {
+            if (x < r || y < r || x >= L.w - r || y >= L.h - r) continue;
             let [s1, s2] = [0, 0];
-            if (mode !== 'edges')
-              for (let k = 0; k < dx.length; k++) {
-                const p = c[(y + dy[k]) * w + x + dx[k]];
+            if (sums)
+              for (let k = 0, o = y * L.w + x; k < dx.length; k++) {
+                const p = L.c[o + dy[k] * L.w + dx[k]];
                 s1 += p;
                 s2 += p * p;
               }
-            for (const { a, t } of turns) {
-              const q = mode === 'edges' ? scoreAt(c, w, gFull, x, y, t, mode, bright) : scoreAt(c, w, gFull, x, y, t, mode, bright, s1, s2);
-              if (q > m.score) m = { x: x + 0.5, y: y + 0.5, angle: a, scale: s, score: q };
+            for (const { a, t } of ts) {
+              const q = sums && t.full ? scoreAt(L.c, L.w, L.g, x, y, t, mode, bright, s1, s2) : scoreAt(L.c, L.w, L.g, x, y, t, mode, bright);
+              if (!best || q > best.score) best = { x: (x + 0.5) * fl, y: (y + 0.5) * fl, angle: a, scale: s, score: q };
             }
           }
+      }
+      if (best) m = best;
+      return !!best;
+    };
+    let [prev, da, dsl] = [f, step / 2, ds];
+    let fits = true;
+    for (const [k, fl] of plan.entries()) {
+      const span = Math.max(1, Math.ceil(prev / fl));
+      if (fl > 1) {
+        // (a level shrunk: the place, the turn within half the last step, the size; the first one wider, every size
+        // tried and the turns within a step either side, all together: where particles touch, a place, a turn and a
+        // size apart can each look best alone)
+        fits = k === 0 ? search(fl, span, [m.angle - step, m.angle - step / 2, m.angle, m.angle + step / 2, m.angle + step], [...new Set([...scales, ...around(m.scale, dsl)])]) : search(fl, span, [m.angle - da, m.angle, m.angle + da], around(m.scale, dsl));
+        // (a place already far below the least similarity on a level shrunk: not refined further)
+        if (!fits || m.score < keepAbove) break;
+        [prev, da, dsl] = [fl, da / 2, dsl / 2];
         continue;
       }
-      // (in steps, each a fraction of all the places × turns: the place at the turn found on the image shrunk, the turn
-      // at that place, the place again within a pixel)
-      let bt = turns.reduce((p, q) => (Math.abs(q.a - bestA[i]) < Math.abs(p.a - bestA[i]) ? q : p), turns[0]);
-      let [bx, by, bq] = [Math.round(x0), Math.round(y0), -2];
-      for (let y = Math.floor(y0 - f); y <= Math.ceil(y0 + f); y++)
-        for (let x = Math.floor(x0 - f); x <= Math.ceil(x0 + f); x++) {
-          if (!fits(x, y)) continue;
-          const q = scoreAt(c, w, gFull, x, y, bt.t, mode, bright);
-          if (q > bq) [bx, by, bq] = [x, y, q];
-        }
-      if (!fits(bx, by)) continue;
-      for (const t of turns) {
-        const q = scoreAt(c, w, gFull, bx, by, t.t, mode, bright);
-        if (q > bq) [bt, bq] = [t, q];
+      const turns: number[] = [];
+      for (let a = m.angle - step; a <= m.angle + step + 1e-9; a += 1) turns.push(a);
+      if (k === 0) {
+        // (shrunk 3 times or less: every place within the shrinking at every turn at 1° and size, all together, as
+        // ever: a small model costs little)
+        fits = search(1, span, turns, around(m.scale, dsl), [Math.floor(x0 - f), Math.ceil(x0 + f), Math.floor(y0 - f), Math.ceil(y0 + f)]);
+        break;
       }
-      const [cx0, cy0] = [bx, by];
-      for (let y = cy0 - 1; y <= cy0 + 1; y++)
-        for (let x = cx0 - 1; x <= cx0 + 1; x++) {
-          if (!fits(x, y)) continue;
-          const q = scoreAt(c, w, gFull, x, y, bt.t, mode, bright);
-          if (q > bq) [bx, by, bq] = [x, y, q];
-        }
-      if (bq > m.score) m = { x: bx + 0.5, y: by + 0.5, angle: bt.a, scale: s, score: bq };
+      // (full size: the place at the turn and size found; every turn at 1° within a step either side and the sizes
+      // there; the place again within a pixel; the turn within half a degree)
+      if (!(fits = search(1, span, [m.angle], [m.scale]))) break;
+      search(1, 0, turns, around(m.scale, dsl));
+      search(1, 1, [m.angle], [m.scale]);
+      search(1, 0, [m.angle - 0.5, m.angle, m.angle + 0.5], [m.scale]);
     }
+    if (!fits) m.score = -1;
     if (m.score < o.min || out.some((p) => clash(m, p))) continue;
     // (the turn within 0 … symmetry)
     m.angle = ((m.angle % o.symmetry) + o.symmetry) % o.symmetry;
@@ -615,8 +695,9 @@ export const FEATURE_NAMES = ['Brightness', 'Edges', 'Mean', 'Contrast', 'Size',
 // place (in model radii)
 export function matchFeatures(c: Float32Array, w: number, h: number, cx: number, cy: number, R0: number, o: MatchOpts, found: Match[], poly?: Pt[], outer?: Pt[]): number[][] {
   const region = comparedRegion(o, cx, cy, poly, outer);
-  const inside = region?.inside ?? null;
   const R = region?.R ?? R0;
+  // (the region on a grid, as findLike reads it: the same points compared)
+  const inside = region ? gridRegion(region.inside, cx, cy, (R / Math.max(0.5, 1 - o.sizes)) * 1.05 + 2, region.R) : null;
   const g = gradients(c, w, h);
   let [lo, hi] = [Infinity, -Infinity];
   for (const v of c) [lo, hi] = [Math.min(lo, v), Math.max(hi, v)];
@@ -650,10 +731,13 @@ export function matchFeatures(c: Float32Array, w: number, h: number, cx: number,
   });
 }
 
+// the most a side's length found by the edges may differ from the size the search found (a part of it)
+export const FIT_CHANGE = 0.3;
 // A box found (a rectangle or a square: its centre, its turn as the selections turn, its sides) fitted to the edges
 // under it: along each of its two axes the profile across it (a band of half its other side averaged), its two edges
 // where it crosses half-way from inside to outside; the centre and the sides from them. limit: how far from the centre
-// the edges are looked for along each axis (the margin drawn; absent: 0.8 of the side)
+// the edges are looked for along each axis (the margin drawn; absent: 0.8 of the side). A side found more than FIT_CHANGE
+// longer or shorter than given is kept as given (and its axis not moved)
 export function fitBox(c: Float32Array, w: number, h: number, x: number, y: number, angle: number, bw: number, bh: number, limit?: [number, number]): { x: number; y: number; w: number; h: number } {
   const t = (angle * Math.PI) / 180;
   const ax: Pt[] = [
@@ -703,8 +787,9 @@ export function fitBox(c: Float32Array, w: number, h: number, x: number, y: numb
     };
     const lo = edge(-1);
     const hi = edge(1);
-    // (an edge not found: the side as it was)
-    const ok = Number.isFinite(lo) && Number.isFinite(hi);
+    // (an edge not found, or a side found far from the size the search found — the edges of a neighbour, or of a gap
+    // between particles, met: the side as it was)
+    const ok = Number.isFinite(lo) && Number.isFinite(hi) && Math.abs((hi - lo) / S - 1) <= FIT_CHANGE;
     len.push(ok ? hi - lo : S);
     shift.push(ok ? (hi + lo) / 2 : 0);
   }
@@ -728,8 +813,9 @@ export function placeLike(pts: Pt[], cx: number, cy: number, a: number, s: numbe
 // (cx, cy): the model's centre, R0: the radius of its disc; poly, outer: as for findLike
 export function dropLikeRejected(c: Float32Array, w: number, h: number, found: Match[], rejected: { x: number; y: number; angle: number; scale: number }[], R0: number, o: MatchOpts, cx: number, cy: number, poly?: Pt[], outer?: Pt[]): Match[] {
   if (!rejected.length) return found;
-  const region = comparedRegion(o, cx, cy, poly, outer);
-  const R = region?.R ?? R0;
+  const region0 = comparedRegion(o, cx, cy, poly, outer);
+  const R = region0?.R ?? R0;
+  const region = region0 ? { ...region0, inside: gridRegion(region0.inside, cx, cy, (R / Math.max(0.5, 1 - o.sizes)) * 1.05 + 2, region0.R) } : null;
   const turns = Math.max(1, Math.round(360 / o.symmetry));
   return found.filter((m) => {
     const [ddx, ddy] = disc(R * m.scale);

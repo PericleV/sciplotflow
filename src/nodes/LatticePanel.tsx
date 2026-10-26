@@ -70,12 +70,13 @@ export function LatticePanel(p: {
   rings?: { R: number; label: string }[];
   ringRows?: { d: number; phase: string; hkl: string; err: number }[];
   centre?: Pt;
+  part?: 'spots' | 'fringes' | 'rings'; // one part (a step of the task Lattice); absent: all
 }) {
   const spots = (p.spec.spots ?? []).map(([fx, fy]) => spotOf(fx, fy));
   const L = (v: number) => `${fmt(v * p.k)} ${p.u}`;
-  return (
+  const spotsPart = (
     <>
-      <div className="ie-section">Spots of the spectrum</div>
+      {!p.part && <div className="ie-section">Spots of the spectrum</div>}
       <Check label="show the spectrum" title="The image's FFT spectrum shown (Image ▸ View): click its spots to measure them" value={p.showing} onChange={p.showSpectrum} />
       <div className="hint">{p.showing ? 'Click a spot of the spectrum: it is moved onto its brightest place, its mirror taken with it.' : 'Show the spectrum, then click its spots.'}</div>
       {spots.map((s, i) => (
@@ -109,7 +110,11 @@ export function LatticePanel(p: {
           </button>
         </div>
       )}
-      <div className="ie-section">Fringes</div>
+    </>
+  );
+  const fringesPart = (
+    <>
+      {!p.part && <div className="ie-section">Fringes</div>}
       <Check label="the period along every line" title="Along every line selection drawn across the fringes: the period of its profile (its strongest frequency) and how many fringes; a sheet Fringes" value={!!p.spec.fringes} onChange={(fringes) => p.set({ fringes: fringes || undefined })} />
       {p.spec.fringes &&
         (p.fringes?.length ? (
@@ -121,7 +126,11 @@ export function LatticePanel(p: {
         ) : (
           <div className="hint">Draw a line across the fringes (the Line tool), as long as it can be.</div>
         ))}
-      <div className="ie-section">Diffraction rings (SAED)</div>
+    </>
+  );
+  const ringsPart = (
+    <>
+      {!p.part && <div className="ie-section">Diffraction rings (SAED)</div>}
       <Check label="the image is a diffraction pattern" title="Its centre found where it is symmetric, its radial profile, the rings in it; their d from the reciprocal size of a pixel, matched with the phases ticked; sheets Rings and Radial profile" value={!!p.spec.saed} onChange={(saed) => p.set({ saed: saed || undefined })} />
       {p.spec.saed && (
         <>
@@ -157,6 +166,16 @@ export function LatticePanel(p: {
           ))}
         </>
       )}
+    </>
+  );
+  if (p.part === 'spots') return spotsPart;
+  if (p.part === 'fringes') return fringesPart;
+  if (p.part === 'rings') return ringsPart;
+  return (
+    <>
+      {spotsPart}
+      {fringesPart}
+      {ringsPart}
     </>
   );
 }

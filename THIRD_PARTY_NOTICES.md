@@ -54,6 +54,19 @@ Calibration), then kept in the browser's cache. The image is read in the browser
 | tesseract.js worker and tesseract.js-core (Tesseract OCR compiled to WebAssembly) | Apache-2.0 |
 | Tesseract's English language data (`@tesseract.js-data/eng`) | Apache-2.0 |
 
+## 2c. Loaded only when Segment anything is used
+
+Served by the app itself (`public/models`, `ort/`) and downloaded by the browser only after the user agrees, the first
+time Segment anything is used (Image analysis ▸ Particles ▸ Find), then kept in the browser's Cache Storage. The image
+is read in the browser and is not sent anywhere. The models were converted from PyTorch to ONNX for this app (the
+encoder and the decoder separately, the decoder giving its four masks and their scores; checked against PyTorch).
+
+| Model or software | Source | Licence |
+|---|---|---|
+| MobileSAM (`public/models/mobilesam-*.onnx`) | Zhang et al., Faster Segment Anything: Towards Lightweight SAM for Mobile Applications (arXiv:2306.14289), github.com/ChaoningZhang/MobileSAM; built on Segment Anything (Meta AI, Apache-2.0) | Apache-2.0 |
+| micro-sam vit_t_em_organelles (`public/models/microsam-em-tiny-*.onnx`) | Archit et al., Segment Anything for Microscopy (doi:10.1101/2023.08.21.554208); weights from Zenodo 10.5281/zenodo.11110950 (BioImage.IO greedy-whale), by Anwai Archit and Constantin Pape | CC BY 4.0 (changed: converted to ONNX) |
+| onnxruntime-web (its WebAssembly, `ort/`) | Microsoft | MIT |
+
 ## 3. Colour palettes
 
 | Palette | Source | Licence |
@@ -91,14 +104,14 @@ shipped with the app (at the end of `public/THIRD_PARTY_LICENSES.txt`, from `scr
 The results are checked against these libraries by `npm run check` (reference scripts in `scripts/fixtures`); the
 report of every check is [`VALIDATION.md`](VALIDATION.md) (`npm run validation`).
 
-Routines once written after *Numerical Recipes* were rewritten (2026-10-18) from public sources, with the results
-checked against SciPy / NumPy: the eigenvalues of non-symmetric matrices after EISPACK's orthes / hqr2 as written in the
-public-domain JAMA (`src/engine/matrix.ts`); the incomplete beta and gamma functions from the continued fractions and the
-series of the DLMF (8.17.22, 8.7.1, 8.9.2) evaluated by the modified Lentz method (`src/engine/dist.ts`, shared by
-`src/engine/lm.ts`); Brent's root finder from its description (`src/engine/probplot.ts`).
+Written from public sources, with the results checked against SciPy / NumPy: the eigenvalues of non-symmetric matrices
+after EISPACK's orthes / hqr2 as written in the public-domain JAMA (`src/engine/matrix.ts`); the incomplete beta and
+gamma functions from the continued fractions and the series of the DLMF (8.17.22, 8.7.1, 8.9.2) evaluated by the
+modified Lentz method (`src/engine/dist.ts`, shared by `src/engine/lm.ts`); Brent's root finder from its description
+(`src/engine/probplot.ts`).
 
 The routines that followed the code of R (GPL) or of the Applied Statistics algorithms (distributed by the Royal
 Statistical Society only free of charge) were written again (2026-10-18): the studentized range and the noncentral t
 from their definitions (an integral over the scale χ_ν/√ν by Gauss–Legendre quadrature, its nodes computed), Shapiro–Wilk
 from Royston's published approximations (1992, 1995). They are checked against SciPy (`scripts/fixtures/rdist-ref.py`).
-No code of *Numerical Recipes*, R or the AS algorithms is left.
+No code of R or of the AS algorithms is left.

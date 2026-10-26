@@ -1982,3 +1982,50 @@ input[type='checkbox']:disabled, input[type='radio']:disabled { cursor: default;
 .ie-labels { pointer-events: none; }
 .ie-labels text.good { fill: #30d158; font-size: 14px; font-weight: 700; paint-order: stroke; stroke: #000; stroke-width: 2px; }
 .ie-labels polygon.unsure { fill: rgba(255, 214, 10, 0.12); stroke: #ffd60a; stroke-width: 2; stroke-dasharray: 5 3; }
+/* the tasks of the image editor: the task picked, its numbered steps, the ways to find particles, what it found so far */
+.image-editor .ie-tasks button { padding-left: 8px; padding-right: 8px; }
+.image-editor .ie-task-steps { display: flex; flex-direction: column; gap: 2px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.image-editor .ie-task-step { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 6px; border: none; border-radius: 6px; background: transparent; box-shadow: none; text-align: left; color: var(--muted); min-height: 0; }
+.image-editor .ie-task-step:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.image-editor .ie-task-step.on { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text); }
+.image-editor .ie-task-n { flex: none; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--border); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; }
+.image-editor .ie-task-step.on .ie-task-n { background: var(--accent); border-color: var(--accent); color: #fff; }
+.image-editor .ie-task-step.done .ie-task-n { background: var(--ok-bg); border-color: transparent; color: var(--ok); }
+.image-editor .ie-task-text { display: flex; flex-direction: column; min-width: 0; }
+.image-editor .ie-task-text > span:first-child { font-weight: 600; }
+.image-editor .ie-task-text .muted { font-size: 11px; }
+.image-editor .ie-task-pane { display: flex; flex-direction: column; gap: 6px; }
+.image-editor .ie-method { display: block; width: 100%; text-align: left; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; box-shadow: none; color: var(--text); min-height: 0; }
+.image-editor .ie-method:hover { border-color: var(--accent); }
+.image-editor .ie-method.on { border: 1.5px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.image-editor .ie-method b { font-weight: 600; }
+.image-editor .ie-method-body { display: flex; flex-direction: column; gap: 6px; padding: 6px 2px 8px 8px; margin-left: 6px; border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+.image-editor .ie-summary { display: flex; flex-direction: column; gap: 2px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.image-editor .ie-sum-label { font-weight: 600; margin-top: 2px; }
+.image-editor .ie-sum-value { font-size: 22px; line-height: 1.1; }
+.image-editor .ie-sum-hist { width: 100%; height: 40px; margin: 4px 0 0; }
+.image-editor .ie-sum-hist rect { fill: var(--accent); }
+.image-editor .ie-tool-opts { display: flex; flex-direction: column; gap: 4px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.ie-areas polygon { stroke: #64d2ff; stroke-width: 1; stroke-dasharray: 3 3; }
+/* a long piece of work over the image: what it is doing, how far, the time, Cancel (the image can still be moved) */
+.image-editor .ie-busy { position: absolute; left: 0; right: 0; top: 14px; display: flex; justify-content: center; pointer-events: none; z-index: 5; }
+.image-editor .ie-busy-card { pointer-events: auto; width: min(360px, calc(100% - 32px)); display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); box-shadow: 0 6px 24px rgb(0 0 0 / 25%); }
+.image-editor .ie-busy-stage { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.image-editor .ie-busy-bar { position: relative; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--accent) 18%, transparent); overflow: hidden; }
+.image-editor .ie-busy-bar > span { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 3px; background: var(--accent); transition: width 0.2s linear; }
+.image-editor .ie-busy-bar.moving > span { width: 30%; animation: ie-busy-move 1.2s ease-in-out infinite; }
+@keyframes ie-busy-move { 0% { left: -30%; } 100% { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .image-editor .ie-busy-bar.moving > span { animation: none; width: 100%; opacity: 0.5; } }
+.image-editor .ie-busy-card > .row { display: flex; align-items: center; gap: 8px; }
+.image-editor .ie-busy-card .grow { flex: 1; min-width: 0; }
+/* Review of the particles of any way: those left out faint and dashed, the unsure ones outlined, said good or not */
+.image-editor .ie-roi.out .ie-roi-line { opacity: 0.4; stroke-dasharray: 3 3; }
+.image-editor .ie-roi.out .ie-roi-name { opacity: 0.5; }
+.image-editor .ie-roi.unsure .ie-roi-line { stroke: #ff9f0a; stroke-width: 2.5; }
+.image-editor .ie-roi-said { font-size: 15px; font-weight: 700; paint-order: stroke; stroke: rgb(0 0 0 / 0.75); stroke-width: 3px; pointer-events: none; }
+.image-editor .ie-roi-said.good { fill: #30d158; }
+.image-editor .ie-roi-said.bad { fill: #ff453a; }
+/* the paint of the classifier over the image, and the brush's circle following the mouse */
+.image-editor .ie-paint { pointer-events: none; image-rendering: pixelated; }
+.image-editor .ie-brush-cursor { position: absolute; transform: translate(-50%, -50%); border: 1.5px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px rgb(0 0 0 / 0.6); pointer-events: none; z-index: 4; }
+.image-editor .ie-brush-cursor.erase { border-style: dashed; }

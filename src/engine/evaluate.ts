@@ -2383,7 +2383,7 @@ function imageNodeOut(id: string, d: ImageAnalysisData): Out {
     const mm = W / p.out.w;
     const at = (x: number, y: number) => [+((x - ox) * mm).toFixed(4), +((y - oy) * mm).toFixed(4)] as const;
     for (const r of d.rois) {
-      if (r.hidden || r.train) continue;
+      if (r.hidden || r.train || r.out) continue;
       const color = r.color ?? ROI_COLOR;
       const line = { ...SHAPE_DEFAULTS, kind: 'line' as const, coords: 'data' as const, color, width: 0.75, head1: 'none' as const, head2: 'none' as const };
       const pts = roiOutline(r);

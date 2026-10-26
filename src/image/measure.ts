@@ -241,7 +241,8 @@ export type MeasureInput = {
 export type MeasureResult = { book: Workbook; summary: string; covered: number };
 
 export function measureRois(q0: MeasureInput): MeasureResult {
-  const q = { ...q0, rois: q0.rois.filter((r) => !r.train) };
+  // (the examples of the classifier, and the particles left out in Review, not measured)
+  const q = { ...q0, rois: q0.rois.filter((r) => !r.train && !r.out) };
   const { image, mask, ox, oy, spec } = q;
   const { w: W, h: H } = image;
   const k = q.cal && q.cal.size > 0 ? q.cal.size : 1;

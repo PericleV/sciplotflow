@@ -9,7 +9,7 @@ import { canny } from './canny.ts';
 import { bandpass, spotMask } from './fft2d.ts';
 import { levelSurface } from './surface.ts';
 import { GLOBAL_METHODS, LOCAL_METHODS, globalThreshold, localThreshold, type GlobalMethod, type LocalMethod } from './threshold.ts';
-import { classifyPixels, edgeClassOf, splitByEdges, uncertainty, type TrainExample } from './classify.ts';
+import { classifyPixels, edgeClassOf, PIXEL_LABELS, PIXEL_METHODS, splitByEdges, uncertainty, type PixelMethod, type TrainExample } from './classify.ts';
 
 export type StepGroup = 'Tone' | 'Colour' | 'Noise' | 'Background' | 'Frequency' | 'Edges' | 'Texture' | 'Morphology' | 'Threshold';
 export const STEP_GROUPS: StepGroup[] = ['Tone', 'Colour', 'Noise', 'Background', 'Frequency', 'Edges', 'Texture', 'Morphology', 'Threshold'];
@@ -233,7 +233,20 @@ export const STEP_DEFS = {
     label: 'Trainable classifier',
     title: 'A mask learnt from examples drawn on the image (as ImageJ’s Trainable Weka Segmentation): selections added to classes (object, background, edge …), a random forest on the pixels’ features at several scales; for what a threshold cannot tell apart (texture, touching particles)',
     params: [
-      num('trees', 'Trees', 30, { min: 1, max: 200, step: 1, title: 'The trees of the forest: more, steadier, slower' }),
+      choice(
+        'method',
+        'Method',
+        'forest',
+        [
+          ['forest', 'random forest'],
+          ['extra', 'extra trees'],
+          ['boost', 'boosted trees'],
+          ['mlp', 'neural network'],
+          ['auto', 'auto (the most often right)'],
+        ],
+        'Random forest: as Weka and ilastik, steady. Extra trees: thresholds drawn at random, quicker to train, smoother. Boosted trees: tree after tree on what the others got wrong (as LightGBM). Neural network: a small one (24 units), smooth borders between the classes. To split touching particles by an edge class, the forest and the extra trees are best: the others are so sure of the object that thin gaps between particles fade. Auto: each trained on three quarters of the example pixels, the one most often right on the quarter kept out',
+      ),
+      num('trees', 'Trees', 30, { min: 1, max: 200, step: 1, title: 'The trees of the forest (random forest, extra trees), the rounds of boosting: more, steadier, slower' }),
       num('smooth', 'Smoothing', 2, { min: 0, step: 0.5, unit: 'px', title: 'The classes’ probabilities smoothed before the pixel is given one (fewer stray pixels)' }),
       num('edges', 'Edges from outlines', 2, { min: 0, max: 10, step: 1, unit: 'px', title: 'A ring this wide just outside every object outlined (an area example of the target class: wand, polygon …) taught as the edge class, and the gap where two outlined objects touch; 0: none' }),
       choice('output', 'Output', 'mask', [
@@ -575,19 +588,28 @@ export function applyStep(r: Raster, s: ImgStep, scale = 1, ctx: StepCtx = {}): 
       return { r: mask1(r, map1(c, (v) => ((light ? v <= t : v > t) ? 1 : 0))), note: `${name}: ${+t.toPrecision(5)}` };
     }
     case 'classify': {
-      const ex = (ctx.train ?? []).map((e) => ({ ...e, pts: e.pts.map(([x, y]): [number, number] => [x * scale, y * scale]), width: Math.max(1, e.width * scale) }));
+      // (the image a preview shrunk: the outlines scaled, the pixels painted moved to its own)
+      const shrunk = (e: TrainExample) => {
+        if (!e.px || scale === 1 || !e.pw) return e.px;
+        const pw = e.pw;
+        return Int32Array.from(new Set(Array.from(e.px, (i) => Math.min(r.h - 1, Math.floor(Math.floor(i / pw) * scale)) * r.w + Math.min(r.w - 1, Math.floor((i % pw) * scale)))));
+      };
+      const ex = (ctx.train ?? []).map((e) => ({ ...e, pts: e.pts.map(([x, y]): [number, number] => [x * scale, y * scale]), width: Math.max(1, e.width * scale), px: shrunk(e), pw: e.px ? r.w : undefined }));
       // (edges from the outlines: absent in a step of an older project, none)
       const named = classesOf(s, ex);
       const target = targetClass(s, named);
       const edgeCls = edgeClassOf(named);
       const ring = Number(s.p.edges ?? 0) * scale;
-      const res = classifyPixels(r, ex, { trees: P<number>('trees'), scale, ...(ring > 0 ? { auto: { from: target, to: edgeCls, ring } } : {}) });
+      const res = classifyPixels(r, ex, { trees: P<number>('trees'), scale, method: (s.p.method as PixelMethod | 'auto' | undefined) ?? 'forest', ...(ring > 0 ? { auto: { from: target, to: edgeCls, ring } } : {}) });
       if (!res) return 'needs examples of two classes: paint on the image with a class chosen (or add selections to the classes)';
       const k = Math.max(0, res.classes.indexOf(target));
       const sm = P<number>('smooth');
       const prob = sm > 0 ? res.prob.map((c) => gaussian(c, w, h, sm)) : res.prob;
       const out = P<string>('output');
-      let note = `${res.classes.map((c, j) => `${c}: ${res.samples[j]} px`).join(', ')} → ${res.classes[k]}`;
+      const how = res.accuracy ? `auto: ${PIXEL_LABELS[res.method]} (${PIXEL_METHODS.map((m) => `${PIXEL_LABELS[m]} ${Math.round((res.accuracy![m] ?? 0) * 100)} %`).join(', ')})` : PIXEL_LABELS[res.method];
+      // (the method said when it is not the forest of before, or chosen by auto)
+      const said = res.accuracy || res.method !== 'forest' ? how : '';
+      let note = `${res.classes.map((c, j) => `${c}: ${res.samples[j]} px`).join(', ')} → ${res.classes[k]}${said ? ` (${said})` : ''}`;
       if (out === 'probability') return { r: gray1(r, prob[k], 0, 1), note };
       if (out === 'uncertainty') return { r: gray1(r, uncertainty(prob), 0, 1), note: `${note}; bright: where it hesitates` };
       if (out === 'split') {

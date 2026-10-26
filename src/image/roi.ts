@@ -28,7 +28,11 @@ export type Roi = {
   hand?: boolean; // a particle found then changed by hand (Refine leaves it as it is)
   shape?: string; // the regular shape it was made by Refine (circle, square …)
   layer?: number; // the layer it lies in (1: nothing on it), estimated (Layers)
-  score?: number; // found by Find like this: how alike the model it is (0 … 1)
+  score?: number; // found by Find like this: how alike the model it is (0 … 1); by Segment anything: how sure it is
+  // Review: left out (not measured), and why: by a click, said not good, by what was learnt, Segment anything not
+  // sure enough; said: said good or not (what Learn from my choices learns from)
+  out?: 'hand' | 'said' | 'learnt' | 'score';
+  said?: boolean;
   bg?: RoiBg;
 };
 export type Pt = [number, number];

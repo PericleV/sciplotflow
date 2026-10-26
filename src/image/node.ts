@@ -5,11 +5,13 @@
 import { cropBox, cropRaster, map1, packPixels, unpackPixels, type Crop, type ImgPixels, type Raster } from './raster.ts';
 import { applySteps, type ImgStep } from './steps.ts';
 import { measureInputs, measureRois, measureSpec, type MeasureResult, type MeasureSpec } from './measure.ts';
-import { trainingExamples } from './classify.ts';
+import { trainingExamples, trainKeyOf } from './classify.ts';
+import { paintExamples, type PaintStored } from './paint.ts';
 import type { ParticleOpts } from './particles.ts';
 import type { MatchExample, MatchOpts, MatchModelSpec, MatchRejected } from './match.ts';
 import type { LearnMethod } from './learn.ts';
 import type { RegularShape } from './refine.ts';
+import type { SamModel, SamOpts } from './sam.ts';
 import { analyzeNetwork, NETWORK_DEFAULTS, type NetworkResult, type NetworkSpec } from './network.ts';
 import { arrange, ARRANGE_DEFAULTS, type ArrangeResult, type ArrangeSpec } from './arrangement.ts';
 import { radialSpectrum } from './fft2d.ts';
@@ -53,12 +55,26 @@ export type ImageAnalysisData = {
   // model they were found by) and the places like them dropped; learn: the classifier of Review (method; examples:
   // the particles said good or not; pmin: the least probability kept); truth: the group of the particles marked as true
   // (Accuracy)
-  match?: Partial<MatchOpts> & { fit?: boolean; inside?: boolean; models?: MatchModelSpec[]; outer?: Pt[]; image?: string; useRejected?: boolean; rejected?: MatchRejected[]; learn?: boolean; method?: LearnMethod | 'auto'; examples?: MatchExample[]; pmin?: number; truth?: string };
+  // showArea: the area compared drawn around every particle found; grow: the margin of a model picked with Segment
+  // anything, its outline widened by it (px)
+  match?: Partial<MatchOpts> & { fit?: boolean; inside?: boolean; models?: MatchModelSpec[]; outer?: Pt[]; image?: string; useRejected?: boolean; rejected?: MatchRejected[]; learn?: boolean; method?: LearnMethod | 'auto'; examples?: MatchExample[]; pmin?: number; truth?: string; showArea?: boolean; grow?: number };
   // Structure: the network of the mask (its skeleton's ligaments, junctions, pores) and the changes by hand
   network?: NetworkSpec;
   // Arrangement: how the particles lie (their neighbours, Delaunay, Voronoi, clusters, g(r), Ripley's L)
   arrange?: ArrangeSpec;
-  tab?: 'image' | 'objects' | 'structure' | 'lattice' | 'surface' | 'results'; // the editor's panel shown last
+  tab?: 'image' | 'objects' | 'structure' | 'lattice' | 'surface' | 'results'; // the editor's panel shown last (All tools)
+  // the editor's task (its numbered steps on the left; all: every panel, as the tabs of before; absent: from the tab
+  // shown last), the step of it open, the way particles are found (Particles ▸ Find)
+  task?: 'particles' | 'spots' | 'network' | 'lattice' | 'surface' | 'all';
+  stage?: number;
+  find?: 'threshold' | 'classifier' | 'like' | 'sam' | 'rays';
+  // Segment anything: the model, how it is asked (a click, a box, every particle), the settings of Everything
+  sam?: Partial<SamOpts> & { model?: SamModel; prompt?: 'click' | 'box' | 'all' };
+  // the paint of the trainable classifier (every pixel of the original its class: the brush, the eraser, the fill)
+  paint?: PaintStored;
+  // Review of the particles of any way but Find like this: Learn from my choices (its method, the least probability
+  // kept), the least Segment anything must be sure of a particle
+  review?: { learn?: boolean; method?: LearnMethod | 'auto'; pmin?: number; sure?: number };
   // Frequency: the spectrum shown instead of the image (log or linear, a Hann window, of the result or the original);
   // radial: its radial average in the workbook
   fft?: { show?: boolean; log?: boolean; hann?: boolean; of?: 'result' | 'original'; radial?: boolean };
@@ -101,8 +117,8 @@ export function processImage(d: ImageAnalysisData): Processed | null {
   const on = measureSpec(d.measure).on;
   // (the examples of a trainable classifier: in the part analysed)
   const c = cropBox(d.crop, d.pixels.w, d.pixels.h);
-  const train = steps.some((s) => s.on && s.kind === 'classify') ? trainingExamples(d.rois ?? [], c?.[0] ?? 0, c?.[1] ?? 0) : [];
-  const key = JSON.stringify([d.crop ?? null, steps, on, train]);
+  const train = steps.some((s) => s.on && s.kind === 'classify') ? [...trainingExamples(d.rois ?? [], c?.[0] ?? 0, c?.[1] ?? 0), ...paintExamples(d.paint, c)] : [];
+  const key = JSON.stringify([d.crop ?? null, steps, on, trainKeyOf(train)]);
   const hit = d.pixelsId ? processed.get(d.pixelsId) : undefined;
   if (hit && hit.key === key) return hit.p;
   const base = cropRaster(unpackPixels(d.pixels, d.pixelsId), d.crop);
@@ -244,7 +260,7 @@ export function imageArrangement(d: ImageAnalysisData, p: Processed): { res: Arr
   const c = cropBox(d.crop, full.w, full.h);
   const [ox, oy] = [c?.[0] ?? 0, c?.[1] ?? 0];
   const group = d.arrange?.group ?? '';
-  const parts = (d.rois ?? []).filter((r) => isArea(r) && !r.train && r.role !== 'background' && !r.hidden && (!group || (r.group ?? '') === group));
+  const parts = (d.rois ?? []).filter((r) => isArea(r) && !r.train && !r.out && r.role !== 'background' && !r.hidden && (!group || (r.group ?? '') === group));
   if (parts.length < 3) return null;
   const key = JSON.stringify([d.arrange ?? {}, d.crop ?? null, parts.map((r) => [r.id, r.kind, r.box, r.pts?.length, r.pts?.[0], r.angle])]);
   const hit = arrangements.get(p);
@@ -275,7 +291,7 @@ export function arrangementSheets(a: { res: ArrangeResult; names: string[]; grou
   const full = d.pixels ? { w: d.pixels.w, h: d.pixels.h } : null;
   const c = full ? cropBox(d.crop, full.w, full.h) : null;
   const [ox, oy] = [c?.[0] ?? 0, c?.[1] ?? 0];
-  const parts = (d.rois ?? []).filter((r) => isArea(r) && !r.train && r.role !== 'background' && !r.hidden && (!d.arrange?.group || (r.group ?? '') === d.arrange.group));
+  const parts = (d.rois ?? []).filter((r) => isArea(r) && !r.train && !r.out && r.role !== 'background' && !r.hidden && (!d.arrange?.group || (r.group ?? '') === d.arrange.group));
   const xy = parts.map((r) => roiCentre(r));
   const neighbours: Dataset = {
     name: 'Neighbours',
@@ -480,7 +496,7 @@ export function surfaceSheets(d: ImageAnalysisData, p: Processed): { sheets: Dat
     const m = roiMask(r, w, h, ox, oy);
     return (x: number, y: number) => x >= m.x0 && y >= m.y0 && x < m.x0 + m.w && y < m.y0 + m.h && m.m[(y - m.y0) * m.w + x - m.x0] === 1;
   };
-  const areas = (d.rois ?? []).filter((r) => isArea(r) && !r.hidden && !r.train);
+  const areas = (d.rois ?? []).filter((r) => isArea(r) && !r.hidden && !r.train && !r.out);
   // (a difference of heights between neighbours as a slope: the heights and the pixel both lengths)
   const slope = zu in LENGTH_NM && u in LENGTH_NM ? LENGTH_NM[zu] / LENGTH_NM[u] / k : NaN;
   if (S.areal) {

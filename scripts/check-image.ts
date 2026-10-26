@@ -1,9 +1,9 @@
 // The checks of the Image analysis node's algorithms against scikit-image / scipy (scripts/fixtures/image-ref.py →
 // image-ref.json), and properties where there is no reference (skeleton, watershed, the ImageJ thresholds).
 import { readFileSync } from 'node:fs';
-import { fitMethod, learn, looAccuracy } from '../src/image/learn.ts';
+import { cvAccuracy, fitMethod, fitSvm, learn, LEARN_METHODS, looAccuracy, scaler } from '../src/image/learn.ts';
 import { accuracyOf } from '../src/image/accuracy.ts';
-import { cropRaster, dataBarRows, gaussian, gaussianWide, packPixels, quantile, shrinkRaster, unpackPixels, type Raster } from '../src/image/raster.ts';
+import { cropRaster, dataBarApart, dataBarRows, gaussian, gaussianWide, packPixels, quantile, shrinkRaster, unpackPixels, type Raster } from '../src/image/raster.ts';
 import { semScale } from '../src/image/load.ts';
 import { measureRois, measureSpec, valueStats, feret, lineProfile } from '../src/image/measure.ts';
 import { nearRoi, offsetDistance, offsetOutline, ringMask, roiMask, traceOutline, wand, polygonArea, type Pt, type Roi } from '../src/image/roi.ts';
@@ -13,7 +13,8 @@ import { fitRegular, REGULAR_SHAPES, snapToEdges } from '../src/image/refine.ts'
 import { clickOutline, RAYS_DEFAULTS, seedsAndRays } from '../src/image/rays.ts';
 import { estimateLayers } from '../src/image/layers.ts';
 import { clustersImage, cubesImage, shapesImage, textureImage, type TestImage } from '../src/image/testImages.ts';
-import { edgeRing, type TrainExample } from '../src/image/classify.ts';
+import { edgeRing, featuresOf, type TrainExample } from '../src/image/classify.ts';
+import { trainBoosted, trainMlp } from '../src/image/pixelModels.ts';
 import { bilateral, entropyFilter, gabor, gradient, hessianEigen, laplace, laplacianOfGaussian, lbp, meanFilter, medianFilter, minMaxFilter, nonLocalMeans, rollingBall, varianceFilter } from '../src/image/filters.ts';
 import { closing, distanceMap, fillHoles, label, opening, separate, skeleton } from '../src/image/morph.ts';
 import { canny } from '../src/image/canny.ts';
@@ -32,6 +33,10 @@ import { arealParams, autocorrelation, heightHistogram, levelSurface, profilePar
 import { readGwy, readHeightText } from '../src/image/heights.ts';
 import { astmG, boxCounting, intercepts, orientation } from '../src/image/texture.ts';
 import { findScaleBar, labelBox, parseScale } from '../src/image/scalebar.ts';
+import { outOf, particleFeatures, PARTICLE_FEATURES } from '../src/image/review.ts';
+import { classIndex, decodePaint, emptyPaint, encodePaint, paintCounts, paintExamples, paintFill, paintSegment } from '../src/image/paint.ts';
+import { thinOutline } from '../src/image/sam.ts';
+import { dropNested, keepMasks, maskOutline, maskOver, pickMask, resizeAA, SAM_DEFAULTS, samInput, samPoints, samSize, type SamCandidate } from '../src/image/sam.ts';
 import type { AppNode } from '../src/types.ts';
 
 type Ok = (cond: boolean, what: string) => void;
@@ -294,6 +299,11 @@ export function checkImage(ok: Ok) {
     const plain: Raster = { ...r, ch: [Float32Array.from(px, (v, i) => (i >= (H - bar) * W ? 60 + ((i * 7919) % 120) : v))] };
     const c = cropRaster(r, [0, 0, W, H - dataBarRows(r)]);
     ok(dataBarRows(r) === bar && dataBarRows(plain) === 0 && c.h === H - bar && c.ch[0][0] === px[0] && cropRaster(r, [0, 0, W, H]) === r, `Image: the data bar under an SEM image found (${dataBarRows(r)} rows of ${bar}), none on an image without one; cut off by a crop`);
+    // (Find like this leaves out a bar that stands apart from the image over it; a plain ground at the foot of an image
+    // — the test images' — is not one)
+    const t = cubesImage();
+    const ground: Raster = { w: t.w, h: t.h, ch: [Float32Array.from(t.px)], kind: 'gray', lo: 0, hi: 255 };
+    ok(dataBarApart(r) === bar && dataBarRows(ground) > 0 && dataBarApart(ground) === 0, `Image: the data bar left out of Find like this when it stands apart (${dataBarApart(r)} rows); the plain ground at the foot of the cubes' image (${dataBarRows(ground)} rows alike) is not taken for one`);
   }
   // a large rolling ball as ImageJ (on the image shrunk): the background of the exact one to a few % of the range
   {
@@ -535,6 +545,42 @@ export function checkImage(ok: Ok) {
     const byForest = findParticles(a.r.ch[0], tx.w, tx.h, { ...PARTICLE_DEFAULTS, minSize: 60 }).found;
     const none = applySteps(r, [step], 1, undefined, 1, { train: train.slice(0, 4) });
     ok(a.r.kind === 'mask' && Math.abs(byForest - tx.truth.length) <= 1 && Math.abs(byOtsu - tx.truth.length) > 3 && a.r.ch[0].every((v, i) => v === b.r.ch[0][i]) && /^object: \d+ px, background: \d+ px → object$/.test(a.notes.c ?? '') && /two classes/.test(none.errors.c ?? ''), `trainable classifier: ${byForest} textured particles of ${tx.truth.length} from 4 lines and 3 background examples (Otsu: ${byOtsu} pieces); the same twice; one class only: said (${a.notes.c})`);
+  }
+  // the trainable classifier's other learners: extra trees, boosted trees and a small neural network find the textured
+  // particles as the forest does, the same twice (seeded); auto says what it chose and how often each was right; a
+  // problem two of them alone can learn (two classes in rings, not split by one threshold) learnt by each
+  {
+    const tx = textureImage();
+    const r: Raster = { w: tx.w, h: tx.h, ch: [Float32Array.from(tx.px)], kind: 'gray', lo: 0, hi: 255 };
+    const train: TrainExample[] = [
+      ...tx.truth.slice(0, 4).map((q): TrainExample => ({ cls: 'object', pts: [[q.cx - 6, q.cy], [q.cx + 6, q.cy]], line: true, width: 3 })),
+      { cls: 'background', pts: [[5, 5], [60, 5], [60, 15], [5, 15]], line: false, width: 1 },
+      { cls: 'background', pts: [[400, 330], [470, 330], [470, 350], [400, 350]], line: false, width: 1 },
+      { cls: 'background', pts: [[80, 90], [120, 90]], line: true, width: 3 },
+    ];
+    const step = (method: string) => ({ ...newStep('classify', 'c'), p: { ...newStep('classify', 'c').p, method } });
+    const found: Record<string, number> = {};
+    let same = true;
+    const notes: Record<string, string> = {};
+    for (const m of ['extra', 'boost', 'mlp', 'auto']) {
+      const a = applySteps(r, [step(m)], 1, undefined, 1, { train });
+      const b = applySteps(r, [step(m)], 1, undefined, 1, { train });
+      same &&= a.r.ch[0].every((v, i) => v === b.r.ch[0][i]);
+      found[m] = findParticles(a.r.ch[0], tx.w, tx.h, { ...PARTICLE_DEFAULTS, minSize: 60 }).found;
+      notes[m] = a.notes.c ?? '';
+    }
+    // (rings: the class by the distance from the middle, 0 inside 3, 1 from 3 to 6, 0 beyond)
+    let seed = 3;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const pts = Array.from({ length: 1200 }, () => [rnd() * 18 - 9, rnd() * 18 - 9]);
+    const cls = Uint8Array.from(pts, ([u, v]) => (Math.hypot(u, v) > 3 && Math.hypot(u, v) < 6 ? 1 : 0));
+    const xs = [Float32Array.from(pts, (q) => q[0]), Float32Array.from(pts, (q) => q[1])];
+    const right = (pr: Float32Array[]) => pts.filter((_, i) => (pr[1][i] > pr[0][i] ? 1 : 0) === cls[i]).length / pts.length;
+    const [rb, rm] = [right(trainBoosted(xs, cls, 2, 60).predict(xs, pts.length)), right(trainMlp(xs, cls, 2, 7, 24, 120).predict(xs, pts.length))];
+    ok(
+      Object.values(found).every((n) => Math.abs(n - tx.truth.length) <= 1) && same && /\(extra trees\)$/.test(notes.extra) && /\(boosted trees\)$/.test(notes.boost) && /\(neural network\)$/.test(notes.mlp) && /\(auto: [a-z ]+ \(random forest \d+ %, extra trees \d+ %, boosted trees \d+ %, neural network \d+ %\)\)$/.test(notes.auto) && rb > 0.97 && rm > 0.95,
+      `trainable classifier, the other learners: textured particles ${tx.truth.length}, found by extra trees ${found.extra}, boosted trees ${found.boost}, the neural network ${found.mlp}, auto ${found.auto} (${notes.auto.replace(/^.*\(auto: /, 'auto: ').replace(/\)$/, '')}); the same twice; rings no threshold splits learnt by boosting (${(rb * 100).toFixed(1)} %) and the network (${(rm * 100).toFixed(1)} %)`,
+    );
   }
   // Structure: a lattice of bars 6 and 7 px wide, 40 px apart (25 junctions inside the image, 40 ligaments between
   // them), with three bumps on its bars: the ligaments 40 px long, their thickness the bars' width, the bumps cut as
@@ -1155,7 +1201,7 @@ export function checkImage(ok: Ok) {
     const nboth = run(dn, 'both', 0.4);
     const ne = run(dn, 'edges', 0.4);
     const pe = run(Float32Array.from(t.px), 'edges', 0.5);
-    ok(he.hollow >= 15 && hb.hollow <= 6 && he.wrong + hb.wrong === 0 && nb.all === t.truth.length && nboth.all >= t.truth.length - 2 && ne.all < nb.all && nb.wrong + nboth.wrong + ne.wrong === 0 && pe.all === t.truth.length && pe.wrong === 0, `Find like this ▸ Compare: hollow cubes found by the edges ${he.hollow}, by the values ${hb.hollow} of ${hollow.length}; strong noise: by the values ${nb.all}, both ${nboth.all}, the edges ${ne.all} of ${t.truth.length}; a clean image by the edges ${pe.all}; none wrong`);
+    ok(he.hollow >= 15 && hb.hollow <= 6 && he.wrong + hb.wrong === 0 && nb.all === t.truth.length && nboth.all >= t.truth.length - 2 && ne.all < nb.all && nb.wrong + nboth.wrong + ne.wrong === 0 && pe.all === t.truth.length && pe.wrong === 0, `Find like this ▸ Compare: hollow cubes found by the edges ${he.hollow}, by the values ${hb.hollow} of ${hollow.length}; strong noise: by the values ${nb.all}, both ${nboth.all}, the edges ${ne.all} of ${t.truth.length}; a clean image by the edges ${pe.all}; none wrong (${he.wrong + hb.wrong + nb.wrong + nboth.wrong + ne.wrong + pe.wrong}: ${[he, hb, nb, nboth, ne, pe].map((q) => q.wrong).join(' ')})`);
     // (the first search through the FFT or directly: the same places, the same similarities)
     const a = (-tpl.angle! * Math.PI) / 180;
     const hs = tpl.side! / 2;
@@ -1196,7 +1242,51 @@ export function checkImage(ok: Ok) {
     const found = [sq(1, 1), sq(21, 2), sq(22, 3), sq(30, 25), sq(500, 500)];
     const a = accuracyOf(truth, found)!;
     ok(a.tp === 2 && a.fp === 2 && a.fn === 2 && Math.abs(a.precision - 0.5) < 1e-12 && Math.abs(a.recall - 0.5) < 1e-12 && Math.abs(a.f1 - 0.5) < 1e-12 && accuracyOf([], found) === null, `Accuracy: 2 right of 4 found in the area marked, 2 of the 4 true ones missed: precision ${a.precision}, recall ${a.recall}, F1 ${a.f1}`);
+  }  // the methods added: naive Bayes as scikit-learn's GaussianNB; the SVM's decision values as SVC's (the RBF kernel,
+  // gamma 'scale'), its probability Platt's sigmoid as sklearn.calibration's; boosting as GradientBoostingClassifier up
+  // to ties between splits (in the first rounds every example of a class has the same residual: scikit-learn breaks them
+  // by its own random order of the features), so the same classes on new points and about as often right
+  {
+    const ref = JSON.parse(readFileSync(new URL('./fixtures/learn2-ref.json', import.meta.url), 'utf8')) as { X: number[][]; y: number[]; Xt: number[][]; svmDecision: number[]; prob: Record<string, number[]>; loo: Record<string, number> };
+    const sc = scaler(ref.X);
+    const svm = fitSvm(ref.X.map(sc), ref.y);
+    const dDec = Math.max(...ref.Xt.map((x, i) => Math.abs(svm.decision(sc(x)) - ref.svmDecision[i])));
+    const diff = (m: 'svm' | 'nb') => {
+      const f = fitMethod(m, ref.X, ref.y);
+      return Math.max(...ref.Xt.map((x, i) => Math.abs(f(x) - ref.prob[m][i])));
+    };
+    const [dSvm, dNb] = [diff('svm'), diff('nb')];
+    const fb = fitMethod('boost', ref.X, ref.y);
+    const sameClass = ref.Xt.filter((x, i) => fb(x) >= 0.5 === ref.prob.boost[i] >= 0.5).length;
+    const loo = { svm: looAccuracy('svm', ref.X, ref.y), nb: looAccuracy('nb', ref.X, ref.y), boost: looAccuracy('boost', ref.X, ref.y) };
+    ok(
+      dDec < 1e-6 && dSvm < 1e-6 && dNb < 1e-12 && loo.svm === ref.loo.svm && loo.nb === ref.loo.nb && sameClass >= ref.Xt.length - 1 && Math.abs(loo.boost - ref.loo.boost) <= 0.05,
+      `Review ▸ learn, the methods added as scikit-learn: naive Bayes ${dNb.toExponential(1)}; the SVM's decision values ${dDec.toExponential(1)}, its Platt probabilities ${dSvm.toExponential(1)}; the same leave-one-out accuracies (SVM ${(loo.svm * 100).toFixed(1)} %, naive Bayes ${(loo.nb * 100).toFixed(1)} %); boosting up to ties: the same class on ${sameClass} of ${ref.Xt.length} new points, right on ${(loo.boost * 100).toFixed(1)} % (scikit-learn ${(ref.loo.boost * 100).toFixed(1)} %)`,
+    );
   }
+  // (many examples: ten parts in turn instead of each left out, the accuracy still right and the click quick; up to 30
+  // examples the same as each left out)
+  {
+    let seed = 5;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const X = Array.from({ length: 120 }, (_, i) => Array.from({ length: 8 }, (_, j) => (i % 2 ? 1.2 : 0) * (j < 3 ? 1 : 0) + rnd()));
+    const y = X.map((_, i) => i % 2);
+    const t0 = performance.now();
+    const L = learn(X, y, 'auto');
+    const ms = performance.now() - t0;
+    const small = X.slice(0, 30);
+    const same = LEARN_METHODS.every((m) => cvAccuracy(m, small, y.slice(0, 30)) === looAccuracy(m, small, y.slice(0, 30)));
+    ok(!!L && L.accuracy.logistic > 0.85 && same && ms < 2000, `Review ▸ learn with 120 examples: ten parts in turn (logistic right on ${((L?.accuracy.logistic ?? 0) * 100).toFixed(0)} %, all four methods in ${ms.toFixed(0)} ms); up to 30, each left out in turn as before`);
+  }
+  // the pixel classifier's features kept for the next examples (the same arrays and scale: the same features)
+  {
+    const t = cubesImage();
+    const r: Raster = { w: t.w, h: t.h, ch: [Float32Array.from(t.px)], kind: 'gray', lo: 0, hi: 255 };
+    const [a, b] = [featuresOf(r), featuresOf(r)];
+    const other = featuresOf({ ...r, ch: [Float32Array.from(t.px)] });
+    ok(a === b && other !== a && other.f.length === a.f.length && other.f.every((c, j) => c.every((v, i) => v === a.f[j][i])), 'Trainable classifier: the features of an image kept for the next examples, made again for another image (the same values)');
+  }
+
   // Find like this ▸ Separate by overlap: rods side by side (their centres 10 px apart, closer than 0.75 of their
   // radius) are two particles by their outlines, one by the distance; every place found its features
   {
@@ -1318,5 +1408,158 @@ export function checkImage(ok: Ok) {
       hit === t.truth.length && found.length === t.truth.length && angleErr < 2 && sideErr < 0.04 && sideSum / hit < 0.02 && turnErr < 2 && whole < 30 && split === t.truth.length && Math.abs(box.length - 8) < 1e-9 && Math.abs(box.width - 3) < 1e-9 && Math.abs(box.angle - (180 - (0.5 * 180) / Math.PI)) < 1e-9 && same.order > 0.98 && Math.abs(same.mean - 10.25) < 0.1 && spread.order < 1e-9,
       `nanocubes: ${hit} of ${t.truth.length} found like one (turn within ${angleErr.toFixed(1)}°, side within ${(100 * sideErr).toFixed(1)} % once its edges are fitted, the box's orientation within ${turnErr.toFixed(1)}°); the mask cut along the dark lines: ${split} (Otsu alone: ${whole}); the smallest rectangle, the alignment`,
     );
+  }
+
+  // the same cubes three times larger (a model of ~45 px in radius, as on an electron microscope's image): found through
+  // the levels between the image shrunk and the full size, every one, their place and turn as sharp
+  {
+    const t = cubesImage();
+    const k = 3;
+    const [w, h] = [t.w * k, t.h * k];
+    const c = new Float32Array(w * h);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const [fx, fy] = [Math.min(t.w - 1, Math.max(0, (x + 0.5) / k - 0.5)), Math.min(t.h - 1, Math.max(0, (y + 0.5) / k - 0.5))];
+        const [x0, y0] = [Math.floor(fx), Math.floor(fy)];
+        const [x1, y1] = [Math.min(t.w - 1, x0 + 1), Math.min(t.h - 1, y0 + 1)];
+        const [tx, ty] = [fx - x0, fy - y0];
+        c[y * w + x] = (t.px[y0 * t.w + x0] * (1 - tx) + t.px[y0 * t.w + x1] * tx) * (1 - ty) + (t.px[y1 * t.w + x0] * (1 - tx) + t.px[y1 * t.w + x1] * tx) * ty;
+      }
+    const tpl = t.truth.find((q) => q.cluster === undefined)!;
+    const t0 = performance.now();
+    // (a least similarity of 0.6: the enlarged image's edge makes one place of 0.54, the full search's as well)
+    const found = findLike(c, w, h, tpl.cx * k, tpl.cy * k, 0.5 * Math.hypot(tpl.side! * k, tpl.side! * k), { ...MATCH_DEFAULTS, sizes: 0.2, min: 0.6 });
+    const ms = performance.now() - t0;
+    let [hit, placeErr, angleErr] = [0, 0, 0];
+    for (const q of t.truth) {
+      const p = found.find((f) => Math.hypot(f.x - q.cx * k, f.y - q.cy * k) < 0.4 * q.side! * k);
+      if (!p) continue;
+      hit++;
+      placeErr = Math.max(placeErr, Math.hypot(p.x - q.cx * k, p.y - q.cy * k) / k);
+      const as = (((-(-tpl.angle! + p.angle) % 90) + 90) % 90);
+      angleErr = Math.max(angleErr, Math.min(Math.abs(as - q.angle!), 90 - Math.abs(as - q.angle!)));
+    }
+    // (and in the particle's shape, only it and its edge compared: the region read from its grid at every level)
+    const th = (-tpl.angle! * Math.PI) / 180;
+    const hs = (tpl.side! * k) / 2;
+    const poly = ([[-hs, -hs], [hs, -hs], [hs, hs], [-hs, hs]] as Pt[]).map(([u, v]): Pt => [tpl.cx * k + u * Math.cos(th) - v * Math.sin(th), tpl.cy * k + u * Math.sin(th) + v * Math.cos(th)]);
+    const t1 = performance.now();
+    const shaped = findLike(c, w, h, tpl.cx * k, tpl.cy * k, 1, { ...MATCH_DEFAULTS, sizes: 0.2, context: 'cluster' }, poly);
+    const ms2 = performance.now() - t1;
+    const hit2 = t.truth.filter((q) => shaped.some((f) => Math.hypot(f.x - q.cx * k, f.y - q.cy * k) < 0.4 * q.side! * k)).length;
+    ok(hit === t.truth.length && found.length === t.truth.length && placeErr < 1 && angleErr < 2 && hit2 === t.truth.length && shaped.length === t.truth.length, `Find like this, a large model (the cubes ×3, ${w} × ${h} px): ${hit} of ${t.truth.length} found through the levels, none more (in ${(ms / 1000).toFixed(1)} s); their place within ${placeErr.toFixed(2)} px of the original's, their turn within ${angleErr.toFixed(1)}°; in the particle's shape (in clusters) ${hit2} of them, none more (in ${(ms2 / 1000).toFixed(1)} s)`);
+  }
+
+  {
+    // ---- Segment anything: the image made the encoder's input and a mask of the decoder enlarged to the image, against
+    // PyTorch as Segment Anything's predictor does them (scripts/fixtures/sam-ref.py) ----
+    type R = { w: number; h: number; nw: number; nh: number; at: [number, number][]; resized: number[]; input: number[]; maskArea: number; maskRows: number[][] };
+    const ref = JSON.parse(readFileSync(new URL('./fixtures/sam-ref.json', import.meta.url), 'utf8')) as Record<string, R>;
+    for (const [name, r] of Object.entries(ref)) {
+      const img = new Float32Array(r.w * r.h);
+      for (let y = 0; y < r.h; y++) for (let x = 0; x < r.w; x++) img[y * r.w + x] = Math.fround(127 + 100 * Math.sin(x / 7) * Math.cos(y / 11) + 20 * ((Math.floor(x / 37) + Math.floor(y / 23)) % 2));
+      const [nw, nh] = samSize(r.w, r.h);
+      const rs = resizeAA(img, r.w, r.h, nw, nh);
+      let [lo, hi] = [Infinity, -Infinity];
+      for (const v of img) [lo, hi] = [Math.min(lo, v), Math.max(hi, v)];
+      const inp = samInput([img], r.w, r.h, lo, hi);
+      let [errR, errI] = [0, 0];
+      r.at.forEach(([x, y], i) => {
+        errR = Math.max(errR, Math.abs(rs[y * nw + x] - r.resized[i]));
+        errI = Math.max(errI, Math.abs(inp[y * 1024 + x] - r.input[i]));
+      });
+      // (the rest of the square 0; the three channels of a gray image its gray made standard each)
+      const pad = (nh < 1024 ? inp[nh * 1024] === 0 : true) && (nw < 1024 ? inp[nw] === 0 : true) && inp[2 * 1024 * 1024 + 5] !== inp[5];
+      const m = new Float32Array(256 * 256);
+      for (let y = 0; y < 256; y++) for (let x = 0; x < 256; x++) m[y * 256 + x] = Math.fround(-3 + 6 * Math.exp(-((x - 60) ** 2 + (y - 50) ** 2) / 300) + 5 * Math.exp(-((x - 150) ** 2 + (y - 70) ** 2) / 900) + 0.8 * Math.sin(x / 9));
+      const mk = maskOver(m, 0, r.w, r.h);
+      const area = mk.mask.reduce((a, v) => a + v, 0);
+      // (every 20th row: where the mask starts and ends along it, within 2 px of PyTorch's)
+      const step = Math.max(1, Math.floor(r.h / 20));
+      let rowErr = 0;
+      r.maskRows.forEach((edges, k) => {
+        const y = k * step;
+        const mine: number[] = [];
+        for (let x = 0; x <= r.w; x++) {
+          const [a, b] = [x > 0 ? mk.mask[y * r.w + x - 1] : 0, x < r.w ? mk.mask[y * r.w + x] : 0];
+          if (a !== b) mine.push(x);
+        }
+        if (mine.length !== edges.length) rowErr = Infinity;
+        else mine.forEach((v, i) => (rowErr = Math.max(rowErr, Math.abs(v - edges[i]))));
+      });
+      const areaErr = Math.abs(area - r.maskArea) / r.maskArea;
+      ok(nw === r.nw && nh === r.nh && errR < 2e-3 && errI < 2e-5 && pad && areaErr < 0.01 && rowErr <= 2, `Segment anything, an image ${name} (${r.w} × ${r.h} to ${nw} × ${nh}): resized as PyTorch's bilinear with antialias within ${errR.toExponential(1)}, the encoder's input within ${errI.toExponential(1)}, padded with 0; a mask of the decoder enlarged to the image: its area within ${(areaErr * 100).toFixed(2)} % of PyTorch's, its edges within ${rowErr} px`);
+    }
+    // the prompts: a click and its padding point, a box's corners (labels 2, 3), in the encoder's square
+    const pc = samPoints(2048, 1024, [[1000, 500, 1]]);
+    const pb = samPoints(2048, 1024, [], [100, 200, 300, 400]);
+    ok(pc.n === 2 && pc.coords[0] === 500 && pc.coords[1] === 250 && pc.labels[1] === -1 && pb.n === 2 && pb.labels[0] === 2 && pb.labels[1] === 3 && pb.coords[2] === 150, 'Segment anything: a click given with the padding point the predictor adds, a box as its two corners (labels 2 and 3), both in the square of 1024');
+    ok(pickMask([0.9, 0.5, 0.8, 0.7], 0, 2) === 2 && pickMask([0.9, 0.5, 0.8, 0.7], 0, 3) === 0, 'Segment anything: one point (or a box), the surest of its three masks; more points, the single mask (as the ONNX model of Segment Anything)');
+    // Everything: the sure and stable ones, the overlapping one dropped; the cluster of two particles and the piece of one
+    const c: SamCandidate[] = [
+      { iou: 0.95, stability: 0.97, box: [10, 10, 30, 30], area: 300, edge: false },
+      { iou: 0.93, stability: 0.96, box: [11, 10, 30, 31], area: 290, edge: false },
+      { iou: 0.7, stability: 0.99, box: [50, 50, 60, 60], area: 80, edge: false },
+      { iou: 0.95, stability: 0.8, box: [70, 70, 90, 90], area: 300, edge: false },
+      { iou: 0.92, stability: 0.95, box: [0, 100, 20, 120], area: 300, edge: true },
+    ];
+    const kept = keepMasks(c, SAM_DEFAULTS, 1024, 1024);
+    const keptEdges = keepMasks(c, { ...SAM_DEFAULTS, edges: true }, 1024, 1024);
+    ok(kept.join() === '0,4' && keptEdges.join() === '0', 'Segment anything, Everything: the masks the model is sure of and that are stable kept, of two alike (their boxes) the surer one, those on the edge left out when asked');
+    const disc = (cx: number, cy: number, r: number) => Uint8Array.from({ length: 64 * 64 }, (_, i) => (Math.hypot((i % 64) - cx, Math.floor(i / 64) - cy) <= r ? 1 : 0));
+    const two = Uint8Array.from(disc(20, 20, 8), (v, i) => v | disc(38, 20, 8)[i]);
+    const nested = dropNested([two, disc(20, 20, 8), disc(38, 20, 8), disc(20, 48, 9), disc(22, 48, 3)]);
+    ok(nested.join() === '1,2,3', 'Segment anything, Everything: a mask holding two particles kept (a cluster) left out for them; a piece inside one particle left out');
+    const square = maskOutline({ mask: Float32Array.from({ length: 40 * 30 }, (_, i) => ((i % 40) >= 10 && (i % 40) < 30 && i / 40 >= 5 && i / 40 < 25 ? 1 : 0)), x0: 100, y0: 200, mw: 40, mh: 30 });
+    const sa = square ? Math.abs(polygonArea(square)) : 0;
+    ok(!!square && Math.abs(sa - 400) < 30 && square.every(([x, y]) => x >= 109 && x <= 131 && y >= 204 && y <= 226), `Segment anything: a mask made an outline in pixels of the image (a square of 20 × 20 px: area ${sa.toFixed(0)})`);
+  }
+
+  {
+    // ---- Review of the particles of any way: what is known of each, and whether it is left out ----
+    const [w, h] = [120, 80];
+    const g = new Float32Array(w * h).fill(20);
+    const disc = (cx: number, cy: number, r: number, v: number) => {
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (Math.hypot(x + 0.5 - cx, y + 0.5 - cy) <= r) g[y * w + x] = v;
+    };
+    disc(30, 40, 12, 200);
+    disc(90, 40, 6, 60);
+    const circle = (cx: number, cy: number, r: number): Pt[] => Array.from({ length: 64 }, (_, i) => [cx + r * Math.cos((i * Math.PI) / 32), cy + r * Math.sin((i * Math.PI) / 32)]);
+    const f = particleFeatures([circle(30, 40, 12), circle(90, 40, 6)], g, w, h, 0, 255, [0.97, undefined]);
+    const [a, b] = f;
+    ok(f.length === 2 && a.length === PARTICLE_FEATURES.length && Math.abs(a[0] - Math.log(Math.PI * 144)) < 0.05 && a[1] > 0.95 && Math.abs(a[2] - 200 / 255) < 0.02 && a[3] > b[3] && b[3] > 0 && a[4] > b[4] && a[5] < 0.02 && Math.abs(a[6] - 60 / 12) < 0.1 && a[7] === 0.97 && b[7] === 1, `Review, the features of a particle (${PARTICLE_FEATURES.join(', ')}): a bright disc of radius 12 and a dim one of 6, 60 px apart: size ${a[0].toFixed(2)} (ln of its area), roundness ${a[1].toFixed(2)}, mean ${a[2].toFixed(2)}, contrast ${a[3].toFixed(2)} against ${b[3].toFixed(2)}, the nearest ${a[6].toFixed(2)} radii, how sure Segment anything is (1 when not found by it)`);
+    const r = (p: Partial<Roi>): Roi => ({ id: 's1', name: 'P1', kind: 'traced', auto: true, score: 0.9, ...p });
+    ok(outOf(r({}), undefined, 0.5, 0) === undefined && outOf(r({ out: 'hand' }), undefined, 0.5, 0) === 'hand' && outOf(r({ said: false }), 0.9, 0.5, 0) === 'said' && outOf(r({ said: true, out: 'hand' }), 0.1, 0.5, 0.95) === undefined && outOf(r({}), 0.3, 0.5, 0) === 'learnt' && outOf(r({}), 0.8, 0.5, 0.95) === 'score' && outOf(r({ id: 'p1' }), 0.8, 0.5, 0.95) === undefined, 'Review: a particle said good kept whatever else; said not good, left out; left out by a click; less probable than asked by what was learnt; Segment anything less sure of it than asked (only its own particles)');
+  }
+
+  {
+    // ---- the paint of the classifier: painted, kept as runs and read back, made examples in the part analysed ----
+    const l = emptyPaint(200, 100);
+    const obj = classIndex(l, 'object');
+    const bg = classIndex(l, 'background');
+    paintSegment(l, [20, 20], [80, 20], 5, obj);
+    paintFill(l, [[100, 40], [180, 40], [180, 90], [100, 90]], bg);
+    paintSegment(l, [140, 30], [140, 95], 3, 0);
+    const n = paintCounts(l);
+    // (a stroke 60 px long, 10 wide with round ends: about 60 × 10 + π 5²; the box 80 × 50 less the band erased, 6 wide)
+    const st = encodePaint(l);
+    const back = decodePaint(st);
+    const same = back.px.every((v, i) => v === l.px[i]) && back.classes.join() === 'object,background';
+    const ex = paintExamples(st, [10, 10, 150, 80]);
+    const exObj = ex.find((e) => e.cls === 'object');
+    const inCrop = (() => {
+      let k = 0;
+      for (let y = 10; y < 90; y++) for (let x = 10; x < 160; x++) if (l.px[y * 200 + x] === obj) k++;
+      return k;
+    })();
+    ok(Math.abs(n.object - (600 + Math.PI * 25)) < 40 && Math.abs(n.background - (80 * 50 - 6 * 50)) < 120 && same && st.rle.length < 1000 && !!exObj && exObj.px!.length === inCrop && exObj.pw === 150 && exObj.px!.every((i) => l.px[(Math.floor(i / 150) + 10) * 200 + (i % 150) + 10] === obj) && ex.every((e) => !!e.key), `Classifier paint: a brush stroke (${n.object} px), a fill (${n.background} px) with a band erased, kept as runs (${st.rle.length} characters) and read back the same; its examples in the part analysed, their pixels where the paint is`);
+    // (an outline of a mask, a staircase, thinned to the points that matter: a square stays a square)
+    const stairs: Pt[] = [];
+    for (let x = 0; x < 20; x++) stairs.push([x, 0]);
+    for (let y = 0; y < 20; y++) stairs.push([20, y]);
+    for (let x = 20; x > 0; x--) stairs.push([x, 20]);
+    for (let y = 20; y > 0; y--) stairs.push([0, y]);
+    const thin = thinOutline(stairs);
+    ok(thin.length === 4 && Math.abs(Math.abs(polygonArea(thin)) - 400) < 1e-9, `Segment anything, Pick with SAM: an outline of ${stairs.length} points thinned to the corners of the square (${thin.length})`);
   }
 }

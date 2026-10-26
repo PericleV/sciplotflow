@@ -2735,6 +2735,7 @@ function microarrayExample(): Project {
     pixelsId: 'example-microarray',
     rois,
     measure: { channels: 'each', ratio: [0, 1], keys: ['area', 'mean', 'median', 'sd', 'intden'], globalBg: 'bg-global' },
+    task: 'spots',
     figure: { width: 100, show: 'original', rois: 'labels' },
   });
   const wb = add(b, 'book', 'ma-book', 640, 0, { ...WORKBOOK_DEFAULTS, name: 'spots', sheets: [], into: ['spots'] });
@@ -2759,7 +2760,7 @@ function microarrayExample(): Project {
   link(b, im, pr, 'dataset', 'workbook');
   add(b, 'note', 'ma-note', -560, 0, {
     ...NOTE_DEFAULTS,
-    text: 'A two-colour microarray scan (red: the sample, green: the reference), 3 replicates (A, B, C) of 6 genes; the background brighter to the right, as scans often are.\n\nEvery spot is measured between two circles: the inner one is the spot (its signal F, an ellipse stamped on it); the outer one, 2 px further out and 4 px wide, is a ring of its own background B, just next to it (the other spots left out of it). Analyze ▸ Selections: rings shows both circles of every spot; pick a spot to change its ring (gap, width). A global background (the rectangle under the spots, picked in Measure ▸ Global bg) is measured too.\n\nThe Spots sheet, on each channel: F, the local B (mean, median, SD), the net signal F − B (the median of B taken off), the SNR = (F − B) / SD(B), and, against the global background, B global and Net global; the ratio R / G with its log2 (about −2.5 … +2.5 from gene 1 to gene 6, the same in the three replicates). The local ring follows the uneven background, the global one does not: compare Net and Net global along a row. The Summary sheet gives each replicate and all of them; the Plot, the red and green profiles along row A.',
+    text: 'A two-colour microarray scan (red: the sample, green: the reference), 3 replicates (A, B, C) of 6 genes; the background brighter to the right, as scans often are.\n\nEvery spot is measured between two circles: the inner one is the spot (its signal F, an ellipse stamped on it); the outer one, 2 px further out and 4 px wide, is a ring of its own background B, just next to it (the other spots left out of it). Analyze opens it in the task Spots: in its step Spots, rings shows both circles of every spot; pick a spot to change its ring (gap, width). A global background (the rectangle under the spots, picked in the step Background ▸ Global bg) is measured too.\n\nThe Spots sheet, on each channel: F, the local B (mean, median, SD), the net signal F − B (the median of B taken off), the SNR = (F − B) / SD(B), and, against the global background, B global and Net global; the ratio R / G with its log2 (about −2.5 … +2.5 from gene 1 to gene 6, the same in the three replicates). The local ring follows the uneven background, the global one does not: compare Net and Net global along a row. The Summary sheet gives each replicate and all of them; the Plot, the red and green profiles along row A.',
   });
   return project(b, 'Microarray spots: signal over a ring of background, red / green ratio');
 }

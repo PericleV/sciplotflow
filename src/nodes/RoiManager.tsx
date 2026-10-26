@@ -61,7 +61,9 @@ const boxPoint = (r: Roi, u: number, v: number): Pt => {
 // rois: in pixels of the original; ox, oy: the corner of the part shown; k: screen pixels per image pixel. interactive:
 // the selections take the clicks (to pick, move, edit them), else the tool drawing does; rings: the rings of background
 // of every spot drawn (else of the one picked)
-export function RoiOverlay({ rois, sel, k, ox, oy, W, H, labels, interactive, rings }: { rois: Roi[]; sel: string | null; k: number; ox: number; oy: number; W: number; H: number; labels: boolean; interactive: boolean; rings: boolean }) {
+// (unsure: the particles Learn from my choices is least sure of, outlined; whole: every area takes the clicks inside it,
+// not only on its outline — Review)
+export function RoiOverlay({ rois, sel, k, ox, oy, W, H, labels, interactive, rings, unsure, whole }: { rois: Roi[]; sel: string | null; k: number; ox: number; oy: number; W: number; H: number; labels: boolean; interactive: boolean; rings: boolean; unsure?: Set<string>; whole?: boolean }) {
   const at = ([x, y]: Pt) => `${((x - ox) * k).toFixed(1)},${((y - oy) * k).toFixed(1)}`;
   const P = (pts: Pt[]) => pts.map(at).join(' ');
   const one = (r: Roi) => {
@@ -73,7 +75,7 @@ export function RoiOverlay({ rois, sel, k, ox, oy, W, H, labels, interactive, ri
       body = (
         <>
           <polygon points={P(pts)} className="ie-roi-line" />
-          <polygon points={P(pts)} className={`ie-roi-hit${picked ? ' inside' : ''}`} />
+          <polygon points={P(pts)} className={`ie-roi-hit${picked || whole ? ' inside' : ''}`} />
         </>
       );
     else if (r.kind === 'points')
@@ -99,13 +101,20 @@ export function RoiOverlay({ rois, sel, k, ox, oy, W, H, labels, interactive, ri
         : null;
     const [x0, y0] = pts.length ? [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1]))] : [0, 0];
     return (
-      <g key={r.id} data-roi={r.id} className={`ie-roi${picked ? ' sel' : ''}${r.role === 'background' ? ' bg' : ''}`} style={{ color }}>
-        {r.score !== undefined && <title>{`${r.name}: similarity ${r.score.toFixed(2)}`}</title>}
+      <g key={r.id} data-roi={r.id} className={`ie-roi${picked ? ' sel' : ''}${r.role === 'background' ? ' bg' : ''}${r.out ? ' out' : ''}${unsure?.has(r.id) ? ' unsure' : ''}`} style={{ color }}>
+        {/* (a particle of Segment anything, its id s…: how sure the model is of it) */}
+        {r.score !== undefined && <title>{r.id.startsWith('s') ? `${r.name}: the model ${(r.score * 100).toFixed(0)} % sure of it` : `${r.name}: similarity ${r.score.toFixed(2)}`}</title>}
         {ring}
         {body}
         {labels && (
           <text x={(x0 - ox) * k + 2} y={(y0 - oy) * k - 3} className="ie-roi-name">
             {r.name}
+          </text>
+        )}
+        {/* (Review: said good ✓, not good ✗) */}
+        {r.said !== undefined && pts.length > 0 && (
+          <text x={(pts.reduce((s, q) => s + q[0], 0) / pts.length - ox) * k} y={(pts.reduce((s, q) => s + q[1], 0) / pts.length - oy) * k} className={`ie-roi-said ${r.said ? 'good' : 'bad'}`} textAnchor="middle" dominantBaseline="central">
+            {r.said ? '✓' : '✗'}
           </text>
         )}
         {picked && <Handles r={r} k={k} ox={ox} oy={oy} />}
@@ -159,15 +168,12 @@ export type RoiPanelProps = {
   setCentre: (v: 'off' | 'bright' | 'dark') => void;
   duplicate: () => void;
   clearAll: () => void;
+  bare?: boolean; // in a fold of its own: no title, the options of the tool picked shown elsewhere
 };
-export function RoiPanel(p: RoiPanelProps) {
-  const { rois, sel, setSel, setRois } = p;
-  const upd = (id: string, patch: Partial<Roi>) => setRois(rois.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-  const picked = rois.find((r) => r.id === sel);
-  const regions = rois.filter((r) => isArea(r) && r.id !== sel);
+// the hint and the options of the tool picked (the wand's tolerance, the particles of the rays, the stamp's centring)
+export function ToolOptions(p: Pick<RoiPanelProps, 'tool' | 'wandTol' | 'setWandTol' | 'raysOf' | 'setRaysOf' | 'centre' | 'setCentre'>) {
   return (
     <>
-      <div className="ie-section">Selections</div>
       {p.tool in TOOL_HINTS && <div className="hint">{TOOL_HINTS[p.tool as RoiTool]}</div>}
       {p.tool === 'wand' && (
         <div className="row wrap">
@@ -205,6 +211,18 @@ export function RoiPanel(p: RoiPanelProps) {
           />
         </div>
       )}
+    </>
+  );
+}
+export function RoiPanel(p: RoiPanelProps) {
+  const { rois, sel, setSel, setRois } = p;
+  const upd = (id: string, patch: Partial<Roi>) => setRois(rois.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const picked = rois.find((r) => r.id === sel);
+  const regions = rois.filter((r) => isArea(r) && r.id !== sel);
+  return (
+    <>
+      {!p.bare && <div className="ie-section">Selections</div>}
+      {!p.bare && <ToolOptions {...p} />}
       <div className="row wrap">
         <span className="muted">New ones in group</span>
         <TextInput className="short" value={p.group} placeholder="none" title="The group of the selections drawn next (a sample, a replicate): the summary is by group" onChange={p.setGroup} />
@@ -385,17 +403,29 @@ export function ParticlesPanel(p: {
   handCount: number;
   layers: boolean;
   setLayers: (on: boolean) => void;
+  // the margin of the model picked made from its outline widened (px); every model given the margin of the one picked;
+  // the area compared drawn around every particle found
+  marginFromOutline: (px: number) => void;
+  sameMarginForAll?: () => void;
+  showArea: boolean;
+  setShowArea: (on: boolean) => void;
+  // the part shown (a step of the task Particles): the particles of the mask (or seeds and rays), Find like this, what
+  // checks those found, Refine and the groups, the layers; absent: all of them, one after the other
+  part?: 'mask' | 'like' | 'check' | 'refine' | 'layers' | 'accuracy';
+  // the model picked with Segment anything (a click on a particle: its outline, its margin the outline widened)
+  samPick?: { on: boolean; toggle: () => void; grow: number; setGrow: (px: number) => void };
 }) {
-  const { opts, set, group, setGroup, k, u, find, msg, count, byShape, likeExamples, match, setMatch } = p;
+  const { opts, set, group, setGroup, k, u, find, msg, count, byShape, likeExamples, match, setMatch, part } = p;
   const a = k * k;
-  return (
+  const [grow, setGrow] = useState(6);
+  const maskPart = (
     <>
-      <div className="ie-section">Particles</div>
-      <div className="hint">The objects of the last mask of the steps (a threshold, a trainable classifier), as selections: measured as the others, found again as asked.</div>
+      {!part && <div className="ie-section">Particles</div>}
+      {!part && <div className="hint">The objects of the last mask of the steps (a threshold, a trainable classifier), as selections: measured as the others, found again as asked.</div>}
       <div className="ie-params">
-        <span className="ie-label">From</span>
-        <span className="row">
-          <Select<'mask' | 'rays'> seg
+        {(!part || opts.method === 'rays') && <span className="ie-label">{part ? 'Particles' : 'From'}</span>}
+        <span className="row" style={part && opts.method !== 'rays' ? { display: 'none' } : undefined}>
+          {!part && <Select<'mask' | 'rays'> seg
             value={opts.method ?? 'mask'}
             title="The particles of the mask (a threshold, a trainable classifier), cut apart if asked; or seeds and rays: a seed in every particle (the mask's centres when there is one, else the bright or dark blobs of the image at their size), from each 32 rays stopped at the first edge: touching particles found one by one, a dark gap between them or not"
             options={[
@@ -403,7 +433,7 @@ export function ParticlesPanel(p: {
               ['rays', 'seeds and rays'],
             ]}
             onChange={(method) => set({ method: method === 'mask' ? undefined : method })}
-          />
+          />}
           {opts.method === 'rays' && (
             <>
               <NumInput className="short" min={0} value={opts.size && opts.size > 0 ? +(opts.size * k).toPrecision(6) : NaN} placeholder="auto" title={`The particles' diameter (${u}): empty, from the mask (a Threshold in the steps); needed without a mask`} onChange={(v) => set({ size: v > 0 ? v / k : undefined })} />
@@ -443,8 +473,15 @@ export function ParticlesPanel(p: {
         </button>
         <span className="muted">{msg}</span>
       </div>
-      <div className="ie-section">Find like this</div>
-      <div className="hint">Or like some of them: draw a rectangle (or any shape) around one good particle, pick it, then Find like this. Every place that looks like it is found, turned any way and a little larger or smaller. The sections below, folded, say what they hold.</div>
+    </>
+  );
+  const likeHead = (
+    <>
+      {!part && <div className="ie-section">Find like this</div>}
+      <div className="hint">{part ? 'Draw a rectangle (or any shape) around one good particle, pick it, then Find like this. Every place that looks like it is found, turned any way and a little larger or smaller.' : 'Or like some of them: draw a rectangle (or any shape) around one good particle, pick it, then Find like this. Every place that looks like it is found, turned any way and a little larger or smaller. The sections below, folded, say what they hold.'}</div>
+    </>
+  );
+  const modelFold = (
       <Fold id="model" title="Model" always>
         <div className="row wrap">
           <button className="nodrag" disabled={!p.canAdd} title={p.canAdd ? 'The selection picked added to the models, with the settings below (then each changed in its row)' : 'Pick a selection around a particle (not one of the models yet)'} onClick={p.addModel}>
@@ -452,6 +489,16 @@ export function ParticlesPanel(p: {
           </button>
           {p.modelList.length > 0 && <span className="muted">{p.modelList.length} model{p.modelList.length === 1 ? '' : 's'}: each its own settings and group</span>}
         </div>
+        {p.samPick && (
+          <div className="row wrap">
+            <button className={`nodrag${p.samPick.on ? ' on' : ''}`} title="Click a good particle on the image: Segment anything gives its outline, a selection picked as the model (added to the models when there is a list), its margin drawn the outline widened as below (then edited in Compared area)" onClick={p.samPick.toggle}>
+              Pick with SAM
+            </button>
+            <span className="muted">margin: outline +</span>
+            <NumInput className="tiny" min={0} max={200} step={1} value={p.samPick.grow} title="How far outside the particle's outline its margin goes (px): what is compared besides the particle" onChange={(v) => p.samPick!.setGrow(Number.isFinite(v) ? Math.min(200, Math.max(0, Math.round(v))) : 6)} />
+            <span className="muted">px</span>
+          </div>
+        )}
         {p.modelList.length > 0 && (
           <div className="ie-models">
             {p.modelList.map((m, j) => (
@@ -490,12 +537,15 @@ export function ParticlesPanel(p: {
           </button>
           {p.models > 1 && <span className="muted">{p.models} models (its group)</span>}
           {p.canMore && (
-            <button className="nodrag" title="Search again with the particles found as models too (the least alike of them: they differ most from the first): more of those that look a little different" onClick={p.findMore}>
+            <button className="nodrag" title="Search again with 4 particles found as models too: of the surer half (as alike as the median or more, not cut by the edge), the least alike. More of those that look a little different, without the doubtful ones finding their own mistakes" onClick={p.findMore}>
               Find more like these
             </button>
           )}
+          {part && <span className="muted">{msg}</span>}
         </div>
       </Fold>
+  );
+  const areaFold = (
       <Fold id="area" title="Compared area" aside={CONTEXTS.find(([v]) => v === (p.pickedContext ?? match.context ?? 'disc'))?.[1]}>
         {p.modelList.length === 0 && (
           <div className="ie-params">
@@ -528,11 +578,29 @@ export function ParticlesPanel(p: {
                 Reset
               </button>
             </div>
+            <div className="row wrap">
+              <span className="muted">From the outline +</span>
+              <NumInput className="tiny" min={0} max={200} step={1} value={grow} title="How far outside the particle's outline the margin starts (px); then edit it as one drawn" onChange={(v) => setGrow(Number.isFinite(v) ? Math.min(200, Math.max(0, Math.round(v))) : 6)} />
+              <span className="muted">px</span>
+              <button className="nodrag" title="The margin made again: the model's outline widened by this, its points then dragged as you like" onClick={() => p.marginFromOutline(grow)}>
+                Make
+              </button>
+            </div>
           </>
         ) : (
           (p.modelList.length ? p.modelList.some((m) => m.context === 'drawn') : match.context === 'drawn') && <div className="hint">Pick the model to see and edit its margin.</div>
         )}
+        {p.sameMarginForAll && (
+          <div className="row">
+            <button className="nodrag" title="Every model of the list given the compared area of the model picked (its kind, its ring, its margin drawn)" onClick={p.sameMarginForAll}>
+              Same margin for all models
+            </button>
+          </div>
+        )}
+        <Check label="show it on the particles found" title="The area compared drawn (dashed) around every particle found, turned and scaled as it was found: what each was judged on" value={p.showArea} onChange={p.setShowArea} />
       </Fold>
+  );
+  const similarityFold = (
       <Fold id="similarity" title="Similarity" aside={p.probs ? `probability ≥ ${p.pmin.toFixed(2)} · ${p.probs.filter((v) => v >= p.pmin).length} found` : `≥ ${match.min.toFixed(2)}${p.scores.length ? ` · ${p.scores.filter((v) => v >= match.min).length} found` : ''}`}>
         {p.probs ? (
           <>
@@ -551,6 +619,8 @@ export function ParticlesPanel(p: {
         </div>
         <div className="hint">{p.scores.length ? 'Every place found: how alike the model it is. The mouse resting on a particle found says its similarity.' : 'After a search: how alike every place found is, on a histogram.'}</div>
       </Fold>
+  );
+  const separationFold = (
       <Fold id="separation" title="Separation and edges" aside={`${match.separate === 'overlap' ? `overlap ${Math.round((match.overlap ?? MATCH_TUNING.overlap) * 100)} %` : (match.reach ?? MATCH_TUNING.reach).toFixed(2)}${p.fit ? ' · edges fitted' : ''}`}>
         <div className="ie-params">
           <span className="ie-label">Separate by</span>
@@ -577,6 +647,8 @@ export function ParticlesPanel(p: {
         <Check label="fit the edges" title="A rectangle or ellipse found: its sides and centre moved to the edges under it (its size measured, not only its place)" value={p.fit} onChange={(fit) => setMatch({ fit })} />
         {p.fit && <Check label="only inside the margin drawn" title="The edges looked for only as far as the margin drawn reaches (a neighbour's edge outside it never taken); with a margin drawn" value={!!p.inside} onChange={(inside) => p.setInside(inside)} />}
       </Fold>
+  );
+  const reviewFold = (
       <Fold id="review" title="Review" aside={p.review ? 'on' : p.negCount ? `${p.negCount} left out` : undefined}>
         <div className="row wrap">
           <button className={`nodrag${p.review ? ' on' : ''}`} disabled={!p.canMore} title="Review: a click on a particle found leaves it out; on one left out (faint), puts it back" onClick={() => p.setReview(!p.review)}>
@@ -596,7 +668,7 @@ export function ParticlesPanel(p: {
             </span>
             <div className="ie-params">
               <span className="ie-label">Method</span>
-              <Select<string> seg value={p.method} title="Auto: the method most often right on your examples (each left out in turn and guessed from the others). Logistic: few examples, says what counts; LDA: few examples, features alike; k-NN: mistakes of a few kinds; Forest: many examples, relations not straight" options={[['auto', 'Auto'], ...LEARN_METHODS.map((m): [string, string] => [m, LEARN_LABELS[m]])]} onChange={(v) => p.setMethod(v as LearnMethod | 'auto')} />
+              <Select<string> value={p.method} title="Auto: the method most often right on your examples (each left out in turn and guessed from the others; past 30 examples, ten parts of them in turn; worked out off the page). Logistic: few examples, says what counts; LDA: few examples, features alike; k-NN: mistakes of a few kinds; Forest: many examples, relations not straight; Naive Bayes: very few examples, each feature on its own; SVM: a curved border between good and not, robust; Boosting: many examples, small differences that add up" options={[['auto', 'Auto'], ...LEARN_METHODS.map((m): [string, string] => [m, LEARN_LABELS[m]])]} onChange={(v) => p.setMethod(v as LearnMethod | 'auto')} />
             </div>
             {p.learnt && (
               <>
@@ -630,6 +702,8 @@ export function ParticlesPanel(p: {
         )}
         <Check label="use those left out: not like these" title="The particles left out are kept, and at the next search every place more like one of them than like the model (judged on what is compared: the area above) is dropped: mistakes of one kind go away together. Leave out mistakes, not good particles: those like a good one would go too" value={!!p.useRejected} onChange={p.setUseRejected} />
       </Fold>
+  );
+  const advancedFold = (
       <Fold id="advanced" title="Advanced" aside={p.changed ? `${p.changed} changed` : 'default'}>
         <div className="ie-params">
           <span className="ie-label">Compare</span>
@@ -681,6 +755,8 @@ export function ParticlesPanel(p: {
           </div>
         )}
       </Fold>
+  );
+  const accuracyFold = (
       <Fold id="accuracy" title="Accuracy" aside={p.acc ? `F1 ${p.acc.f1.toFixed(2)}` : undefined}>
         <div className="hint">Mark by hand every true particle of a part of the image (selections in one group), then Check: of the particles found in the box around them, how many are right (precision), how many of the true ones were found (recall), and both at once (F1). For any way of finding them.</div>
         <div className="ie-params">
@@ -698,10 +774,17 @@ export function ParticlesPanel(p: {
           )}
         </div>
       </Fold>
+  );
+  const layersPart = count > 0 && (
+    <>
+      {part !== 'layers' && <div className="ie-section">Layers</div>}
+      <Check label="estimate the layers (which lie on others)" title="Where two particles touch, the one whose outline stays whole there is on top, the one cut by it under it (else the brighter on top): every particle its layer, 1 when nothing lies on it, its outline in the colour of its layer (green, orange, red …) and a Layer column in the measurements. A curiosity: an estimate" value={p.layers} onChange={p.setLayers} />
+    </>
+  );
+  const refinePart = (
+    <>
       {count > 0 && (
         <>
-          <div className="ie-section">Layers</div>
-          <Check label="estimate the layers (which lie on others)" title="Where two particles touch, the one whose outline stays whole there is on top, the one cut by it under it (else the brighter on top): every particle its layer, 1 when nothing lies on it, its outline in the colour of its layer (green, orange, red …) and a Layer column in the measurements. A curiosity: an estimate" value={p.layers} onChange={p.setLayers} />
           <div className="ie-section">Refine</div>
           <div className="hint">Every particle found made the regular shape most like it, among those ticked, its place, size and turn fitted; then each can still be moved, turned or resized by hand (a particle changed by hand, ✎, is left as it is when refined again).</div>
           <div className="ie-shapes">
@@ -732,13 +815,53 @@ export function ParticlesPanel(p: {
           </button>
         </div>
       )}
+      {part && !count && <div className="hint">Find the particles first (step 2): then they can be refined into regular shapes and grouped by their shape.</div>}
+    </>
+  );
+  if (part === 'mask') return maskPart;
+  if (part === 'like')
+    return (
+      <>
+        {likeHead}
+        {modelFold}
+        {areaFold}
+        {separationFold}
+        {advancedFold}
+      </>
+    );
+  if (part === 'check')
+    return (
+      <>
+        {similarityFold}
+        {reviewFold}
+        {accuracyFold}
+      </>
+    );
+  if (part === 'refine') return refinePart;
+  if (part === 'accuracy') return accuracyFold;
+  if (part === 'layers') return layersPart || null;
+  return (
+    <>
+      {maskPart}
+      {likeHead}
+      {modelFold}
+      {areaFold}
+      {similarityFold}
+      {separationFold}
+      {reviewFold}
+      {advancedFold}
+      {accuracyFold}
+      {layersPart}
+      {refinePart}
     </>
   );
 }
 
 // ---- what is measured, and the results ----
 
-export function MeasurePanel({ spec, set, steps, rgb, rois, book, sheet, setSheet, pick }: { spec: MeasureSpec; set: (p: Partial<MeasureSpec>) => void; steps: ImgStep[]; rgb: boolean; rois: Roi[]; book: Workbook | null; sheet: string; setSheet: (s: string) => void; pick: (name: string) => void }) {
+// part: what is measured and the results without the background of the spots, or only that (a step of the task Spots);
+// absent: all
+export function MeasurePanel({ spec, set, steps, rgb, rois, book, sheet, setSheet, pick, part }: { spec: MeasureSpec; set: (p: Partial<MeasureSpec>) => void; steps: ImgStep[]; rgb: boolean; rois: Roi[]; book: Workbook | null; sheet: string; setSheet: (s: string) => void; pick: (name: string) => void; part?: 'measure' | 'spots' }) {
   const on: [string, string][] = [['original', 'the original'], ['result', 'the result'], ...steps.map((s, k): [string, string] => [s.id, `after ${k + 1}. ${STEP_DEFS[s.kind]?.label ?? s.kind}`])];
   const toggle = (key: MeasureKey, v: boolean) => set({ keys: v ? [...spec.keys, key] : spec.keys.filter((x) => x !== key) });
   const hasSpots = rois.some((r) => r.bg && r.bg.mode !== 'none');
@@ -751,6 +874,34 @@ export function MeasurePanel({ spec, set, steps, rgb, rois, book, sheet, setShee
     void navigator.clipboard?.writeText(tsv);
   };
   const ch = ['R', 'G', 'B'].map((c, j): [number, string] => [j, c]);
+  // the background of the spots: its statistic, saturation, the global one
+  const spotsPart = () => (
+    <div className="ie-params">
+          <span className="ie-label">Spots</span>
+          <Select<MeasureSpec['bgStat']>
+            value={spec.bgStat}
+            title="The background taken off a spot: the median of its pixels (robust to dust and neighbours) or their mean"
+            options={[
+              ['median', 'background median'],
+              ['mean', 'background mean'],
+            ]}
+            onChange={(bgStat) => set({ bgStat })}
+          />
+          <span className="ie-label">Saturated</span>
+          <NumInput className="short" value={spec.saturated} placeholder="the top" title="A pixel at or above this counts as saturated (empty: the top of the image's range, 255 or 65535)" onChange={(saturated) => set({ saturated })} />
+          <span className="ie-label">Global bg</span>
+          <span className="row">
+            <Select<string> value={spec.globalBg ?? ''} title="The global background: a selection (its pixels), else the value given" options={[['', 'a value'], ...rois.filter(isArea).map((r): [string, string] => [r.id, r.name])]} onChange={(g) => set({ globalBg: g || undefined })} />
+            {!spec.globalBg && <NumInput className="short" value={spec.globalValue ?? NaN} placeholder="value" onChange={(globalValue) => set({ globalValue: Number.isFinite(globalValue) ? globalValue : undefined })} />}
+          </span>
+    </div>
+  );
+  if (part === 'spots')
+    return hasSpots ? (
+      spotsPart()
+    ) : (
+      <div className="hint">No spot has a background yet: pick a spot (step 2) and give it a ring around it, a region drawn, or the global one.</div>
+    );
   return (
     <>
       <div className="ie-section">Measure</div>
@@ -786,27 +937,7 @@ export function MeasurePanel({ spec, set, steps, rgb, rois, book, sheet, setShee
           <Check key={key} label={label} title={title} value={spec.keys.includes(key)} onChange={(v) => toggle(key, v)} />
         ))}
       </div>
-      {hasSpots && (
-        <div className="ie-params">
-          <span className="ie-label">Spots</span>
-          <Select<MeasureSpec['bgStat']>
-            value={spec.bgStat}
-            title="The background taken off a spot: the median of its pixels (robust to dust and neighbours) or their mean"
-            options={[
-              ['median', 'background median'],
-              ['mean', 'background mean'],
-            ]}
-            onChange={(bgStat) => set({ bgStat })}
-          />
-          <span className="ie-label">Saturated</span>
-          <NumInput className="short" value={spec.saturated} placeholder="the top" title="A pixel at or above this counts as saturated (empty: the top of the image's range, 255 or 65535)" onChange={(saturated) => set({ saturated })} />
-          <span className="ie-label">Global bg</span>
-          <span className="row">
-            <Select<string> value={spec.globalBg ?? ''} title="The global background: a selection (its pixels), else the value given" options={[['', 'a value'], ...rois.filter(isArea).map((r): [string, string] => [r.id, r.name])]} onChange={(g) => set({ globalBg: g || undefined })} />
-            {!spec.globalBg && <NumInput className="short" value={spec.globalValue ?? NaN} placeholder="value" onChange={(globalValue) => set({ globalValue: Number.isFinite(globalValue) ? globalValue : undefined })} />}
-          </span>
-        </div>
-      )}
+      {hasSpots && part !== 'measure' && spotsPart()}
       <div className="ie-section">Results</div>
       {book && book.sheets.length ? (
         <>
@@ -863,8 +994,9 @@ const foldsOpen = (): Record<string, boolean> => {
     return {};
   }
 };
-export function Fold({ id, title, aside, always, children }: { id: string; title: string; aside?: string; always?: boolean; children: ReactNode }) {
-  const [open, setOpen] = useState(() => always || (foldsOpen()[id] ?? false));
+// (opened: open the first time, until folded)
+export function Fold({ id, title, aside, always, opened, children }: { id: string; title: string; aside?: string; always?: boolean; opened?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(() => always || (foldsOpen()[id] ?? !!opened));
   const toggle = () => {
     const next = !open;
     setOpen(next);
@@ -897,7 +1029,7 @@ const Reset = ({ onClick }: { onClick: () => void }) => (
 );
 // The similarities of every place found, on a histogram (0.3 … 1), the least kept a line on it: a click or a drag on it
 // sets it (the particles kept, to its right, in the accent)
-function ScoreHistogram({ scores, min, onMin, lo = 0.3 }: { scores: number[]; min: number; onMin: (v: number) => void; lo?: number }) {
+export function ScoreHistogram({ scores, min, onMin, lo = 0.3 }: { scores: number[]; min: number; onMin: (v: number) => void; lo?: number }) {
   const [W, H, n] = [240, 56, 35];
   const bins = new Array<number>(n).fill(0);
   for (const v of scores) bins[Math.min(n - 1, Math.max(0, Math.floor(((v - lo) / (1 - lo)) * n)))]++;

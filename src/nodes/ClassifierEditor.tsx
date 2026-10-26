@@ -1,6 +1,6 @@
 // The trainable classifier's step in the Image analysis editor: its classes (a click on one picks it: what is drawn is
-// an example of it), the tools that draw (Fill: an outline drawn is filled; Brush: a stroke as wide as the slider;
-// Eraser: the examples it passes over taken away), the class the mask is made of, the particles found made examples of
+// painted with it), the tools that paint (Fill: the inside of an outline drawn; Brush: under its circle; Eraser: the
+// paint under its circle taken away), Live update, the class the mask is made of, the particles found made examples of
 // the object, its trees, smoothing, the edges made from the outlines and the output.
 import { useState } from 'react';
 import { Brush, Eraser, PenTool, X } from 'lucide-react';
@@ -8,19 +8,23 @@ import { STEP_DEFS, stepClasses, targetClass, type ImgStep } from '../image/step
 import type { Roi } from '../image/roi.ts';
 import type { StepHist } from '../image/imageWorker.ts';
 import { ParamField } from './ImageParams.tsx';
-import { Select, TextInput } from './ui.tsx';
+import { Check, Select, TextInput } from './ui.tsx';
 import { classColor, edgeClassOf } from '../image/classify.ts';
 import { IC } from './iconProps.ts';
 
 export type PaintTool = 'fill' | 'brush' | 'eraser';
 
-export function ClassifierEditor({ s, set, rois, sel, setRois, note, hist, paint, setPaint, tool, setTool, brush, setBrush }: { s: ImgStep; set: (p: Partial<ImgStep['p']>) => void; rois: Roi[]; sel: string | null; setRois: (r: Roi[]) => void; note?: string; hist?: StepHist; paint: string | null; setPaint: (c: string | null) => void; tool: PaintTool; setTool: (t: PaintTool) => void; brush: number; setBrush: (w: number) => void }) {
+// painted: the pixels painted of every class; live: the classifier learns at the end of every stroke, else at Update now
+// (pending: something painted since)
+export function ClassifierEditor({ s, set, rois, sel, setRois, note, hist, paint, setPaint, tool, setTool, brush, setBrush, painted, clearPaint, live, setLive, pending, updateNow }: { s: ImgStep; set: (p: Partial<ImgStep['p']>) => void; rois: Roi[]; sel: string | null; setRois: (r: Roi[]) => void; note?: string; hist?: StepHist; paint: string | null; setPaint: (c: string | null, t?: PaintTool) => void; tool: PaintTool; setTool: (t: PaintTool) => void; brush: number; setBrush: (w: number) => void; painted: Record<string, number>; clearPaint: (cls: string) => void; live: boolean; setLive: (on: boolean) => void; pending: boolean; updateNow: () => void }) {
   const [name, setName] = useState('');
   const classes = stepClasses(s, rois);
   const target = targetClass(s, classes);
   const picked = rois.find((r) => r.id === sel);
   const color = (c: string) => classColor(classes, c);
   const count = (c: string) => rois.filter((r) => r.train === c).length;
+  const px = (c: string) => painted[c] ?? 0;
+  const pxText = (n: number) => (n >= 10000 ? `${(n / 1000).toFixed(0)}k px` : `${n} px`);
   // (a particle found made an example: kept when the particles are found again)
   const give = (c: string) => picked && setRois(rois.map((r) => (r.id === picked.id ? { ...r, train: c, color: color(c), role: undefined, bg: undefined, auto: undefined } : r)));
   const addClass = () => {
@@ -37,36 +41,49 @@ export function ClassifierEditor({ s, set, rois, sel, setRois, note, hist, paint
   const found = rois.filter((r) => r.auto);
   const useFound = () => setRois(rois.map((r) => (r.auto ? { ...r, train: target, color: color(target), auto: undefined, group: undefined } : r)));
   const toolBtn = (t: PaintTool, icon: React.ReactNode, label: string, title: string) => (
-    <button className={`nodrag${tool === t && paint ? ' on' : ''}`} title={title} onClick={() => (setTool(t), !paint && setPaint(t === 'eraser' ? classes[0] : target))}>
+    <button className={`nodrag${tool === t && paint ? ' on' : ''}`} title={title} onClick={() => (setTool(t), !paint && setPaint(t === 'eraser' ? classes[0] : target, t))}>
       {icon} {label}
     </button>
   );
   return (
     <div className="ie-classifier">
       <div className="hint">
-        Click a class (or press 1, 2, 3 …), then draw on the image: Fill: draw around a particle or a piece of the ground, the inside is the example; Brush: a stroke as wide as the slider; Eraser: takes away the examples it passes over. Edge needs nothing drawn: the ring around every particle filled, and the gap between touching ones, is learnt by itself; only where two particles still come out joined, brush a short line across the gap between them. Esc: stop drawing.
+        Click a class (or press 1, 2, 3 …), then paint on the image: Brush paints under its circle, Fill paints the inside of what you draw around, Eraser takes the paint away under its circle. Its size: the slider, [ and ], or Alt and the wheel. The classifier learns when a stroke ends. Edge needs nothing painted: the ring around every particle painted, and the gap between touching ones, is learnt by itself; only where two particles still come out joined, brush a short line across the gap between them. Esc: stop painting.
       </div>
       <div className="row ie-paint-tools">
-        {toolBtn('fill', <PenTool {...IC} />, 'Fill', 'Draw around a particle (or a piece of the ground): the inside is an example of the class picked')}
-        {toolBtn('brush', <Brush {...IC} />, 'Brush', 'A stroke as wide as the slider: an example of the class picked (for the edge: a short line across a gap)')}
-        {toolBtn('eraser', <Eraser {...IC} />, 'Eraser', 'The examples the eraser passes over are taken away')}
+        {toolBtn('fill', <PenTool {...IC} />, 'Fill', 'Draw around a particle (or a piece of the ground): its inside painted the class picked')}
+        {toolBtn('brush', <Brush {...IC} />, 'Brush', 'Paints the class picked under its circle (for the edge: a short line across a gap)')}
+        {toolBtn('eraser', <Eraser {...IC} />, 'Eraser', 'Takes the paint away under its circle (and an example drawn as a selection it touches)')}
       </div>
-      <div className="row ie-paint-width" title="The width of the brush and the eraser (pixels of the image)">
-        <span className="muted">width</span>
-        <input className="nodrag grow" type="range" min={1} max={40} step={1} value={brush} onChange={(e) => setBrush(Number(e.target.value))} />
+      <div className="row ie-paint-width" title="The size of the brush and the eraser (pixels of the image; also [ and ], or Alt and the wheel)">
+        <span className="muted">size</span>
+        <input className="nodrag grow" type="range" min={1} max={100} step={1} value={brush} onChange={(e) => setBrush(Number(e.target.value))} />
         <span className="muted">{brush} px</span>
+      </div>
+      <div className="row wrap">
+        <Check label="Live update" title="The classifier learns at the end of every stroke; off: only at Update now (paint a lot, then learn once)" value={live} onChange={setLive} />
+        {!live && (
+          <button className="nodrag" disabled={!pending} title="The classifier learns from all that is painted now" onClick={updateNow}>
+            Update now
+          </button>
+        )}
       </div>
       {classes.map((c, j) => (
         <div key={c} className={`row ie-class-row${paint === c ? ' on' : ''}`} title={`Click: draw ${c}${j < 9 ? ` (key ${j + 1})` : ''}; again: stop`} onClick={() => setPaint(paint === c ? null : c)}>
           <span className="ie-class-dot" style={{ background: color(c) }} />
           <b className="grow ellipsis">{c}</b>
-          <span className="muted" title={`${count(c)} example${count(c) === 1 ? '' : 's'}${c === edgeCls && ring > 0 ? `, and a ring of ${ring} px around every ${target} filled` : ''}`}>
-            {c === edgeCls && ring > 0 ? `auto: ring ${ring} px${count(c) ? ` + ${count(c)}` : ''}` : count(c)}
+          <span className="muted" title={`${pxText(px(c))} painted, ${count(c)} example${count(c) === 1 ? '' : 's'} drawn as selections${c === edgeCls && ring > 0 ? `, and a ring of ${ring} px around every ${target} painted` : ''}`}>
+            {c === edgeCls && ring > 0 ? `auto: ring ${ring} px${px(c) || count(c) ? ` + ${px(c) ? pxText(px(c)) : count(c)}` : ''}` : px(c) ? `${pxText(px(c))}${count(c) ? ` + ${count(c)}` : ''}` : count(c)}
           </span>
+          {px(c) > 0 && (
+            <button className="nodrag ts-btn" title={`Take away all the paint of ${c}`} onClick={(e) => (e.stopPropagation(), clearPaint(c))}>
+              <Eraser {...IC} />
+            </button>
+          )}
           <button className="nodrag" disabled={!picked} title={picked ? `${picked.name}: an example of ${c}` : 'Pick a selection on the image first'} onClick={(e) => (e.stopPropagation(), give(c))}>
             + picked
           </button>
-          <button className="nodrag ts-btn" disabled={count(c) > 0 || classes.length <= 2} title="Remove the class (when it has no examples)" onClick={(e) => (e.stopPropagation(), set({ classes: classes.filter((x) => x !== c).join(','), ...(s.p.target === c ? { target: '' } : {}) }))}>
+          <button className="nodrag ts-btn" disabled={count(c) > 0 || px(c) > 0 || classes.length <= 2} title="Remove the class (when it has no examples, nothing painted)" onClick={(e) => (e.stopPropagation(), set({ classes: classes.filter((x) => x !== c).join(','), ...(s.p.target === c ? { target: '' } : {}) }))}>
             <X {...IC} />
           </button>
         </div>

@@ -46,6 +46,7 @@
     "@xyflow/react": "^12.11.6",
     "fflate": "^0.8.2",
     "lucide-react": "^1.59.0",
+    "onnxruntime-web": "1.30.0",
     "paper": "^0.12.18",
     "paperjs-offset": "^2.2.2",
     "react": "^19.2.8",
