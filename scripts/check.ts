@@ -99,7 +99,7 @@ import { curveFormulas } from '../src/engine/curvemath.ts';
 import { condsFormula, selectRows, type RowOp } from '../src/engine/rowsel.ts';
 import { rowHandle, sourcePort, targetAccepts } from '../src/engine/ports.ts';
 import { checkImage } from './check-image.ts';
-import { APP_VERSION } from '../src/version.ts';
+import { APP_VERSION, CITE_APA, CITE_BIBTEX, DOI } from '../src/version.ts';
 import { callSite, writeValidation, type CheckRecord } from './validation.ts';
 import { checkStat2 } from './check-stat2.ts';
 import { checkStat3 } from './check-stat3.ts';
@@ -7083,6 +7083,12 @@ checkPhase(ok);
 
 // the version shown in the app is package.json's
 ok(APP_VERSION === (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version, `the app's version (${APP_VERSION}) as package.json's`);
+// the citation: the app's (Cite), CITATION.cff's and the README's one DOI and version
+{
+  const cff = readFileSync(new URL('../CITATION.cff', import.meta.url), 'utf8');
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  ok(cff.includes(`version: "${APP_VERSION}"`) && cff.includes(`doi: "${DOI}"`) && CITE_APA.includes(`https://doi.org/${DOI}`) && CITE_BIBTEX.includes(`version   = {${APP_VERSION}}`) && readme.includes(CITE_APA), `the citation: the app's, CITATION.cff's and the README's (DOI ${DOI}, version ${APP_VERSION})`);
+}
 
 console.log(`${passed} passed, ${failed} failed`);
 if (report) {

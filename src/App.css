@@ -1595,6 +1595,10 @@ select option, select optgroup { background: var(--panel); color: var(--text); }
 .tb-credit b { font-weight: 600; color: var(--text); }
 .tb-credit a { display: inline-flex; align-items: center; gap: 3px; color: inherit; text-decoration: none; }
 .tb-credit a:hover { color: var(--accent); }
+.cite-box { display: flex; flex-direction: column; gap: 8px; font-size: var(--fs-small); color: var(--text); }
+.cite-box .cite-head { color: var(--muted); }
+.cite-copy { display: flex; flex-direction: column; gap: 4px; }
+.cite-copy textarea { width: 100%; box-sizing: border-box; resize: none; font-family: ui-monospace, Consolas, monospace; font-size: 11px; line-height: 1.4; }
 .toolbar > button { display: inline-flex; align-items: center; gap: 5px; }
 .tb-theme > button { padding: 3px 5px; color: var(--muted); }
 .tb-theme > button.active { color: color-mix(in srgb, var(--accent) 70%, var(--text)); }

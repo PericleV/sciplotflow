@@ -1,15 +1,16 @@
 // The welcome window: at every start (unless “Show at start” is unticked, kept in this browser) and from Help ▸
 // Welcome. What the app is; import a data file, open a project file, start empty or go on with the project open; the
 // examples in one menu, by their groups; the guided tours (one left half-way: taken up again); the projects kept in
-// this browser last worked on; who made it.
+// this browser last worked on; who made it, and how to cite it.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { FileUp, FolderOpen, FilePlus2, ArrowRight, GraduationCap, X } from 'lucide-react';
+import { FileUp, FolderOpen, FilePlus2, ArrowRight, GraduationCap, X, Check, Copy, Quote } from 'lucide-react';
+import { Popover } from '@mantine/core';
 import { libList, type LibEntry } from './library.ts';
 import { IC } from './nodes/iconProps.ts';
 import { ACCEPT, pickDataFiles } from './readFiles.ts';
 import { setWelcomeAtStart, welcomeAtStart } from './theme.ts';
 import { loadTourProgress, SHOW_TOURS, stepsOf, TOURS } from './tour/tours.ts';
-import { versionShown } from './version.ts';
+import { CITE_APA, CITE_BIBTEX, DOI, versionShown } from './version.ts';
 
 const INSTAGRAM = 'https://www.instagram.com/pericle_v/';
 
@@ -21,6 +22,64 @@ export const InstagramIcon = ({ size = 14 }: { size?: number }) => (
     <circle cx="17.4" cy="6.6" r="0.6" fill="currentColor" />
   </svg>
 );
+
+function CopyCite({ text, label, rows }: { text: string; label: string; rows: number }) {
+  const [done, setDone] = useState(false);
+  return (
+    <div className="cite-copy">
+      <div className="row">
+        <b>{label}</b>
+        <span className="grow" />
+        <button
+          className="nodrag"
+          title={`Copy the ${label} citation`}
+          onClick={() =>
+            void navigator.clipboard.writeText(text).then(() => {
+              setDone(true);
+              setTimeout(() => setDone(false), 1500);
+            })
+          }
+        >
+          {done ? <Check {...IC} /> : <Copy {...IC} />} {done ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <textarea readOnly rows={rows} value={text} spellCheck={false} onFocus={(e) => e.currentTarget.select()} />
+    </div>
+  );
+}
+
+// Cite: a link that opens the citation (APA, BibTeX) with their copy buttons and the DOI
+export function Cite() {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover opened={open} onChange={setOpen} position="bottom-end" width={440} zIndex={10000} shadow="md">
+      <Popover.Target>
+        <a
+          href={`https://doi.org/${DOI}`}
+          title="How to cite SciPlotFlow"
+          onClick={(e) => {
+            e.preventDefault();
+            setOpen((o) => !o);
+          }}
+        >
+          <Quote {...IC} /> Cite
+        </a>
+      </Popover.Target>
+      <Popover.Dropdown className="cite-box">
+        <div className="cite-head">If SciPlotFlow helped your work, please cite it:</div>
+        <CopyCite label="APA" text={CITE_APA} rows={3} />
+        <CopyCite label="BibTeX" text={CITE_BIBTEX} rows={9} />
+        <div className="muted">
+          DOI{' '}
+          <a href={`https://doi.org/${DOI}`} target="_blank" rel="noopener noreferrer">
+            {DOI}
+          </a>{' '}
+          (all the versions, archived on Zenodo)
+        </div>
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
 
 // Who made it, in the top bar: only while the bar has room for it on its row (else it would push the buttons to a row
 // of their own); shown again when the room is back (the free space before it measured)
@@ -62,6 +121,8 @@ export function TopCredit() {
       <a href={INSTAGRAM} target="_blank" rel="noopener noreferrer" title="Follow me on Instagram">
         <InstagramIcon /> @pericle_v
       </a>
+      <span aria-hidden="true">·</span>
+      <Cite />
     </span>
   );
 }
@@ -71,7 +132,7 @@ export function MadeBy() {
   return (
     <div className="made-by">
       <div>
-        SciPlotFlow {versionShown} · Developed by <b>Pericle Vărășteanu</b> · IMT Bucharest
+        SciPlotFlow {versionShown} · Developed by <b>Pericle Vărășteanu</b> · IMT Bucharest · <Cite />
       </div>
       <div>
         If you find this app useful, please support my photography: follow me on Instagram{' '}

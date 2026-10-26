@@ -1,6 +1,6 @@
 # SciPlotFlow
 
-**Version 1.1**
+**Version 1.1** · [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23658458.svg)](https://doi.org/10.5281/zenodo.23658458)
 
 SciPlotFlow is a free app for scientific data analysis and publication-quality graphs, built from nodes. You import a
 file, clean it, compute, fit and test, then draw the figure. Every step is a node on a canvas, so the whole analysis
@@ -119,6 +119,16 @@ Please open an [issue](https://github.com/PericleV/sciplotflow/issues) and write
 4. if you can, the project file (**Save**) or a small piece of the data.
 
 Ideas and requests are welcome too.
+
+## Citing SciPlotFlow
+
+If SciPlotFlow helped your work, please cite it (also under **Cite** at the top of the app, as APA or BibTeX):
+
+> Vărășteanu, P. (2026). SciPlotFlow (Version 1.1) [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.23658458
+
+This DOI stands for all the versions (it leads to the latest); every version also has its own on
+[Zenodo](https://doi.org/10.5281/zenodo.23658458). GitHub's **Cite this repository** gives the same, from
+[CITATION.cff](CITATION.cff).
 
 ## License
 

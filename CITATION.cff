@@ -8,10 +8,18 @@ authors:
     given-names: "Pericle"
     affiliation: "IMT Bucharest, National Institute for Research and Development in Microtechnologies"
 version: "1.1.0"
+doi: "10.5281/zenodo.23658458"
 date-released: "2026-10-26"
 license: MIT
 repository-code: "https://github.com/PericleV/sciplotflow"
 url: "https://periclev.github.io/sciplotflow/"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.23658458"
+    description: "All the versions, archived on Zenodo"
+  - type: doi
+    value: "10.5281/zenodo.23658459"
+    description: "Version 1.1.0"
 keywords:
   - data analysis
   - scientific graphs
