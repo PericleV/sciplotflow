@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use SciPlotFlow in your work, please cite it as below."
+type: software
+title: "SciPlotFlow"
+abstract: "A free, open-source app for scientific data analysis and publication-quality graphs, built from nodes: data import and preparation, statistics, signal processing, fitting, image analysis and figures, each computation checked against established libraries and the literature. It runs in the browser and the data never leave the computer."
+authors:
+  - family-names: "Vărășteanu"
+    given-names: "Pericle"
+    affiliation: "IMT Bucharest, National Institute for Research and Development in Microtechnologies"
+version: "1.1.0"
+date-released: "2026-10-26"
+license: MIT
+repository-code: "https://github.com/PericleV/sciplotflow"
+url: "https://periclev.github.io/sciplotflow/"
+keywords:
+  - data analysis
+  - scientific graphs
+  - visual programming
+  - statistics
+  - signal processing
+  - curve fitting
+  - image analysis
+  - C-V curves

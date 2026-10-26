@@ -1,6 +1,6 @@
 # SciPlotFlow
 
-**Version 1.0**
+**Version 1.1**
 
 SciPlotFlow is a free app for scientific data analysis and publication-quality graphs, built from nodes. You import a
 file, clean it, compute, fit and test, then draw the figure. Every step is a node on a canvas, so the whole analysis

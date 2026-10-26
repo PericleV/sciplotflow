@@ -1,6 +1,6 @@
 # Validation
 
-SciPlotFlow 1.0.0, 2026-10-26: **1558 of 1558 checks pass**.
+SciPlotFlow 1.1.0, 2026-10-26: **1558 of 1558 checks pass**.
 
 Every computation of SciPlotFlow is checked by `npm run check`:
 
@@ -1821,6 +1821,6 @@ n 0.87 W1 W 0.00401 S·s^½); Nyquist and Bode drawn by Plots from them
 - ✓ Symbols: filled, white and dot as before, a fill colour of their own with its opacity, the marks inside
 - ✓ Scientific numbers: 1e16, 1E16, 1x10^16, 1*10^16, 1·10¹⁶, 10^16 and a decimal comma read alike; what is none of them, not a number
 - ✓ Scientific numbers: written short only when very large or very small (1e16, 5e-9; 100, 0.01 as they are), and read back the same
-- ✓ the app's version (1.0.0) as package.json's
+- ✓ the app's version (1.1.0) as package.json's
 
 </details>

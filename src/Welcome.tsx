@@ -55,7 +55,9 @@ export function TopCredit() {
   }, [shown]);
   return (
     <span ref={ref} className="tb-credit" style={shown ? undefined : { display: 'none' }}>
-      Made by <b>Pericle Vărășteanu</b>
+      Developed by <b>Pericle Vărășteanu</b>
+      <span aria-hidden="true">·</span>
+      IMT Bucharest
       <span aria-hidden="true">·</span>
       <a href={INSTAGRAM} target="_blank" rel="noopener noreferrer" title="Follow me on Instagram">
         <InstagramIcon /> @pericle_v
@@ -69,7 +71,7 @@ export function MadeBy() {
   return (
     <div className="made-by">
       <div>
-        SciPlotFlow {versionShown} · Made by <b>Pericle Vărășteanu</b> · IMT Bucharest
+        SciPlotFlow {versionShown} · Developed by <b>Pericle Vărășteanu</b> · IMT Bucharest
       </div>
       <div>
         If you find this app useful, please support my photography: follow me on Instagram{' '}
