@@ -1,5 +1,5 @@
 // Small building blocks of the node views: number fields, choices, ports, messages.
-import { useContext, useLayoutEffect, useRef, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import { useContext, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { InPanel } from './inspectorStore.ts';
 import { Handle, Position, useNodeConnections, useNodeId, useNodesData } from '@xyflow/react';
 import { nodeDisplayName } from '../nodeColors.ts';
@@ -7,6 +7,7 @@ import type { AppNode } from '../types.ts';
 import { isMultiInput, PORT_COLORS, PORT_LABELS, targetAccepts, type PortType } from '../engine/ports.ts';
 import type { NodeResult } from '../engine/evaluate.ts';
 import { Choice } from '../ui/props.tsx';
+import { parseSci, sciPretty, sciText } from '../engine/table.ts';
 
 const num = (v: string) => (v === '' ? NaN : Number(v));
 
@@ -24,6 +25,32 @@ export function NumInput(props: { value: number; onChange: (v: number) => void; 
       placeholder={placeholder}
       value={disabled || value == null || Number.isNaN(value) ? '' : value}
       onChange={(e) => onChange(num(e.target.value))}
+    />
+  );
+}
+
+// A number in scientific notation (sciText, parseSci in table.ts): shown short (1e16) when very large or very small,
+// typed as 1e16, 1x10^16, 1·10¹⁶ …; its value written out (1·10¹⁶) in its tooltip
+export function SciInput({ value, onChange, className, title, unit }: { value: number; onChange: (v: number) => void; className?: string; title?: string; unit?: string }) {
+  // (what is typed stays as typed while the field has the focus; the value goes on at every number it makes)
+  const [draft, setDraft] = useState<string | null>(null);
+  const pretty = `${sciPretty(value)}${unit ? ` ${unit}` : ''}`;
+  return (
+    <input
+      className={`nodrag ${className ?? ''}`}
+      type="text"
+      inputMode="decimal"
+      spellCheck={false}
+      title={title ? `${title} (${pretty})` : pretty}
+      value={draft ?? sciText(value)}
+      onFocus={() => setDraft(sciText(value))}
+      onBlur={() => setDraft(null)}
+      onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const v = parseSci(e.target.value);
+        if (Number.isFinite(v)) onChange(v);
+      }}
     />
   );
 }

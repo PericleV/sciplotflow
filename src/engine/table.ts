@@ -77,6 +77,30 @@ export function finiteCount(v: ArrayLike<number>): number {
 }
 
 // A short, readable number for tables and node texts.
+// A number in scientific notation: written short (1e16, 2.5e-9) when very large or very small, or out (1·10¹⁶); read
+// from 1e16, 1E16, 1x10^16, 1*10^16, 1·10¹⁶ or 10^16 (a decimal comma too; NaN when it is none of them)
+const SUP = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+export function sciText(v: number): string {
+  if (!Number.isFinite(v)) return '';
+  const a = Math.abs(v);
+  return a !== 0 && (a >= 1e5 || a < 1e-3) ? Number(v.toPrecision(12)).toExponential().replace('e+', 'e') : String(Number(v.toPrecision(12)));
+}
+export function sciPretty(v: number): string {
+  const t = sciText(v);
+  const m = /^(-?[\d.]+)e(-?\d+)$/.exec(t);
+  return m ? `${m[1]}·10${[...m[2]].map((c) => (c === '-' ? '⁻' : SUP[+c])).join('')}` : t;
+}
+export function parseSci(s: string): number {
+  const t = s
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/,/g, '.')
+    .replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]+$/, (e) => `^${[...e].map((c) => (c === '⁻' ? '-' : c === '⁺' ? '+' : String(SUP.indexOf(c)))).join('')}`);
+  if (!t) return NaN;
+  const m = /^(?:([+-]?(?:\d+\.?\d*|\.\d+))[*x×·X])?10\^([+-]?\d+)$/.exec(t);
+  if (m) return (m[1] === undefined ? 1 : Number(m[1])) * 10 ** Number(m[2]);
+  return /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(t) ? Number(t) : NaN;
+}
 export function fmtNum(v: number, digits = 6): string {
   if (!Number.isFinite(v)) return Number.isNaN(v) ? '—' : v > 0 ? '∞' : '−∞';
   if (v === 0) return '0';

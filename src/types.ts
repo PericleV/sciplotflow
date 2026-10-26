@@ -34,6 +34,7 @@ import type { PieSpec } from './engine/piechart.ts';
 import type { ContourSpec } from './engine/contour.ts';
 import type { PolarSpec } from './engine/polar.ts';
 import type { SmithSpec } from './engine/smith.ts';
+import type { SigGenSpec } from './engine/siggen.ts';
 import type { MatrixSpec } from './engine/scattermatrix.ts';
 import type { TernarySpec } from './engine/ternary.ts';
 import type { WaterfallSpec } from './engine/waterfall.ts';
@@ -575,6 +576,9 @@ export type CombineNode = Node<CombineData, 'combine'>;
 export type MathColNode = Node<MathColData, 'mathcol'>;
 export type PythonNode = Node<PythonData, 'python'>;
 export type GenColNode = Node<GenColData, 'gencol'>;
+// Signal generator: a sum of components, the C–V of an ideal MOS capacitor, or a circuit's impedance, with noise and the rest.
+export type SigGenData = SigGenSpec;
+export type SigGenNode = Node<SigGenData, 'siggen'>;
 export type ColumnsNode = Node<ColumnsData, 'columns'>;
 export type PeakWidthNode = Node<PeakWidthData, 'peakwidth'>;
 export type StatsNode = Node<StatsData, 'stats'>;
@@ -664,6 +668,7 @@ export type AppNode =
   | MathColNode
   | PythonNode
   | GenColNode
+  | SigGenNode
   | ColumnsNode
   | PeakWidthNode
   | StatsNode

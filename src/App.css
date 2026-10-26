@@ -128,7 +128,7 @@ tbody th, th.rowhead { font-weight: 400; }
    a small table); L, a graph, a large table or an editor; XL, a whole figure. A new node takes its place here. */
 .node-extract, .node-gencol, .node-unstack, .node-convert, .node-transpose, .node-stack, .node-columns, .node-combine, .node-clean, .node-pick, .node-groupio { width: var(--node-s); }
 .node-mathcol, .node-autoextract, .node-tosheets, .node-stats, .node-matrix, .node-stattest, .node-group, .node-note { width: var(--node-m); }
-.node-import, .node-book, .node-signal, .node-translate, .node-curvemath, .node-datamanip, .node-digitizer, .node-phasedigitizer, .node-eis, .node-peaks, .node-calculus, .node-fit, .node-matcomp, .node-python { width: var(--node-l); }
+.node-import, .node-book, .node-signal, .node-siggen, .node-translate, .node-curvemath, .node-datamanip, .node-digitizer, .node-phasedigitizer, .node-eis, .node-peaks, .node-calculus, .node-fit, .node-matcomp, .node-python { width: var(--node-l); }
 .node-plot1d, .node-canvas, .node-drawing { width: var(--node-xl); }
 
 .node-shell {
@@ -1669,14 +1669,14 @@ input[type='checkbox'], input[type='radio'] { box-shadow: none; }
 
 /* Equivalent circuit (EIS): the graph (Nyquist / Bode, points left out with a click), the schematic of the circuit */
 .node-eis .eis-graph, .big-view .eis-graph { display: block; border: 1px solid var(--border); touch-action: none; }
-.node-eis .eis-schematic { display: block; margin: 4px 0; background: #ffffff; border-radius: 4px; padding: 2px; max-width: 100%; }
+:is(.node-eis, .node-siggen) .eis-schematic { display: block; margin: 4px 0; background: #ffffff; border-radius: 4px; padding: 2px; max-width: 100%; }
 .node-eis .eis-params td { padding: 1px 4px; }
 .node-eis .eis-role { margin: 4px 0 6px; }
 .node-eis .eis-role .hint { margin-top: 1px; }
-.node-eis .eis-editor { margin: 4px 0; }
-.node-eis .eis-editor button.mono { min-width: 30px; }
-.node-eis .eis-editor .eis-chip, .node-eis .eis-schematic { touch-action: none; user-select: none; }
-.node-eis .eis-schematic.dropping { cursor: copy; }
+:is(.node-eis, .node-siggen) .eis-editor { margin: 4px 0; }
+:is(.node-eis, .node-siggen) .eis-editor button.mono { min-width: 30px; }
+:is(.node-eis, .node-siggen) .eis-editor .eis-chip, :is(.node-eis, .node-siggen) .eis-schematic { touch-action: none; user-select: none; }
+:is(.node-eis, .node-siggen) .eis-schematic.dropping { cursor: copy; }
 .eis-editor-big .eis-schematic { margin: 8px auto; }
 .eis-ghost { position: fixed; z-index: 100000; pointer-events: none; padding: 2px 6px; border-radius: 4px; background: #1971c2; color: #ffffff; font-size: 12px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3); }
 .eis-ghost.del { background: #e03131; }

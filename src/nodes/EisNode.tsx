@@ -536,7 +536,7 @@ function dropAt(dr: CircuitDrawing, x: number, y: number): Drop {
   const all = { x0: 1, y0: 1, x1: dr.w - 1, y1: dr.h - 1 };
   return { path: [], side: side(all, false), box: all };
 }
-function CircuitEditor({ code, onCode }: { code: string; onCode: (c: string) => void }) {
+export function CircuitEditor({ code, onCode }: { code: string; onCode: (c: string) => void }) {
   const parsed = useMemo(() => parseCircuit(code), [code]);
   const tree = typeof parsed === 'object' ? parsed.tree : null;
   const [sel, setSel] = useState<EisPath | null>(null);

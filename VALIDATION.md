@@ -1,12 +1,12 @@
 # Validation
 
-SciPlotFlow 1.0.0, 2026-10-24: **1440 of 1440 checks pass**.
+SciPlotFlow 1.0.0, 2026-10-26: **1558 of 1558 checks pass**.
 
 Every computation of SciPlotFlow is checked by `npm run check`:
 
-- **293 checks** compare a result with reference values computed in Python by established libraries (NumPy, SciPy, matplotlib, pandas, pingouin, statsmodels, contourpy, PyWavelets, scikit-learn, scikit-image, reliability, lifelines, pycwt, ruptures, pybaselines, differint, astropy). The scripts that compute them are in [`scripts/fixtures`](scripts/fixtures); their values are stored next to them as JSON, so the checks run without Python.
+- **319 checks** compare a result with reference values computed in Python by established libraries (NumPy, SciPy, matplotlib, pandas, pingouin, statsmodels, contourpy, PyWavelets, scikit-learn, scikit-image, reliability, lifelines, pycwt, ruptures, pybaselines, differint, astropy). The scripts that compute them are in [`scripts/fixtures`](scripts/fixtures); their values are stored next to them as JSON, so the checks run without Python.
 - **29 checks** compare with the conventions of a library or program they name (ImageJ, Origin, SciPy, NumPy, matplotlib, scikit-image), without stored values.
-- **1118 checks** compare with exact values: a known answer, a formula, an identity (a transform and its inverse, the energy kept), a property (a test that must not change when the data are shifted), or the behaviour of the interface (a file read, a figure laid out, a project opened). Methods that no library does (or none does right) are written from their publications, cited in the code.
+- **1210 checks** compare with exact values: a known answer, a formula, an identity (a transform and its inverse, the energy kept), a property (a test that must not change when the data are shifted), or the behaviour of the interface (a file read, a figure laid out, a project opened). Methods that no library does (or none does right) are written from their publications, cited in the code.
 
 Each check states what it compares and how close the result is; one check often compares many values (the statistical tests against SciPy: one check, 267 values). This file is made by `npm run validation`, which runs every check and writes it.
 
@@ -31,11 +31,13 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 | [`biostat-ref.py`](scripts/fixtures/biostat-ref.py) | 7 / 7 | Dunnett (scipy.stats.dunnett), two-way ANOVA with a factor between and one within the subjects (pingouin.mixed_anova), two-way with both factors within (statsmodels AnovaRM; pingouin.rm_anova for ε), the linear mixed model with a random intercept, REML (statsmodels MixedLM) on data with missing values. Made with SciPy 1.18, statsmodels 0.15, pingouin 0.7, pandas 3.0 (a virtual environment: pip install scipy statsmodels pingouin). | NumPy, pandas, SciPy, pingouin, statsmodels |
 | [`box-ref.py`](scripts/fixtures/box-ref.py) | 10 / 10 | Box & violin node (matplotlib / scipy). | NumPy, SciPy, matplotlib |
 | [`contour-ref.py`](scripts/fixtures/contour-ref.py) | 14 / 14 | Contour / heatmap node: contour lines (contourpy's serial algorithm, as matplotlib's; engine: the vertices of the lines of a level) and scattered points interpolated to a grid (scipy griddata, linear) | NumPy, contourpy, SciPy |
+| [`cv-ref.py`](scripts/fixtures/cv-ref.py) | 13 / 13 | The C-V structures of the Signal generator, each computed apart from the app's algorithm: the MOS capacitor of CV_ideal.m (the band bending solved at every gate voltage by brentq; low frequency, and high frequency held below 2.10\|u_B\| + 1.33 kT/q), the exact high-frequency capacitance of Lindner (1962) and Brews (1974) (the linearized Poisson equation integrated in x on the equilibrium profile by solve_ivp), interface traps (their charge and capacitance by quad over the Fermi function) and the curve they make, the p-n junction (abrupt; linearly graded, its built-in voltage by brentq) and the Schottky diode (Sze & Ng, ch. 2 and 3), the SPICE junction capacitance, the ferroelectric capacitor of Miller et al. (1990), the semiconductor electrode with its Helmholtz layer (Poisson's equation, the potential split by brentq) and the Gouy-Chapman-Stern double layer (Bard & Faulkner, section 13.3; the potential split by brentq). | NumPy, SciPy |
 | [`cwt-ref.py`](scripts/fixtures/cwt-ref.py) | 2 / 2 | Morlet scalogram: its definition (Torrence & Compo, a direct sum in NumPy) and PyWavelets' complex Morlet of the same shape (cmor2.0-w0/2pi). | NumPy, PyWavelets |
 | [`hist-ref.py`](scripts/fixtures/hist-ref.py) | 18 / 18 | Histogram node (numpy / scipy / sklearn). | NumPy, SciPy, scikit-learn |
-| [`image-ref.py`](scripts/fixtures/image-ref.py) | 18 / 18 | Image analysis node (scikit-image 0.25, scipy, numpy): Small synthetic images whose values are exact in float32 (multiples of 1/8), so the differences are the algorithms'. | NumPy, SciPy, scikit-image |
+| [`image-ref.py`](scripts/fixtures/image-ref.py) | 23 / 23 | Image analysis node (scikit-image 0.25, scipy, numpy): Small synthetic images whose values are exact in float32 (multiples of 1/8), so the differences are the algorithms'. | NumPy, SciPy, scikit-image |
 | [`kk-ref.py`](scripts/fixtures/kk-ref.py) | 1 / 1 | Lin-KK test of the Kramers–Kronig node (numpy; Schönleber et al. 2014, as impedance.py's linKK builds its model): A Randles circuit with 0.3 % noise; the fit of R0, M RC elements (time constants spread evenly in log over the frequencies), an inductance, every row divided by \|Z\|; of M = 1 … 50, the best fit with μ ≥ 0.85. | NumPy |
-| [`matrix-ref.py`](scripts/fixtures/matrix-ref.py) | 42 / 42 | Matrix nodes: numpy.linalg and scipy.linalg on a few matrices: general, symmetric positive definite, rectangular, rank-deficient, with real eigenvalues, Hilbert. | NumPy, SciPy |
+| [`learn-ref.py`](scripts/fixtures/learn-ref.py) | 2 / 2 | Classifier of Find like this &gt; Review, from scikit-learn: LogisticRegression (C = 1), LinearDiscriminantAnalysis (lsqr, Ledoit-Wolf shrinkage) and KNeighborsClassifier (k = 5, weighted by distance), each on the features standardized by StandardScaler; their probabilities on new points and their leave-one-out accuracies (the scaler fitted again in every fold). | NumPy, scikit-learn |
+| [`matrix-ref.py`](scripts/fixtures/matrix-ref.py) | 43 / 43 | Matrix nodes: numpy.linalg and scipy.linalg on a few matrices: general, symmetric positive definite, rectangular, rank-deficient, with real eigenvalues, Hilbert. | NumPy, SciPy |
 | [`nr-ref.py`](scripts/fixtures/nr-ref.py) | 4 / 4 | Incomplete beta and gamma functions (scipy.special betainc, gammainc and their complements) and the eigenvalues of non-symmetric matrices (numpy.linalg.eigvals), for src/engine/dist.ts and src/engine/matrix.ts. | NumPy, SciPy |
 | [`peakshape-ref.py`](scripts/fixtures/peakshape-ref.py) | 11 / 11 | Peak shapes (SciPy): the Faddeeva function w(z) over the upper half plane, the Voigt profile, and a Doniach–Šunjić line computed from its formula. | NumPy, SciPy |
 | [`pie-ref.py`](scripts/fixtures/pie-ref.py) | 3 / 3 | Pie chart node (matplotlib pie: the wedges' angles). | matplotlib |
@@ -45,6 +47,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 | [`reliability-ref.py`](scripts/fixtures/reliability-ref.py) | 17 / 17 | Life data: the Python package `reliability` (Fitters: maximum likelihood with right censoring, rank regression, 3-parameter Weibull, Fisher bounds, plotting positions with Johnson's adjusted ranks) and `lifelines` (Kaplan–Meier with the exponential Greenwood interval). Run in an environment with both: python reliability-ref.py &gt; reliability-ref.json | matplotlib, NumPy, reliability, lifelines, SciPy |
 | [`roi-ref.py`](scripts/fixtures/roi-ref.py) | 1 / 1 | Selections of the Image analysis node (scikit-image regionprops, scipy, numpy, matplotlib for the pixels inside a polygon: their centres, as ImageJ): The gray image G of image-ref.json (20 × 24) measured under a few shapes. | NumPy, matplotlib, SciPy, scikit-image |
 | [`sig-ref.py`](scripts/fixtures/sig-ref.py) | 5 / 5 | Significance brackets (scipy): Welch t + Holm, Mann–Whitney, Tukey HSD | NumPy, SciPy |
+| [`siggen-ref.py`](scripts/fixtures/siggen-ref.py) | 5 / 5 | The Signal generator: scipy's chirp, square and sawtooth, the Voigt profile, and the ideal C-V curve of a MOS capacitor by the algorithm of razvan_CV_ideal_test.m (the majority carriers only, a dense grid of the surface potential read at the gate sweep), with CODATA constants. | NumPy, SciPy |
 | [`signal-ref.py`](scripts/fixtures/signal-ref.py) | 1 / 1 | Signal processing (scipy / numpy). | NumPy, SciPy |
 | [`sigpack-ref.py`](scripts/fixtures/sigpack-ref.py) | 14 / 14 | Signal package: the arPLS baseline (pybaselines), the change points (ruptures: Pelt and Binseg, jump 1), the continuous wavelet transform with its significance and the wavelet coherence (pycwt), the multiresolution analysis (PyWavelets' mra, the stationary transform), the peaks of a Ricker transform (SciPy's find_peaks_cwt), the fractional derivatives (differint, and the exact ones of powers), the fast fractional Fourier transform (fracF of Ozaktas et al. 1996, written out here), the Lomb–Scargle periodogram (astropy's LombScargle and scipy.signal.lombscargle), the Bessel filter and the notch (scipy.signal.bessel, iirnotch). It also writes src/engine/waveletFilters.ts (the filters of PyWavelets). Made with SciPy 1.18, PyWavelets 1.9, pycwt 0.5, pybaselines 1.2, ruptures 1.1, differint, astropy 8.0 (a virtual environment: pip install scipy PyWavelets pycwt pybaselines ruptures differint astropy). | NumPy, SciPy, PyWavelets, pycwt, ruptures, pybaselines, differint, astropy |
 | [`spectral-ref.py`](scripts/fixtures/spectral-ref.py) | 17 / 17 | Spectral analysis (SciPy): Welch's PSD, the coherence, the spectrogram, the analytic signal, Butterworth and Chebyshev filters (second-order sections, causal and forward–backward), and the overlapping Allan deviation (its formula, NumPy). | NumPy, SciPy |
@@ -158,6 +161,24 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 
 </details>
 
+<details><summary><b>cv-ref.py</b>: 13 checks</summary>
+
+- ✓ C–V, MOS: as CV_ideal.m, its band bending solved at every one of 1001 gate voltages (scipy brentq): low frequency 1.0e-14, high frequency (held below 2.10\|u_B\| + 1.33 kT/q) 1.9e-15
+- ✓ C–V, MOS: the exact high-frequency capacitance (Lindner 1962; Brews 1974) as the linearized Poisson equation in x on the equilibrium profile (scipy solve_ivp) to 3.4e-9 from depletion to strong inversion and accumulation; with no minority carriers, the deep depletion's own (5.1e-8)
+- ✓ C–V, MOS: the high-frequency minimum against the exact theory, Si (p, 10¹⁶ cm⁻³, 20 nm SiO₂): at 2φ_B (Sze) +7.04 %, CV_ideal.m +2.79 %; 4H-SiC (n, 10¹⁶, 14 nm): +2.48 %, −0.39 % (the depletion approximation at 2φ_B above it, CV_ideal.m's nearer)
+- ✓ C–V, MOS: interface traps (U-shaped, donors below mid-gap, acceptors above), their charge and capacitance at 300 K and 77 K as scipy quad over the Fermi function (1.1e-15); the low- and high-frequency curves they stretch (7.8e-16, 1.4e-15)
+- ✓ C–V, MOS: the high–low method (Castagné & Vapaille 1971) gives back the D_it typed to 0.000 %, Terman's (1962) to 0.002 %, over 22 voltages in depletion
+- ✓ C–V: measured in parallel mode through R_s with a leak G, Nicollian and Brews's correction gives back C and G (3.4e-9)
+- ✓ C–V: p–n junctions (abrupt; linearly graded, V_bi 0.6671 V self-consistent as scipy brentq) and a Schottky diode as Sze and Ng (6.7e-16, 9.6e-16, 1.0e-15); their 1/C² lines give back N_eff and V_bi − 2kT/q, N_D and V_bi − kT/q, 1/C³ of the graded one V_bi
+- ✓ C–V: the SPICE junction capacitance C_J0(1 − V/V_J)^−M, linear beyond F_C·V_J (SPICE2, Nagel 1975) as the reference; with M = ½, V_J = V_bi − 2kT/q, the abrupt junction; continuous at F_C·V_J
+- ✓ C–V: a MIM capacitor, C₀ = ε₀εA/d and its voltage coefficients given back (20.0000 ppm/V, 50.0000 ppm/V²)
+- ✓ C–V: a ferroelectric capacitor as Miller, Nasby, Schwank, Rodgers and Dressendorfer (1990): its butterfly up and down as the reference; P = ∓P_r at 0 V, 0 at the coercive voltage, where C is largest
+- ✓ C–V: a semiconductor electrode with its Helmholtz layer as the reference (5.4e-15); without it, the Mott–Schottky line (Gelderman, Lee and Donne 2007) gives N_D 1.00000·10¹⁸ cm⁻³ (10¹⁸ typed) and E_fb + kT/q to 0.0002 mV
+- ✓ C–V: the Gouy–Chapman and Gouy–Chapman–Stern double layers as the reference (1.8e-15, 2.0e-15; the diffuse layer's potential to 3.6e-16 V); Bard and Faulkner's 228.5·z·√C*·cosh(19.5·z·φ₀) µF/cm² to 0.39 % (its rounded constants), the Debye lengths 3.04 and 0.962 nm to 0.06 %
+- ✓ C–V: the table made (V (V) / C (nF/cm²) / G_m (S) / 1/C² (cm⁴/nF²) / W (nm); V (V) / C (pF), up / P (µC/cm²), up / C (pF), down / P (µC/cm²), down; V_G (V) / C/C_ox, LF / C/C_ox, HF) and its graphs
+
+</details>
+
 <details><summary><b>cwt-ref.py</b>: 2 checks</summary>
 
 - ✓ Morlet scalogram as its definition (a direct sum, Torrence & Compo), 28 scales (9.6e-10)
@@ -188,7 +209,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 
 </details>
 
-<details><summary><b>image-ref.py</b>: 18 checks</summary>
+<details><summary><b>image-ref.py</b>: 23 checks</summary>
 
 - ✓ local entropy (bits, disk 2) as scikit-image's rank.entropy away from the edge (4.519653318268979e-7)
 - ✓ Canny (σ 1.5, 0.05 / 0.12) as scikit-image: 0 pixels differ of 71 edges
@@ -208,6 +229,11 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ arrangement in the node: its sheets, in nm (NND 10 nm)
 - ✓ lattice: fringes 7.300 px; the spot d 9.494 at 157.1°; the pattern's centre 130.5, 121.5; rings Au 111 -0.04 %, Au 200 -0.14 %, Au 220 -0.08 %, Au 311 -0.06 %
 - ✓ lattice in the node: d 0.1899 nm, fringes 0.1900 nm, rings 111 200 220 311
+- ✓ Find like this, the finer settings: as before when given as they are; reach 2.5 (20 of 48); Precise 48, Fast 48 of 48
+- ✓ Find like this, the brightness counted: a cube dimmed to a third 0.99 → 0.13, the others on their own 0.92 or more
+- ✓ Find like this ▸ edges only inside the margin: the side 19.78 (unlimited 19.81, true 20.048076536421153)
+- ✓ Find like this ▸ Compare: hollow cubes found by the edges 17, by the values 2 of 24; strong noise: by the values 48, both 47, the edges 25 of 48; a clean image by the edges 48; none wrong
+- ✓ Find like this, the first search through the FFT: the same places as directly (values, edges, both; a disc and only the particle): true, true, true, true, true, true
 
 </details>
 
@@ -217,7 +243,14 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 
 </details>
 
-<details><summary><b>matrix-ref.py</b>: 42 checks</summary>
+<details><summary><b>learn-ref.py</b>: 2 checks</summary>
+
+- ✓ Review ▸ learn: logistic, LDA, k-NN as scikit-learn (largest difference 1.7e-11); forest right on 83 %; auto logistic (87 %), the first feature counts most; fewer than 3 of a kind: none
+- ✓ Accuracy: 2 right of 4 found in the area marked, 2 of the 4 true ones missed: precision 0.5, recall 0.5, F1 0.5
+
+</details>
+
+<details><summary><b>matrix-ref.py</b>: 43 checks</summary>
 
 - ✓ Matrix: det, trace as numpy (-0.2420502408961773)
 - ✓ Matrix: the inverse as numpy inv
@@ -246,6 +279,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Matrix: a row just added (empty) is kept: of 2 columns and of 1; no value at all: no matrix
 - ✓ Matrix from a dataset: the rows’ Y from X, the columns’ X from their names
 - ✓ Matrix ▸ dataset: read back as a matrix by the Contour
+- ✓ Matrix: the rows’ Y and the columns’ X by hand (a range, a step, a list, names; typed and from a dataset)
 - ✓ Matrix: rot90 and flips as numpy
 - ✓ Matrix: reshape (row by row), part
 - ✓ Matrix: broadcasting a row over A (numpy); sizes that do not fit said
@@ -388,6 +422,16 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Significance: Tukey HSD as scipy tukey_hsd (0.0007679,0.9980,0.0006486)
 - ✓ Significance: from a post hoc table (ns left out), written with stars and p
 - ✓ Significance: the wide bracket placed above the two narrow ones
+
+</details>
+
+<details><summary><b>siggen-ref.py</b>: 5 checks</summary>
+
+- ✓ Signal generator: chirps (1e-16, 3e-14, 1e-16, 1e-14), square, sawtooth, triangle as scipy; Voigt; Fano's zero and maximum; coupled oscillators split by 2g (4.472, 5.477)
+- ✓ Signal generator: noise spectra, white -0.01, pink -1.01, brown -1.99 (0, −1, −2)
+- ✓ C–V: as razvan_CV_ideal_test.m (deep depletion, 300 K and 14 K: 7.5e-8, 5.9e-6); low frequency back to C_ox, high frequency at C_min (1.0154 of Sze's, which leaves out kT/q in W_max), deep depletion below
+- ✓ Signal generator: an R(RC) circuit's impedance; noise at 20 dB SNR (SD 0.0708, expected 0.0707); 10 % missing; the same seed, the same signal
+- ✓ Signal generator: its graph (the signal on the clean one; a C–V curve a temperature; Nyquist and Bode for an impedance)
 
 </details>
 
@@ -565,7 +609,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 
 </details>
 
-<details><summary><b>Exact values, definitions and properties</b>: 1118 checks</summary>
+<details><summary><b>Exact values, definitions and properties</b>: 1210 checks</summary>
 
 - ✓ box handles: a side moves alone (across, or up), the other ways ignored
 - ✓ box handles: a corner moves two sides; Ctrl: about the centre
@@ -737,6 +781,8 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ rows: = and ≠; a condition without its value left aside
 - ✓ rows: the conditions, or the formula when chosen (an older project: its formula)
 - ✓ rows: the conditions written as a formula, the same rows (x &gt; 450 or (B &gt;= 2 and B &lt;= 5) or (not isnan(B)))
+- ✓ rows: is one of (a in 2, 5, 9), said, as a formula (isin(B, 2, 5, 9) or x &gt; 600)
+- ✓ rows: is one of with no values yet left aside
 - ✓ rows: is empty / is not empty (a 0 is a value)
 - ✓ statistics: percentiles and the confidence interval of the mean (1.9, 9.1, 3.3341 … 7.6659)
 - ✓ rows: odd and even rows, a formula on top, the row number in a condition, row and % in formulas
@@ -784,6 +830,44 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Math column: one value of whole columns (32.5)
 - ✓ Math column: one value from a column row by row; said
 - ✓ Math column: one value; a value port
+- ✓ formulas: at(A, 3), the value of row 3 in every row
+- ✓ formulas: at(A, n - 1), the row a formula of n
+- ✓ formulas: first(A, between(B, 2, 3)), several rows said (2; first(A, between(B, 2, 3)): 5 rows match, the first used (row 2).)
+- ✓ formulas: first with a condition of or; between either way round
+- ✓ formulas: last(A, isin(B, 0)) (8)
+- ✓ formulas: one row matching, nothing said
+- ✓ formulas: mean, sum, count, median, sd of the rows where a condition is true
+- ✓ formulas: minif, maxif; max(A, B) still row by row
+- ✓ formulas: a condition with a function of the whole column in it
+- ✓ formulas: no row matching, empty and said (count: 0, nothing said) (first(A, B &gt; 10): no row where B &gt; 10 (with a value of A).)
+- ✓ formulas: at a row that is not there, empty and said
+- ✓ formulas: a condition with an unknown name, said
+- ✓ formulas: isin, between (either way round), row by row
+- ✓ formulas: if with isin
+- ✓ formulas: the wrong number of parts said (between, isin, randint, rand)
+- ✓ rand: the same values computed again, others with another seed
+- ✓ rand: between 0 and 1, mean 0.5
+- ✓ rand(5, 10): between 5 and 10
+- ✓ randint(1, 6): whole numbers 1 … 6, each about as often (995 1028 975 951 1008 1043)
+- ✓ randn(10, 2): mean 10, SD 2 (9.991, 1.997)
+- ✓ rand: two calls in a formula, two values
+- ✓ rand: a row’s value does not depend on the rows computed before it
+- ✓ Math column: rand() the same computed again; a new seed or another node, other values
+- ✓ Columns: first([x], [k] == 5), said; two rand() columns differ (“y”: first([x], [k] == 5): 2 rows match, the first used (row 2).)
+- ✓ ƒ Functions: every function described (missing: none)
+- ✓ ƒ Functions: every example computes (all)
+- ✓ Set column values: the formula kept by the columns' keys, shown with their letters ([@o0] * [@o1] * first([@o0], [@o2] == 5))
+- ✓ Set column values: D = A * B * first(A, C == 5) (20,80,180,320; Column D: first(A, C == 5): 2 rows match, the first used (row 2).)
+- ✓ Set column values: a cell of B changed, the column computed again
+- ✓ Set column values: on the rows where z &gt; 4, the others kept or emptied
+- ✓ Set column values: on the rows where z is one of 0, 9
+- ✓ Set column values: a formula of another formula column, computed after it
+- ✓ Set column values: two formulas needing one another, said (Column D: its formula and others need one another in a loop; left empty.)
+- ✓ Set column values: a formula of its own column, said
+- ✓ Set column values: an unknown name, said
+- ✓ Set column values: a column moved, the formula follows it
+- ✓ Set column values: a formula of an input's column (x, y, z, D, g)
+- ✓ Set column values: rand() the same computed again; another column or a new seed, other values
 - ✓ Import: missing values empty (N/A, -999), 1.234,5 with a thousands point, a footer of 2 lines left out
 - ✓ Import: a quoted 1,234.5 with a thousands comma
 - ✓ format 10 → 11: the three nodes converted, the ports of Add column moved to A, B
@@ -822,6 +906,9 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ example “Difference spectrum: sample minus reference” has no errors
 - ✓ example “Difference spectrum: sample minus reference” draws curves
 - ✓ example “Difference spectrum: sample minus reference” saves and opens
+- ✓ example “Workbook formulas: a blank subtracted, the unknowns found” has no errors
+- ✓ example “Workbook formulas: a blank subtracted, the unknowns found” draws curves
+- ✓ example “Workbook formulas: a blank subtracted, the unknowns found” saves and opens
 - ✓ example “Digitizer: values read off the image of a graph” has no errors
 - ✓ example “Digitizer: values read off the image of a graph” draws curves
 - ✓ example “Digitizer: values read off the image of a graph” saves and opens
@@ -891,6 +978,9 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ example “Pie, doughnut and nested rings” has no errors
 - ✓ example “Pie, doughnut and nested rings” draws curves
 - ✓ example “Pie, doughnut and nested rings” saves and opens
+- ✓ example “Smith chart: an antenna before and after matching” has no errors
+- ✓ example “Smith chart: an antenna before and after matching” draws curves
+- ✓ example “Smith chart: an antenna before and after matching” saves and opens
 - ✓ example “Polar: antenna pattern, wind rose, radar” has no errors
 - ✓ example “Polar: antenna pattern, wind rose, radar” draws curves
 - ✓ example “Polar: antenna pattern, wind rose, radar” saves and opens
@@ -951,6 +1041,9 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ example “Signals: uneven periods, harmonics, mains hum (FFT)” has no errors
 - ✓ example “Signals: uneven periods, harmonics, mains hum (FFT)” draws curves
 - ✓ example “Signals: uneven periods, harmonics, mains hum (FFT)” saves and opens
+- ✓ example “Signal generator: a chirp, Fano and coupled oscillators, C–V curves” has no errors
+- ✓ example “Signal generator: a chirp, Fano and coupled oscillators, C–V curves” draws curves
+- ✓ example “Signal generator: a chirp, Fano and coupled oscillators, C–V curves” saves and opens
 - ✓ example “Signals: a chirp taken out by the fractional Fourier transform” has no errors
 - ✓ example “Signals: a chirp taken out by the fractional Fourier transform” draws curves
 - ✓ example “Signals: a chirp taken out by the fractional Fourier transform” saves and opens
@@ -972,6 +1065,12 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ example “Cyclic voltammogram: area between the branches” has no errors
 - ✓ example “Cyclic voltammogram: area between the branches” draws curves
 - ✓ example “Cyclic voltammogram: area between the branches” saves and opens
+- ✓ example “Mott–Schottky: an n-type TiO₂ electrode” has no errors
+- ✓ example “Mott–Schottky: an n-type TiO₂ electrode” draws curves
+- ✓ example “Mott–Schottky: an n-type TiO₂ electrode” saves and opens
+- ✓ example “Double layer: Gouy–Chapman and Gouy–Chapman–Stern” has no errors
+- ✓ example “Double layer: Gouy–Chapman and Gouy–Chapman–Stern” draws curves
+- ✓ example “Double layer: Gouy–Chapman and Gouy–Chapman–Stern” saves and opens
 - ✓ example “Nanocubes: found like one, their side and orientation” has no errors
 - ✓ example “Nanocubes: found like one, their side and orientation” draws curves
 - ✓ example “Nanocubes: found like one, their side and orientation” saves and opens
@@ -1020,6 +1119,27 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ example “3D stacked maps: RSMs of five samples” has no errors
 - ✓ example “3D stacked maps: RSMs of five samples” draws curves
 - ✓ example “3D stacked maps: RSMs of five samples” saves and opens
+- ✓ example “C–V: a MOS capacitor at low and high frequency (CV_ideal.m)” has no errors
+- ✓ example “C–V: a MOS capacitor at low and high frequency (CV_ideal.m)” draws curves
+- ✓ example “C–V: a MOS capacitor at low and high frequency (CV_ideal.m)” saves and opens
+- ✓ example “C–V: interface traps on Si, low and high frequency” has no errors
+- ✓ example “C–V: interface traps on Si, low and high frequency” draws curves
+- ✓ example “C–V: interface traps on Si, low and high frequency” saves and opens
+- ✓ example “C–V: p–n junctions, abrupt and linearly graded” has no errors
+- ✓ example “C–V: p–n junctions, abrupt and linearly graded” draws curves
+- ✓ example “C–V: p–n junctions, abrupt and linearly graded” saves and opens
+- ✓ example “C–V: a Schottky diode on 4H-SiC at three temperatures” has no errors
+- ✓ example “C–V: a Schottky diode on 4H-SiC at three temperatures” draws curves
+- ✓ example “C–V: a Schottky diode on 4H-SiC at three temperatures” saves and opens
+- ✓ example “C–V: varactors, the SPICE junction (abrupt and hyperabrupt)” has no errors
+- ✓ example “C–V: varactors, the SPICE junction (abrupt and hyperabrupt)” draws curves
+- ✓ example “C–V: varactors, the SPICE junction (abrupt and hyperabrupt)” saves and opens
+- ✓ example “C–V: a MIM capacitor and its voltage coefficients” has no errors
+- ✓ example “C–V: a MIM capacitor and its voltage coefficients” draws curves
+- ✓ example “C–V: a MIM capacitor and its voltage coefficients” saves and opens
+- ✓ example “C–V: a ferroelectric capacitor, its butterfly and loop” has no errors
+- ✓ example “C–V: a ferroelectric capacitor, its butterfly and loop” draws curves
+- ✓ example “C–V: a ferroelectric capacitor, its butterfly and loop” saves and opens
 - ✓ example: mean of the replicates
 - ✓ example: SD of the replicates
 - ✓ example: 61 wavelengths, 400–700 nm
@@ -1269,6 +1389,8 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Polar: r from −30 dB to 0, circles every 5, a half circle (-25,-20,-15,-10,-5,0)
 - ✓ Polar: r from 0 to a nice value
 - ✓ Radar: 5 spokes evenly, closed polygons, a series with its own line and fill
+- ✓ Smith chart: Γ of Z, Y, Γ, S11; back to z; a marker (f = 2.45 GHz, Z = 100 + j0 Ω, VSWR = 2, RL = 9.54 dB); a point outside at the rim
+- ✓ Polar axes: 0° where asked, the circles every step (0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4), the axes' look to the drawing
 - ✓ Scatter matrix: 9 panels, Pearson r, the diagonal in its row's range, one legend entry a group
 - ✓ Scatter matrix node: the designated Y columns (2 × 2 frames), X shared down a column, Y along a row (4)
 - ✓ Waterfall: steps from the running total, increases and decreases apart, the total, the connectors
@@ -1304,6 +1426,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ 3D marks: a rectangle’s corners in its plane
 - ✓ 3D: the limits of the axes cut the surface; the camera kept (1,4; 1,2,3,4)
 - ✓ 3D: the surface hidden, the mesh by Z along X, contours on it, the ceiling, the walls, the curtain, the underside, the shine
+- ✓ 3D: the curtain coloured like the surface, a reversed Z axis, its own step, a mark in front of the data
 - ✓ 3D marks: an arrow (its head, projections, label), an upright rectangle filled, a point
 - ✓ 3D: a place on the floor found from the screen (2.5,1.5,0)
 - ✓ 3D: the plane drawn on; the floor, a back wall, a value
@@ -1409,6 +1532,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Python script: a run asked for when the code or the data change; its outputs as values, an error with its line
 - ✓ Plot: a quick fit’s curve styled as a curve (line + symbols, colour, fill); older fits’ look read in; its defaults
 - ✓ Legend: placed off a results box (tl); an entry on three lines three lines high
+- ✓ Legend: text width by its font (Arial 76.5, Courier 89.0, Times 73.4 pt); sample height and gap
 - ✓ Drawing: its page, the hidden object left out, the order its layer, a locked one marked
 - ✓ Drawing in a Merge: its whole cell; the Plot beside it alone gives the common titles
 - ✓ Drawing as an inset of a Plot: placed in its box, no zoom marks
@@ -1485,6 +1609,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ transpose: names from the row numbers, the old names as text
 - ✓ stack columns: two columns one under the other, their names as numbers (Name (K), t (s), Value)
 - ✓ stack columns: the names as text, the errors stacked with the values
+- ✓ Columns to sheets: a sheet per column (and back: 1 2 3 \| 4 5 6), per value of a column (S1:10,30 S2:20,50 S3:40; 300:1,3 310:2), errors said
 - ✓ Export: CSV, quoted where needed ("Wavelength (nm),\"R, a \"\"label\"\"\",Sample\n400,0.25,a\n405.5,,b;c\n410,0.3333333333333333,\n")
 - ✓ Export: decimal comma (semicolons), 3 digits, NaN, masked rows left out ("400;0,25;a\n406;NaN;\"b;c\"\n")
 - ✓ Export: the first form of the settings read; the extension from the delimiter
@@ -1552,6 +1677,7 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Batch: made from a group, it keeps what its last step gives
 - ✓ Batch: the steps shown on the file chosen (the third: its peak at 70); the files with what their names say (T = 20, T = 30, T = 40)
 - ✓ Batch: a file with its own settings of a step (sample_30C read at X = 40; the others their maximum: 30, 40, 70)
+- ✓ Batch: a step skipped for one file (its data passed on: 101 rows; the others their maximum), said in the table; the steps whose changes are for one file
 - ✓ Batch: own settings tidied (no empty step or file), laid over the common ones (the others kept)
 - ✓ Batch: a pattern guessed from the names (PL_{V}K_run1; sample_{V1}C_{V2}h)
 - ✓ Batch: an empty one from the Nodes panel; its files counted, no steps, nothing kept yet
@@ -1605,6 +1731,10 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ Refine: 30 of 30 regular particles made their shape; 48 nanocubes made squares snapped to the edges, their side within 0.7 % (median); only the shapes allowed
 - ✓ Find like this in the particle's shape: in clusters 48 of 48, none wrong; alone (ring 8 px): the cubes on their own 0.99 or more alike, those in clusters 0.81 at most
 - ✓ the dashed line around a model (a square 2 px out: 14 × 14); the eraser over an area, near its edge, on a stroke of its width
+- ✓ Find like this, a margin drawn by hand (a line 8 px out, its corners square: 44 of 48 found, the ring 48): the cubes on their own 0.99 or more alike, those in clusters 0.81 at most
+- ✓ Find like this, a margin drawn tight (as only the particle): every cube found (48 of 48)
+- ✓ Find like this ▸ Review: a cube in a cluster left out, the places like it dropped (in clusters 44 → 0), every cube on its own kept
+- ✓ Find like this ▸ Separate by overlap: rods side by side 8 of 8 (by the distance 4); two squares half over each other 0.50; the features of every place found
 - ✓ classifier: 3 nanocubes outlined, the edges from their outlines, split by edges: 47 of 48 apart (a mask without edges: 20; an older step: none made); their side within 2.0 % (median); sure inside 48 of them, hesitating at the edges
 - ✓ classifier: edges from outlines, a ring just outside them and the gap between two touching
 - ✓ nanocubes: 48 of 48 found like one (turn within 2.0°, side within 3.0 % once its edges are fitted, the box's orientation within 2.0°); the mask cut along the dark lines: 48 (Otsu alone: 24); the smallest rectangle, the alignment
@@ -1685,6 +1815,12 @@ n 0.87 W1 W 0.00401 S·s^½); Nyquist and Bode drawn by Plots from them
 - ✓ catalog: llms.txt with the rules, the format version and the nodes
 - ✓ catalog: check.mjs runs alone (ok)
 - ✓ catalog: nothing private in the published files
+- ✓ Help search: endings, synonyms, a word being typed, a typo, nothing found
+- ✓ Help: a long help cut into 30 subsections (nothing lost); the words found highlighted, the piece around them
+- ✓ Help search on the assistant's 162 questions: the right node in the first three for 80 % (no recipes yet)
+- ✓ Symbols: filled, white and dot as before, a fill colour of their own with its opacity, the marks inside
+- ✓ Scientific numbers: 1e16, 1E16, 1x10^16, 1*10^16, 1·10¹⁶, 10^16 and a decimal comma read alike; what is none of them, not a number
+- ✓ Scientific numbers: written short only when very large or very small (1e16, 5e-9; 100, 0.01 as they are), and read back the same
 - ✓ the app's version (1.0.0) as package.json's
 
 </details>

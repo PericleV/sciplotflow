@@ -2,7 +2,7 @@
 import { peakRunKey } from './engine/peaks.ts';
 import type { Edge } from '@xyflow/react';
 import { REGION_COLORS } from './nodes/regionColors.ts';
-import { DRAWING_DEFAULTS, PYTHON_DEFAULTS, CONVERT_DEFAULTS, STACK_DEFAULTS, TOSHEETS_DEFAULTS, TRANSPOSE_DEFAULTS, COLUMNS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, DATAMANIP_DEFAULTS, AVERAGE_DEFAULTS, COMBINE_DEFAULTS, TRANSLATE_DEFAULTS, CURVEMATH_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, PADJUST_DEFAULTS, CONTINGENCY_DEFAULTS, ROC_DEFAULTS, SURVIVAL_DEFAULTS, REGRESS_DEFAULTS, POWER_DEFAULTS, RESAMPLE_DEFAULTS, DISTFIT_DEFAULTS, AGREE_DEFAULTS, METHCOMP_DEFAULTS, LOGISTIC_DEFAULTS, BASELINE_DEFAULTS, WAVEFORM_DEFAULTS, STEPS_DEFAULTS, EVENTS_DEFAULTS, WAVELET_DEFAULTS, FRAC_DEFAULTS, FRFT_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SMITH_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, IMAGE_DEFAULTS, KK_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
+import { DRAWING_DEFAULTS, PYTHON_DEFAULTS, CONVERT_DEFAULTS, STACK_DEFAULTS, TOSHEETS_DEFAULTS, TRANSPOSE_DEFAULTS, COLUMNS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, DATAMANIP_DEFAULTS, AVERAGE_DEFAULTS, COMBINE_DEFAULTS, TRANSLATE_DEFAULTS, CURVEMATH_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, PEAKWIDTH_DEFAULTS, MATRIX_DEFAULTS, MATRIX_CONTOUR_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, ANOVA_DEFAULTS, CORR_DEFAULTS, PADJUST_DEFAULTS, CONTINGENCY_DEFAULTS, ROC_DEFAULTS, SURVIVAL_DEFAULTS, REGRESS_DEFAULTS, POWER_DEFAULTS, RESAMPLE_DEFAULTS, DISTFIT_DEFAULTS, AGREE_DEFAULTS, METHCOMP_DEFAULTS, LOGISTIC_DEFAULTS, BASELINE_DEFAULTS, WAVEFORM_DEFAULTS, STEPS_DEFAULTS, EVENTS_DEFAULTS, WAVELET_DEFAULTS, FRAC_DEFAULTS, FRFT_DEFAULTS, NONPAR_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, CALCULUS_DEFAULTS, PEAK_DEFAULTS, WORKBOOK_DEFAULTS, PICK_DEFAULTS, CANVAS_DEFAULTS, CANVAS_LAYOUT_DEFAULTS, UNSTACK_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, BARCHART_DEFAULTS, HISTOGRAM_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SMITH_DEFAULTS, SIGGEN_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, IMAGE_DEFAULTS, KK_DEFAULTS, NOTE_DEFAULTS, PLOT1D_DEFAULTS, PLOT_PAGE_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
 import { INSET_DEFAULTS, AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, COLORBAR_DEFAULTS, CURVE_STYLE_DEFAULTS, LEGEND_STYLE_DEFAULTS, PALETTE, SHAPE_DEFAULTS, SIDE_DEFAULTS, TEXT_SPEC_DEFAULTS, type AxesStyle, type CurveStyle, type SideStyle } from './figure/spec.ts';
 import { PROJECT_VERSION, type Project } from './project.ts';
 import type { AnnotationItem, AppNode, ImportSheet, NodeType, Plot1DData, PlotLegend, PlotPage } from './types.ts';
@@ -1093,6 +1093,82 @@ function groupedBarsExample(): Project {
   link(b, imp, bc, 'dataset');
   return project(b, 'Grouped bars with their values');
 }
+
+// the Signal generator: a chirp on pink noise (its spectrum by the FFT), a Fano peak beside two coupled oscillators on a
+// sloping baseline, and the C–V curves of an ideal MOS capacitor at 14 K and 300 K (deep depletion)
+function signalGeneratorExample(): Project {
+  const b = builder();
+  const chirp = add(b, 'siggen', 'sg-chirp', 0, 0, { ...SIGGEN_DEFAULTS, xTo: 2, points: 4000, components: [{ id: 'c1', kind: 'chirp', p: { A: 1, f0: 5, f1: 80, x0: 0.2, T: 1.6, phase: 0 }, opts: { method: 'linear', env: 'tukey' } }], noise: { kind: 'pink', dist: 'normal', by: 'snr', snr: 15, sigma: 0.1 }, clean: true });
+  const p1 = add(b, 'plot1d', 'sg-p1', 640, 0, plot({ label: 'chirp', style: curve(0, { mode: 'line', lineWidth: 0.5 }), cols: { x: 't (s)', y: 'Signal' }, rows: [{ label: 'clean', style: curve(1, { mode: 'line', lineWidth: 0.8 }), cols: { x: 't (s)', y: 'Signal (clean)' } }] }, { page: { name: 'chirp' } }));
+  link(b, chirp, p1, 'dataset');
+  const peaks = add(b, 'siggen', 'sg-peaks', 0, 1500, { ...SIGGEN_DEFAULTS, xFrom: 1, xTo: 3, points: 800, xName: 'Energy (eV)', yName: 'Absorbance', components: [{ id: 'c1', kind: 'fano', p: { A: 0.2, c: 1.5, w: 0.08, q: -2.5 }, own: true }, { id: 'c2', kind: 'coupled', p: { A: 1, e1: 2.3, e2: 2.4, g1: 0.05, g2: 0.03, g: 0.08 }, opts: { out: 'power' }, own: true }, { id: 'c3', kind: 'poly', p: {}, coefs: '0.1, 0.05' }], noise: { kind: 'white', dist: 'normal', by: 'sigma', snr: 20, sigma: 0.01 } });
+  const p2 = add(b, 'plot1d', 'sg-p2', 640, 1500, plot({ label: 'spectrum', style: curve(0, { mode: 'line' }), cols: { x: 'Energy (eV)', y: 'Absorbance' }, rows: [{ label: 'Fano', style: curve(1, { mode: 'line', dash: 'dash' }), cols: { x: 'Energy (eV)', y: 'Fano 1' } }, { label: 'coupled oscillators', style: curve(2, { mode: 'line', dash: 'dash' }), cols: { x: 'Energy (eV)', y: 'Coupled oscillators 2' } }] }, { axes: titled('Energy (eV)', 'Absorbance'), page: { name: 'peaks' } }));
+  link(b, peaks, p2, 'dataset');
+  const cv = add(b, 'siggen', 'sg-cv', 0, 3000, { ...SIGGEN_DEFAULTS, kind: 'cv' });
+  const p3 = add(b, 'plot1d', 'sg-p3', 640, 3000, plot({ label: '14 K', style: curve(0, { mode: 'line' }), cols: { x: 'V_G (V)', y: 'C (pF), T = 14 K' }, rows: [{ label: '300 K', style: curve(1, { mode: 'line' }), cols: { x: 'V_G (V)', y: 'C (pF), T = 300 K' } }] }, { axes: titled('V_G (V)', 'C (pF)'), page: { name: 'cv' } }));
+  link(b, cv, p3, 'dataset');
+  return project(b, 'Signal generator: a chirp, Fano and coupled oscillators, C–V curves');
+}
+
+// the C–V examples: Signal generators making the curves of a structure, each with its plots (C, 1/C², W, P …)
+type CvPlot = { name: string; y: string; cols: [label: string, column: string][] };
+function capacitanceExample(title: string, id: string, parts: { cv: Partial<typeof SIGGEN_DEFAULTS.cv>; plots: CvPlot[] }[]): Project {
+  const b = builder();
+  parts.forEach((part, i) => {
+    const cv = { ...SIGGEN_DEFAULTS.cv, ...part.cv };
+    const st = cv.struct ?? 'mos';
+    const x = st === 'mos' ? 'V_G (V)' : st === 'ms' || st === 'gcs' ? 'E (V)' : 'V (V)';
+    const g = add(b, 'siggen', `${id}-gen${i + 1}`, 0, i * 2400, { ...SIGGEN_DEFAULTS, kind: 'cv', cv });
+    part.plots.forEach((q, k) => {
+      const [first, ...rest] = q.cols;
+      const pl = add(b, 'plot1d', `${id}-plot${i + 1}${k + 1}`, 700, i * 2400 + k * 1100, plot({ label: first[0], style: curve(0, { mode: 'line' }), cols: { x, y: first[1] }, rows: rest.map(([label, y], j) => ({ label, style: curve(j + 1, { mode: 'line' }), cols: { x, y } })) }, { axes: titled(x, q.y), legend: rest.length ? {} : undefined, page: { name: q.name } }));
+      link(b, g, pl, 'dataset');
+    });
+  });
+  return project(b, title);
+}
+const SI_CV = { epsS: 11.7, eg: 1.12, mc: 1.08, mv: 0.81, niFrom: 'typed' as const, ni: 1e10 };
+const cvIdealExample = () =>
+  capacitanceExample('C–V: a MOS capacitor at low and high frequency (CV_ideal.m)', 'cvi', [
+    { cv: { mode: 'lfhf', hfMin: 'fit', niFrom: 'typed', ni: 5e-9, epsS: 9.7, tox: 39.74, vfbFrom: 'typed', vfb: 0, temps: '300', points: 1001, unit: 'norm' }, plots: [{ name: 'cv-ideal', y: 'C/C_ox', cols: [['low frequency', 'C/C_ox, LF'], ['high frequency', 'C/C_ox, HF']] }] },
+    { cv: { mode: 'hf', hfMin: 'exact', niFrom: 'typed', ni: 5e-9, epsS: 9.7, tox: 39.74, vfbFrom: 'typed', vfb: 0, temps: '300', points: 1001, unit: 'norm' }, plots: [{ name: 'cv-exact', y: 'C/C_ox', cols: [['high frequency, exact', 'C/C_ox']] }] },
+  ]);
+const cvTrapsExample = () =>
+  capacitanceExample('C–V: interface traps on Si, low and high frequency', 'cvt', [
+    { cv: { ...SI_CV, type: 'p', dop: 1e16, tox: 20, vfbFrom: 'typed', vfb: 0, mode: 'lfhf', hfMin: 'exact', ditShape: 'u', dit: 2e11, ditEdge: 1e13, ditW: 0.1, temps: '300', vFrom: -3, vTo: 3, unit: 'pF', psi: true }, plots: [{ name: 'cv-traps', y: 'C (pF)', cols: [['low frequency', 'C (pF), LF'], ['high frequency', 'C (pF), HF']] }, { name: 'band-bending', y: 'ψs (V)', cols: [['ψs', 'ψs (V), HF']] }] },
+    { cv: { ...SI_CV, type: 'p', dop: 1e16, tox: 20, vfbFrom: 'typed', vfb: 0, mode: 'lfhf', hfMin: 'exact', ditShape: 'none', temps: '300', vFrom: -3, vTo: 3, unit: 'pF' }, plots: [{ name: 'cv-no-traps', y: 'C (pF)', cols: [['low frequency', 'C (pF), LF'], ['high frequency', 'C (pF), HF']] }] },
+  ]);
+const cvJunctionExample = () =>
+  capacitanceExample('C–V: p–n junctions, abrupt and linearly graded', 'cvj', [
+    { cv: { ...SI_CV, struct: 'pn', profile: 'abrupt', na: 1e18, nd: 1e16, temps: '300', vFrom: -10, vTo: 0.5, unit: 'pF', inv2: true, width: true }, plots: [{ name: 'pn-abrupt', y: 'C (pF)', cols: [['abrupt', 'C (pF)']] }, { name: 'pn-mott-schottky', y: '1/C² (pF⁻²)', cols: [['1/C²', '1/C² (pF⁻²)']] }] },
+    { cv: { ...SI_CV, struct: 'pn', profile: 'graded', grad: 1e20, temps: '300', vFrom: -10, vTo: 0.5, unit: 'pF', width: true }, plots: [{ name: 'pn-graded', y: 'C (pF)', cols: [['linearly graded', 'C (pF)']] }, { name: 'pn-width', y: 'W (nm)', cols: [['W', 'W (nm)']] }] },
+  ]);
+const cvSchottkyExample = () =>
+  capacitanceExample('C–V: a Schottky diode on 4H-SiC at three temperatures', 'cvs', [
+    { cv: { struct: 'schottky', type: 'n', dop: 1e16, barrierFrom: 'typed', phiB: 1.6, temps: '300, 400, 500', vFrom: -20, vTo: 1, unit: 'pF', inv2: true }, plots: [{ name: 'schottky-cv', y: 'C (pF)', cols: [['300 K', 'C (pF), T = 300 K'], ['400 K', 'C (pF), T = 400 K'], ['500 K', 'C (pF), T = 500 K']] }, { name: 'schottky-mott', y: '1/C² (pF⁻²)', cols: [['300 K', '1/C² (pF⁻²), T = 300 K'], ['400 K', '1/C² (pF⁻²), T = 400 K'], ['500 K', '1/C² (pF⁻²), T = 500 K']] }] },
+  ]);
+const cvVaractorExample = () =>
+  capacitanceExample('C–V: varactors, the SPICE junction (abrupt and hyperabrupt)', 'cvv', [
+    { cv: { struct: 'varactor', cj0: 30, vj: 0.7, mj: 0.5, fc: 0.5, vFrom: -10, vTo: 0.6, unit: 'pF', inv2: true }, plots: [{ name: 'varactor-abrupt', y: 'C (pF)', cols: [['M = 0.5', 'C (pF)']] }, { name: 'varactor-inv', y: '1/C² (pF⁻²)', cols: [['1/C²', '1/C² (pF⁻²)']] }] },
+    { cv: { struct: 'varactor', cj0: 30, vj: 0.7, mj: 1.5, fc: 0.5, vFrom: -10, vTo: 0.6, unit: 'pF' }, plots: [{ name: 'varactor-hyperabrupt', y: 'C (pF)', cols: [['M = 1.5', 'C (pF)']] }] },
+  ]);
+const cvMimExample = () =>
+  capacitanceExample('C–V: a MIM capacitor and its voltage coefficients', 'cvm', [
+    { cv: { struct: 'mim', epsI: 7, tins: 50, area: 1, vcc1: 20, vcc2: 50, vFrom: -10, vTo: 10, unit: 'pF', rs: 0, gl: 0 }, plots: [{ name: 'mim', y: 'C (pF)', cols: [['Si₃N₄, 50 nm', 'C (pF)']] }] },
+  ]);
+const cvFerroExample = () =>
+  capacitanceExample('C–V: a ferroelectric capacitor, its butterfly and loop', 'cvf', [
+    { cv: { struct: 'ferro', ps: 30, pr: 25, ec: 50, tf: 200, epsB: 100, area: 0.01, vFrom: -8, vTo: 8, points: 801, unit: 'pF' }, plots: [{ name: 'butterfly', y: 'C (pF)', cols: [['up', 'C (pF), up'], ['down', 'C (pF), down']] }, { name: 'loop', y: 'P (µC/cm²)', cols: [['up', 'P (µC/cm²), up'], ['down', 'P (µC/cm²), down']] }] },
+  ]);
+const cvElectrodeExample = () =>
+  capacitanceExample('Mott–Schottky: an n-type TiO₂ electrode', 'cve', [
+    { cv: { struct: 'ms', type: 'n', dop: 1e18, epsS: 31, efb: -0.5, ch: 20, temps: '298.15', area: 100, vFrom: -0.8, vTo: 1.5, unit: 'uF/cm2', inv2: true, width: true }, plots: [{ name: 'electrode-cv', y: 'C (µF/cm²)', cols: [['C', 'C (µF/cm²)']] }, { name: 'mott-schottky', y: '1/C² (cm⁴/µF²)', cols: [['1/C²', '1/C² (cm⁴/µF²)']] }] },
+  ]);
+const cvDoubleLayerExample = () =>
+  capacitanceExample('Double layer: Gouy–Chapman and Gouy–Chapman–Stern', 'cvd', [
+    { cv: { struct: 'gcs', conc: 0.01, z: 1, epsW: 78.49, ch: 20, epzc: 0, temps: '298.15', area: 100, vFrom: -0.5, vTo: 0.5, unit: 'uF/cm2', psi: true }, plots: [{ name: 'gcs', y: 'C (µF/cm²)', cols: [['Stern 20 µF/cm²', 'C (µF/cm²)']] }, { name: 'diffuse-potential', y: 'φ_d (V)', cols: [['φ_d', 'φ_d (V)']] }] },
+    { cv: { struct: 'gcs', conc: 0.01, z: 1, epsW: 78.49, ch: 0, epzc: 0, temps: '298.15', area: 100, vFrom: -0.2, vTo: 0.2, unit: 'uF/cm2' }, plots: [{ name: 'gouy-chapman', y: 'C (µF/cm²)', cols: [['Gouy–Chapman alone', 'C (µF/cm²)']] }] },
+  ]);
 
 // a Smith chart: the impedance of a patch antenna from 2 to 3 GHz (a series RLC near 2.45 GHz, its resistance growing
 // away from resonance), before and after a matching section; markers at 2.40, 2.45 and 2.50 GHz, VSWR 2
@@ -3772,6 +3848,16 @@ const LIST: { group: string; name: string; desc: string; make: () => Project }[]
   { group: 'Electrochemistry & impedance', name: 'Cyclic voltammogram: area between the branches', desc: 'A potentiostat file with three cycles in one table: Split into columns makes a current column per cycle (a Plot coloured by the cycle) and cuts the pieces going up and coming back; Integrate takes the area between them, absolute, over a region (hatched); Pick points reads the peaks and the current at 0.5 V.', make: cvExample },
   { group: 'Signals', name: 'Signals: wavelets (transform, coherence, multiresolution, denoising, peaks)', desc: 'Signals made here: an oscillation of 8 s that fades as a burst of 3 s begins (the wavelet power with its cone and significance, to a Contour map; the power in the 6–10 s band in time); the coherence with a second signal of 8 s and its phase; a drifting noisy record split into details and a smooth (MODWT) and denoised (BayesShrink); the peaks of a diffraction pattern on a sloping background (CWT ridges).', make: waveletExample },
   { group: 'Signals', name: 'Signals: uneven periods, harmonics, mains hum (FFT)', desc: 'Made here: the brightness of a star seen on 180 uneven nights (Lomb–Scargle finds its period of 2.73 days, with the false-alarm probability of the peak); an amplifier driven near clipping (its harmonics, THD, SNR, SINAD, ENOB, SFDR); a slow signal under the mains hum at 50 Hz and its harmonics (a notch at 50 Hz with 5 harmonics, drawn over the signal without the hum).', make: spectraExample },
+  { group: 'Signals', name: 'Signal generator: a chirp, Fano and coupled oscillators, C–V curves', desc: 'Signals made, with their answer known: a linear chirp from 5 to 80 Hz in a Tukey window on pink noise (with the clean signal), a Fano dip beside two coupled oscillators (their anticrossing) on a sloping baseline, each also on its own, and the C–V curves of an ideal MOS capacitor at 14 K and 300 K.', make: signalGeneratorExample },
+  { group: 'Devices: C–V', name: 'C–V: a MOS capacitor at low and high frequency (CV_ideal.m)', desc: 'The MOS capacitor of CV_ideal.m (n-type, 10¹⁶ cm⁻³, ε_s 9.7, a 39.74 nm oxide, nᵢ 5·10⁻⁹ cm⁻³, V_FB 0, 300 K) as C/C_ox: its band bending solved at every gate voltage; at low frequency back to C_ox in inversion, at high frequency held at its value at 2.10|u_B| + 1.33 kT/q; below, the high frequency by the exact theory of Lindner and Brews.', make: cvIdealExample },
+  { group: 'Devices: C–V', name: 'C–V: interface traps on Si, low and high frequency', desc: 'A p-type Si capacitor (10¹⁶ cm⁻³, 20 nm SiO₂) with U-shaped interface traps (2·10¹¹ cm⁻² eV⁻¹ at mid-gap, rising to the band edges): their charge stretches both curves along V_G and their capacitance lifts the low-frequency one (the high–low method reads D_it from the gap between the two); ψs against V_G; below, the same without traps.', make: cvTrapsExample },
+  { group: 'Devices: C–V', name: 'C–V: p–n junctions, abrupt and linearly graded', desc: 'Si at 300 K: an abrupt junction (N_A 10¹⁸, N_D 10¹⁶ cm⁻³), its C and its straight 1/C² (slope: N_eff; meeting 0 at V_bi − 2kT/q); a linearly graded one (10²⁰ cm⁻⁴, V_bi self-consistent), its C ∝ (V_bi − V)^−⅓ and the depletion width.', make: cvJunctionExample },
+  { group: 'Devices: C–V', name: 'C–V: a Schottky diode on 4H-SiC at three temperatures', desc: 'A 1.6 eV barrier on n-type 4H-SiC (10¹⁶ cm⁻³) at 300, 400 and 500 K: C in reverse bias and the 1/C² lines, their slope the doping, their intercept V_bi − kT/q, lower as the temperature rises.', make: cvSchottkyExample },
+  { group: 'Devices: C–V', name: 'C–V: varactors, the SPICE junction (abrupt and hyperabrupt)', desc: 'The SPICE junction capacitance C_J0(1 − V/V_J)^−M (C_J0 30 pF, V_J 0.7 V), linear beyond F_C·V_J: an abrupt one (M = ½, its 1/C² straight) and a hyperabrupt one (M = 1.5) with a far wider tuning range.', make: cvVaractorExample },
+  { group: 'Devices: C–V', name: 'C–V: a MIM capacitor and its voltage coefficients', desc: 'A 50 nm Si₃N₄ MIM capacitor of 1 mm² (C₀ = ε₀εA/d) with voltage coefficients of 20 ppm/V and 50 ppm/V²: the slightly tilted parabola a linear-quadratic fit reads them back from.', make: cvMimExample },
+  { group: 'Devices: C–V', name: 'C–V: a ferroelectric capacitor, its butterfly and loop', desc: 'A PZT-like film (P_s 30, P_r 25 µC/cm², E_c 50 kV/cm, 200 nm, 100 µm × 100 µm) by the model of Miller et al.: the butterfly of C up and down, its peaks at the coercive voltage ±1 V, and the P–V loop.', make: cvFerroExample },
+  { group: 'Electrochemistry & impedance', name: 'Mott–Schottky: an n-type TiO₂ electrode', desc: 'An n-type TiO₂ electrode (ε 31, 10¹⁸ cm⁻³, E_fb −0.5 V, a Helmholtz layer of 20 µF/cm²) by Poisson’s equation: C, and the Mott–Schottky plot, straight in depletion, its slope the donors and its intercept E_fb + kT/q.', make: cvElectrodeExample },
+  { group: 'Electrochemistry & impedance', name: 'Double layer: Gouy–Chapman and Gouy–Chapman–Stern', desc: '0.01 M of a 1:1 electrolyte in water at 25 °C: the Gouy–Chapman capacitance (its minimum 22.8 µF/cm² at the potential of zero charge, a cosh around it), and with a Stern layer of 20 µF/cm² in series (flattened, the diffuse layer’s potential beside).', make: cvDoubleLayerExample },
   { group: 'Signals', name: 'Signals: a chirp taken out by the fractional Fourier transform', desc: 'A pulse under a chirp from 20 to 200 Hz: the scan of the orders finds where the chirp gathers (and its rate, 350 Hz/s); a narrow notch at that order (and at its mirror) takes it out, the pulse left, drawn over the pulse alone.', make: chirpExample },
   { group: 'Signals', name: 'Signals: baseline, waveform, steps, event averaging', desc: 'Signals made here: a Raman spectrum on a fluorescence background (Baseline correction with arPLS, the corrected spectrum in a Plot); a pulse train with ringing (Waveform measurements: levels, rise and fall times, period, duty cycle, overshoot); a photobleaching trace (Step detection by PELT: the levels and step sizes); a response five times smaller than the noise (Event averaging on the stimulus channel).', make: signalToolsExample },
   { group: 'Statistics', name: 'Laboratory: method comparison, agreement, distributions, power', desc: 'Data made here. Two analyzers on 50 samples (Passing–Bablok and Deming, with the data in a Plot; Lin’s concordance); three pathologists grading 60 biopsies (Cohen’s weighted κ, Fleiss’s κ, the ICC of their scores); 40 sensor lifetimes (five distributions fitted and ranked, the bootstrap interval of the median life); dose and response of 160 animals (logistic regression, its ROC curve); the size of the next study (Power & sample size with its curve).', make: labExample },

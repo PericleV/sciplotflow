@@ -1,7 +1,7 @@
 // The settings of a new node of each type.
 import { CSV_DEFAULTS } from './engine/csv.ts';
 import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, COLORBAR_DEFAULTS, CURVE_STYLE_DEFAULTS, FONTS, SHAPE_DEFAULTS, TEXT_SPEC_DEFAULTS } from './figure/spec.ts';
-import type { MatCompData, MatrixData, PickData, CalculusData, BookSheet, WorkbookData, ColumnsData, PeakWidthData, CombineData, UnstackData, ConvertData, TransposeData, StackData, ToSheetsData, AnnotationItem, AutoExtractData, CanvasData, DrawingData, DrawingGrid, CanvasLayout, DataManipData, ExtractData, FitNodeData, GenColData, ImportData, MathColData, PythonData, NoteData, Plot1DData, PlotPage, StatsData, PeakData, AnovaData, CorrData, NonparData, NormData, TTestData, CurveMathData, TranslateData, ConvData, FFTData, InterpData, NormalizeData, SmoothData, AverageData, CleanData, DigitizerData, FilterData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, SmithData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from './types.ts';
+import type { MatCompData, MatrixData, PickData, CalculusData, BookSheet, WorkbookData, ColumnsData, PeakWidthData, CombineData, UnstackData, ConvertData, TransposeData, StackData, ToSheetsData, AnnotationItem, AutoExtractData, CanvasData, DrawingData, DrawingGrid, CanvasLayout, DataManipData, ExtractData, FitNodeData, GenColData, SigGenData, ImportData, MathColData, PythonData, NoteData, Plot1DData, PlotPage, StatsData, PeakData, AnovaData, CorrData, NonparData, NormData, TTestData, CurveMathData, TranslateData, ConvData, FFTData, InterpData, NormalizeData, SmoothData, AverageData, CleanData, DigitizerData, FilterData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, SmithData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from './types.ts';
 import { SET_COLORS } from './engine/digitize.ts';
 import type { PhaseDigitizerData } from './engine/phasedigitize.ts';
 import type { EisData } from './engine/eis.ts';
@@ -138,6 +138,19 @@ export const COMBINE_DEFAULTS: CombineData = { how: 'after', at: 0, match: 'name
 export const MATHCOL_DEFAULTS: MathColData = { name: '', formula: '' };
 export const PYTHON_DEFAULTS: PythonData = { code: '# The inputs A, B … are variables here; the variables you make are the outputs.\nimport numpy as np\n\n' };
 export const GENCOL_DEFAULTS: GenColData = { name: 'x', mode: 'linspace', count: 101, start: 0, stop: 10, step: 0.1, formula: 'i^2', dist: 'normal', a: 0, b: 1, seed: 1 };
+export const SIGGEN_DEFAULTS: SigGenData = {
+  kind: 'components',
+  xFrom: 0,
+  xTo: 10,
+  points: 1000,
+  xName: 't (s)',
+  yName: 'Signal',
+  components: [{ id: 'c1', kind: 'sine', p: { A: 1, f: 1, phase: 0, offset: 0 } }],
+  cv: { type: 'n', mode: 'deep', temps: '14, 300', dop: 1e16, tox: 14, epsOx: 3.9, epsS: 9.66, eg: 3.3, mc: 0.45, mv: 0.66, area: 1, vfbFrom: 'typed', vfb: 1, phiM: 4.6, chi: 3.6, nox: 0, vFrom: -10, vTo: 10, points: 500, unit: 'pF' },
+  eis: { circuit: 'R(RC)', params: [{ name: 'R1', value: 10 }, { name: 'R2', value: 100 }, { name: 'C1', value: 1e-6 }], fMin: 0.1, fMax: 1e5, per: 10 },
+  noise: { kind: 'none', dist: 'normal', by: 'snr', snr: 20, sigma: 0.1 },
+  seed: 1,
+};
 export const STATS_DEFAULTS: StatsData = { on: 'columns' };
 export const PEAKWIDTH_DEFAULTS: PeakWidthData = { x: '', ys: '', kind: 'auto', base: 'line', baseValue: 0, regions: [] };
 export const COLUMNS_DEFAULTS: ColumnsData ={ items: [], find: '', replace: '', prefix: '', suffix: '', namesRow: 0 };

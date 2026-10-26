@@ -140,6 +140,8 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
     }
     case 'gencol':
       return 'column';
+    case 'siggen':
+      return 'dataset';
     case 'stats': {
       // on rows: every statistic a column, X, and the dataset
       if (node.data.on === 'rows') return handle === 'out' ? 'dataset' : handle === 'x' || STAT_KEYS.has(handle ?? '') ? 'column' : null;

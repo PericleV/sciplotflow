@@ -53,6 +53,7 @@ import { blandAltman, type BAGroup, type BAStats } from './blandaltman.ts';
 import { pieChart } from './piechart.ts';
 import { polarChart, radarSeries, toDegrees } from './polar.ts';
 import { smithChart, toGamma, type SmithSet } from './smith.ts';
+import { generate as generateSignal } from './siggen.ts';
 import { scatterMatrix } from './scattermatrix.ts';
 import { ternaryChart } from './ternary.ts';
 import { waterfallChart, waterfallZ } from './waterfall.ts';
@@ -5018,6 +5019,12 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       return polarNode(n, inputs);
     case 'smith':
       return smithNode(n, inputs);
+    case 'siggen': {
+      // a signal made: no input
+      const r = generateSignal(n.data);
+      if (typeof r === 'string') return { errors: [r] };
+      return { outputs: { out: { t: 'dataset', v: r.dataset } }, warnings: r.warnings, view: { available: r.dataset.columns.map(colInfo), signal: { labels: r.labels, plots: r.plots } } };
+    }
     case 'scattermatrix':
       return scatterMatrixNode(n, inputs);
     case 'ternary':

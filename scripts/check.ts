@@ -7,6 +7,8 @@ import { copiedFigure, figureCopied } from '../src/nodes/figureClip.ts';
 import { docFromText, isPlain, plainOf } from '../src/nodes/richDoc.ts';
 import { NODE_HELP, NODE_SHORT } from '../src/help.ts';
 import * as Sg from '../src/engine/signal.ts';
+import { componentAt, generate, mosCurve, newComponent, noiseOf, rng } from '../src/engine/siggen.ts';
+import { cvMake, gradedVbi, hfExactTable, measured, trapsOf, type CvSpec } from '../src/engine/cv.ts';
 import { legendLayout } from '../src/figure/legendLayout.ts';
 import { fitLook, quickFit, quickFitsOf } from '../src/engine/quickfit.ts';
 import { aggregateByX } from '../src/engine/aggregate.ts';
@@ -44,7 +46,7 @@ import { mathFace, mathKey, setMathSizes } from '../src/math/sizes.ts';
 import { plotMapping, stuckLines } from '../src/engine/evaluate.ts';
 import { canvasFigure, collapseGroups, evaluateGraph, legendCurves, newCache, packCells, parseRows, plotRows, shapeSpec } from '../src/engine/evaluate.ts';
 import { autoFrame, axesGeometry, turnedExtent, wrapLabel, autoTitle, axisNeeds, legendPlace, endLabels, placeLegends } from '../src/figure/axes.ts';
-import { column, curvesByRole, findColumn, fmtNum, unitOf } from '../src/engine/table.ts';
+import { column, curvesByRole, findColumn, fmtNum, parseSci, sciPretty, sciText, unitOf } from '../src/engine/table.ts';
 import { autoExtract, pick } from '../src/engine/extract.ts';
 import { applyManip, renumber, ROW_CHANGED, ROW_DELETED, ROW_MASKED } from '../src/engine/manip.ts';
 import { tQuantile } from '../src/engine/lm.ts';
@@ -152,7 +154,7 @@ import { averageNode } from '../src/engine/signalnodes.ts';
 import { AVERAGE_DEFAULTS, BARCHART_DEFAULTS, DIGITIZER_DEFAULTS, HISTOGRAM_DEFAULTS } from '../src/defaults.ts';
 import { barChart, rawTable, wideTable, sortTable, type BarTable } from '../src/engine/barchart.ts';
 import { boxGroups, boxStats, boxViolin, violinStats } from '../src/engine/boxviolin.ts';
-import { BLANDALTMAN_DEFAULTS, BOXVIOLIN_DEFAULTS, CONTOUR_DEFAULTS, PIE_DEFAULTS, POLAR_DEFAULTS, SMITH_DEFAULTS, PROBPLOT_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS } from '../src/defaults.ts';
+import { BLANDALTMAN_DEFAULTS, BOXVIOLIN_DEFAULTS, CONTOUR_DEFAULTS, PIE_DEFAULTS, POLAR_DEFAULTS, SMITH_DEFAULTS, SIGGEN_DEFAULTS, PROBPLOT_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS } from '../src/defaults.ts';
 import { blandAltman } from '../src/engine/blandaltman.ts';
 import { pieAngles, pieChart } from '../src/engine/piechart.ts';
 import { bracketCurves, SIG_DEFAULTS, significance, type SigElement, type SigSpec } from '../src/engine/signif.ts';
@@ -6775,6 +6777,310 @@ checkPhase(ok);
   ok(filled.fill === '#0072b2' && !filled.inner && white.fill === '#ffffff' && dot.fill === 'none' && dot.inner === 'dot' && own.fill === '#ffcc00' && own.fillOpacity === 0.4 && own.inner === 'plus' && plus.d === 'M-2.5,0L2.5,0M0,-2.5L0,2.5' && !plus.filled && dotIn.filled && innerPath('backslash', 10, 0, 0).d.startsWith('M-1.77,-1.77'), 'Symbols: filled, white and dot as before, a fill colour of their own with its opacity, the marks inside');
 }
 
+{
+  // Signal generator: chirps, square, sawtooth and triangle as scipy; Voigt as scipy's voigt_profile; Fano's zero and
+  // maximum; coupled oscillators split by 2g; noise spectra (white, pink 1/f, brown 1/f²); C–V of an ideal MOS
+  // capacitor as razvan_CV_ideal_test.m (deep depletion), and its low and high frequency limits (Sze); a circuit's
+  // impedance; the SNR, missing values and the seed
+  const G = JSON.parse(readFileSync(new URL('./fixtures/siggen-ref.json', import.meta.url), 'utf8')) as { t: number[]; chirp: Record<string, number[]>; square: number[]; sawtooth: number[]; triangle: number[]; voigt: number[]; cv: { V: number[]; C: Record<string, number[]>; Cox: number } };
+  const comp = (kind: Parameters<typeof newComponent>[0], p: Record<string, number>, opts?: Record<string, string>) => ({ ...newComponent(kind, 'c'), p: { ...newComponent(kind, 'c').p, ...p }, ...(opts ? { opts: { ...newComponent(kind, 'c').opts, ...opts } } : {}) });
+  const maxDiff = (a: number[] | string, b: number[]) => (typeof a === 'string' ? Infinity : Math.max(...a.map((v, i) => Math.abs(v - b[i]))));
+  const chirps = ['linear', 'quadratic', 'logarithmic', 'hyperbolic'].map((m) => maxDiff(componentAt(comp('chirp', { f0: 1, f1: 10, x0: 0, T: 10 }, { method: m, env: 'none' }), G.t), G.chirp[m]));
+  const mism = (a: number[] | string, b: number[]) => (typeof a === 'string' ? 999 : a.filter((v, i) => Math.abs(v - b[i]) > 1e-9).length);
+  const waves = [mism(componentAt(comp('square', { f: 0.7, duty: 0.3 }), G.t), G.square), maxDiff(componentAt(comp('sawtooth', { f: 0.7 }), G.t), G.sawtooth), maxDiff(componentAt(comp('triangle', { f: 0.7 }), G.t), G.triangle)];
+  const xs = Array.from({ length: 101 }, (_, i) => i / 10);
+  const vg = maxDiff(componentAt(comp('voigt', { c: 5, gw: 1, lw: 0.5 }), xs), G.voigt);
+  const fano = componentAt(comp('fano', { c: 5, w: 1, q: 2 }), [5 - 1, 5 + 0.25]) as number[];
+  const grid = Array.from({ length: 4001 }, (_, i) => 3 + i / 1000);
+  const pw = componentAt(comp('coupled', { e1: 5, e2: 5, g1: 0.02, g2: 0.02, g: 0.5 }), grid) as number[];
+  const peaks = grid.filter((_, i) => i > 0 && i < grid.length - 1 && pw[i] > pw[i - 1] && pw[i] >= pw[i + 1] && pw[i] > 0.3);
+  ok(chirps.every((d) => d < 1e-9) && waves[0] <= 2 && waves[1] < 1e-9 && waves[2] < 1e-9 && vg < 1e-6 && Math.abs(fano[0]) < 1e-12 && Math.abs(fano[1] - 5) < 1e-12 && peaks.length === 2 && Math.abs(peaks[0] - 4.5) < 0.03 && Math.abs(peaks[1] - 5.5) < 0.03, `Signal generator: chirps (${chirps.map((d) => d.toExponential(0)).join(', ')}), square, sawtooth, triangle as scipy; Voigt; Fano's zero and maximum; coupled oscillators split by 2g (${peaks.map((p) => p.toFixed(3)).join(', ')})`);
+  // the slope of the noise's spectrum (log power against log frequency, octave bands)
+  const slope = (kind: 'white' | 'pink' | 'brown') => {
+    const n = 8192;
+    let px = 0;
+    let py = 0;
+    let pxx = 0;
+    let pxy = 0;
+    let m = 0;
+    const P = new Array(n / 2).fill(0);
+    for (let rep = 0; rep < 8; rep++) {
+      const v = noiseOf(kind, 'normal', n, rng(11 + rep));
+      const [re, im] = Sg.fft(v, new Array(n).fill(0));
+      for (let k = 1; k < n / 2; k++) P[k] += re[k] ** 2 + im[k] ** 2;
+    }
+    for (let a = 4; a < n / 4; a *= 2) {
+      let s = 0;
+      for (let k = a; k < 2 * a; k++) s += P[k];
+      const [lx, ly] = [Math.log10(a * 1.5), Math.log10(s / a)];
+      px += lx;
+      py += ly;
+      pxx += lx * lx;
+      pxy += lx * ly;
+      m++;
+    }
+    return (m * pxy - px * py) / (m * pxx - px * px);
+  };
+  const sl = [slope('white'), slope('pink'), slope('brown')];
+  ok(Math.abs(sl[0]) < 0.15 && Math.abs(sl[1] + 1) < 0.15 && Math.abs(sl[2] + 2) < 0.3, `Signal generator: noise spectra, white ${sl[0].toFixed(2)}, pink ${sl[1].toFixed(2)}, brown ${sl[2].toFixed(2)} (0, −1, −2)`);
+  // C–V
+  const cvBase = { ...SIGGEN_DEFAULTS.cv, type: 'n' as const, mode: 'deep' as const, dop: 1e16, tox: 14, epsOx: 3.9, epsS: 9.66, eg: 3.3, mc: 0.45, mv: 0.66, area: 1, vfbFrom: 'typed' as const, vfb: 1 };
+  const rel = (T: number) => {
+    const cur = mosCurve(cvBase, T, G.cv.V);
+    if (typeof cur === 'string') return Infinity;
+    const ref = G.cv.C[String(T)];
+    // (the points both reach: at the ends of the range of ψ one grid may reach a voltage the other does not)
+    const both = cur.c.flatMap((v, i) => (Number.isFinite(v) && Number.isFinite(ref[i]) ? [Math.abs(v - ref[i]) / ref[i]] : []));
+    const fin = [cur.c, ref].map((a) => a.filter(Number.isFinite).length);
+    return Math.abs(fin[0] - fin[1]) <= 2 && both.length > 100 ? Math.max(...both) : Infinity;
+  };
+  const si = { ...cvBase, eg: 1.12, mc: 1.08, mv: 0.81, epsS: 11.7, tox: 20 };
+  const curve = (mode: 'deep' | 'lf' | 'hf') => mosCurve({ ...si, mode }, 300, [-10, 5]) as Exclude<ReturnType<typeof mosCurve>, string>;
+  const [lf, hf, deep] = [curve('lf'), curve('hf'), curve('deep')];
+  const phiT = (1.380649e-23 * 300) / 1.602176634e-19;
+  const nc = 2 * ((2 * Math.PI * 1.08 * 9.1093837015e-31 * 1.380649e-23 * 300) / 6.62607015e-34 ** 2) ** 1.5;
+  const nv = 2 * ((2 * Math.PI * 0.81 * 9.1093837015e-31 * 1.380649e-23 * 300) / 6.62607015e-34 ** 2) ** 1.5;
+  const ni = Math.sqrt(nc * nv) * Math.exp((-1.602176634e-19 * 1.12) / (2 * 1.380649e-23 * 300));
+  const es = 8.8541878128e-12 * 11.7;
+  const wmax = Math.sqrt((4 * es * phiT * Math.log(1e22 / ni)) / (1.602176634e-19 * 1e22));
+  const cmin = 1 / (1 / hf.cox + wmax / (es * 1e-6));
+  ok(rel(300) < 2e-3 && rel(14) < 2e-3 && lf.c[0] > 0.95 * lf.cox && Math.abs(hf.c[0] / cmin - 1) < 0.02 && deep.c[0] < hf.c[0] && lf.c[1] > 0.9 * lf.cox, `C–V: as razvan_CV_ideal_test.m (deep depletion, 300 K and 14 K: ${rel(300).toExponential(1)}, ${rel(14).toExponential(1)}); low frequency back to C_ox, high frequency at C_min (${(hf.c[0] / cmin).toFixed(4)} of Sze's, which leaves out kT/q in W_max), deep depletion below`);
+  // a circuit's impedance; the noise by a signal-to-noise ratio; missing values; the seed
+  const ez = generate({ ...SIGGEN_DEFAULTS, kind: 'eis', eis: { circuit: 'R(RC)', params: [{ name: 'R1', value: 10 }, { name: 'R2', value: 100 }, { name: 'C1', value: 1e-6 }], fMin: 1, fMax: 1e5, per: 5 } });
+  const zc = typeof ez === 'string' ? [] : ez.dataset.columns;
+  const f0 = zc[0]?.values[10] ?? NaN;
+  const w = 2 * Math.PI * f0;
+  const zr = 10 + 100 / (1 + (w * 100e-6) ** 2);
+  const zi = (-w * 100 * 100e-6) / (1 + (w * 100e-6) ** 2);
+  const sine = { ...SIGGEN_DEFAULTS, components: [comp('sine', { A: 1, f: 3 })], points: 4000, noise: { kind: 'white' as const, dist: 'normal' as const, by: 'snr' as const, snr: 20, sigma: 0 }, clean: true, missing: 10 };
+  const g1 = generate(sine);
+  const g2 = generate(sine);
+  const yv = typeof g1 === 'string' ? [] : Array.from(g1.dataset.columns[1].values);
+  const cl = typeof g1 === 'string' ? [] : Array.from(g1.dataset.columns[2].values);
+  const resid = yv.flatMap((v, i) => (Number.isFinite(v) ? [v - cl[i]] : []));
+  const sd = Math.sqrt(resid.reduce((a, b) => a + b * b, 0) / resid.length);
+  ok(zc.map((c) => c.name).join(' / ') === "f (Hz) / Z' (Ω) / -Z'' (Ω) / |Z| (Ω) / Phase (°)" && Math.abs(zc[1].values[10] - zr) < 1e-9 * zr && Math.abs(zc[2].values[10] + zi) < 1e-9 * Math.abs(zi) && Math.abs(sd / (Math.SQRT1_2 / 10) - 1) < 0.05 && yv.filter((v) => !Number.isFinite(v)).length === 400 && typeof g2 !== 'string' && g2.dataset.columns[1].values.every((v, i) => Object.is(v, yv[i]) || v === yv[i]), `Signal generator: an R(RC) circuit's impedance; noise at 20 dB SNR (SD ${sd.toFixed(4)}, expected ${(Math.SQRT1_2 / 10).toFixed(4)}); 10 % missing; the same seed, the same signal`);
+  // the node's graph: the noisy signal as dots on the clean one; the C–V curves one a temperature; Nyquist and Bode
+  const gcv = generate({ ...SIGGEN_DEFAULTS, kind: 'cv' });
+  const pz = typeof ez === 'string' ? [] : ez.plots;
+  const ps = typeof g1 === 'string' ? undefined : g1.plots[0];
+  ok(!!ps?.data && ps.result.y[5] === cl[5] && typeof gcv !== 'string' && gcv.plots[0].series?.length === 1 && gcv.plots[0].legend?.[0] === 'T = 14 K' && gcv.plots[0].series[0].name === 'T = 300 K' && pz.length === 3 && pz[0].xName === "Z' (Ω)" && Math.abs(pz[0].result.y[10] + zi) < 1e-9 * Math.abs(zi) && !!pz[1].logX && (typeof ez === 'string' ? '' : ez.labels.join()) === 'Nyquist,Bode |Z|,Bode phase', 'Signal generator: its graph (the signal on the clean one; a C–V curve a temperature; Nyquist and Bode for an impedance)');
+}
+
+{
+  // C–V structures of the Signal generator, against references computed apart (scripts/fixtures/cv-ref.py) and the
+  // literature: CV_ideal.m, the exact high-frequency theory, interface traps (and the high–low and Terman methods that
+  // measure them), the series resistance correction, p–n and Schottky junctions, the SPICE junction, the MIM and
+  // ferroelectric capacitors, the Mott–Schottky electrode and the Gouy–Chapman–Stern double layer
+  type Arr = (number | null)[];
+  const R = JSON.parse(readFileSync(new URL('./fixtures/cv-ref.json', import.meta.url), 'utf8')) as {
+    ideal: { V: number[]; lf: number[]; hf: number[]; Cox: number };
+    hfx: { lnR: number; v: number[]; C: number[] };
+    traps: { s: number[]; Q: Record<string, number[]>; C: Record<string, number[]> };
+    trapcurve: { V: number[]; lf: number[]; hf: number[] };
+    pn: { V: number[]; vbi: number; abrupt: Arr; vbiGraded: number; graded: Arr; vbiSchottky: number; schottky: Arr };
+    spice: { V: number[]; C: number[] };
+    ferro: { V: number[]; up: number[]; down: number[]; Pup: number[]; Pdown: number[] };
+    ms: { E: number[]; C: number[] };
+    gcs: { E: number[]; gc: number[]; gcs: number[]; phi: number[] };
+  };
+  const KB = 1.380649e-23;
+  const QE = 1.602176634e-19;
+  const EPS0 = 8.8541878128e-12;
+  // the largest relative difference where both are numbers, and the same points empty in both
+  const relDiff = (a: number[], b: Arr) => {
+    if (a.length !== b.length || a.some((v, i) => Number.isFinite(v) !== (b[i] !== null && Number.isFinite(b[i])))) return Infinity;
+    return Math.max(0, ...a.flatMap((v, i) => (Number.isFinite(v) ? [Math.abs(v - (b[i] as number)) / Math.abs(b[i] as number)] : [])));
+  };
+  const base: CvSpec = { ...SIGGEN_DEFAULTS.cv };
+  const made = (c: Partial<CvSpec>) => {
+    const m = cvMake({ ...base, ...c });
+    if (typeof m === 'string') throw new Error(m);
+    return m;
+  };
+  const curveOf = (c: CvSpec, T: number, V: number[], mode: 'deep' | 'lf' | 'hf') => {
+    const m = mosCurve(c, T, V, mode);
+    if (typeof m === 'string') throw new Error(m);
+    return m;
+  };
+  // a straight line through (x, y): slope, intercept
+  const line = (x: number[], y: number[]) => {
+    const n = x.length;
+    const [mx, my] = [x.reduce((a, b) => a + b, 0) / n, y.reduce((a, b) => a + b, 0) / n];
+    const b = x.reduce((a, v, i) => a + (v - mx) * (y[i] - my), 0) / x.reduce((a, v) => a + (v - mx) ** 2, 0);
+    return { b, a: my - b * mx };
+  };
+
+  // CV_ideal.m: n-type, nᵢ typed (5·10⁻³ m⁻³), V_FB = 0; low frequency, and high frequency held at 2.10|u_B| + 1.33
+  const ideal: CvSpec = { ...base, type: 'n', dop: 1e16, epsS: 9.7, epsOx: 3.9, tox: 39.74, area: 1, vfbFrom: 'typed', vfb: 0, niFrom: 'typed', ni: 5e-9, hfMin: 'fit', ditShape: 'none' };
+  const dIdeal = [relDiff(curveOf(ideal, 300, R.ideal.V, 'lf').c, R.ideal.lf), relDiff(curveOf(ideal, 300, R.ideal.V, 'hf').c, R.ideal.hf)];
+  ok(dIdeal.every((d) => d < 1e-9), `C–V, MOS: as CV_ideal.m, its band bending solved at every one of 1001 gate voltages (scipy brentq): low frequency ${dIdeal[0].toExponential(1)}, high frequency (held below 2.10|u_B| + 1.33 kT/q) ${dIdeal[1].toExponential(1)}`);
+
+  // the exact high-frequency theory (the majority carriers respond, the minority ones' charge does not): the Riccati
+  // equation in v against the linearized Poisson equation integrated in x (scipy solve_ivp, DOP853)
+  const Yx = hfExactTable(R.hfx.lnR, -70, 10);
+  const dHf = Math.max(...R.hfx.v.map((v, i) => Math.abs(-Yx(v) - R.hfx.C[i]) / R.hfx.C[i]));
+  // (no minority carriers: the deep depletion's capacitance, (1 − e^v)/√(2(e^v − v − 1)) exactly)
+  const Y0 = hfExactTable(-1e4, -60, 10);
+  const dd = (v: number) => Math.abs(Math.expm1(v)) / Math.sqrt(2 * (Math.expm1(v) - v));
+  const dDeep = Math.max(...[-50, -20, -5, -1, -0.1, 0.1, 1, 5].map((v) => Math.abs(-Y0(v) - dd(v)) / dd(v)));
+  ok(dHf < 1e-6 && dDeep < 1e-7, `C–V, MOS: the exact high-frequency capacitance (Lindner 1962; Brews 1974) as the linearized Poisson equation in x on the equilibrium profile (scipy solve_ivp) to ${dHf.toExponential(1)} from depletion to strong inversion and accumulation; with no minority carriers, the deep depletion's own (${dDeep.toExponential(1)})`);
+
+  // its minimum against the two shortcuts: the depletion width at 2φ_B (Sze) and CV_ideal.m's 2.10|u_B| + 1.33
+  const minOf = (c: CvSpec, h: 'sze' | 'fit' | 'exact') => curveOf({ ...c, hfMin: h }, 300, [c.type === 'n' ? -8 : 8], 'hf').c[0];
+  const si: CvSpec = { ...base, type: 'p', dop: 1e16, epsS: 11.7, epsOx: 3.9, tox: 20, eg: 1.12, mc: 1.08, mv: 0.81, area: 1, vfbFrom: 'typed', vfb: 0, niFrom: 'typed', ni: 1e10, ditShape: 'none' };
+  const sic: CvSpec = { ...base, type: 'n', dop: 1e16, tox: 14, area: 1, vfbFrom: 'typed', vfb: 1, niFrom: 'masses', ditShape: 'none' };
+  const devs = [si, sic].map((c) => {
+    const ex = minOf(c, 'exact');
+    return [minOf(c, 'sze') / ex - 1, minOf(c, 'fit') / ex - 1];
+  });
+  const pc = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v * 100).toFixed(2)} %`;
+  ok(devs.every(([sz, ft]) => sz > 0 && Math.abs(ft) < sz), `C–V, MOS: the high-frequency minimum against the exact theory, Si (p, 10¹⁶ cm⁻³, 20 nm SiO₂): at 2φ_B (Sze) ${pc(devs[0][0])}, CV_ideal.m ${pc(devs[0][1])}; 4H-SiC (n, 10¹⁶, 14 nm): ${pc(devs[1][0])}, ${pc(devs[1][1])} (the depletion approximation at 2φ_B above it, CV_ideal.m's nearer)`);
+
+  // interface traps: their charge and capacitance (Gauss–Legendre on the Fermi function's pieces) against scipy quad
+  const tr = trapsOf({ ...base, eg: 1.12, ditShape: 'u', dit: 2e11, ditEdge: 1e13, ditW: 0.1 })!;
+  const dTr = Math.max(
+    ...[300, 77].flatMap((T) =>
+      R.traps.s.flatMap((s, i) => {
+        const ph = (KB * T) / QE;
+        const [q, c] = [R.traps.Q[String(T)][i], R.traps.C[String(T)][i]];
+        // (against the largest of each: the charge passes 0 at mid-gap, the capacitance far beyond the gap)
+        const [qMax, cMax] = [Math.max(...R.traps.Q[String(T)].map(Math.abs)), Math.max(...R.traps.C[String(T)])];
+        return [Math.abs(tr.charge(s, ph) - q) / qMax, Math.abs(tr.cap(s, ph) - c) / cMax];
+      }),
+    ),
+  );
+  // the curve they make (U-shaped D_it on Si): at the gate voltages of chosen band bendings
+  const siT: CvSpec = { ...si, type: 'n', ditShape: 'u', dit: 2e11, ditEdge: 1e13, ditW: 0.1, hfMin: 'sze' };
+  const dTc = [relDiff(curveOf(siT, 300, R.trapcurve.V, 'lf').c, R.trapcurve.lf), relDiff(curveOf(siT, 300, R.trapcurve.V, 'hf').c, R.trapcurve.hf)];
+  ok(dTr < 1e-8 && dTc.every((d) => d < 1e-8), `C–V, MOS: interface traps (U-shaped, donors below mid-gap, acceptors above), their charge and capacitance at 300 K and 77 K as scipy quad over the Fermi function (${dTr.toExponential(1)}); the low- and high-frequency curves they stretch (${dTc.map((d) => d.toExponential(1)).join(', ')})`);
+
+  // the two methods that measure them (Schroder, Semiconductor Material and Device Characterization, ch. 6): high–low
+  // (Castagné & Vapaille 1971) and Terman (1962), on a constant D_it of 5·10¹¹ cm⁻² eV⁻¹, in depletion
+  const siC: CvSpec = { ...siT, ditShape: 'const', dit: 5e11 };
+  const Vd = Array.from({ length: 81 }, (_, i) => -0.6 + i * 0.02);
+  const [cl, chf] = [curveOf(siC, 300, Vd, 'lf'), curveOf(siC, 300, Vd, 'hf')];
+  const cox = cl.cox;
+  const inDep = Vd.flatMap((_, i) => (cl.psi[i] < -0.15 && cl.psi[i] > -0.55 ? [i] : []));
+  const hiLo = inDep.map((i) => (1 / (1 / cl.c[i] - 1 / cox) - 1 / (1 / chf.c[i] - 1 / cox)) / (QE * 1e-6) / 1e4);
+  // Terman: the ideal high-frequency curve gives ψs of every C; ΔV(ψs) = V − V_ideal; D_it = (C_ox/qA)·dΔV/dψs
+  const Vi = Array.from({ length: 8001 }, (_, i) => -2 + i * 0.0005);
+  const ideal2 = curveOf({ ...siC, ditShape: 'none' }, 300, Vi, 'hf');
+  const atC = (c: number) => {
+    const k = Math.max(1, ideal2.c.findIndex((q, i) => i > 0 && ideal2.psi[i] < -0.05 && (q - c) * (ideal2.c[i - 1] - c) <= 0));
+    const f = (c - ideal2.c[k - 1]) / (ideal2.c[k] - ideal2.c[k - 1]);
+    return { v: Vi[k - 1] + f * (Vi[k] - Vi[k - 1]), psi: ideal2.psi[k - 1] + f * (ideal2.psi[k] - ideal2.psi[k - 1]) };
+  };
+  const tm = inDep.map((i) => ({ dv: Vd[i] - atC(chf.c[i]).v, psi: atC(chf.c[i]).psi }));
+  const terman = tm.slice(1).map((p, j) => ((cox / (QE * 1e-6)) * ((p.dv - tm[j].dv) / (p.psi - tm[j].psi))) / 1e4);
+  const errHL = Math.max(...hiLo.map((d) => Math.abs(d / 5e11 - 1)));
+  const errT = Math.max(...terman.map((d) => Math.abs(d / 5e11 - 1)));
+  ok(inDep.length > 10 && errHL < 0.01 && errT < 0.01, `C–V, MOS: the high–low method (Castagné & Vapaille 1971) gives back the D_it typed to ${(errHL * 100).toFixed(3)} %, Terman's (1962) to ${(errT * 100).toFixed(3)} %, over ${inDep.length} voltages in depletion`);
+
+  // the series resistance and the leak: the correction of Nicollian & Brews (Schroder, ch. 6) gives back C and G
+  const corr = [1e-12, 1e-10, 1e-9].flatMap((C) =>
+    [
+      [50, 0, 1e5],
+      [500, 1e-6, 1e6],
+      [10, 1e-4, 1e3],
+    ].map(([rs, gl, f]) => {
+      const m = measured(C, rs, gl, f);
+      const w = 2 * Math.PI * f;
+      const M = m.g * m.g + w * w * m.c * m.c;
+      const a = m.g - M * rs;
+      return Math.max(Math.abs((M * m.c) / (a * a + w * w * m.c * m.c) / C - 1), Math.abs((M * a) / (a * a + w * w * m.c * m.c) - gl) / Math.max(gl, 1e-12));
+    }),
+  );
+  ok(Math.max(...corr) < 1e-7, `C–V: measured in parallel mode through R_s with a leak G, Nicollian and Brews's correction gives back C and G (${Math.max(...corr).toExponential(1)})`);
+
+  // p–n junctions and the Schottky diode (Si, 300 K): as the reference, and their lines (Sze & Ng, ch. 2 and 3)
+  const siJ: Partial<CvSpec> = { epsS: 11.7, eg: 1.12, mc: 1.08, mv: 0.81, niFrom: 'typed', ni: 1e10, temps: '300', area: 1, vFrom: -5, vTo: 0.5, points: 111, rs: 0, gl: 0 };
+  const ab = made({ ...siJ, struct: 'pn', na: 1e18, nd: 1e16, profile: 'abrupt' }).sets[0].c;
+  const gr = made({ ...siJ, struct: 'pn', profile: 'graded', grad: 1e20 }).sets[0].c;
+  const sk = made({ ...siJ, struct: 'schottky', type: 'n', dop: 1e16, barrierFrom: 'typed', phiB: 0.8 }).sets[0].c;
+  const dJ = [relDiff(ab, R.pn.abrupt), relDiff(gr, R.pn.graded), relDiff(sk, R.pn.schottky)];
+  const vg = gradedVbi(1e28, EPS0 * 11.7, (KB * 300) / QE, Math.log(1e16));
+  const phiT = (KB * 300) / QE;
+  const es = EPS0 * 11.7;
+  // 1/C² against V: its slope −2/(qεN·A²) and where it meets 0, V_bi − 2kT/q (abrupt) or V_bi − kT/q (Schottky);
+  // 1/C³ of the graded one meets 0 at V_bi
+  const rev = R.pn.V.flatMap((v, i) => (v < -0.5 ? [i] : []));
+  const lnAb = line(rev.map((i) => R.pn.V[i]), rev.map((i) => 1 / ab[i] ** 2));
+  const lnSk = line(rev.map((i) => R.pn.V[i]), rev.map((i) => 1 / sk[i] ** 2));
+  const lnGr = line(rev.map((i) => R.pn.V[i]), rev.map((i) => 1 / gr[i] ** 3));
+  const nEff = 2 / (QE * es * 1e-12 * -lnAb.b) / 1e6;
+  const nSk = 2 / (QE * es * 1e-12 * -lnSk.b) / 1e6;
+  const lines = [nEff / ((1e18 * 1e16) / (1e18 + 1e16)) - 1, -lnAb.a / lnAb.b - (R.pn.vbi - 2 * phiT), nSk / 1e16 - 1, -lnSk.a / lnSk.b - (R.pn.vbiSchottky - phiT), -lnGr.a / lnGr.b - R.pn.vbiGraded];
+  ok(dJ.every((d) => d < 1e-12) && Math.abs(vg - R.pn.vbiGraded) < 1e-12 && lines.every((d) => Math.abs(d) < 1e-9), `C–V: p–n junctions (abrupt; linearly graded, V_bi ${R.pn.vbiGraded.toFixed(4)} V self-consistent as scipy brentq) and a Schottky diode as Sze and Ng (${dJ.map((d) => d.toExponential(1)).join(', ')}); their 1/C² lines give back N_eff and V_bi − 2kT/q, N_D and V_bi − kT/q, 1/C³ of the graded one V_bi`);
+
+  // the SPICE junction capacitance; with M = ½ and V_J = V_bi − 2kT/q it is the abrupt junction; continuous at F_C·V_J
+  const sp = made({ struct: 'varactor', cj0: 10, vj: 0.7, mj: 0.4, fc: 0.5, vFrom: -10, vTo: 1, points: 221, rs: 0, gl: 0 }).sets[0].c;
+  const vjA = R.pn.vbi - 2 * phiT;
+  const asAb = made({ struct: 'varactor', cj0: (R.pn.abrupt[R.pn.V.indexOf(0)] as number) * 1e12, vj: vjA, mj: 0.5, fc: 0.95, vFrom: -5, vTo: 0.5, points: 111, rs: 0, gl: 0 }).sets[0].c;
+  const cont = made({ struct: 'varactor', cj0: 10, vj: 0.7, mj: 0.4, fc: 0.5, vFrom: 0.35 - 1e-9, vTo: 0.35 + 1e-9, points: 2, rs: 0, gl: 0 }).sets[0].c;
+  ok(relDiff(sp, R.spice.C) < 1e-12 && relDiff(asAb, R.pn.abrupt) < 1e-12 && Math.abs(cont[1] / cont[0] - 1) < 1e-8, 'C–V: the SPICE junction capacitance C_J0(1 − V/V_J)^−M, linear beyond F_C·V_J (SPICE2, Nagel 1975) as the reference; with M = ½, V_J = V_bi − 2kT/q, the abrupt junction; continuous at F_C·V_J');
+
+  // the MIM capacitor: C₀ = ε₀εA/d, its voltage coefficients given back by a quadratic
+  const mim = made({ struct: 'mim', epsI: 7, tins: 50, area: 1, vcc1: 20, vcc2: 50, vFrom: -10, vTo: 10, points: 201, rs: 0, gl: 0 });
+  const c0 = (EPS0 * 7 * 1e-6) / 50e-9;
+  const mc = mim.sets[0].c;
+  const qa = (mc[200] + mc[0] - 2 * mc[100]) / (2 * 100) / c0 / 1e-6;
+  const qb = (mc[200] - mc[0]) / 20 / c0 / 1e-6;
+  ok(Math.abs(mc[100] / c0 - 1) < 1e-14 && Math.abs(qa - 50) < 1e-6 && Math.abs(qb - 20) < 1e-6, `C–V: a MIM capacitor, C₀ = ε₀εA/d and its voltage coefficients given back (${qb.toFixed(4)} ppm/V, ${qa.toFixed(4)} ppm/V²)`);
+
+  // the ferroelectric capacitor (Miller et al. 1990): as the reference; P = ∓P_r at 0 V, 0 at ±V_c, C largest there
+  const fe = made({ struct: 'ferro', ps: 30, pr: 25, ec: 50, tf: 200, epsB: 100, area: 0.01, vFrom: -8, vTo: 8, points: 401, rs: 0, gl: 0 });
+  const [up, dn] = fe.sets;
+  const P = (s: typeof up) => s.extra![0].v;
+  const iAt = (v: number) => R.ferro.V.findIndex((q) => Math.abs(q - v) < 1e-9);
+  const iMax = (a: number[]) => a.indexOf(Math.max(...a));
+  const dFe = Math.max(relDiff(up.c, R.ferro.up), relDiff(dn.c, R.ferro.down), ...[0, 100, 300, 400].map((i) => Math.abs(P(up)[i] - R.ferro.Pup[i]) / 30), ...[0, 100, 300, 400].map((i) => Math.abs(P(dn)[i] - R.ferro.Pdown[i]) / 30));
+  ok(dFe < 1e-12 && Math.abs(P(up)[iAt(0)] + 25) < 1e-9 && Math.abs(P(dn)[iAt(0)] - 25) < 1e-9 && Math.abs(P(up)[iAt(1)]) < 1e-9 && Math.abs(P(dn)[iAt(-1)]) < 1e-9 && iMax(up.c) === iAt(1) && iMax(dn.c) === iAt(-1), 'C–V: a ferroelectric capacitor as Miller, Nasby, Schwank, Rodgers and Dressendorfer (1990): its butterfly up and down as the reference; P = ∓P_r at 0 V, 0 at the coercive voltage, where C is largest');
+
+  // the semiconductor electrode: as Poisson's equation with the Helmholtz layer (the potential split by scipy
+  // brentq); without it, the Mott–Schottky line gives back N_D and E_fb + kT/q (Gelderman, Lee and Donne 2007)
+  const msSpec: Partial<CvSpec> = { struct: 'ms', type: 'n', dop: 1e18, epsS: 31, efb: -0.5, ch: 20, temps: '298.15', area: 100, vFrom: -0.8, vTo: 1.5, points: 93, rs: 0, gl: 0 };
+  const dMs = relDiff(made(msSpec).sets[0].c, R.ms.C);
+  const bare = made({ ...msSpec, ch: 0 });
+  const dep = R.ms.E.flatMap((e, i) => (e > -0.2 && e < 1.5 ? [i] : []));
+  const ms = line(dep.map((i) => R.ms.E[i]), dep.map((i) => 1 / bare.sets[0].c[i] ** 2));
+  const nD = 2 / (QE * EPS0 * 31 * 1e-8 * ms.b) / 1e6;
+  const e0 = -ms.a / ms.b - (-0.5 + (KB * 298.15) / QE);
+  ok(dMs < 1e-9 && Math.abs(nD / 1e18 - 1) < 1e-3 && Math.abs(e0) < 1e-3, `C–V: a semiconductor electrode with its Helmholtz layer as the reference (${dMs.toExponential(1)}); without it, the Mott–Schottky line (Gelderman, Lee and Donne 2007) gives N_D ${(nD / 1e18).toFixed(5)}·10¹⁸ cm⁻³ (10¹⁸ typed) and E_fb + kT/q to ${Math.abs(e0 * 1000).toFixed(4)} mV`);
+
+  // the double layer: as the reference (Gouy–Chapman, and with its Stern layer); Bard and Faulkner's numbers for water
+  // at 25 °C: C_d = 228.5·z·√C*·cosh(19.5·z·φ₀) µF/cm², and the Debye length 3.04 nm (0.01 M), 0.962 nm (0.1 M)
+  const gSpec: Partial<CvSpec> = { struct: 'gcs', conc: 0.01, z: 1, epsW: 78.49, epzc: 0, temps: '298.15', area: 100, vFrom: -0.4, vTo: 0.4, points: 81, rs: 0, gl: 0, psi: true };
+  const gc = made({ ...gSpec, ch: 0 }).sets[0];
+  const gs = made({ ...gSpec, ch: 20 }).sets[0];
+  const dPhi = Math.max(...gs.extra![0].v.map((v, i) => Math.abs(v - R.gcs.phi[i])));
+  const dG = [relDiff(gc.c, R.gcs.gc), relDiff(gs.c, R.gcs.gcs)];
+  const bf = [0, 0.05, -0.05, 0.1].map((p) => {
+    const i = R.gcs.E.findIndex((e) => Math.abs(e - p) < 1e-9);
+    return gc.c[i] / 1e-6 / (228.5 * Math.sqrt(0.01) * Math.cosh(19.5 * p)) - 1;
+  });
+  const debye = (cM: number) => (EPS0 * 78.49 * 1e-4) / made({ ...gSpec, ch: 0, conc: cM, vFrom: 0, vTo: 0, points: 2 }).sets[0].c[0] / 1e-9;
+  const [l1, l2] = [debye(0.01) / 3.04 - 1, debye(0.1) / 0.962 - 1];
+  ok(dG.every((d) => d < 1e-9) && dPhi < 1e-12 && bf.every((d) => Math.abs(d) < 0.005) && Math.abs(l1) < 0.002 && Math.abs(l2) < 0.002, `C–V: the Gouy–Chapman and Gouy–Chapman–Stern double layers as the reference (${dG.map((d) => d.toExponential(1)).join(', ')}; the diffuse layer's potential to ${dPhi.toExponential(1)} V); Bard and Faulkner's 228.5·z·√C*·cosh(19.5·z·φ₀) µF/cm² to ${(Math.max(...bf.map(Math.abs)) * 100).toFixed(2)} % (its rounded constants), the Debye lengths 3.04 and 0.962 nm to ${(Math.max(Math.abs(l1), Math.abs(l2)) * 100).toFixed(2)} %`);
+
+  // the table made: its columns, the units, the graphs (C, 1/C², W, G_m, the more columns)
+  const g = generate({ ...SIGGEN_DEFAULTS, kind: 'cv', cv: { ...base, struct: 'pn', na: 1e18, nd: 1e16, temps: '300', vFrom: -5, vTo: 0, points: 51, inv2: true, width: true, rs: 10, gl: 0, freq: 1e5, unit: 'nF/cm2' } });
+  const gf = generate({ ...SIGGEN_DEFAULTS, kind: 'cv', cv: { ...base, struct: 'ferro', vFrom: -8, vTo: 8, points: 81, unit: 'pF', area: 0.01 } });
+  const gn = generate({ ...SIGGEN_DEFAULTS, kind: 'cv', cv: { ...base, mode: 'lfhf', temps: '300', unit: 'norm' } });
+  const names = (r: typeof g) => (typeof r === 'string' ? r : r.dataset.columns.map((c) => c.name).join(' / '));
+  ok(names(g) === 'V (V) / C (nF/cm²) / G_m (S) / 1/C² (cm⁴/nF²) / W (nm)' && names(gf) === 'V (V) / C (pF), up / P (µC/cm²), up / C (pF), down / P (µC/cm²), down' && names(gn) === 'V_G (V) / C/C_ox, LF / C/C_ox, HF' && typeof g !== 'string' && g.labels.join() === 'C–V,G_m (S),1/C² (cm⁴/nF²),W (nm)' && typeof gf !== 'string' && gf.labels.join() === 'C–V,P (µC/cm²)' && typeof gn !== 'string' && Math.abs(gn.dataset.columns[1].values[0] - 1) < 0.01, `C–V: the table made (${names(g)}; ${names(gf)}; ${names(gn)}) and its graphs`);
+}
+
+{
+  // numbers in scientific notation (the generator's dopings, densities, frequencies): written short when very large
+  // or very small, and read from the ways they are typed
+  const forms = ['1e16', '1E16', '1x10^16', '1*10^16', '1×10^16', '1·10¹⁶', '10^16', '10¹⁶', ' 1 e16 ', '1.0e+16'];
+  const small = ['5e-9', '5x10^-9', '5·10⁻⁹', '5,0e-9'];
+  const bad = ['', 'abc', '1e', '1x10', '10^', '1e16x', '--1'];
+  ok(forms.every((f) => parseSci(f) === 1e16) && small.every((f) => Math.abs(parseSci(f) / 5e-9 - 1) < 1e-15) && bad.every((f) => Number.isNaN(parseSci(f))) && parseSci('2.5e18') === 2.5e18 && parseSci('-3') === -3, 'Scientific numbers: 1e16, 1E16, 1x10^16, 1*10^16, 1·10¹⁶, 10^16 and a decimal comma read alike; what is none of them, not a number');
+  ok(sciText(1e16) === '1e16' && sciText(2.5e18) === '2.5e18' && sciText(5e-9) === '5e-9' && sciText(1e-6) === '1e-6' && sciText(100) === '100' && sciText(0.01) === '0.01' && sciText(0) === '0' && sciText(1e5) === '1e5' && sciText(0.1 + 0.2) === '0.3' && sciPretty(1e16) === '1·10¹⁶' && sciPretty(-2.5e-9) === '-2.5·10⁻⁹' && sciPretty(42) === '42' && [1e16, 2.5e18, 5e-9, 123456.789, 3e-7].every((v) => parseSci(sciText(v)) === v), 'Scientific numbers: written short only when very large or very small (1e16, 5e-9; 100, 0.01 as they are), and read back the same');
+}
+
 // the version shown in the app is package.json's
 ok(APP_VERSION === (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version, `the app's version (${APP_VERSION}) as package.json's`);
 
@@ -6797,3 +7103,4 @@ function erfApprox(x: number) {
   const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
   return x >= 0 ? y : -y;
 }
+
