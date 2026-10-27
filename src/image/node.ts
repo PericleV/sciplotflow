@@ -661,11 +661,17 @@ export function figurePng(p: { base: Raster; out: Raster }, f: ImageFigure): str
   return url;
 }
 
+// The bar's length when none is given: the length of the microscope's bar the image was calibrated on (when it fits,
+// at most 3/5 of the image's width), else a round one
+export const autoBarLength = (w: number, cal: ImageCal) => {
+  const units = w * cal.size;
+  return cal.length && cal.length > 0 && cal.length <= units * 0.6 ? cal.length : niceBar(units);
+};
 // The scale bar on the page (mm): its line (x1, y1, x2, y2) and its label's place, or null (no calibration, hidden)
 export function scaleBarPlace(w: number, h: number, pageW: number, cal: ImageCal | undefined, bar: ScaleBar): { len: number; x1: number; x2: number; y: number; tx: number; ty: number; text: string } | null {
   if (!bar.show || !cal || !(cal.size > 0)) return null;
   const units = w * cal.size;
-  const len = bar.length > 0 ? bar.length : niceBar(units);
+  const len = bar.length > 0 ? bar.length : autoBarLength(w, cal);
   const mmPerUnit = pageW / units;
   const L = len * mmPerUnit;
   const pageH = (pageW * h) / w;

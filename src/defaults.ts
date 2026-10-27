@@ -1,7 +1,7 @@
 // The settings of a new node of each type.
 import { CSV_DEFAULTS } from './engine/csv.ts';
 import { AXES_STYLE_DEFAULTS, AXIS_DEFAULTS, COLORBAR_DEFAULTS, CURVE_STYLE_DEFAULTS, FONTS, SHAPE_DEFAULTS, TEXT_SPEC_DEFAULTS } from './figure/spec.ts';
-import type { MatCompData, MatrixData, PickData, CalculusData, BookSheet, WorkbookData, ColumnsData, PeakWidthData, CombineData, UnstackData, ConvertData, TransposeData, StackData, ToSheetsData, AnnotationItem, AutoExtractData, CanvasData, DrawingData, DrawingGrid, CanvasLayout, DataManipData, ExtractData, FitNodeData, GenColData, SigGenData, ImportData, MathColData, PythonData, NoteData, Plot1DData, PlotPage, StatsData, PeakData, AnovaData, CorrData, NonparData, NormData, TTestData, CurveMathData, TranslateData, ConvData, FFTData, InterpData, NormalizeData, SmoothData, AverageData, CleanData, DigitizerData, FilterData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, SmithData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from './types.ts';
+import type { SelectFigData, RenameSheetsData, MatCompData, MatrixData, PickData, CalculusData, BookSheet, WorkbookData, ColumnsData, PeakWidthData, CombineData, UnstackData, ConvertData, TransposeData, StackData, ToSheetsData, AnnotationItem, AutoExtractData, CanvasData, DrawingData, DrawingGrid, CanvasLayout, DataManipData, ExtractData, FitNodeData, GenColData, SigGenData, ImportData, MathColData, PythonData, NoteData, Plot1DData, PlotPage, StatsData, PeakData, AnovaData, CorrData, NonparData, NormData, TTestData, CurveMathData, TranslateData, ConvData, FFTData, InterpData, NormalizeData, SmoothData, AverageData, CleanData, DigitizerData, FilterData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, SmithData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from './types.ts';
 import { SET_COLORS } from './engine/digitize.ts';
 import type { PhaseDigitizerData } from './engine/phasedigitize.ts';
 import type { EisData } from './engine/eis.ts';
@@ -133,6 +133,7 @@ export const CONVERT_DEFAULTS: ConvertData = { to: 'numbers', cols: '' };
 export const TRANSPOSE_DEFAULTS: TransposeData = { names: '', head: 'text' };
 export const STACK_DEFAULTS: StackData = { cols: '', key: 'text' };
 export const TOSHEETS_DEFAULTS: ToSheetsData = { mode: 'columns', cols: '' };
+export const RENAMESHEETS_DEFAULTS: RenameSheetsData = {};
 export const UNSTACK_DEFAULTS: UnstackData = { x: '', ys: '', by: 'auto', names: '', xs: 'first', naming: 'block' };
 export const COMBINE_DEFAULTS: CombineData = { how: 'after', at: 0, match: 'name', x: '', dup: 'all', name: '' };
 export const MATHCOL_DEFAULTS: MathColData = { name: '', formula: '' };
@@ -534,6 +535,7 @@ export const PLOT3D_DEFAULTS: Plot3DData = {
   page: { ...PLOT_PAGE_DEFAULTS, width: 85, height: 75 },
 };
 export const CANVAS_LAYOUT_DEFAULTS: CanvasLayout = { rows: 1, cols: 2, sizing: 'fit', hgap: 0, vgap: 0, margin: 0, shareX: 'none', shareY: 'none', inner: false, arrange: 'grid', stackGap: 0, ratios: '' };
+export const SELECTFIG_DEFAULTS: SelectFigData = {};
 export const CANVAS_DEFAULTS: CanvasData = { width: 180, height: 70, unit: 'mm', font: FONTS[0][0], size: 8, bold: false, italic: false, textColor: '#000000', background: 'white', border: 0, borderColor: '#000000', panels: '(a)', panelText: {}, panelX: 2, panelY: 2, dpi: 600, name: 'figure', layout: { ...CANVAS_LAYOUT_DEFAULTS } };
 // a new annotation of each kind (on a Plot: % of the frame)
 let next = 0;

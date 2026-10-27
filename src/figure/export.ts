@@ -16,6 +16,35 @@ export function download(content: Blob | string, filename: string, type = 'text/
   window.dispatchEvent(new CustomEvent('graph-flow:downloaded', { detail: filename }));
 }
 
+// A file saved where the user chooses: the system's Save dialog (its folders; the browser remembers the last folder
+// by `id`), else (a browser without it: Firefox, Safari) downloaded. false: the dialog cancelled.
+type SavePicker = (o: { suggestedName: string; id?: string; types?: { description: string; accept: Record<string, string[]> }[] }) => Promise<{ createWritable: () => Promise<{ write: (b: Blob) => Promise<void>; close: () => Promise<void> }> }>;
+export async function saveAs(content: Blob | string, filename: string, type: string, what: { description: string; ext: string; id: string }): Promise<boolean> {
+  const pick = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
+  if (!pick) {
+    download(content, filename, type);
+    return true;
+  }
+  const blob = typeof content === 'string' ? new Blob([content], { type }) : content;
+  try {
+    const handle = await pick({ suggestedName: filename, id: what.id, types: [{ description: what.description, accept: { [type]: [what.ext] } }] });
+    const w = await handle.createWritable();
+    await w.write(blob);
+    await w.close();
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') return false;
+    // (not allowed here, e.g. in a frame: downloaded)
+    if ((e as Error).name === 'SecurityError') {
+      download(content, filename, type);
+      return true;
+    }
+    notify(`Not saved: ${(e as Error).message}`);
+    return false;
+  }
+  window.dispatchEvent(new CustomEvent('graph-flow:downloaded', { detail: filename }));
+  return true;
+}
+
 export const safeName = (s: string, fallback: string) => s.replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || fallback;
 
 function standalone(svg: SVGSVGElement, width: string, height: string): string {

@@ -22,7 +22,7 @@ import { clahe, equalize, monotoneCurve, pickChannel } from '../src/image/tone.t
 import { GLOBAL_METHODS, globalThreshold, localThreshold } from '../src/image/threshold.ts';
 import { applyStep, applySteps, newStep } from '../src/image/steps.ts';
 import { encodePNG } from '../src/image/render.ts';
-import { niceBar, scaleBarPlace, BAR_DEFAULTS } from '../src/image/node.ts';
+import { autoBarLength, niceBar, scaleBarPlace, BAR_DEFAULTS } from '../src/image/node.ts';
 import { unzlibSync } from 'fflate';
 import { evaluateGraph, logicalData } from '../src/engine/evaluate.ts';
 import { analyzeNetwork, learnRatio, type NetworkResult } from '../src/image/network.ts';
@@ -247,6 +247,7 @@ export function checkImage(ok: Ok) {
   {
     const b = scaleBarPlace(1000, 500, 80, { size: 0.05, unit: 'um' }, BAR_DEFAULTS);
     ok(niceBar(50) === 10 && niceBar(3.3) === 0.5 && niceBar(170) === 20 && !!b && b.len === 10 && Math.abs(b.x2 - b.x1 - 16) < 1e-9 && b.text === '10 µm' && scaleBarPlace(10, 10, 80, undefined, BAR_DEFAULTS) === null, `scale bar: round lengths; 10 µm of a 50 µm wide image on 80 mm is 16 mm, “10 µm” (${b?.text})`);
+    ok(autoBarLength(1000, { size: 0.5, unit: 'nm', length: 300 }) === 300 && autoBarLength(1000, { size: 0.5, unit: 'nm', length: 450 }) === 100 && autoBarLength(1000, { size: 0.5, unit: 'nm' }) === 100, 'scale bar: as long as the bar the image was calibrated on (when it fits), else a round one');
   }
   // the node: the image through its steps; a matrix with X, Y in the calibrated unit; a figure (the image, a scale bar)
   {

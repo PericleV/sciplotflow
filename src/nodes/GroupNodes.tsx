@@ -16,6 +16,7 @@ import { sheetOptions } from './sheetOptions.ts';
 import { DataPreview } from './DataNodes.tsx';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { IC } from './iconProps.ts';
+import { notify } from '../ui/dialogStore.ts';
 
 const known = (t: string | undefined | null): PortType => (t && t !== 'any' ? (t as PortType) : 'any');
 
@@ -206,7 +207,7 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
         </Field>
         <OutputNames outputs={data.outputs} what="Kept" onChange={(outputs) => updateNodeData(id, { outputs })} />
         <div className="hint">
-          {kept.length ? `Kept from every ${unit}: ${kept.join(', ')} (named above).` : 'Nothing is kept yet.'} To keep more, open the batch and connect a value or a table to “+ keep” on its Group output.
+          {kept.length ? `Kept from every ${unit}: ${kept.join(', ')} (named above).` : 'Nothing is kept yet.'} To keep more, open the batch and connect a value, a table or a Plot’s figure to “+ keep” on its Group output (the Plots: “figures”, a panel each in a Merge).
         </div>
         {list.length > 0 && (
           <div className="batch-files nowheel">
@@ -241,9 +242,10 @@ function BatchView({ id, data }: NodeProps<GroupNode>) {
       <OutPort label="table" port="dataset" id="table" title={`A row per ${unit}: its name, what the name says, the values kept (and the one row of a table kept)`} />
       <OutPort label="sheets" port="workbook" id="sheets" title={`A sheet per ${unit}: the tables kept (Sheets to columns or a Plot of a workbook draws them all)`} />
       <OutPort label="all rows" port="dataset" id="stacked" title={spec.long === 'side' ? `The first table kept, every ${unit}'s columns side by side (named after the ${unit})` : `The rows of every ${unit} one under the other, the ${unit} and what its name says before them`} />
-      {data.outputs.map((p, k) => (
-        <OutPort key={p.id} label={kept[k]} port="dataset" id={`k-${p.id}`} title={`“${kept[k]}” alone: a value (or a table of one row) gives a row per ${unit}; a longer table, ${spec.long === 'side' ? `every ${unit}'s columns side by side` : `the rows of every ${unit} one under the other`}`} />
-      ))}
+      {data.outputs.map((p, k) =>
+        p.type === 'figure' ? null : <OutPort key={p.id} label={kept[k]} port="dataset" id={`k-${p.id}`} title={`“${kept[k]}” alone: a value (or a table of one row) gives a row per ${unit}; a longer table, ${spec.long === 'side' ? `every ${unit}'s columns side by side` : `the rows of every ${unit} one under the other`}`} />,
+      )}
+      {(data.outputs.some((p) => p.type === 'figure') || r?.outputs.figures) && <OutPort label="figures" port="figure" id="figures" title={`The Plots kept, one from every ${unit} (named after it): connect them to a Merge, a panel each`} />}
     </div>
   );
 }
@@ -327,7 +329,15 @@ export function BatchFileBar({
 // A step of a Batch, above its options: its changes for every file (the common settings) or for the file shown only
 // (each file its own; the others keep the common ones); skipped for the file shown (it passes its data on unchanged
 // where it can, else gives nothing for that file)
-export function BatchStepBar({ unit, shown, each, skipped, ownCount, total, onEach, onSkip }: { unit: 'file' | 'column'; shown?: string; each: boolean; skipped: boolean; ownCount: number; total: number; onEach: (on: boolean) => void; onSkip: (on: boolean) => void }) {
+// a name written where the cursor is (a text field of the step, still focused), else copied
+function insertName(text: string) {
+  const el = document.activeElement as HTMLElement | null;
+  const editable = !!el && (el.isContentEditable || (el.tagName === 'INPUT' && (el as HTMLInputElement).type === 'text') || el.tagName === 'TEXTAREA');
+  if (editable && document.execCommand('insertText', false, text)) return;
+  void navigator.clipboard?.writeText(text).then(() => notify(`${text} copied: paste it into a text (a legend, an axis title …).`));
+}
+// names: the names a figure's texts can hold, filled for every file or column ({name}, what the pattern reads)
+export function BatchStepBar({ unit, shown, each, skipped, ownCount, total, onEach, onSkip, names }: { unit: 'file' | 'column'; shown?: string; each: boolean; skipped: boolean; ownCount: number; total: number; onEach: (on: boolean) => void; onSkip: (on: boolean) => void; names?: string[] }) {
   return (
     <div className="batch-step-bar">
       <span className="row wrap">
@@ -351,6 +361,16 @@ export function BatchStepBar({ unit, shown, each, skipped, ownCount, total, onEa
           value={skipped}
           onChange={onSkip}
         />
+      )}
+      {names && names.length > 0 && (
+        <span className="row wrap" title={`Written in a text of the figure (its legend, an axis title, a text on it, the page's name), filled with every ${unit}'s own: click one with the cursor in the text (else it is copied)`}>
+          <span className="muted">Names:</span>
+          {names.map((n) => (
+            <button key={n} className="nodrag ts-btn mono" onMouseDown={(e) => e.preventDefault()} onClick={() => insertName(`{${n}}`)}>
+              {`{${n}}`}
+            </button>
+          ))}
+        </span>
       )}
     </div>
   );
@@ -377,7 +397,7 @@ export function GroupOutNodeView() {
       {(current?.outputs ?? []).map((p, k) => (
         <InPort key={p.id} label={portNames(current?.outputs ?? [])[k]} port={known(p.type)} id={p.id} />
       ))}
-      <InPort label={current?.batch ? '+ keep' : '+ output'} port="any" id={NEW_OUT} title={current?.batch ? 'Connect a value or a table: it is kept for every file' : 'Connect anything: it becomes a new output of the group'} />
+      <InPort label={current?.batch ? '+ keep' : '+ output'} port="any" id={NEW_OUT} title={current?.batch ? 'Connect a value, a table or a Plot’s figure: it is kept for every file (the figures together on the batch’s “figures”, for a Merge)' : 'Connect anything: it becomes a new output of the group'} />
     </div>
   );
 }

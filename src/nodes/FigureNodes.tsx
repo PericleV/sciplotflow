@@ -7,7 +7,7 @@ import { packCells, panelOrder, plotRows } from '../engine/evaluate.ts';
 import { rowHandle } from '../engine/ports.ts';
 import { curvesByRole, titleOf } from '../engine/table.ts';
 import type { ColInfo } from '../engine/evaluate.ts';
-import { CMAP_OPTIONS, PALETTES } from '../figure/colors.ts';
+import { CMAP_OPTIONS, COLOR_MAPS, PALETTES, spreadColors } from '../figure/colors.ts';
 import type { ColorMapName } from '../figure/spec.ts';
 import { axesStyle, curveStyle, type Curve, type CurveStyle, type PanelScheme, type Side } from '../figure/spec.ts';
 import { addAxis, axisChoices } from '../figure/multiAxes.ts';
@@ -72,6 +72,8 @@ export function Plot1DNodeView({ id, data }: NodeProps<Plot1DNode>) {
   const [fold, setFold] = useState<Record<number, boolean>>({});
   // the same in the options panel: a curve folded to its head (its columns, fits and style hidden)
   const [pfold, setPfold] = useState<Record<number, boolean>>({});
+  // Recolour: the palette, colour map or my colours chosen (shown before it is applied), reversed or not
+  const [rec, setRec] = useState<{ key: string; reverse: boolean; mine: string[] } | null>(null);
   // a curve double-clicked on the figure (or its quick fit's range): its style opened, its row flashed
   const [flash, setFlash] = useState<{ k: number; seq: number } | null>(null);
   useFigureFocus(id, (part, seq) => {
@@ -100,6 +102,11 @@ export function Plot1DNodeView({ id, data }: NodeProps<Plot1DNode>) {
   ];
   // the curves: those used (connected, or a Y chosen) and those added with + Add curve (kept in the data)
   const count = Math.max(1, maxOf(used.map((u) => u + 1)), stored.length);
+  // every curve recoloured from a list of colours, in order (repeated when there are more curves)
+  const recolour = (pal: string[]) => {
+    const all = plotRows(data, count);
+    updateNodeData(id, { style: { ...data.style, color: pal[0] }, rows: all.slice(1).map((r, j) => ({ ...r, style: { ...r.style, color: pal[(j + 1) % pal.length] } })) } as Partial<Plot1DData>);
+  };
   const rows = plotRows(data, count);
   const curves = useMemo(() => r?.view.curves ?? [], [r]);
   // the first curve of each row (a split row gives several: keys `plot:row#group`)
@@ -279,19 +286,26 @@ export function Plot1DNodeView({ id, data }: NodeProps<Plot1DNode>) {
       </InPort>
       {rows.length > 1 && (
         <div className="row">
-          <span className="muted">{rows.length} curves</span>
+          <button className="nodrag ts-btn" title={data.foldCurves ? 'Show the list of curves' : 'Fold the whole list of curves to this line (their connections kept)'} onClick={() => updateNodeData(id, { foldCurves: data.foldCurves ? undefined : true } as Partial<Plot1DData>)}>
+            {data.foldCurves ? '▸' : '▾'} {rows.length} curves
+          </button>
+          {!data.foldCurves && (
+            <>
           <button className="nodrag ts-btn" title="Every curve on one line (its ports hidden, its connections kept)" onClick={() => setFold(Object.fromEntries(rows.map((_, k) => [k, true])))}>
             <ChevronsDownUp {...IC} /> Collapse all
           </button>
           <button className="nodrag ts-btn" title="Every curve with its ports" onClick={() => setFold(Object.fromEntries(rows.map((_, k) => [k, false])))}>
             <ChevronsUpDown {...IC} /> Expand all
           </button>
+            </>
+          )}
         </div>
       )}
+      <div className={`curve-list${data.foldCurves && rows.length > 1 ? ' hidden' : ''}`}>
       {rows.map((row, k) => {
         const c = byRow.get(k);
         const st = curveStyle(row.style);
-        const folded = fold[k] ?? rows.length > 6;
+        const folded = (data.foldCurves && rows.length > 1) || (fold[k] ?? rows.length > 6);
         return (
           <div key={k} className={`curve-row${folded ? ' folded' : ''}`}>
             <div className="curve-head">
@@ -331,30 +345,74 @@ export function Plot1DNodeView({ id, data }: NodeProps<Plot1DNode>) {
           </div>
         );
       })}
+      </div>
       <NodeOptions>
-        <div className="row">
-          <Field label="Colours" title="Each curve its own colour (its style), or all the curves coloured by a colour map: by the value of the block each came from (Split into columns: the cavity thickness, the cycle …), else by their order; the legend can then show them as one entry with the colour scale">
-            <Select<'own' | ColorMapName>
-              value={data.curveColors?.map ?? 'own'}
-              options={[['own', 'each curve its own'], ...CMAP_OPTIONS.filter(([k]) => k !== 'custom').map(([k, l]): ['own' | ColorMapName, string] => [k, `colour map: ${l}`])]}
-              onChange={(m) => updateNodeData(id, { curveColors: m === 'own' ? undefined : { ...data.curveColors, map: m } } as Partial<Plot1DData>)}
-            />
-          </Field>
-          {data.curveColors && <Check label="Reversed" value={!!data.curveColors.reverse} onChange={(reverse) => updateNodeData(id, { curveColors: { ...data.curveColors!, reverse } } as Partial<Plot1DData>)} />}
-          {!data.curveColors && (
-            <Select<string>
-              value=""
-              title="Every curve recoloured from a palette, in order (each can be changed afterwards)"
-              options={[['', 'recolour from a palette'], ...PALETTES.map(([k, l]): [string, string] => [k, l])]}
-              onChange={(k) => {
-                const pal = PALETTES.find((p) => p[0] === k)?.[2];
-                if (!pal) return;
-                const all = plotRows(data, count);
-                updateNodeData(id, { style: { ...data.style, color: pal[0] }, rows: all.slice(1).map((r, j) => ({ ...r, style: { ...r.style, color: pal[(j + 1) % pal.length] } })) } as Partial<Plot1DData>);
-              }}
-            />
-          )}
-        </div>
+        {(() => {
+          // Colours: individual (each curve its own; recoloured at once from the menu, shown first) or grouped (the curves
+          // coloured by a colour scale: the map of the menu, by their value or order; one legend entry with the scale)
+          const cc = data.curveColors;
+          const grouped = !!cc;
+          const n = plotRows(data, count).length;
+          const MAPS = CMAP_OPTIONS.filter(([k]) => k !== 'custom').map(([k, l]): [string, string] => [`map:${k}`, l]);
+          const MINE: [string, string] = ['mine', 'my colours (2–3), mixed between …'];
+          const setCc = (p: Partial<NonNullable<Plot1DData['curveColors']>>) => updateNodeData(id, { curveColors: { ...(cc ?? { map: 'viridis' }), ...p } } as Partial<Plot1DData>);
+          // what the menu shows: the scale of a grouped Plot; else the palette chosen to recolour
+          const key = grouped ? (cc.map === 'custom' ? 'mine' : `map:${cc.map}`) : (rec?.key ?? '');
+          const mine = grouped ? (cc.colors?.length ? cc.colors : ['#2166ac', '#b2182b']) : (rec?.mine ?? ['#2166ac', '#b2182b']);
+          const reverse = grouped ? !!cc.reverse : !!rec?.reverse;
+          const m = /^map:(.+)$/.exec(key);
+          const pal = key === 'mine' ? spreadColors(mine, n) : m ? spreadColors(COLOR_MAPS[m[1] as Exclude<ColorMapName, 'custom'>].stops, n) : (PALETTES.find((q) => q[0] === key)?.[2] ?? []);
+          const list = Array.from({ length: n }, (_, j) => pal[j % (pal.length || 1)]).filter(Boolean);
+          const colors = reverse ? [...list].reverse() : list;
+          const pick = (k: string) => {
+            if (!grouped) return setRec(k ? { key: k, reverse, mine } : null);
+            if (k === 'mine') setCc({ map: 'custom', colors: mine });
+            else if (k.startsWith('map:')) setCc({ map: k.slice(4) as ColorMapName });
+          };
+          return (
+            <>
+              <div className="row">
+                <Field label="Colours" title="Individual: each curve its own colour (its style), recoloured at once from a palette or a colour map (shown first, then Recolour). Grouped: all the curves coloured by a colour scale, by the value of the block each came from (Split into columns: the cavity thickness, the cycle …), else by their order; the legend can then show them as one entry with the scale">
+                  <Select<'individual' | 'grouped'>
+                    value={grouped ? 'grouped' : 'individual'}
+                    options={[
+                      ['individual', 'individual'],
+                      ['grouped', 'grouped (a colour scale)'],
+                    ]}
+                    onChange={(v) => updateNodeData(id, { curveColors: v === 'grouped' ? { map: rec?.key === 'mine' ? 'custom' : /^map:/.test(rec?.key ?? '') ? (rec!.key.slice(4) as ColorMapName) : 'viridis', ...(rec?.key === 'mine' ? { colors: rec.mine } : {}), ...(rec?.reverse ? { reverse: true } : {}) } : undefined } as Partial<Plot1DData>)}
+                  />
+                </Field>
+                <Select<string>
+                  value={key}
+                  title={grouped ? 'The colour scale of the curves: a colour map, or your own 2 or 3 colours (those between them mixed)' : 'Every curve recoloured, in order (each can be changed afterwards), shown first: from a palette (its colours one after the other), from a colour map (spread evenly from its first colour to its last), or from your own 2 or 3 colours (those between them mixed)'}
+                  options={grouped ? [...MAPS, MINE] : [['', 'recolour from a palette'], ...PALETTES.map(([k, l]): [string, string] => [k, l]), ...MAPS.map(([k, l]): [string, string] => [k, `${l} (spread)`]), MINE]}
+                  onChange={pick}
+                />
+              </div>
+              {(grouped || rec) && (
+                <div className="row wrap">
+                  {key === 'mine' && <MyColours colors={mine} set={(c) => (grouped ? setCc({ colors: c }) : setRec({ ...rec!, mine: c }))} />}
+                  <span className="recolour-strip" title={grouped ? 'The scale, from the lowest value (or the first curve) to the highest' : `The colours of the ${n} curves, in order`}>
+                    {colors.map((c, j) => (
+                      <span key={j} style={{ background: c }} />
+                    ))}
+                  </span>
+                  <Check label="Reversed" value={reverse} onChange={(r) => (grouped ? setCc({ reverse: r || undefined }) : setRec({ ...rec!, reverse: r }))} />
+                  {!grouped && (
+                    <>
+                      <button className="nodrag btn-run" disabled={!colors.length} title="Every curve recoloured as shown (each can be changed afterwards); the menu stays, to try another" onClick={() => recolour(colors)}>
+                        Recolour
+                      </button>
+                      <button className="nodrag" title="Close the menu" onClick={() => setRec(null)}>
+                        Close
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+            </>
+          );
+        })()}
         {count > 1 && (
           <div className="row wrap">
             <Field label="Curves" title="Each as it is; stacked: each on the ones before it, on the X of the first (stacked areas: each filled down to the one under it unless it has a fill of its own); or as % of their sum at every X">
@@ -723,7 +781,23 @@ function CommonControls({ L, set }: { L: CanvasLayout; set: (p: Partial<CanvasLa
 // The figures in the Merge (Plots, drawings), in the order they fill the grid: their panel (changed: two change
 // places; the arrows: with the panel left, right, above or below it in the grid), the cells each spans, or its own box
 // (an inset); a Plot split into facets.
-function ItemsControls({ keys, items, set, setOrder, L }: { keys: string[]; items: CanvasItem[]; set: (items: CanvasItem[]) => void; setOrder: (order: string[]) => void; L: CanvasLayout }) {
+// Your own colour map: 2 colours, or 3 (a middle one); the curves (or values) between them mixed
+function MyColours({ colors, set }: { colors: string[]; set: (c: string[]) => void }) {
+  const c = colors.length >= 2 ? colors : ['#2166ac', '#b2182b'];
+  const three = c.length >= 3;
+  const at = (k: number) => (k === 0 ? c[0] : k === 2 ? c[c.length - 1] : c[1]);
+  const put = (k: number, v: string) => set(three ? [k === 0 ? v : c[0], k === 1 ? v : c[1], k === 2 ? v : c[2]] : [k === 0 ? v : c[0], k === 2 ? v : c[1]]);
+  return (
+    <span className="row">
+      <input className="nodrag color" type="color" value={at(0)} title="The first colour" onChange={(e) => put(0, e.target.value)} />
+      {three && <input className="nodrag color" type="color" value={at(1)} title="The middle colour" onChange={(e) => put(1, e.target.value)} />}
+      <input className="nodrag color" type="color" value={at(2)} title="The last colour" onChange={(e) => put(2, e.target.value)} />
+      <Check label="middle" title="A third colour in the middle" value={three} onChange={(on) => set(on ? [c[0], '#f7f7f7', c[c.length - 1]] : [c[0], c[c.length - 1]])} />
+    </span>
+  );
+}
+
+function ItemsControls({ keys, items, set, setOrder, L, names }: { keys: string[]; items: CanvasItem[]; set: (items: CanvasItem[]) => void; setOrder: (order: string[]) => void; L: CanvasLayout; names: Record<string, string> }) {
   const nodes = useNodesData<AppNode>(keys);
   const item = (key: string) => items.find((it) => it.key === key) ?? { key };
   const setItem = (key: string, p: Partial<CanvasItem>) => {
@@ -784,7 +858,7 @@ function ItemsControls({ keys, items, set, setOrder, L }: { keys: string[]; item
               </button>
             </span>
             <span className="ellipsis" title={key}>
-              {n ? nodeDisplayName(n as AppNode) : key}
+              {names[key] ?? (n ? nodeDisplayName(n as AppNode) : key)}
             </span>
             {it.free ? (
               <>
@@ -798,7 +872,7 @@ function ItemsControls({ keys, items, set, setOrder, L }: { keys: string[]; item
               <>
                 <NumInput className="tiny" min={1} step={1} value={it.colSpan ?? 1} onChange={(v) => setItem(key, { colSpan: Math.max(1, Math.floor(v) || 1) })} />
                 <NumInput className="tiny" min={1} step={1} value={it.rowSpan ?? 1} onChange={(v) => setItem(key, { rowSpan: Math.max(1, Math.floor(v) || 1) })} />
-                {n?.type === 'plot1d' ? <input className="nodrag" type="checkbox" title="A panel for every curve of this Plot (it needs two curves or more)" checked={!!it.facet} onChange={(e) => setItem(key, { facet: e.target.checked })} /> : <span className="muted" title="Only a Plot is split into facets (a panel for every curve)">–</span>}
+                {n?.type === 'plot1d' || names[key] ? <input className="nodrag" type="checkbox" title="A panel for every curve of this Plot (it needs two curves or more)" checked={!!it.facet} onChange={(e) => setItem(key, { facet: e.target.checked })} /> : <span className="muted" title="Only a Plot is split into facets (a panel for every curve)">–</span>}
               </>
             )}
           </div>
@@ -820,8 +894,10 @@ export function CanvasNodeView({ id, data }: NodeProps<CanvasNode>) {
   const fig = r?.view.figure;
   const L: CanvasLayout = { ...CANVAS_LAYOUT_DEFAULTS, ...data.layout };
   const conns = useNodeConnections({ handleType: 'target', handleId: 'figures' });
-  // (in the order they fill the grid)
-  const keys = panelOrder(conns.map((c) => c.source), data.order);
+  // (in the order they fill the grid; a Batch's figures: a panel each, named after its file or column)
+  const panels = r?.view.panels;
+  const keys = panelOrder(panels?.length ? panels.map((p) => p.key) : conns.map((c) => c.source), data.order);
+  const panelNames = Object.fromEntries((panels ?? []).flatMap((p) => (p.name ? [[p.key, p.name]] : [])));
   const [tab, setTab] = useState<'layout' | 'page' | 'annotate' | null>('layout');
   // a part of the page double-clicked: its tab opened
   useFigureFocus(id, (part, seq) => {
@@ -859,7 +935,7 @@ export function CanvasNodeView({ id, data }: NodeProps<CanvasNode>) {
       {tab === 'layout' && (
         <>
           <LayoutControls L={L} set={(p) => set({ layout: { ...L, ...p } })} />
-          <ItemsControls keys={keys} items={data.items ?? []} set={(items) => set({ items })} setOrder={(order) => set({ order })} L={L} />
+          <ItemsControls keys={keys} items={data.items ?? []} set={(items) => set({ items })} setOrder={(order) => set({ order })} L={L} names={panelNames} />
         </>
       )}
       {tab === 'page' && (

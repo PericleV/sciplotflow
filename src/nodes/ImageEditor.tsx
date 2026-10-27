@@ -14,7 +14,7 @@ import { useReactFlow } from '@xyflow/react';
 import type { AppNode, ImageAnalysisData } from '../types.ts';
 import { STEP_DEFS, STEP_GROUP_LABELS, STEP_GROUPS, newStep, stepClasses, type ImgStep, type StepDef, type StepKind } from '../image/steps.ts';
 import { cropBox, cropRaster, dataBarApart, dataBarRows, luminance, unpackPixels, type Crop } from '../image/raster.ts';
-import { unitText } from '../image/node.ts';
+import { autoBarLength, imageFigure, unitText } from '../image/node.ts';
 import type { CentreReply, ImgReply, ImgRequest, MatchReply, MatchRequest, MeasureReply, MeasureRequest, ParticlesReply, ParticlesRequest, ProgressReply, RaysReply, RefineReply, RefineRequest, SpectrumReply, SpectrumRequest, SpotReply, SpotRequest, ValueReply, WandReply } from '../image/imageWorker.ts';
 import { MATCH_DEFAULTS, MATCH_PRESETS, MATCH_TUNING, placeLike, type MatchOpts } from '../image/match.ts';
 import { trainingExamples, trainKeyOf } from '../image/classify.ts';
@@ -567,7 +567,9 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     put(canvas.current, reply.rgba, reply.w, reply.h);
     // (what it is compared with: the same size as the result)
     if (reply.before) put(canvasB.current, reply.before.rgba, reply.w, reply.h);
-  }, [reply, mode]);
+    // (drawn again when the view changes: the original shown for Crop and Scale, the spectrum, the comparison make new
+    // canvases, else blank until the next result)
+  }, [reply, mode, onOriginal, data.fft?.show]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const c = canvasO.current;
     if (!c || !full || !onOriginal) return;
@@ -1568,7 +1570,11 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     }
     if (d?.kind === 'crop' && cropDraft && full) {
       const c = cropBox(cropDraft, full.w, full.h);
-      if (cropDraft[2] > 3 && cropDraft[3] > 3) set({ crop: c ?? undefined });
+      // (a part chosen: the result of it shown at once)
+      if (cropDraft[2] > 3 && cropDraft[3] > 3) {
+        set({ crop: c ?? undefined });
+        setTool('pan');
+      }
       setCropDraft(null);
     }
   };
@@ -2146,6 +2152,19 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
               </div>
             </div>
           )}
+          {data.cal && data.cal.size > 0 && base && (() => {
+            // the scale bar the figure gets (the node's Figure settings: shown, its length)
+            const f = imageFigure(data.figure);
+            const len = f.bar.length > 0 ? f.bar.length : autoBarLength(base.w, data.cal);
+            return (
+              <div className="row wrap">
+                <span className="hint grow">{f.bar.show ? `On the figure: a scale bar of ${+len.toPrecision(6)} ${unitText(data.cal.unit)}${f.bar.length > 0 ? '' : ' (its length: the bar calibrated on, or a round one)'}.` : 'On the figure: no scale bar.'}</span>
+                <button className="nodrag" title="The scale bar drawn on the figure of the node, or not (its length, place and look: the node's Figure settings)" onClick={() => set({ figure: { ...data.figure, bar: { ...f.bar, show: !f.bar.show } } })}>
+                  {f.bar.show ? 'Hide it' : 'Show it'}
+                </button>
+              </div>
+            );
+          })()}
           <div className="hint">Or the size of a pixel, known:</div>
           <div className="row wrap">
             <span className="muted">1 px =</span>

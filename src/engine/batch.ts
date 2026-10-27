@@ -8,6 +8,7 @@ import { pick } from './extract.ts';
 import { sourcePort } from './ports.ts';
 import type { Edge } from '@xyflow/react';
 import type { AppNode, GroupPort } from '../types.ts';
+import type { Figure } from '../figure/spec.ts';
 
 // The names of a group's ports: the one given by hand, else the one made; a name met twice numbered (“Smooth (2)”), as
 // the results of a Batch are gathered by their names
@@ -77,7 +78,8 @@ export function tidyOwn(own: BatchOwn): BatchOwn | undefined {
 }
 
 // what one file gave: the values of the steps' outputs (scalars), their tables (datasets), and its errors
-export type FileRun = { name: string; values: { label: string; value: number }[]; tables: { label: string; ds: Dataset }[]; errors: string[] };
+// (figures: the Plots kept, a figure each, for a Merge)
+export type FileRun = { name: string; values: { label: string; value: number }[]; tables: { label: string; ds: Dataset }[]; errors: string[]; figures?: { label: string; fig: Figure }[] };
 
 type Part = { name: string; text: boolean };
 // the pattern as a regular expression, and the names of its parts (in order)
@@ -103,6 +105,38 @@ export function readName(name: string, p: { re: RegExp; parts: Part[] }): (numbe
   if (!m) return null;
   return p.parts.map((q, k) => (q.text ? m[k + 1] : Number(m[k + 1].replace(',', '.'))));
 }
+
+// Names in the texts of a figure kept from a run (a legend, an axis title, a text on it, the page's name): {name} (also
+// {file}, {column}) the file's or column's name, {T} … what its name says by the pattern; only the names known are
+// filled, an index (C_{OX}, x^{2}) is left alone. Every other value as it was (the same objects when nothing changed).
+export function fillNames<T>(o: T, vals: Record<string, string>): T {
+  const keys = new Map(Object.entries(vals).map(([k, v]) => [k.toLowerCase(), v]));
+  const re = /(^|[^_^\\])\{\s*([A-Za-z][\w ]*?)\s*\}/g;
+  const walk = (v: unknown): unknown => {
+    if (typeof v === 'string') return v.includes('{') ? v.replace(re, (all, pre: string, name: string) => (keys.has(name.toLowerCase()) ? pre + keys.get(name.toLowerCase()) : all)) : v;
+    if (Array.isArray(v)) {
+      let changed = false;
+      const out = v.map((x) => {
+        const y = walk(x);
+        if (y !== x) changed = true;
+        return y;
+      });
+      return changed ? out : v;
+    }
+    if (v && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype) {
+      let out: Record<string, unknown> | null = null;
+      for (const [k, x] of Object.entries(v)) {
+        const y = walk(x);
+        if (y !== x) (out ??= { ...(v as Record<string, unknown>) })[k] = y;
+      }
+      return out ?? v;
+    }
+    return v;
+  };
+  return walk(o) as T;
+}
+// the names of a run: its own (as {name}, {file}, {column}) and what it says by the pattern
+export const runNames = (name: string, read: (number | string)[] | null, parts: { name: string }[]): Record<string, string> => ({ name, file: name, column: name, ...Object.fromEntries(parts.map((q, k) => [q.name, read ? String(read[k]) : ''])) });
 
 // what a name says, written out: “T = 300, run = a”
 export const readText = (read: (number | string)[] | null, parts: { name: string }[]) => (read ? parts.map((q, k) => `${q.name} = ${read[k]}`).join(', ') : '');
@@ -277,6 +311,7 @@ export function resultOf(label: string, v: { t: string; v: unknown } | undefined
   if (v.t === 'scalar') run.values.push({ label, value: (v.v as Scalar).value });
   else if (v.t === 'dataset') run.tables.push({ label, ds: v.v as Dataset });
   else if (v.t === 'column') run.tables.push({ label, ds: { name: label, columns: [v.v as Column] } });
+  else if (v.t === 'figure') (run.figures ??= []).push({ label, fig: v.v as Figure });
 }
 
 // ---- Over columns: every column of a table a run of its own ----

@@ -853,6 +853,8 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 /* the legend text on the whole first line (it was squeezed to a few letters), the curve's buttons under it at the right */
 .curve-head { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .curve-head .grow { flex: 1 1 calc(100% - 64px); min-width: 0; display: flex; }
+/* (a curve folded to one line stays one line: its name shortened, not put under its number from curve 10 on) */
+.react-flow__node .curve-row.folded > .curve-head { flex-wrap: nowrap; }
 .curve-head .grow + button { margin-left: auto; }
 /* a curve's Y and X axes (Y1, Y2 … X1 …), beside its legend text */
 .curve-head .grow + .curve-axes { margin-left: auto; }
@@ -863,6 +865,11 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .curve-ports.collapsed { position: relative; height: 0; margin-top: -3px; }
 .curve-ports.collapsed > .port-row { position: absolute; left: 0; right: 0; top: -11px; height: 0; min-height: 0; margin: 0; visibility: hidden; }
 .curve-ports.collapsed .react-flow__handle { visibility: visible; }
+/* the whole list of curves folded: every row in one place under the line that says how many (its ports there) */
+.curve-list { display: flex; flex-direction: column; gap: inherit; }
+.curve-list.hidden { position: relative; height: 0; margin-top: -6px; }
+.curve-list.hidden > .curve-row { position: absolute; left: 0; right: 0; top: -23px; visibility: hidden; }
+.curve-list.hidden .react-flow__handle { visibility: visible; }
 .curve-ports .port-row.out { margin-top: 0; font-weight: 400; font-size: var(--fs-small); color: var(--muted); }
 .legend-preview { align-self: center; line-height: 0; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
 .big-view { position: fixed; inset: 0; z-index: 1000; background: rgb(0 0 0 / 0.55); display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
@@ -1096,6 +1103,14 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .annotation-item { border-top: 1px solid var(--border); padding-top: 2px; }
 .annotation-body { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 4px 18px; }
 .canvas-items { display: flex; flex-direction: column; gap: 2px; }
+/* Rename sheets: kept, the old name, the new one */
+/* Recolour: the colours the curves get, in order, before they are applied */
+.recolour-strip { display: inline-flex; height: 16px; min-width: 60px; max-width: 220px; flex: 1 1 120px; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
+.recolour-strip > span { flex: 1 1 0; }
+.rename-sheets { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.rename-sheet { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); gap: 6px; align-items: center; }
+.rename-sheet.head { font-size: var(--fs-small); color: var(--muted); }
+.rename-sheet.off > span { text-decoration: line-through; }
 .canvas-item { display: grid; grid-template-columns: auto 1fr 64px 64px auto; gap: 6px; align-items: center; }
 .canvas-item-order { gap: 2px; align-items: center; }
 .canvas-item-order select { width: 3.4em; }

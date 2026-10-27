@@ -25,7 +25,7 @@ import '@xyflow/react/dist/style.css';
 import './App.css';
 import { EngineContext, useEngine } from './engine/engine.ts';
 import { canConnect, isMultiInput, PORT_COLORS, sourcePort, targetAccepts, type PortContext } from './engine/ports.ts';
-import { KK_DEFAULTS, CONVERT_DEFAULTS, TRANSPOSE_DEFAULTS, STACK_DEFAULTS, TOSHEETS_DEFAULTS, MATCOMP_DEFAULTS, MATRIX_DEFAULTS, COLUMNS_DEFAULTS, PEAKWIDTH_DEFAULTS, AUTOEXTRACT_DEFAULTS, CANVAS_DEFAULTS, DRAWING_DEFAULTS, COMBINE_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS, CALCULUS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, AVERAGE_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, IMAGE_DEFAULTS, PHASE_DEFAULTS, HISTOGRAM_DEFAULTS, BARCHART_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SMITH_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, CURVEMATH_DEFAULTS, TRANSLATE_DEFAULTS, PEAK_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, ANOVA_DEFAULTS, NONPAR_DEFAULTS, CORR_DEFAULTS, PADJUST_DEFAULTS, CONTINGENCY_DEFAULTS, ROC_DEFAULTS, SURVIVAL_DEFAULTS, REGRESS_DEFAULTS, POWER_DEFAULTS, RESAMPLE_DEFAULTS, DISTFIT_DEFAULTS, AGREE_DEFAULTS, METHCOMP_DEFAULTS, LOGISTIC_DEFAULTS, BASELINE_DEFAULTS, FRAC_DEFAULTS, FRFT_DEFAULTS, WAVELET_DEFAULTS, WAVEFORM_DEFAULTS, STEPS_DEFAULTS, EVENTS_DEFAULTS, PICK_DEFAULTS, DATAMANIP_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, SIGGEN_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, PYTHON_DEFAULTS, NOTE_DEFAULTS, NOTE_SIZE,PLOT1D_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
+import { SELECTFIG_DEFAULTS, RENAMESHEETS_DEFAULTS, KK_DEFAULTS, CONVERT_DEFAULTS, TRANSPOSE_DEFAULTS, STACK_DEFAULTS, TOSHEETS_DEFAULTS, MATCOMP_DEFAULTS, MATRIX_DEFAULTS, COLUMNS_DEFAULTS, PEAKWIDTH_DEFAULTS, AUTOEXTRACT_DEFAULTS, CANVAS_DEFAULTS, DRAWING_DEFAULTS, COMBINE_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS, CALCULUS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, AVERAGE_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, IMAGE_DEFAULTS, PHASE_DEFAULTS, HISTOGRAM_DEFAULTS, BARCHART_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SMITH_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, CURVEMATH_DEFAULTS, TRANSLATE_DEFAULTS, PEAK_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, ANOVA_DEFAULTS, NONPAR_DEFAULTS, CORR_DEFAULTS, PADJUST_DEFAULTS, CONTINGENCY_DEFAULTS, ROC_DEFAULTS, SURVIVAL_DEFAULTS, REGRESS_DEFAULTS, POWER_DEFAULTS, RESAMPLE_DEFAULTS, DISTFIT_DEFAULTS, AGREE_DEFAULTS, METHCOMP_DEFAULTS, LOGISTIC_DEFAULTS, BASELINE_DEFAULTS, FRAC_DEFAULTS, FRFT_DEFAULTS, WAVELET_DEFAULTS, WAVEFORM_DEFAULTS, STEPS_DEFAULTS, EVENTS_DEFAULTS, PICK_DEFAULTS, DATAMANIP_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, SIGGEN_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, PYTHON_DEFAULTS, NOTE_DEFAULTS, NOTE_SIZE,PLOT1D_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
 import { NODE_HELP, NODE_SHORT } from './help.ts';
 import { DRAG_TYPE, NodePalette, type PaletteGroup } from './NodePalette.tsx';
 // side panels: separate chunks, loaded when first opened
@@ -33,7 +33,7 @@ const ProjectsPanel = lazy(() => import('./ProjectsPanel.tsx').then((m) => ({ de
 const DocumentPanel = lazy(() => import('./DocumentPanel.tsx').then((m) => ({ default: m.DocumentPanel })));
 const HelpWindow = lazy(() => import('./HelpWindow.tsx').then((m) => ({ default: m.HelpWindow })));
 const CollabPanel = lazy(() => import('./CollabPanel.tsx').then((m) => ({ default: m.CollabPanel })));
-import { download } from './figure/export.ts';
+import { saveAs } from './figure/export.ts';
 import { PALETTE } from './figure/spec.ts';
 import { ContextMenu, type MenuAction, type MenuItem, type MenuState } from './ContextMenu.tsx';
 import { loadRecent, pushRecent } from './recentNodes.ts';
@@ -67,11 +67,13 @@ import { FitNodeView } from './nodes/FitNode.tsx';
 import { ColumnsNodeView, AutoExtractNodeView, ExtractNodeView, GenColNodeView, ImportNodeView, MathColNodeView } from './nodes/DataNodes.tsx';
 import { StatsNodeView } from './nodes/StatsNodes.tsx';
 import { CanvasNodeView, Plot1DNodeView } from './nodes/FigureNodes.tsx';
+import { SelectFiguresNodeView } from './nodes/SelectFiguresNode.tsx';
 import { DrawingNodeView } from './nodes/DrawingNode.tsx';
 import { NoteNodeView } from './nodes/NoteNode.tsx';
 import { PeakWidthNodeView } from './nodes/PeakWidthNode.tsx';
 import { CombineNodeView, UnstackNodeView } from './nodes/ReshapeNodes.tsx';
 import { ConvertNodeView, StackNodeView, ToSheetsNodeView, TransposeNodeView } from './nodes/TableShapeNodes.tsx';
+import { RenameSheetsNodeView } from './nodes/RenameSheetsNode.tsx';
 import { WorkbookNodeView } from './nodes/WorkbookNode.tsx';
 import { CalculusNodeView } from './nodes/CalculusNode.tsx';
 import { PickNodeView } from './nodes/PickNode.tsx';
@@ -116,7 +118,7 @@ import type { NodeResult } from './engine/evaluate.ts';
 import { canPaste, copySettings, pastedData, useClipboard } from './nodes/clipboard.ts';
 import { clearDefaultStyle, defaultStyleFor, forgetStyle, saveStyle, setDefaultStyle, styledData, stylesFor, userStylesFor, withDefaultStyle } from './nodes/styles.ts';
 import { FRAME_COLORS, GROUP_COLORS, NODE_COLORS, nodeColor, nodeDisplayName, nodeTitle } from './nodeColors.ts';
-import { eachSteps, portNames, tidyOwn, type BatchOwn, type BatchSpec } from './engine/batch.ts';
+import { eachSteps, patternOf, portNames, tidyOwn, type BatchOwn, type BatchSpec } from './engine/batch.ts';
 import { FindNode } from './FindNode.tsx';
 import { PlotColumnsDialog, type PlotChoice } from './PlotColumnsDialog.tsx';
 import { buildFigure } from './plotBuild.ts';
@@ -180,6 +182,7 @@ const baseNodeTypes = {
   transpose: TransposeNodeView,
   stack: StackNodeView,
   tosheets: ToSheetsNodeView,
+  renamesheets: RenameSheetsNodeView,
   combine: CombineNodeView,
   mathcol: MathColNodeView,
   python: PythonNodeView,
@@ -205,6 +208,7 @@ const baseNodeTypes = {
   matrix: MatrixNodeView,
   matcomp: MatCompNodeView,
   canvas: CanvasNodeView,
+  selectfig: SelectFiguresNodeView,
   drawing: DrawingNodeView,
   note: NoteNodeView,
   subgraph: GroupNodeView,
@@ -246,6 +250,7 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
       { sub: 'Workbook and sheets', type: 'extract', label: 'Extract column', data: EXTRACT_DEFAULTS },
       { sub: 'Workbook and sheets', type: 'autoextract', label: 'Sheets to columns', data: AUTOEXTRACT_DEFAULTS },
       { sub: 'Workbook and sheets', type: 'tosheets', label: 'Columns to sheets', data: TOSHEETS_DEFAULTS },
+      { sub: 'Workbook and sheets', type: 'renamesheets', label: 'Rename sheets', data: RENAMESHEETS_DEFAULTS, search: 'sheet names, rename files, find replace' },
       { sub: 'Columns', type: 'columns', label: 'Columns', data: COLUMNS_DEFAULTS },
       { sub: 'Columns', type: 'mathcol', label: 'Math column', data: MATHCOL_DEFAULTS },
       { sub: 'Columns', type: 'unstack', label: 'Split into columns', data: UNSTACK_DEFAULTS },
@@ -338,6 +343,7 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
       { sub: 'Surfaces', type: 'plot3d', label: '3D plot', data: PLOT3D_DEFAULTS },
       { sub: 'Surfaces', type: 'contour', label: 'Contour / heatmap', data: CONTOUR_DEFAULTS },
       { sub: 'Layout', type: 'canvas', label: 'Merge plots', data: CANVAS_DEFAULTS },
+      { sub: 'Layout', type: 'selectfig', label: 'Select figures', data: SELECTFIG_DEFAULTS, search: 'pick a figure, choose plots, one of the batch' },
       { sub: 'Layout', type: 'drawing', label: 'Figure Drawing', data: DRAWING_DEFAULTS },
     ],
   },
@@ -466,6 +472,11 @@ function Flow() {
   // settings); the steps skipped for the file shown, faint
   const shownName = currentGroup?.batch ? batchFiles[batchShown]?.name : undefined;
   const batchUnit = currentGroup?.batch?.over === 'columns' ? 'column' : 'file';
+  // the names a figure's texts can hold in this Batch: its file's (or column's) name, what its pattern reads
+  const batchNames = (() => {
+    const p = currentGroup?.batch?.pattern?.trim() ? patternOf(currentGroup.batch.pattern.trim()) : null;
+    return [batchUnit === 'column' ? 'column' : 'file', ...(p && typeof p !== 'string' ? p.parts.map((q) => q.name) : [])];
+  })();
   const eachSet = useMemo(() => (currentGroup?.batch ? eachSteps(currentGroup.batch) : new Set<string>()), [currentGroup]);
   const ownShown = useMemo(() => (shownName ? (currentGroup?.batch?.own?.[shownName] ?? {}) : {}), [currentGroup, shownName]);
   const skipShown = useMemo(() => new Set(shownName ? (currentGroup?.batch?.skip?.[shownName] ?? []) : []), [currentGroup, shownName]);
@@ -560,7 +571,7 @@ function Flow() {
   // a step's place in the Batch, at the top of its options
   const batchStepTop = (n: AppNode) =>
     currentGroup?.batch && n.type !== 'groupin' && n.type !== 'groupout' && nodes.some((q) => q.id === n.id) ? (
-      <BatchStepBar unit={batchUnit} shown={shownName} each={eachSet.has(n.id)} skipped={skipShown.has(n.id)} ownCount={Object.values(currentGroup.batch.own ?? {}).filter((o) => o[n.id]).length} total={batchFiles.length} onEach={(on) => setStepEach(n.id, on)} onSkip={(on) => setStepSkip(n.id, on)} />
+      <BatchStepBar names={sourcePort(n, 'figure') === 'figure' ? batchNames : undefined} unit={batchUnit} shown={shownName} each={eachSet.has(n.id)} skipped={skipShown.has(n.id)} ownCount={Object.values(currentGroup.batch.own ?? {}).filter((o) => o[n.id]).length} total={batchFiles.length} onEach={(on) => setStepEach(n.id, on)} onSkip={(on) => setStepSkip(n.id, on)} />
     ) : null;
   const openGroup = (id: string) => {
     const g = getNode(id);
@@ -1320,7 +1331,11 @@ function Flow() {
   const menuItems: MenuItem[] = useMemo(
     () => [
       ...recentOf(({ i }) => ({ type: (i.key ?? i.type) as AppNode['type'], label: i.label, group: 'Recent', search: i.search })),
-      ...offered.map(({ i, g }) => ({ type: (i.key ?? i.type) as AppNode['type'], label: i.label, group: g, sub: i.sub, search: i.search })),
+      ...offered.flatMap(({ i, g }, k) => [
+        { type: (i.key ?? i.type) as AppNode['type'], label: i.label, group: g, sub: i.sub, search: i.search },
+        // (after the last node of Data: a Batch, as in the Nodes panel)
+        ...(g === 'Data' && offered[k + 1]?.g !== 'Data' ? [{ type: BATCH_NEW as AppNode['type'], label: 'Batch', group: 'Data', sub: 'Batch', search: 'every file, every column, repeat the steps', color: GROUP_COLORS.Groups }] : []),
+      ]),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [recent],
@@ -1615,9 +1630,9 @@ function Flow() {
         </button>
         <button
           onClick={() =>
-            download(stringifyProject(toProject(root.nodes, root.edges, projectName, projectId), 1), `${(projectName || 'sciplotflow-project').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '')}.json`, 'application/json')
+            void saveAs(stringifyProject(toProject(root.nodes, root.edges, projectName, projectId), 1), `${(projectName || 'sciplotflow-project').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '')}.json`, 'application/json', { description: 'SciPlotFlow project', ext: '.json', id: 'sciplotflow-project' })
           }
-          title="Save the project to a file (.json)"
+          title="Save the project to a file (.json): the folder and the name chosen in the Save dialog (a browser without it: downloaded)"
         >
           <Save {...IC} /> <span className="tb-label">Save</span>
         </button>
@@ -1935,10 +1950,10 @@ function Flow() {
             {menu && (
               <ContextMenu
                 menu={menu}
-                items={menu.kind === 'connect' ? menuItems.filter((i) => fitsConnect(menu.from, GROUPS.flatMap((g) => g.items).find((q) => (q.key ?? q.type) === i.type)!)) : menuItems}
+                items={menu.kind === 'connect' ? menuItems.filter((i) => (i.type as string) !== BATCH_NEW && fitsConnect(menu.from, GROUPS.flatMap((g) => g.items).find((q) => (q.key ?? q.type) === i.type)!)) : menuItems}
                 onClose={closeMenu}
                 onAdd={(type) => {
-                  const t = GROUPS.flatMap((g) => g.items).find((i) => (i.key ?? i.type) === type);
+                  const t = template(type);
                   if (t && menu.kind === 'connect') addConnected(t, menu);
                   else if (t) addNode(t, { x: menu.x, y: menu.y });
                 }}

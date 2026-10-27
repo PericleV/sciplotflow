@@ -37,6 +37,9 @@ export const PALETTES: [string, string, string[]][] = [
   ['greys', 'greys (print)', ['#000000', '#555555', '#888888', '#b0b0b0']],
 ];
 
+// n colours spread evenly over a map (its first stop to its last), in order
+export const spreadColors = (stops: string[], n: number): string[] => Array.from({ length: n }, (_, j) => mapColor(stops, n > 1 ? j / (n - 1) : 0));
+
 // The colour at t ∈ [0, 1] of a map.
 export function mapColor(stops: string[], t: number): string {
   const rgb = stops.map(hexRgb);

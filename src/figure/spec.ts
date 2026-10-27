@@ -811,6 +811,7 @@ export type FigureBox = { key: string; box: Placement; free: boolean; border?: P
 export type LengthUnit = 'mm' | 'cm' | 'in';
 export type PanelScheme = 'none' | 'a' | '(a)' | 'a)' | 'A' | '(A)' | 'A)';
 export type Figure = {
+  panelName?: string; // a figure of a Batch (a file's, a column's): its name, in a Merge's list of panels
   width: number;
   height: number;
   unit: LengthUnit;

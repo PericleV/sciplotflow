@@ -8,6 +8,7 @@ import { markMathAsked, mathSizesVersion, resetMathAsked } from '../math/sizes.t
 import { bendPoints, outlinePoint, type Outline, type Pt, type StickSide } from '../figure/shapes.ts';
 import { parsePath, pathBox, pathText, reversePath, shapeToPath } from '../figure/paths.ts';
 import { placeComponent } from './drawingItems.ts';
+import { renameSheets, type SheetRename } from './sheetNames.ts';
 import { isoMatrix, isoToPage } from './isoPlane.ts';
 import { suspendedOf } from './reliability.ts';
 import { generatedValues } from './gencol.ts';
@@ -23,7 +24,7 @@ import { curveColumns, digest, figPort, outValue, toPy, type PyJob, type PyResul
 import { applySheet, hasEdits, readSheet, type SheetMap } from './sheet.ts';
 import { applyFormulas } from './sheetFormula.ts';
 import { flattenGroups, GROUP_IN, GROUP_OUT } from './subgraph.ts';
-import { columnRuns, gather, gatherOne, orderFiles, portNames, readText, resultOf, skipSteps, withOwn, type FileRun } from './batch.ts';
+import { columnRuns, fillNames, gather, gatherOne, orderFiles, portNames, readText, resultOf, runNames, skipSteps, withOwn, type FileRun } from './batch.ts';
 import { takeRows } from './split.ts';
 import { parseRows } from './rows.ts';
 export { parseRows };
@@ -105,7 +106,9 @@ export type Value =
   | { t: 'column'; v: Column }
   | { t: 'scalar'; v: Scalar }
   | { t: 'matrix'; v: Matrix }
-  | { t: 'figure'; v: Figure };
+  | { t: 'figure'; v: Figure }
+  // the figures of a Batch (a Plot kept from every file or column): a panel each in a Merge
+  | { t: 'figures'; v: Figure[] };
 
 // A matrix as the node views show it: its size, names, and the cells of its top-left corner (at most max × max).
 export type MatrixInfo = { name: string; rows: number; cols: number; shownRows: number; shownCols: number; cells: number[]; xs?: number[]; ys?: number[]; colNames?: string[]; rowNames?: string[] };
@@ -142,6 +145,9 @@ export type NodeView = {
   sheet?: SheetMap; // Import: which row / column of the table as read each row / column shown is
   sheets?: string[]; // Import, Extract column, Workbook: the names of the sheets of the workbook
   toSheets?: string[]; // Columns to sheets: the names of the sheets made
+  figList?: { key: string; name?: string; on: boolean }[]; // Select figures: the figures in, taken or not
+  panels?: { key: string; name?: string }[]; // Merge: its figures as connected (a Batch's: one each, named)
+  renamed?: SheetRename[]; // Rename sheets: every sheet's old name, new name, what its name said, left out or not
   // Convert columns: the columns converted, and every column whose text looks like numbers (how many of its text cells)
   convert?: { changed: string[]; looks: { name: string; numeric: number; text: number; examples: string[] }[] };
   // Workbook: its own sheets (the first `own`; the others: from the inputs, read-only) and its inputs; kinds: every sheet
@@ -286,7 +292,7 @@ function pythonNode(n: { id: string; data: PythonData }, inputs: Inputs): Out {
   for (const [h, list] of inputs) {
     const m = /^in-(\d+)$/.exec(h);
     const v = list[0]?.value;
-    if (!m || !v || v.t === 'figure') continue;
+    if (!m || !v || v.t === 'figure' || v.t === 'figures') continue;
     const letter = columnLetter(Number(m[1]));
     const name = d.vars?.[letter]?.trim() || letter;
     const value = toPy(v);
@@ -4928,6 +4934,36 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       if (typeof r === 'string') return { errors: [r], view: { available } };
       return { outputs: { out: { t: 'workbook', v: r.book } }, warnings: r.warnings, view: { available, toSheets: r.book.sheets.map((s) => s.name) } };
     }
+    case 'selectfig': {
+      // of the figures in (a Batch's, or Plots'): all, one, or some (by a list of names or numbers, else those ticked)
+      const figs = all('figures').flatMap((v) => (v.t === 'figure' ? [v.v] : v.t === 'figures' ? v.v : []));
+      if (!figs.length) return { view: { waiting: 'Connect figures: a Batch’s “figures”, or Plots (their “figure”).' } };
+      const keys = figs.map((f, k) => f.key ?? `figure ${k + 1}`);
+      const d = n.data;
+      const warnings: string[] = [];
+      let on: boolean[];
+      if (d.take === 'one') {
+        const k = Math.max(0, keys.indexOf(d.one ?? ''));
+        on = keys.map((_, j) => j === k);
+      } else if (d.take === 'some' && d.some?.trim()) {
+        const p = pick(d.some, figs.map((f, k) => f.panelName ?? keys[k]), false);
+        if (p.missing.length) warnings.push(`List: not found: ${p.missing.join(', ')}.`);
+        on = keys.map((_, j) => p.found.includes(j));
+      } else if (d.take === 'some') on = keys.map((k) => (d.ticked ?? keys).includes(k));
+      else on = keys.map(() => true);
+      const chosen = figs.filter((_, j) => on[j]);
+      const figList = figs.map((f, j) => ({ key: keys[j], ...(f.panelName ? { name: f.panelName } : {}), on: on[j] }));
+      if (!chosen.length) return { warnings, view: { figList, waiting: 'No figure taken.' } };
+      const out: Value = d.take === 'one' ? { t: 'figure', v: chosen[0] } : { t: 'figures', v: chosen };
+      return { outputs: { figure: out }, warnings, view: { figList } };
+    }
+    case 'renamesheets': {
+      const v = one('in');
+      if (v?.t !== 'workbook' && v?.t !== 'dataset') return { view: { waiting: 'Connect a workbook (Import with several files, Columns to sheets …).' } };
+      const book = v.t === 'workbook' ? v.v : { name: v.v.name, sheets: [v.v] };
+      const r = renameSheets(book, n.data);
+      return { outputs: { out: { t: 'workbook', v: r.book } }, warnings: r.warnings, view: { renamed: r.rows } };
+    }
     case 'unstack': {
       const v = one('in');
       if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset (Import …): one long table, the blocks one under the other.' } };
@@ -5101,12 +5137,13 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       return matCompNode(n.data, inputs);
     case 'canvas': {
       const d = n.data;
-      const figs = all('figures').flatMap((v) => (v.t === 'figure' ? [v.v] : []));
+      // (a Batch's figures: a panel each)
+      const figs = all('figures').flatMap((v) => (v.t === 'figure' ? [v.v] : v.t === 'figures' ? v.v : []));
       if (!(d.width > 0) || !(d.height > 0)) return { errors: ['The width and the height must be positive.'] };
       const warnings: string[] = [];
       const figure = canvasFigure(n.id, d, figs, warnings);
       if (toPt(figure.width, figure.unit) > 72 * 60 || toPt(figure.height, figure.unit) > 72 * 60) return { errors: ['At most 60 inches (1.5 m) on a side.'] };
-      return { view: { figure, ...(figs.length ? {} : { waiting: 'Connect Plots (their “figure” output).' }) }, warnings: [...new Set(warnings)] };
+      return { view: { figure, panels: figs.map((f) => ({ key: f.key ?? '', ...(f.panelName ? { name: f.panelName } : {}) })), ...(figs.length ? {} : { waiting: 'Connect Plots (their “figure” output).' }) }, warnings: [...new Set(warnings)] };
     }
     case 'image':
       return imageNodeOut(n.id, n.data);
@@ -5278,7 +5315,11 @@ function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cac
     });
     for (const q of inner.nodes) for (const err of res.get(q.id)?.errors ?? []) run.errors.push(`${q.type}: ${err}`);
     runs.push(run);
-    if (k === shown) preview = res;
+    // (the steps shown inside: their figures with this file's names filled, as they are kept)
+    if (k === shown) {
+      const names = runNames(f.name, ordered.read[k], ordered.parts);
+      preview = new Map([...res].map(([id, q]) => [id, q.view.figure ? { ...q, view: { ...q.view, figure: fillNames(q.view.figure, names) } } : q]));
+    }
   });
   pyNow = outerPy;
   // the caches of files no longer there: forgotten
@@ -5306,8 +5347,20 @@ function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cac
     const one = gatherOne(runs, ordered.read, ordered.parts, keptNames[q], overCols ? 'Column' : 'File', side);
     if (one) each[`k-${p.id}`] = { t: 'dataset', v: one };
   });
+  // the figures kept (a Plot inside): every file's, in order, each named after its file (and what was kept, when more
+  // than one), keyed by them (a Merge keeps its order and settings by these keys)
+  const figures: Figure[] = runs.flatMap((r, ri) =>
+    (r.figures ?? []).map((f0, _, all) => {
+      // (its texts: {name}, {T} … filled with this file's)
+      const f = { ...f0, fig: fillNames(f0.fig, runNames(r.name, ordered.read[ri], ordered.parts)) };
+      const tag = all.length > 1 ? `${r.name} · ${f.label}` : r.name;
+      const key = `${n.id}#${tag}`;
+      // (its frames keyed after it too: every file's the same Plot inside, else the Merge lays them on one another)
+      return { ...f.fig, key, panelName: tag, axes: f.fig.axes.map((ax) => ({ ...ax, key: `${key}/${ax.key}`, node: key, ...(ax.beneath ? { beneath: `${key}/${ax.beneath}` } : {}) })) };
+    }),
+  );
   return {
-    outputs: { table: { t: 'dataset', v: out.table }, sheets: { t: 'workbook', v: out.sheets }, ...(out.stacked ? { stacked: { t: 'dataset', v: out.stacked } } : {}), ...each },
+    outputs: { table: { t: 'dataset', v: out.table }, sheets: { t: 'workbook', v: out.sheets }, ...(out.stacked ? { stacked: { t: 'dataset', v: out.stacked } } : {}), ...each, ...(figures.length ? { figures: { t: 'figures', v: figures } } : {}) },
     warnings,
     view: { batch: { files: runs.length, failed, list: runs.map((r, k) => ({ name: r.name, read: readText(ordered.read[k], ordered.parts), errors: r.errors, own: ownOf(r.name) })), shown, ...(colView ? { over: 'columns' as const, ...colView } : {}) } },
     inner: preview,

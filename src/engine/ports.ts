@@ -103,6 +103,7 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
     case 'stack':
       return handle === 'book' ? 'workbook' : 'dataset';
     case 'tosheets':
+    case 'renamesheets':
       return 'workbook';
     case 'filterrows':
       // every sheet of a workbook: a workbook; the parts: a dataset each, all of them as sheets
@@ -193,7 +194,7 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
     case 'subgraph': {
       // a Batch: a row per file, a sheet per file, every file's rows
       // (and every result kept on its own port, k-…: a table)
-      if (node.data.batch) return handle === 'sheets' ? 'workbook' : handle === 'table' || handle === 'stacked' || handle?.startsWith('k-') ? 'dataset' : null;
+      if (node.data.batch) return handle === 'figures' ? 'figure' : handle === 'sheets' ? 'workbook' : handle === 'table' || handle === 'stacked' || handle?.startsWith('k-') ? 'dataset' : null;
       // what the inside source of this output gives
       const e = node.data.edges.find((x) => x.target === 'group-out' && x.targetHandle === handle);
       const src = e && node.data.nodes.find((x) => x.id === e.source);
@@ -207,6 +208,8 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
     }
     case 'drawing':
       return handle === 'figure' ? 'figure' : null;
+    case 'selectfig':
+      return 'figure';
     case 'image':
       return handle === 'figure' ? 'figure' : handle === 'matrix' ? 'matrix' : handle === 'workbook' ? 'workbook' : null;
     case 'phasedigitizer':
@@ -234,6 +237,7 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
     case 'convert':
     case 'transpose':
     case 'stack':
+    case 'renamesheets':
       return handle === 'in' ? ['dataset', 'workbook'] : [];
     case 'tosheets':
     case 'datamanip':
@@ -339,6 +343,7 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
     case 'matcomp':
       return /^in-\d+$/.test(handle) ? ['matrix', 'column', 'scalar'] : [];
     case 'canvas':
+    case 'selectfig':
       return handle === 'figures' ? ['figure'] : [];
     case 'drawing':
       return handle === 'under' ? ['figure'] : [];
@@ -360,7 +365,7 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
 
 // Target handles that accept any number of incoming connections (drawn as squares).
 // (3D stacked maps: A, B, C … one dataset each)
-export const isMultiInput = (node: AppNode | undefined, handle: string | null | undefined) => !(node?.type === 'plot3d' && node.data.kind === 'layers' && handle === 'dataset') && ((node?.type === 'canvas' && handle === 'figures') || ((node?.type === 'plot1d' || node?.type === 'histogram' || node?.type === 'barchart' || node?.type === 'boxviolin' || node?.type === 'probplot' || node?.type === 'blandaltman' || node?.type === 'pie' || node?.type === 'contour' || node?.type === 'polar' || node?.type === 'smith' || node?.type === 'scattermatrix' || node?.type === 'ternary' || node?.type === 'waterfall' || node?.type === 'plot3d') && (handle === 'dataset' || handle === 'insets')));
+export const isMultiInput = (node: AppNode | undefined, handle: string | null | undefined) => !(node?.type === 'plot3d' && node.data.kind === 'layers' && handle === 'dataset') && (((node?.type === 'canvas' || node?.type === 'selectfig') && handle === 'figures') || ((node?.type === 'plot1d' || node?.type === 'histogram' || node?.type === 'barchart' || node?.type === 'boxviolin' || node?.type === 'probplot' || node?.type === 'blandaltman' || node?.type === 'pie' || node?.type === 'contour' || node?.type === 'polar' || node?.type === 'smith' || node?.type === 'scattermatrix' || node?.type === 'ternary' || node?.type === 'waterfall' || node?.type === 'plot3d') && (handle === 'dataset' || handle === 'insets')));
 
 export function canConnect(source?: AppNode, target?: AppNode, targetHandle?: string | null, sourceHandle?: string | null, ctx?: PortContext) {
   if (!source || !target || source.id === target.id) return false;

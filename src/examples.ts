@@ -211,6 +211,10 @@ function panelsExample(): Project {
   const cv = add(b, 'canvas', 'canvas-2', 2000, 0, { ...CANVAS_DEFAULTS, width: 180, height: 70, panels: '(a)', name: 'melting_two_panels', layout: { ...CANVAS_LAYOUT_DEFAULTS, rows: 1, cols: 2, hgap: 2, shareY: 'row', inner: false } });
   link(b, pa, cv, 'figures', 'figure');
   link(b, pb, cv, 'figures', 'figure');
+  // one of the two taken out (Select figures: one): a figure of its own, to annotate or export alone
+  const sf = add(b, 'selectfig', 'pick-one', 2000, 760, { take: 'one', one: 'plot-b' });
+  link(b, pa, sf, 'figures', 'figure');
+  link(b, pb, sf, 'figures', 'figure');
   return project(b, 'Two panels: colour by value, colour bar, spikes removed');
 }
 
@@ -894,6 +898,9 @@ function workbookExample(): Project {
   link(b, imp, ex, 'in', 'book');
   const st = add(b, 'stats', 'run3-stats', 1180, 900, {});
   link(b, ex, st, 'in');
+  // the sheets renamed: “Run 3” → “Sample 3” (Rename sheets: a find and its replacement), for the nodes after it
+  const rn = add(b, 'renamesheets', 'runs-renamed', 640, 1180, { find: 'Run ', replace: 'Sample ' });
+  link(b, imp, rn, 'in', 'book');
   return project(b, 'Four runs in a workbook: Sheets to columns');
 }
 

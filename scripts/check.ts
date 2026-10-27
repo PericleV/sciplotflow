@@ -103,6 +103,8 @@ import { curveFormulas } from '../src/engine/curvemath.ts';
 import { condsFormula, selectRows, type RowOp } from '../src/engine/rowsel.ts';
 import { rowHandle, sourcePort, targetAccepts } from '../src/engine/ports.ts';
 import { checkImage } from './check-image.ts';
+import { renameSheets } from '../src/engine/sheetNames.ts';
+import { fillNames } from '../src/engine/batch.ts';
 import { APP_VERSION, CITE_APA, CITE_BIBTEX, DOI } from '../src/version.ts';
 import { callSite, writeValidation, type CheckRecord } from './validation.ts';
 import { checkStat2 } from './check-stat2.ts';
@@ -6235,6 +6237,33 @@ for (const ex of EXAMPLES) {
     const oc2 = overCols({ cols: 'C, E', x: 't' });
     const t2b = oc2.get('b1')!.outputs.table;
     ok(Array.from(ct(t2b, 't')?.values ?? []).join(' ') === '60 100' && inner1?.t === 'dataset', `Batch over columns: the columns listed (C, E), with another X (t = 2 x: maxima at 60, 100 — ${Array.from(ct(t2b, 't')?.values ?? []).join(', ')}; ${oc2.get('b1')!.errors.join(' ')})`);
+    // Rename sheets: a find removed, a pattern read and a template written, typed names first, the order by value
+    {
+      const bk = { name: 'b', sheets: ['C-V 20-400K: Append10', 'C-V 20-400K: Append2', 'C-V 20-400K: Data', 'other'].map((name) => ({ name, columns: [column('x', [1])] })) };
+      const r1 = renameSheets(bk, { find: 'C-V 20-400K: ' });
+      const r2 = renameSheets(bk, { pattern: 'C-V 20-400K: Append{n}', template: '{n} K', order: 'value', names: { other: 'Ref' }, drop: ['C-V 20-400K: Data'] });
+      const r3 = renameSheets({ name: 'b', sheets: [{ name: 'a1', columns: [] }, { name: 'a2', columns: [] }] }, { find: 'a(\\d)', replace: 'S', regex: true });
+      ok(r1.book.sheets.map((q) => q.name).join('|') === 'Append10|Append2|Data|other' && r2.book.sheets.map((q) => q.name).join('|') === '2 K|10 K|Ref' && r2.warnings.length === 1 && r3.book.sheets.map((q) => q.name).join('|') === 'S|S (2)', `Rename sheets: found and replaced, read by a pattern and written, typed, by value, left out, names met twice numbered (${r2.book.sheets.map((q) => q.name).join(', ')}; ${r3.book.sheets.map((q) => q.name).join(', ')})`);
+    }
+    // a Plot kept from every column: the batch's figures, a panel each in a Merge (named after its column)
+    {
+      const plt = { id: 'pl', type: 'plot1d', position: { x: 0, y: 0 }, data: structuredClone(PLOT1D_DEFAULTS) } as AppNode;
+      const fb = { ...batch, data: { ...(batch.data as GroupData), nodes: [...inner, plt], edges: [{ id: 'a', source: GROUP_IN, sourceHandle: 'in-0', target: 'pl', targetHandle: 'series' }, { id: 'b', source: 'pl', sourceHandle: 'figure', target: GROUP_OUT, targetHandle: 'out-0' }], outputs: [{ id: 'out-0', label: 'plot', type: 'figure' }], batch: { over: 'columns' } } } as AppNode;
+      const mg = { id: 'mg', type: 'canvas', position: { x: 0, y: 0 }, data: structuredClone(CANVAS_DEFAULTS) } as AppNode;
+      const fr = evaluateGraph([one, fb, mg], [{ id: 'c', source: 'tbl', sourceHandle: 'out', target: 'b1', targetHandle: 'in-0' }, { id: 'm', source: 'b1', sourceHandle: 'figures', target: 'mg', targetHandle: 'figures' }]);
+      const figs = fr.get('b1')!.outputs.figures;
+      const panels = fr.get('mg')!.view.panels ?? [];
+      // the names in its texts filled for every column ({column}); an index left alone; Select figures: one, some, all
+      const fb2 = { ...fb, data: { ...(fb.data as GroupData), nodes: (fb.data as GroupData).nodes.map((q) => (q.id === 'pl' ? ({ ...q, data: { ...(q.data as object), label: '{column} at C_{OX}' } } as AppNode) : q)) } } as AppNode;
+      const sfOf = (d: object) => ({ id: 'sf', type: 'selectfig', position: { x: 0, y: 0 }, data: d }) as AppNode;
+      const named = evaluateGraph([one, fb2, sfOf({ take: 'some', some: '1, 3' })], [{ id: 'c', source: 'tbl', sourceHandle: 'out', target: 'b1', targetHandle: 'in-0' }, { id: 's', source: 'b1', sourceHandle: 'figures', target: 'sf', targetHandle: 'figures' }]);
+      const nf = named.get('b1')!.outputs.figures;
+      const some = named.get('sf')!.outputs.figure;
+      ok(nf?.t === 'figures' && JSON.stringify(nf.v[1].axes[0].curves.map((c) => c.label)).includes('R · d = 200 at C_{OX}') && some?.t === 'figures' && some.v.map((f) => f.panelName).join('|') === 'R · d = 150|R · d = 250' && fillNames({ a: 'x {T} {name} {U} y^{T}' }, { T: '300', name: 'S1' }).a === 'x 300 S1 {U} y^{T}', `Batch: {column} filled in every figure's texts (C_{OX} left alone); Select figures: some by number (${some?.t === 'figures' ? some.v.map((f) => f.panelName).join(', ') : some?.t})`);
+      const onePick = evaluateGraph([one, fb, sfOf({ take: 'one', one: 'b1#R · d = 200' })], [{ id: 'c', source: 'tbl', sourceHandle: 'out', target: 'b1', targetHandle: 'in-0' }, { id: 's', source: 'b1', sourceHandle: 'figures', target: 'sf', targetHandle: 'figures' }]).get('sf')!;
+      ok(onePick.outputs.figure?.t === 'figure' && onePick.outputs.figure.v.panelName === 'R · d = 200' && onePick.view.figList?.filter((q) => q.on).length === 1 && sourcePort(sfOf({}), 'figure') === 'figure', 'Select figures: one taken, a figure of its own');
+      ok(figs?.t === 'figures' && figs.v.length === 3 && sourcePort(fb, 'figures') === 'figure' && panels.length === 3 && panels[0].name === 'R · d = 150' && new Set(panels.map((q) => q.key)).size === 3 && new Set((fr.get('mg')!.view.figure?.axes ?? []).map((q) => JSON.stringify(q.style.pos))).size === 3, `Batch: a Plot kept from every column, its figures a panel each in a Merge (${panels.map((q) => q.name).join(', ')}; ${fr.get('b1')!.errors.join(' ')} ${fr.get('mg')!.errors.join(' ')})`);
+    }
     const runsOf = columnRuns({ name: 'p', columns: [{ ...column('x1', [1, 2]), role: 'x' }, { ...column('a', [5, 6]), role: 'y' }, { ...column('x2', [3, 4]), role: 'x' }, { ...column('b', [7, 8]), role: 'y' }, { ...column('db', [1, 1]), role: 'yerr' }] }, { xFrom: 'left' });
     const rowRuns = columnRuns({ name: 'p', columns: [{ ...column('a', [5, 6, 7]), role: 'y' }, { ...column('b', [1, 2, 3]), role: 'y' }] }, { xFrom: 'row', cols: 'a, b' });
     ok(typeof runsOf !== 'string' && runsOf.map((d) => d.columns.map((c) => c.name).join('+')).join(' | ') === 'x1+a | x2+b+db' && typeof rowRuns !== 'string' && rowRuns[1].columns[0].name === 'Row' && Array.from(rowRuns[1].columns[0].values).join() === '1,2,3' && columnRuns({ name: 'p', columns: [] }, { cols: 'Z' }) === 'Columns: not found: Z.', 'Batch over columns: the X on the left of each (pairs; the ±Y with its column), the row number, a column not found said');

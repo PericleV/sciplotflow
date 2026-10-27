@@ -380,6 +380,7 @@ export type PlotPage = PageData & { frame: 'auto' | 'manual'; pad?: number };
 // curveColors: the curves coloured by a colour map (by the value of the block each came from, else their order) instead
 // of each its own colour.
 export type Plot1DData = {
+  foldCurves?: boolean; // the node's list of curves folded to one line (their connections kept)
   label: string;
   style: Partial<CurveStyle>;
   cols?: CurveCols;
@@ -582,6 +583,10 @@ export type ConvertNode = Node<ConvertData, 'convert'>;
 export type TransposeNode = Node<TransposeData, 'transpose'>;
 export type StackNode = Node<StackData, 'stack'>;
 export type ToSheetsNode = Node<ToSheetsData, 'tosheets'>;
+// Rename sheets (engine/sheetNames.ts): names typed (by the old name), a find and its replacement (regex: a regular
+// expression), a pattern read from the names and the template written from it, the order, the sheets left out
+export type RenameSheetsData = { names?: Record<string, string>; find?: string; replace?: string; regex?: boolean; pattern?: string; template?: string; order?: 'given' | 'name' | 'value'; drop?: string[] };
+export type RenameSheetsNode = Node<RenameSheetsData, 'renamesheets'>;
 export type { ConvertData, StackData, ToSheetsData, TransposeData };
 export type CombineNode = Node<CombineData, 'combine'>;
 export type MathColNode = Node<MathColData, 'mathcol'>;
@@ -595,6 +600,10 @@ export type PeakWidthNode = Node<PeakWidthData, 'peakwidth'>;
 export type StatsNode = Node<StatsData, 'stats'>;
 export type Plot1DNode = Node<Plot1DData, 'plot1d'>;
 export type CanvasNode = Node<CanvasData, 'canvas'>;
+// Select figures: all (absent), one (its key: the node, or the Batch's file), some (a list: names, 2-5, R*; else the
+// keys ticked)
+export type SelectFigData = { take?: 'all' | 'one' | 'some'; one?: string; some?: string; ticked?: string[] };
+export type SelectFigNode = Node<SelectFigData, 'selectfig'>;
 export type DrawingNode = Node<DrawingData, 'drawing'>;
 export type NoteNode = Node<NoteData, 'note'>;
 export type FrameNode = Node<FrameData, 'frame'>;
@@ -675,6 +684,7 @@ export type AppNode =
   | TransposeNode
   | StackNode
   | ToSheetsNode
+  | RenameSheetsNode
   | CombineNode
   | MathColNode
   | PythonNode
@@ -685,6 +695,7 @@ export type AppNode =
   | StatsNode
   | Plot1DNode
   | CanvasNode
+  | SelectFigNode
   | DrawingNode
   | NoteNode
   | FrameNode

@@ -4,7 +4,7 @@ import { NODE_COLORS } from './nodeColors.ts';
 import type { AppNode } from './types.ts';
 
 // sub: the part of its group it is listed under; search: other words it is found by
-export type MenuItem = { type: AppNode['type']; label: string; group: string; sub?: string; search?: string };
+export type MenuItem = { type: AppNode['type']; label: string; group: string; sub?: string; search?: string; color?: string };
 // An entry of a node / selection menu; `colors` shows a row of swatches instead of a button.
 export type MenuAction =
   | { label: string; onClick: () => void; danger?: boolean; kbd?: string }
@@ -135,7 +135,7 @@ export function ContextMenu(props: {
                   {i.sub && i.sub !== inGroup[j - 1]?.sub && <div className="ctx-sub">{i.sub}</div>}
                   <button
                     className={k === active ? 'active' : ''}
-                    style={{ '--node-color': NODE_COLORS[i.type] } as CSSProperties}
+                    style={{ '--node-color': i.color ?? NODE_COLORS[i.type] } as CSSProperties}
                     onMouseEnter={() => setActive(k)}
                     onClick={() => add(i.type)}
                   >
