@@ -1,7 +1,7 @@
 // A figure inside a node (1D plot, Merge): drawn at the node's width, its legend and annotations dragged with the
 // mouse, “Edit layout” for the frame / boxes, a large view, colour-vision checks, and the exports. And the page
 // settings both nodes share (size, default text, background, border).
-import { useContext, useEffect, useId, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useNodeId, useReactFlow } from '@xyflow/react';
 import { figureCopied } from './figureClip.ts';
@@ -9,7 +9,8 @@ import { EDITABLE_FIGURES, makeEmbedded, type Embedded } from '../figure/embed.t
 import { ProjectInfoContext } from '../projectInfo.ts';
 import { exportPng, exportSvg, exportTiff, copyPng, printPdf, pixelSize, safeName, MAX_PIXELS } from '../figure/export.ts';
 import { FigureSvg } from '../figure/render.tsx';
-import { dragKeys, FocusCurve, Interactive, LayoutEdit, ThreeTurn, type DragInfo } from '../figure/interactive.ts';
+import { dragKeys, FocusCurve, HandlesFor, Interactive, LayoutEdit, ThreeTurn, type DragInfo } from '../figure/interactive.ts';
+import { liveFigure } from './figureLive.ts';
 import { FigureRotateLayer, type Turn } from './FigureRotate.tsx';
 import { FONTS, toPt, type Figure, type LengthUnit } from '../figure/spec.ts';
 import type { AnnotationItem, AppNode, PageData } from '../types.ts';
@@ -54,8 +55,10 @@ const CVD: Record<Exclude<ViewMode, 'normal' | 'gray'>, string> = {
 };
 
 // Dragging the parts of a figure on screen: a legend, text, shape, colour bar, frame or box follows the mouse, and its
-// node gets its new place when the mouse is released.
-function useFigureDrag() {
+// node gets its new place when the mouse is released (the part kept moved until the figure comes back drawn there:
+// `moved`); a handle changes its annotation as it goes, drawn here at once (`preview`: the figure shown until the new
+// one comes), its node getting it when the mouse is released.
+function useFigureDrag(figNow: () => Figure, preview: (base: Figure, shown: Figure | null) => void, moved: { current: Element[] }) {
   const { updateNodeData, getNode } = useReactFlow<AppNode>();
   return (e: ReactPointerEvent) => {
     let el = e.target as Element | null;
@@ -86,7 +89,14 @@ function useFigureDrag() {
       dragKeys.ctrl = ev.ctrlKey || ev.metaKey;
       if (data0) {
         cancelAnimationFrame(frame);
-        frame = requestAnimationFrame(() => updateNodeData(info.node, info.apply(d[0], d[1], data0, shift)));
+        frame = requestAnimationFrame(() => {
+          const patch = info.apply(d[0], d[1], data0, shift);
+          const node = getNode(info.node);
+          const base = figNow();
+          const shown = node && Array.isArray(patch.annotations) ? liveFigure(base, node, patch.annotations as AnnotationItem[]) : null;
+          if (shown) preview(base, shown);
+          else updateNodeData(info.node, patch);
+        });
         return;
       }
       target.setAttribute('transform', info.transform ? info.transform(d[0], d[1], shift) : `translate(${d[0].toFixed(2)} ${d[1].toFixed(2)})`);
@@ -95,10 +105,21 @@ function useFigureDrag() {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       cancelAnimationFrame(frame);
-      target.removeAttribute('transform');
-      if (Math.hypot(d[0], d[1]) < 0.3) return;
-      const n = data0 ?? (getNode(info.node)?.data as Record<string, unknown> | undefined);
-      if (n) updateNodeData(info.node, info.apply(d[0], d[1], n, shift));
+      const n = Math.hypot(d[0], d[1]) < 0.3 ? undefined : (data0 ?? (getNode(info.node)?.data as Record<string, unknown> | undefined));
+      if (!n) {
+        target.removeAttribute('transform');
+        preview(figNow(), null);
+        return;
+      }
+      if (!data0) {
+        moved.current.push(target);
+        setTimeout(() => {
+          if (!moved.current.includes(target)) return;
+          target.removeAttribute('transform');
+          moved.current = moved.current.filter((x) => x !== target);
+        }, 3000);
+      }
+      updateNodeData(info.node, info.apply(d[0], d[1], n, shift));
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -110,8 +131,23 @@ function useFigureDrag() {
 // the figure as on the graph of a Fit (↔ Add a range, then drag; All X: none), with the node's own tools beside them.
 // noAxes: a figure without axes (a Figure Drawing) — no layout, zoom nor reader; onPick: a click on a part of it (its node,
 // the part: ann:<id>, curve:…, page)
-export function FigureView({ fig, width, maxHeight = 480, page, setPage, layoutTitle, place, ranges, noAxes, onPick, pick3d }: { fig: Figure; width: number; maxHeight?: number; page: PageData; setPage: (p: Partial<PageData>) => void; layoutTitle: string; place?: { curve: string; sorted?: boolean; points: Pt2[]; onPoints: (p: Pt2[]) => void }; ranges?: { list: XRange[]; onChange: (r: XRange[]) => void; title: string; extra?: ReactNode }; noAxes?: boolean; onPick?: (node: string, part: string) => void; pick3d?: Pick3D }) {
-  const drag = useFigureDrag();
+export function FigureView({ fig: figIn, width, maxHeight = 480, page, setPage, layoutTitle, place, ranges, noAxes, onPick, pick3d }: { fig: Figure; width: number; maxHeight?: number; page: PageData; setPage: (p: Partial<PageData>) => void; layoutTitle: string; place?: { curve: string; sorted?: boolean; points: Pt2[]; onPoints: (p: Pt2[]) => void }; ranges?: { list: XRange[]; onChange: (r: XRange[]) => void; title: string; extra?: ReactNode }; noAxes?: boolean; onPick?: (node: string, part: string) => void; pick3d?: Pick3D }) {
+  // an annotation changed by its handle: the figure shown, drawn here from the figure it was made on (until the node's
+  // new figure comes back)
+  const [live, setLive] = useState<{ base: Figure; shown: Figure } | null>(null);
+  const fig = live && live.base === figIn ? live.shown : figIn;
+  // (a newer figure: the one shown, the preview made on the old one no longer)
+  const figRef = useRef(figIn);
+  useLayoutEffect(() => {
+    figRef.current = figIn;
+  }, [figIn]);
+  // the parts dragged, kept moved until the figure comes back drawn where they were dropped (no jump back; at most 3 s)
+  const moved = useRef<Element[]>([]);
+  useLayoutEffect(() => {
+    for (const el of moved.current) el.removeAttribute('transform');
+    moved.current = [];
+  }, [figIn]);
+  const drag = useFigureDrag(() => figRef.current, (base, shown) => setLive(shown ? { base, shown } : null), moved);
   const { updateNodeData, getNode } = useReactFlow<AppNode>();
   // a polygon annotation of this figure whose points are placed with the mouse (its editor's button)
   const shapePlacing = useShapePlacing();
@@ -142,6 +178,9 @@ export function FigureView({ fig, width, maxHeight = 480, page, setPage, layoutT
   // an annotation clicked: the quick bar over it (until a click elsewhere)
   const quickOn = useQuickBar();
   const [quick, setQuick] = useState<QuickAt | null>(null);
+  // the annotations drawn with their handles: only the one clicked (the others still dragged by their body)
+  const quickItem = quick?.item ?? null;
+  const handleSet = useMemo(() => new Set(quickItem ? [quickItem] : []), [quickItem]);
   useEffect(() => {
     if (!quick) return;
     // a press outside the figure (not in a picker the bar opened): the bar goes
@@ -419,13 +458,15 @@ export function FigureView({ fig, width, maxHeight = 480, page, setPage, layoutT
       )}
       <div className={`canvas-view nodrag${fig.background === 'none' ? ' checker' : ''}`} ref={box} style={{ width: dispW, height: dispH, filter }} onPointerDown={drag} onClick={(e) => pick(e, false)} onDoubleClick={open} title={layout ? 'Drag a box to move it, its squares to resize it' : 'Click a part of the figure to outline it, double-click it to open its settings (an axis, the legend, a curve, an annotation; elsewhere: the page). Drag the legend, a text, shape or colour bar to move it'}>
         <Interactive.Provider value={true}>
-          <LayoutEdit.Provider value={layout}>
-            <FocusCurve.Provider value={focused}>
-              <ThreeTurn.Provider value={turn}>
-                <FigureSvg fig={fig} display={{ width: dispW, height: dispH }} idPrefix={pid} />
-              </ThreeTurn.Provider>
-            </FocusCurve.Provider>
-          </LayoutEdit.Provider>
+          <HandlesFor.Provider value={handleSet}>
+            <LayoutEdit.Provider value={layout}>
+              <FocusCurve.Provider value={focused}>
+                <ThreeTurn.Provider value={turn}>
+                  <FigureSvg fig={fig} display={{ width: dispW, height: dispH }} idPrefix={pid} />
+                </ThreeTurn.Provider>
+              </FocusCurve.Provider>
+            </LayoutEdit.Provider>
+          </HandlesFor.Provider>
         </Interactive.Provider>
         {pick3d && zoom === 'none' && <Figure3DPickLayer fig={fig} width={dispW} height={dispH} pick={pick3d} />}
         {three ? <Figure3DZoomLayer fig={fig} width={dispW} height={dispH} mode={zoom} onTurn={setTurn} /> : <FigureZoomLayer fig={fig} width={dispW} height={dispH} mode={zoom} onRescale={() => rescale()} />}
@@ -446,6 +487,7 @@ export function FigureView({ fig, width, maxHeight = 480, page, setPage, layoutT
             </button>
             <div className="big-figure" style={{ filter }} onPointerDown={drag} onClick={(e) => pick(e, true)} onDoubleClick={open}>
               <Interactive.Provider value={true}>
+                <HandlesFor.Provider value={handleSet}>
                 <LayoutEdit.Provider value={layout}>
                   <FocusCurve.Provider value={focused}>
                     <ThreeTurn.Provider value={turn}>
@@ -453,6 +495,7 @@ export function FigureView({ fig, width, maxHeight = 480, page, setPage, layoutT
                     </ThreeTurn.Provider>
                   </FocusCurve.Provider>
                 </LayoutEdit.Provider>
+                </HandlesFor.Provider>
               </Interactive.Provider>
               {pick3d && zoom === 'none' && <Figure3DPickLayer fig={fig} width={bigW} height={bigH} pick={pick3d} />}
         {three ? <Figure3DZoomLayer fig={fig} width={bigW} height={bigH} mode={zoom} onTurn={setTurn} /> : <FigureZoomLayer fig={fig} width={bigW} height={bigH} mode={zoom} onRescale={() => rescale()} />}

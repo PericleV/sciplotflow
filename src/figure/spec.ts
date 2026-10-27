@@ -591,6 +591,10 @@ export type ShapeSpec = Placed & {
   fillOpacity: number;
   head1: ArrowHead; // at the start
   head2: ArrowHead; // at the end
+  // heads along the line too (a flow, a cycle): so many, evenly along it, pointing its way or back
+  headMid?: ArrowHead;
+  midCount?: number;
+  midBack?: boolean;
   headSize: number; // pt
   radius: number; // rounded corners, pt
   radii?: string; // a rectangle: a radius for each corner, pt (top-left, top-right, bottom-right, bottom-left)
@@ -598,6 +602,7 @@ export type ShapeSpec = Placed & {
   // i-th piece of its outline as a path; 0: its first point); kept apart from its points, so they can be changed again
   corners?: string;
   rotation: number; // degrees
+  mirror?: boolean; // a picture mirrored across (Flip)
   below: boolean; // (older projects) under the curves: now z < 0
   text: string; // bracket: the text over it (e.g. ***)
   textStyle: TextStyle;
@@ -773,7 +778,8 @@ export type ColorbarSpec = Placed & {
 // locked: drawn, but not moved with the mouse (a Figure Drawing's object locked in its layers); clip: an outline (path
 // text in its units) it is cut to; mask: a shape whose lightness shows it (white: all of it, black: none)
 // shift: drawn moved by so much (in its units: a drawing's object pinned to the data of the Plot under it)
-type AnnBase = { key: string; owner?: Owner; locked?: boolean; clip?: string; mask?: ShapeSpec; shift?: [number, number] };
+// iso: drawn on a face of an isometric box (a drawing's object): its projection, the place in mm
+type AnnBase = { key: string; owner?: Owner; locked?: boolean; clip?: string; mask?: ShapeSpec; shift?: [number, number]; iso?: [number, number, number, number, number, number] };
 export type Annotation = (AnnBase & { kind: 'shape'; shape: ShapeSpec }) | (AnnBase & { kind: 'text'; text: TextSpec }) | (AnnBase & { kind: 'colorbar'; bar: ColorbarSpec; curve: Curve | null });
 
 // One frame of axes with what is drawn in it. auto: the frame is placed by the margins its axes need (pad pt more

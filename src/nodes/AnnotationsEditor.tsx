@@ -142,6 +142,19 @@ function HeadRows({ s, set, start = true, label = 'Heads', sizeLabel = 'Head siz
       <Row label={sizeLabel}>
         <SliderField value={s.headSize} onChange={(v) => set({ headSize: num(v) })} min={0} max={15} step={0.5} unit="pt" />
       </Row>
+      {start && (
+        <Row label="Along it" hint="Heads along the line too (a flow, a cycle): so many, evenly along it, pointing its way or back">
+          <Group gap={6} wrap="nowrap">
+            <PicturePick label="Head along the line" value={s.headMid ?? 'none'} onChange={(headMid) => set({ headMid: headMid === 'none' ? undefined : headMid })} options={headPics(false)} />
+            {s.headMid && s.headMid !== 'none' && (
+              <>
+                <NumField value={s.midCount ?? 1} min={1} max={20} step={1} onChange={(v) => set({ midCount: Number.isFinite(v) && v > 1 ? Math.min(20, Math.round(v)) : undefined })} />
+                <Toggle label="back" value={!!s.midBack} onChange={(midBack) => set({ midBack: midBack || undefined })} />
+              </>
+            )}
+          </Group>
+        </Row>
+      )}
     </>
   );
 }

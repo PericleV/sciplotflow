@@ -365,7 +365,11 @@ export type PageData = {
 // pin: an object of a drawing over a Plot that moves with the Plot's data — at: the data point (x, y of the Plot's axes) its
 // anchor was on when pinned, ref: where its anchor then was (mm): it is drawn moved by where `at` is now minus `ref`.
 // behind: (a drawing over a Plot) drawn behind the Plot's data — under its curves, over its frame's ground and grid
-export type AnnotationItem = { id: string; name?: string; hidden?: boolean; locked?: boolean; group?: string; clipBy?: string; maskBy?: string; behind?: boolean; pin?: { at: [number, number]; ref: [number, number] } } & ({ type: 'shape'; spec: Partial<ShapeSpec> } | { type: 'text'; spec: Partial<TextSpec> } | { type: 'colorbar'; spec: Partial<ColorbarSpec> });
+// An object of a drawing on a face of an isometric box (src/engine/isoPlane.ts): its points in the face, drawn through
+// the face's projection moved to `at` (mm); a text upright: only its place on the face, its letters level.
+export type IsoFace = 'top' | 'left' | 'right';
+export type IsoPlace = { face: IsoFace; at: [number, number]; upright?: boolean };
+export type AnnotationItem = { id: string; name?: string; hidden?: boolean; locked?: boolean; group?: string; clipBy?: string; maskBy?: string; behind?: boolean; pin?: { at: [number, number]; ref: [number, number] }; iso?: IsoPlace } & ({ type: 'shape'; spec: Partial<ShapeSpec> } | { type: 'text'; spec: Partial<TextSpec> } | { type: 'colorbar'; spec: Partial<ColorbarSpec> });
 // The legend of a Plot: shown or not, and its settings.
 export type PlotLegend = Partial<Omit<LegendSpec, 'key' | 'curves' | 'owner'>> & { show: boolean };
 // The page of a Plot: frame 'auto' — placed by the margins its axes need (pad pt more around) —, or 'manual' (the
@@ -443,19 +447,26 @@ export type CanvasData = PageData & {
   panelX?: number;
   panelY?: number;
   panelBox?: string; // a ground behind the panel labels ('' = none)
+  order?: string[]; // the figures in the order they fill the grid (their nodes), chosen in its Grid tab; absent: as connected
 };
 
 // Figure Drawing: a vector drawing on its own page (PageData: size, text, background, border, exports), its objects in
 // `annotations` (shapes and texts in mm from the top-left corner of the page; the first one at the back). grid: the
 // step (in mm or pt) of the editor's grid, shown or not, objects snapped to it; snapObjects: to the edges and middles of
 // the other objects and of the page (guides shown while dragging). Its figure goes to a Merge or a Plot's insets.
-export type DrawingGrid = { step: number; unit: 'mm' | 'pt'; show: boolean; snap: boolean };
+// iso: an isometric grid (lines at 30° either way and down, points a step apart)
+// The isometric mode of a drawing's editor: on (the cube shown), the face new objects are drawn on ('flat': none), the
+// guides out of the rulers along the face's edges, new texts upright (else slanted with the face).
+export type IsoMode = { on?: boolean; plane?: IsoFace | 'flat'; guides?: boolean; upright?: boolean };
+export type DrawingGrid = { step: number; unit: 'mm' | 'pt'; show: boolean; snap: boolean; iso?: boolean };
 // components: groups of objects kept once (their points from the top-left corner of their box, w × h mm), placed as
 // instances (shapes of kind 'component') that all change with them.
 export type DrawingComponent = { id: string; name: string; w: number; h: number; items: AnnotationItem[] };
 // under: a figure connected to its port (a Plot, a Merge …) is drawn under the drawing — its page the drawing's — and
 // goes out with it ('draw', the default), or is only a guide while drawing ('guide': the drawing goes out alone).
-export type DrawingData = PageData & { annotations?: AnnotationItem[]; grid?: Partial<DrawingGrid>; snapObjects?: boolean; components?: DrawingComponent[]; under?: 'draw' | 'guide' };
+// guides: lines dragged out of the rulers (mm from the page's left, top), objects snapped to them; snapNodes: points
+// snapped to the nodes (corners, ends, middles) of the other objects and to where their outlines cross
+export type DrawingData = PageData & { annotations?: AnnotationItem[]; grid?: Partial<DrawingGrid>; snapObjects?: boolean; snapNodes?: boolean; guides?: { x?: number[]; y?: number[]; hidden?: boolean; iso?: { at: [number, number]; deg: number }[] }; isoMode?: IsoMode; components?: DrawingComponent[]; under?: 'draw' | 'guide' };
 
 // ---- Notes, layout ----
 // doc: the formatted note (the editor's document; absent: a plain note, its text alone); text: its plain text, always

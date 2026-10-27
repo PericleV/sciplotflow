@@ -26,3 +26,26 @@ const subscribe = (f: () => void) => {
   return () => void listeners.delete(f);
 };
 export const useQuickBar = () => useSyncExternalStore(subscribe, () => on, () => on);
+
+// In the Figure Drawing editor: by the objects selected (null), or where it was dragged (px from the top-left corner of
+// the room of the page; kept in this browser)
+const AT = 'graph-flow:quick-bar-at';
+let placed: { x: number; y: number } | null = (() => {
+  try {
+    const v = JSON.parse(localStorage.getItem(AT) ?? 'null') as { x: number; y: number } | null;
+    return v && Number.isFinite(v.x) && Number.isFinite(v.y) ? v : null;
+  } catch {
+    return null;
+  }
+})();
+export function setQuickBarAt(v: { x: number; y: number } | null) {
+  placed = v;
+  try {
+    if (v) localStorage.setItem(AT, JSON.stringify(v));
+    else localStorage.removeItem(AT);
+  } catch {
+    // storage unavailable: for this visit
+  }
+  listeners.forEach((f) => f());
+}
+export const useQuickBarAt = () => useSyncExternalStore(subscribe, () => placed, () => placed);

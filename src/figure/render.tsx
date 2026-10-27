@@ -2,7 +2,7 @@
 // size, PNG / TIFF at a chosen dpi). Only SVG attributes, no CSS classes, so the export is the drawing.
 import { createContext, Fragment, memo, useContext, type ReactNode } from 'react';
 import { CommaContext, commaNumbers } from './comma.ts';
-import { dragKeys, FocusCurve, HandleScale, Interactive, LayoutEdit, PickedNodes, type DragInfo } from './interactive.ts';
+import { dragKeys, FocusCurve, HandlesFor, HandleScale, Interactive, LayoutEdit, PickedNodes, type DragInfo } from './interactive.ts';
 import type { AnnotationItem, CanvasItem } from '../types.ts';
 import { categoryColors, legendColor, mapColor, mapT, stopsOf } from './colors.ts';
 import { cellEdges } from '../engine/contour.ts';
@@ -74,6 +74,8 @@ function Dim({ curve, children }: { curve: string; children: ReactNode }) {
 // ---- dragging on the figure (the Merge view): a draggable part carries what its drag changes in its node ----
 // inside a drawing scaled to its place (a Merge, an inset): the mouse's moves (pt of the page) back in its own pt
 const DragScale = createContext(1);
+// (an annotation not among those drawn with their handles: without them, still dragged by its body)
+const HandlesOff = createContext(false);
 function Draggable({ info: info0, children }: { info: DragInfo; children: ReactNode }) {
   const on = useContext(Interactive);
   const k = useContext(DragScale);
@@ -1862,6 +1864,19 @@ function LegendDraw({ lg, box, defaults, place }: { lg: LegendSpec; box: Box; de
 // ---- annotations ----
 type Mapper = { x: (v: number) => number; y: (v: number) => number; ix: (p: number) => number; iy: (p: number) => number; box: Box };
 
+// the heads along a line (its points, pt): midCount of them evenly along it, pointing its way (midBack: back)
+function midHeads(s: ShapeSpec, pts: Pt[]): ReactNode {
+  if (!s.headMid || s.headMid === 'none' || pts.length < 2) return null;
+  const n = Math.max(1, Math.min(20, Math.round(s.midCount ?? 1)));
+  return Array.from({ length: n }, (_, k) => {
+    const { p, u } = pointAlong(pts, (k + 0.5) / n);
+    const ang = s.midBack ? Math.atan2(-u[1], -u[0]) : Math.atan2(u[1], u[0]);
+    // (its tip ahead of the middle by half its length: the head centred on the place)
+    const half = (s.headSize || 0) / 2;
+    const d = s.midBack ? -half : half;
+    return <g key={k}>{head(s.headMid!, p[0] + u[0] * d, p[1] + u[1] * d, ang, s.headSize, s.color, s.width)}</g>;
+  });
+}
 function head(kind: ArrowHead, x: number, y: number, ang: number, size: number, color: string, width: number): ReactNode {
   if (kind === 'none') return null;
   const c = Math.cos(ang);
@@ -2128,6 +2143,7 @@ function ArrowView({ s, p1, p2, bends, stroke, defaults }: { s: ShapeSpec; p1: P
       {lines}
       {heads && head(s.head1, p1[0], p1[1], ends.ang1, size, s.color, s.width)}
       {heads && head(s.head2, p2[0], p2[1], ends.ang2, size, s.color, s.width)}
+      {heads && midHeads(s, mid)}
       {cross}
       {labels}
     </g>
@@ -2270,13 +2286,20 @@ function ShapeView({ s, m, defaults, id = 'shape' }: { s: ShapeSpec; m: Mapper; 
         return `${d}Z`;
       })();
       const pc = [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length];
-      if (closed) return <ClosedShape s={s} id={id} box={gradFrame(s, m)?.box} transform={rot(pc[0], pc[1])} make={(p) => <path d={path} {...p} />} />;
+      if (closed)
+        return (
+          <g transform={rot(pc[0], pc[1])}>
+            <ClosedShape s={s} id={id} box={gradFrame(s, m)?.box} make={(p) => <path d={path} {...p} />} />
+            {midHeads(s, [...pts, pts[0]])}
+          </g>
+        );
       const angle = (p: [number, number], q: [number, number]) => Math.atan2(p[1] - q[1], p[0] - q[0]);
       return (
         <g transform={rot(pc[0], pc[1])}>
           {s.width > 0 && <path d={path} fill="none" {...stroke} strokeLinecap={s.cap ?? (s.join === 'round' ? 'round' : 'butt')} />}
           {head(s.head1, pts[0][0], pts[0][1], angle(pts[0], pts[1]), s.headSize, s.color, s.width)}
           {head(s.head2, pts[pts.length - 1][0], pts[pts.length - 1][1], angle(pts[pts.length - 1], pts[pts.length - 2]), s.headSize, s.color, s.width)}
+          {midHeads(s, pts)}
         </g>
       );
     }
@@ -2348,13 +2371,14 @@ function ShapeView({ s, m, defaults, id = 'shape' }: { s: ShapeSpec; m: Mapper; 
           <ClosedShape s={s} id={id} box={b} make={(p) => <path d={d} fillRule={s.evenodd ? 'evenodd' : undefined} {...p} />} />
           {ends && first && head(s.head1, first[0], first[1], ends.ang1, s.headSize, s.color, s.width)}
           {last && lastPt && head(s.head2, lastPt[0], lastPt[1], last.ang2, s.headSize, s.color, s.width)}
+          {s.headMid && s.headMid !== 'none' && pathPolylines(segs).filter((l) => l.length > 1).map((l, k) => <g key={k}>{midHeads(s, l)}</g>)}
         </g>
       );
     }
     case 'image': {
       const [x, y, w, h] = [Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1)];
       return (
-        <g transform={rot(x + w / 2, y + h / 2)}>
+        <g transform={`${rot(x + w / 2, y + h / 2) ?? ''}${s.mirror ? ` translate(${n2(2 * x + w)} 0) scale(-1 1)` : ''}`.trim() || undefined}>
           {s.href ? <image href={s.href} x={n2(x)} y={n2(y)} width={n2(w)} height={n2(h)} preserveAspectRatio={s.stretch ? 'none' : 'xMidYMid meet'} opacity={s.opacity < 1 ? s.opacity : undefined} /> : <rect x={n2(x)} y={n2(y)} width={n2(w)} height={n2(h)} fill="#eeeeee" stroke="#999999" strokeDasharray="3 2" strokeWidth={0.5} />}
           {s.width > 0 && <rect x={n2(x)} y={n2(y)} width={n2(w)} height={n2(h)} fill="none" {...stroke} />}
         </g>
@@ -2575,7 +2599,8 @@ function RotateHandle({ cx, cy, r, deg, info }: { cx: number; cy: number; r: num
 // dragged alone — the band itself does not move.
 function RangeEdges({ s, m, info }: { s: ShapeSpec; m: Mapper; info: (patch: Patch) => DragInfo }) {
   const on = useContext(Interactive);
-  if (!on) return null;
+  const off = useContext(HandlesOff);
+  if (!on || off) return null;
   const { mx } = moved(m, s.coords);
   const X = (v: number) => (s.coords === 'data' ? m.x(v) : m.box.x + (v / 100) * m.box.w);
   const edge = (x: number, apply: Patch, k: string) =>
@@ -2722,9 +2747,10 @@ function PathHandles({ s, m, info, item }: { s: ShapeSpec; m: Mapper; info: (pat
 // the ellipse made a circle).
 function GradHandles({ s, m, info }: { s: ShapeSpec; m: Mapper; info: (patch: Patch) => DragInfo }) {
   const on = useContext(Interactive);
+  const off = useContext(HandlesOff);
   const k = useContext(HandleScale);
   const band = s.kind === 'xband' || s.kind === 'yband';
-  if (!on || !s.grad || s.grad === 'none' || !(s.fill || band)) return null;
+  if (!on || off || !s.grad || s.grad === 'none' || !(s.fill || band)) return null;
   const f = gradFrame(s, m);
   if (!f || !(f.box.w > 0) || !(f.box.h > 0)) return null;
   const { box: b, c } = f;
@@ -2823,7 +2849,8 @@ function boxHandles(s: ShapeSpec, X: (v: number) => number, Y: (v: number) => nu
 const BOX_CURSORS = ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'];
 function ShapeHandles({ s, m, info, item }: { s: ShapeSpec; m: Mapper; info: (patch: Patch) => DragInfo; item?: string }) {
   const on = useContext(Interactive);
-  if (!on) return null;
+  const off = useContext(HandlesOff);
+  if (!on || off) return null;
   const { mx, my } = moved(m, s.coords);
   const X = (v: number) => (s.coords === 'data' ? m.x(v) : m.box.x + (v / 100) * m.box.w);
   const Y = (v: number) => (s.coords === 'data' ? m.y(v) : m.box.y + (v / 100) * m.box.h);
@@ -3012,7 +3039,8 @@ function ShapeHandles({ s, m, info, item }: { s: ShapeSpec; m: Mapper; info: (pa
 // The far end of a colour bar: dragging it changes its length.
 function BarHandle({ b, m, info, curve, defaults }: { b: ColorbarSpec; m: Mapper; info: (patch: Patch) => DragInfo; curve: Curve | null; defaults: TextDefaults }) {
   const on = useContext(Interactive);
-  if (!on) return null;
+  const off = useContext(HandlesOff);
+  if (!on || off) return null;
   const vert = b.orientation === 'vertical';
   const [ox, oy] = curve?.colorRange ? barOffset(b, curve, curve.colorRange[0], curve.colorRange[1], defaults) : [0, 0];
   const x = m.box.x + (b.x / 100) * m.box.w + ox;
@@ -3029,7 +3057,8 @@ function BarHandle({ b, m, info, curve, defaults }: { b: ColorbarSpec; m: Mapper
 // The turning handle of a text annotation: above it, about its point.
 function TextHandles({ s, m, defaults, info }: { s: TextSpec; m: Mapper; defaults: TextDefaults; info: (patch: Patch) => DragInfo }) {
   const on = useContext(Interactive);
-  if (!on) return null;
+  const off = useContext(HandlesOff);
+  if (!on || off) return null;
   const t = resolveText(s.style, defaults);
   const x = s.coords === 'data' ? m.x(s.x) : m.box.x + (s.x / 100) * m.box.w;
   const y = s.coords === 'data' ? m.y(s.y) : m.box.y + (s.y / 100) * m.box.h;
@@ -3119,10 +3148,12 @@ function AnnotationView({ a, m, defaults, idPrefix }: { a: Annotation; m: Mapper
 // An annotation as a part a click finds: an item of a node's annotations, or a quick fit's range (its curve)
 function PartOf({ a, children }: { a: Annotation; children: ReactNode }) {
   const o = a.owner;
+  const only = useContext(HandlesFor);
   const part = o?.field === 'annotations' ? `ann:${o.item}` : o?.field === 'qfit' ? `curve:${o.node}:${o.curve}` : o?.field === 'ranges' ? 'frame' : undefined;
+  const bare = !!only && o?.field === 'annotations' && !only.has(o.item);
   return part ? (
     <g data-part={part} data-node={o!.node}>
-      {children}
+      {bare ? <HandlesOff.Provider value={true}>{children}</HandlesOff.Provider> : children}
     </g>
   ) : (
     <>{children}</>
@@ -3302,11 +3333,16 @@ function DrawingPanel({ ax, W, H, idPrefix, defaults }: { ax: AxesFig; W: number
   const clipId = `${idPrefix}-dclip`;
   const node = ax.node ?? ax.key;
   const items = ax.annotations.map((a): Item => {
+    const part = (
+      <PartOf a={a}>
+        <AnnotationView a={a} m={m} defaults={defaults} idPrefix={idPrefix} />
+      </PartOf>
+    );
+    // on an isometric face: drawn (its handles too) through the face's projection
+    const iso = a.iso;
     const el = (
       <Clipped a={a} m={m} defaults={defaults} id={`${idPrefix}-${a.key}`.replace(/[^\w-]/g, '_')}>
-        <PartOf a={a}>
-          <AnnotationView a={a} m={m} defaults={defaults} idPrefix={idPrefix} />
-        </PartOf>
+        {iso ? <g transform={`matrix(${iso.slice(0, 4).map((v) => +v.toFixed(6)).join(' ')} ${n2(m.x(iso[4]) - m.x(0))} ${n2(m.y(iso[5]) - m.y(0))})`}>{part}</g> : part}
       </Clipped>
     );
     // pinned to the data under it: moved with them (its points kept as drawn: its handles still change them)

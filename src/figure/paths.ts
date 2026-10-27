@@ -696,3 +696,58 @@ export function breakAt(segs: Seg[], i: number): Seg[][] {
     [{ c: 'M', p: at }, ...body.slice(k), ...after],
   ];
 }
+
+// ---- simplified: the points that matter of every subpath (Douglas–Peucker, tol in its units), straight between them
+// or a smooth curve through them (Catmull–Rom as cubics); a closed one stays closed ----
+function douglas(pts: Pt[], tol: number): Pt[] {
+  if (pts.length < 3) return pts;
+  const [a, b] = [pts[0], pts[pts.length - 1]];
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  let [far, at] = [-1, 0];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const d = L > 1e-12 ? Math.abs((b[0] - a[0]) * (a[1] - pts[i][1]) - (a[0] - pts[i][0]) * (b[1] - a[1])) / L : Math.hypot(pts[i][0] - a[0], pts[i][1] - a[1]);
+    if (d > far) [far, at] = [d, i];
+  }
+  return far > tol ? [...douglas(pts.slice(0, at + 1), tol).slice(0, -1), ...douglas(pts.slice(at), tol)] : [a, b];
+}
+export function simplifyPath(d: string, tol: number, smooth: boolean): string {
+  const segs = parsePath(d);
+  const subs: Seg[][] = [];
+  for (const s of segs) {
+    if (s.c === 'M' || !subs.length) subs.push([]);
+    subs[subs.length - 1].push(s);
+  }
+  const out: Seg[] = [];
+  for (const sub of subs) {
+    const closed = isClosed(sub);
+    let pts = pathPolylines(sub, 16)[0] ?? [];
+    if (closed && pts.length > 1 && Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) < 1e-9) pts = pts.slice(0, -1);
+    if (pts.length < 2) continue;
+    let keep: Pt[];
+    if (closed) {
+      // (split where it is farthest from its first point: two open halves)
+      let far = 0;
+      for (let i = 1; i < pts.length; i++) if (Math.hypot(pts[i][0] - pts[0][0], pts[i][1] - pts[0][1]) > Math.hypot(pts[far][0] - pts[0][0], pts[far][1] - pts[0][1])) far = i;
+      keep = [...douglas(pts.slice(0, far + 1), tol).slice(0, -1), ...douglas([...pts.slice(far), pts[0]], tol).slice(0, -1)];
+    } else keep = douglas(pts, tol);
+    const n = keep.length;
+    out.push({ c: 'M', p: [r4(keep[0][0]), r4(keep[0][1])] });
+    const count = closed ? n : n - 1;
+    for (let k = 0; k < count; k++) {
+      const p1 = keep[k];
+      const p2 = keep[(k + 1) % n];
+      if (!smooth || n < 3) {
+        out.push({ c: 'L', p: [r4(p2[0]), r4(p2[1])] });
+        continue;
+      }
+      // (the ends of an open one: their neighbour mirrored)
+      const p0 = closed ? keep[(k - 1 + n) % n] : k > 0 ? keep[k - 1] : ([2 * p1[0] - p2[0], 2 * p1[1] - p2[1]] as Pt);
+      const p3 = closed ? keep[(k + 2) % n] : k + 2 < n ? keep[k + 2] : ([2 * p2[0] - p1[0], 2 * p2[1] - p1[1]] as Pt);
+      out.push({ c: 'C', p: [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6, p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6, p2[0], p2[1]].map(r4) });
+    }
+    if (closed) out.push({ c: 'Z', p: [] });
+  }
+  return pathText(out);
+}
+// the nodes of a path (their count: what Simplify takes away)
+export const nodeCount = (d: string) => parsePath(d).filter((s) => s.c !== 'Z').length;

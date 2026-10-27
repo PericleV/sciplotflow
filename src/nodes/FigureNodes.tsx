@@ -3,7 +3,7 @@
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { useNodeConnections, useNodesData, useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
-import { plotRows } from '../engine/evaluate.ts';
+import { packCells, panelOrder, plotRows } from '../engine/evaluate.ts';
 import { rowHandle } from '../engine/ports.ts';
 import { curvesByRole, titleOf } from '../engine/table.ts';
 import type { ColInfo } from '../engine/evaluate.ts';
@@ -30,7 +30,7 @@ import { parsePoints, pointsText } from './points.ts';
 import { Check, Field, InPort, Messages, NumInput, OutPort, Select, TextInput } from './ui.tsx';
 import { sheetOptions } from './sheetOptions.ts';
 import { maxOf } from '../engine/minmax.ts';
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, ClipboardPaste, Copy, CopyPlus, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, ClipboardPaste, Copy, CopyPlus, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
 
 // ---- 1D plot ----
@@ -720,30 +720,71 @@ function CommonControls({ L, set }: { L: CanvasLayout; set: (p: Partial<CanvasLa
   );
 }
 
-// The Plots in the Merge, in the order of connection: the cells each spans, or its own box (an inset).
-function ItemsControls({ keys, items, set }: { keys: string[]; items: CanvasItem[]; set: (items: CanvasItem[]) => void }) {
+// The figures in the Merge (Plots, drawings), in the order they fill the grid: their panel (changed: two change
+// places; the arrows: with the panel left, right, above or below it in the grid), the cells each spans, or its own box
+// (an inset); a Plot split into facets.
+function ItemsControls({ keys, items, set, setOrder, L }: { keys: string[]; items: CanvasItem[]; set: (items: CanvasItem[]) => void; setOrder: (order: string[]) => void; L: CanvasLayout }) {
   const nodes = useNodesData<AppNode>(keys);
   const item = (key: string) => items.find((it) => it.key === key) ?? { key };
   const setItem = (key: string, p: Partial<CanvasItem>) => {
     const next = { ...item(key), ...p };
     set(items.some((it) => it.key === key) ? items.map((it) => (it.key === key ? next : it)) : [...items, next]);
   };
+  const swap = (a: number, b: number) => {
+    if (b < 0 || b >= keys.length || a === b) return;
+    const order = [...keys];
+    [order[a], order[b]] = [order[b], order[a]];
+    setOrder(order);
+  };
+  // where each is in the grid (as the Merge packs them; stacked: one column or one row), and the one beside it
+  const count = keys.length;
+  const [gc, gr] = L.arrange === 'stackV' ? [1, count] : L.arrange === 'stackH' ? [count, 1] : [Math.max(1, Math.floor(L.cols) || 1), Math.max(1, Math.floor(L.rows) || 1)];
+  const cells = packCells(keys.map((k) => (L.arrange && L.arrange !== 'grid' ? { key: k, free: item(k).free } : item(k))), gc, gr);
+  const beside = (k: number, dr: number, dc: number) => {
+    const c = cells[k];
+    if (!c) return -1;
+    const [r, col] = [dr < 0 ? c.r - 1 : dr > 0 ? c.r + c.rs : c.r, dc < 0 ? c.c - 1 : dc > 0 ? c.c + c.cs : c.c];
+    return cells.findIndex((o, j) => j !== k && !!o && r >= o.r && r < o.r + o.rs && col >= o.c && col < o.c + o.cs);
+  };
   if (!keys.length) return null;
   return (
     <div className="canvas-items">
       <div className="canvas-item head">
-        <span>Plot</span>
+        <span title="Its panel: the order the figures fill the grid; choose another, the two change places">Panel</span>
+        <span>Figure</span>
         <span title="Columns of the grid it spans">Cols</span>
         <span title="Rows of the grid it spans">Rows</span>
-        <span title="Split into panels: one for every curve of the Plot (its axes and styles), in its place in the grid">Facets</span>
+        <span title="A Plot split into panels: one for every curve it shows (its axes and styles), side by side in its place in the grid (only a Plot of several curves)">Facets</span>
       </div>
       {keys.map((key, k) => {
         const it = item(key);
         const n = nodes.find((x) => x.id === key);
+        const [left, right, up, down] = [beside(k, 0, -1), beside(k, 0, 1), beside(k, -1, 0), beside(k, 1, 0)];
         return (
           <div key={key} className="canvas-item">
+            <span className="row canvas-item-order">
+              <select className="nodrag" value={k} title="Its panel: another one, and the figure there takes this one's place" onChange={(e) => swap(k, Number(e.target.value))}>
+                {keys.map((_, j) => (
+                  <option key={j} value={j}>
+                    {j + 1}
+                  </option>
+                ))}
+              </select>
+              <button className="nodrag ts-btn" disabled={left < 0} title="With the panel on its left" onClick={() => swap(k, left)}>
+                <ArrowLeft {...IC} />
+              </button>
+              <button className="nodrag ts-btn" disabled={right < 0} title="With the panel on its right" onClick={() => swap(k, right)}>
+                <ArrowRight {...IC} />
+              </button>
+              <button className="nodrag ts-btn" disabled={up < 0} title="With the panel above it" onClick={() => swap(k, up)}>
+                <ArrowUp {...IC} />
+              </button>
+              <button className="nodrag ts-btn" disabled={down < 0} title="With the panel below it" onClick={() => swap(k, down)}>
+                <ArrowDown {...IC} />
+              </button>
+            </span>
             <span className="ellipsis" title={key}>
-              {k + 1}. {n ? nodeDisplayName(n as AppNode) : key}
+              {n ? nodeDisplayName(n as AppNode) : key}
             </span>
             {it.free ? (
               <>
@@ -757,7 +798,7 @@ function ItemsControls({ keys, items, set }: { keys: string[]; items: CanvasItem
               <>
                 <NumInput className="tiny" min={1} step={1} value={it.colSpan ?? 1} onChange={(v) => setItem(key, { colSpan: Math.max(1, Math.floor(v) || 1) })} />
                 <NumInput className="tiny" min={1} step={1} value={it.rowSpan ?? 1} onChange={(v) => setItem(key, { rowSpan: Math.max(1, Math.floor(v) || 1) })} />
-                <input className="nodrag" type="checkbox" title="A panel for every curve of this Plot" checked={!!it.facet} onChange={(e) => setItem(key, { facet: e.target.checked })} />
+                {n?.type === 'plot1d' ? <input className="nodrag" type="checkbox" title="A panel for every curve of this Plot (it needs two curves or more)" checked={!!it.facet} onChange={(e) => setItem(key, { facet: e.target.checked })} /> : <span className="muted" title="Only a Plot is split into facets (a panel for every curve)">–</span>}
               </>
             )}
           </div>
@@ -779,7 +820,8 @@ export function CanvasNodeView({ id, data }: NodeProps<CanvasNode>) {
   const fig = r?.view.figure;
   const L: CanvasLayout = { ...CANVAS_LAYOUT_DEFAULTS, ...data.layout };
   const conns = useNodeConnections({ handleType: 'target', handleId: 'figures' });
-  const keys = conns.map((c) => c.source);
+  // (in the order they fill the grid)
+  const keys = panelOrder(conns.map((c) => c.source), data.order);
   const [tab, setTab] = useState<'layout' | 'page' | 'annotate' | null>('layout');
   // a part of the page double-clicked: its tab opened
   useFigureFocus(id, (part, seq) => {
@@ -792,7 +834,7 @@ export function CanvasNodeView({ id, data }: NodeProps<CanvasNode>) {
   const keep = L.sizing === 'keep';
   return (
     <div className="node node-canvas">
-      <InPort label="figures" port="figure" id="figures" title="Plots (their “figure” output), in the order they fill the grid">
+      <InPort label="figures" port="figure" id="figures" title="Plots or drawings (their “figure” output); the order they fill the grid: Grid ▸ Panel">
         <span className="muted">{keys.length ? `${keys.length} Plot${keys.length > 1 ? 's' : ''}` : ''}</span>
       </InPort>
       {fig && (
@@ -817,7 +859,7 @@ export function CanvasNodeView({ id, data }: NodeProps<CanvasNode>) {
       {tab === 'layout' && (
         <>
           <LayoutControls L={L} set={(p) => set({ layout: { ...L, ...p } })} />
-          <ItemsControls keys={keys} items={data.items ?? []} set={(items) => set({ items })} />
+          <ItemsControls keys={keys} items={data.items ?? []} set={(items) => set({ items })} setOrder={(order) => set({ order })} L={L} />
         </>
       )}
       {tab === 'page' && (

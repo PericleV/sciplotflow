@@ -16,6 +16,9 @@ export const FocusCurve = createContext<string | null>(null);
 export const HandleScale = createContext(1);
 // the nodes picked on the path being edited (the drawing editor: its corners rounded or cut alone)
 export const PickedNodes = createContext<{ item: string; nodes: number[] } | null>(null);
+// the drawing editor: only these objects (their ids) drawn with their handles (the others: picked by their body; a
+// drawing of many points stays quick to draw while one is dragged)
+export const HandlesFor = createContext<Set<string> | null>(null);
 // (or zoomed and moved: its camera)
 export const ThreeTurn = createContext<{ node: string; azim: number; elev: number; cam?: { k: number; dx: number; dy: number } } | null>(null);
 // the keys held during a drag that the handles read (Ctrl: a box resized about its centre); set by whatever drags them

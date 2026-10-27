@@ -1,6 +1,6 @@
 // The icons of the Figure Drawing editor's tools: Lucide's (ISC licence) and, where it has none, our own (drawIcons).
 import type { ReactNode } from 'react';
-import { ChartPie, SquareRoundCorner, Circle, Hexagon, Image, MessageSquare, MousePointer2, MoveHorizontal, MoveRight, PenTool, RectangleHorizontal, RulerDimensionLine, Slash, Star, Type, type LucideProps } from 'lucide-react';
+import { ChartPie, SquareRoundCorner, Circle, Combine, Hexagon, Image, MessageSquare, MousePointer2, MoveHorizontal, MoveRight, Pencil, PenTool, RectangleHorizontal, RulerDimensionLine, Slash, Star, Type, type LucideProps } from 'lucide-react';
 import { Arc, Brace, Bracket, CurvedArrow, ElbowArrow, Equilibrium, Polygon, Polyline, Retro } from './drawIcons.tsx';
 
 // their size on the buttons (px) and line width
@@ -9,6 +9,8 @@ export type ToolIcon = (p: LucideProps) => ReactNode;
 export const TOOL_ICONS: Record<string, ToolIcon> = {
   select: MousePointer2,
   pen: PenTool,
+  pencil: Pencil,
+  builder: Combine,
   corner: SquareRoundCorner,
   image: Image,
   text: Type,

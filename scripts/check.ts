@@ -51,9 +51,13 @@ import { autoExtract, pick } from '../src/engine/extract.ts';
 import { applyManip, renumber, ROW_CHANGED, ROW_DELETED, ROW_MASKED } from '../src/engine/manip.ts';
 import { tQuantile } from '../src/engine/lm.ts';
 import { DRAWING_DEFAULTS } from '../src/defaults.ts';
-import { pathArray } from '../src/nodes/drawingOps.ts';
+import { bakeIso, onFace, pathArray } from '../src/nodes/drawingOps.ts';
+import { isoEdges, isoToFace, isoToPage } from '../src/engine/isoPlane.ts';
+import { flipAcross, flipDown, scaleAbout, skewAbout, transformItem } from '../src/nodes/drawingTransform.ts';
+import { bendItems, blendItems, isoBox, isoStack } from '../src/nodes/drawingMake.ts';
+import { panelOrder } from '../src/engine/evaluate.ts';
 import type { AnnotationItem } from '../src/types.ts';
-import { breakAt, cornersOf, cornersText, joinPaths, longestSegment, roundedRectD, splitSegment } from '../src/figure/paths.ts';
+import { breakAt, cornersOf, cornersText, joinPaths, longestSegment, nodeCount, roundedRectD, simplifyPath, splitSegment } from '../src/figure/paths.ts';
 import { gradAttrs, linearEnds } from '../src/figure/gradient.ts';
 import { exportOptions, extensionOf, TABLE_EXPORT_DEFAULTS, tableCells, tableText } from '../src/engine/exportTable.ts';
 import { deleteNode, insertNode, parsePath, pathBox, pathText, reversePath, roundCorners, setClosed, shapeToPath, toggleNode, turnedPath } from '../src/figure/paths.ts';
@@ -5400,6 +5404,75 @@ for (const ex of EXAMPLES) {
   const ring = pathArray([dot], shapeToPath({ ...SHAPE_DEFAULTS, kind: 'ellipse', x1: -10, y1: -10, x2: 10, y2: 10 }, 1)!, 4, [0, 0], true);
   const c0 = ring.map((it) => [((it.spec as { x1: number; x2: number }).x1 + (it.spec as { x2: number }).x2) / 2, ((it.spec as { y1: number; y2: number }).y1 + (it.spec as { y2: number }).y2) / 2]);
   ok(ring.length === 4 && c0.every(([x, y]) => Math.abs(Math.hypot(x, y) - 10) < 0.05), 'Array along a closed path: evenly round it');
+  // ---- transformed: flipped, scaled, skewed; blended, bent; isometric boxes; simplified; heads along a line ----
+  {
+    const spec = (it: AnnotationItem | null) => (it?.type === 'shape' ? (it.spec as Record<string, number | string | boolean | undefined>) : {});
+    const rect: AnnotationItem = { id: 'r', type: 'shape', spec: { kind: 'rect', x1: 0, y1: 0, x2: 10, y2: 4, rotation: 20 } };
+    const fr = spec(transformItem(rect, flipAcross([20, 0])));
+    ok(fr.kind === 'rect' && fr.x1 === 30 && fr.x2 === 40 && Math.abs((((Number(fr.rotation) + 20) % 180) + 180) % 180) < 1e-9, `Flip across: a rectangle stays one, mirrored about x = 20 and turned the other way (${fr.x1} … ${fr.x2}, ${fr.rotation}°)`);
+    const star: AnnotationItem = { id: 's', type: 'shape', spec: { kind: 'star', x1: 0, y1: 0, x2: 10, y2: 10, n: 5 } };
+    ok(spec(transformItem(star, flipDown([5, 5]))).rotation === 180 && !spec(transformItem(star, flipAcross([5, 5]))).rotation, 'Flip: a star pointing up flipped down points down; flipped across, it is the same');
+    const img: AnnotationItem = { id: 'i', type: 'shape', spec: { kind: 'image', x1: 0, y1: 0, x2: 8, y2: 6, href: 'x' } };
+    const fi = spec(transformItem(img, flipAcross([4, 3])));
+    ok(fi.mirror === true && fi.x1 === 0 && fi.x2 === 8 && !spec(transformItem({ ...img, spec: { ...img.spec, mirror: true } } as AnnotationItem, flipAcross([4, 3]))).mirror, 'Flip across: a picture mirrored (twice: as it was)');
+    const ln: AnnotationItem = { id: 'l', type: 'shape', spec: { kind: 'arrow', x1: 0, y1: 0, x2: 10, y2: 0, curve: 0.3 } };
+    const fl = spec(transformItem(ln, flipDown([0, 5])));
+    ok(fl.y1 === 10 && fl.y2 === 10 && fl.curve === -0.3, 'Flip down: an arrow\'s points mirrored, its bend the other way');
+    const sc = spec(transformItem({ id: 'e', type: 'shape', spec: { kind: 'ellipse', x1: 0, y1: 0, x2: 10, y2: 10 } }, scaleAbout([0, 0], 2, 0.5)));
+    ok(sc.kind === 'ellipse' && sc.x2 === 20 && sc.y2 === 5, 'Scale across × 2, down × 0.5: an ellipse not turned stays one, its box scaled');
+    const sk = spec(transformItem(rect, skewAbout([0, 0], 30, 0)));
+    ok(sk.kind === 'path' && typeof sk.d === 'string', 'Skew: a turned rectangle becomes a path');
+    const tx = transformItem({ id: 't', type: 'text', spec: { x: 2, y: 0, text: 'a', style: { size: 8 } } } as AnnotationItem, scaleAbout([0, 0], 1.5, 1.5));
+    ok(tx?.type === 'text' && (tx.spec as { x: number }).x === 3 && (tx.spec as { style: { size: number } }).style.size === 12, 'Scale 150 %: a text moved and its letters 1.5 × larger');
+    const a: AnnotationItem = { id: 'a', type: 'shape', spec: { kind: 'ellipse', x1: -2, y1: -2, x2: 2, y2: 2, fill: '#000000', fillOpacity: 1, color: '#000000', width: 1 } };
+    const b: AnnotationItem = { id: 'b', type: 'shape', spec: { kind: 'rect', x1: -10, y1: -10, x2: 10, y2: 10, fill: '#ffffff', fillOpacity: 1, color: '#ff0000', width: 3 } };
+    const bl = blendItems(a, b, 3);
+    const mid = bl[1]?.type === 'shape' ? (bl[1].spec as { points: string; fill: string; width: number }) : null;
+    const pts = mid ? mid.points.split(';').map((q) => q.trim().split(/\s+/).map(Number)) : [];
+    const rad = pts.map(([x, y]) => Math.max(Math.abs(x), Math.abs(y)));
+    ok(bl.length === 3 && !!mid && mid.fill === '#808080' && mid.width === 2 && Math.min(...rad) > 2 && Math.max(...rad) < 10 && new Set(bl.map((it) => it.group)).size === 1, `Blend: 3 shapes between a circle and a square, the middle one between them, its fill and width halfway (${mid?.fill}, ${mid?.width} pt)`);
+    const bar: AnnotationItem = { id: 'bar', type: 'shape', spec: { kind: 'rect', x1: 0, y1: -1, x2: 10, y2: 1 } };
+    const bent = bendItems([bar], 'M0 0 L0 20', { x: 0, y: -1, w: 10, h: 2 }, true)[0];
+    const bd = bent.type === 'shape' ? String(bent.spec.d) : '';
+    const nums = bd.match(/-?\d+(\.\d+)?/g)?.map(Number) ?? [];
+    const xs = nums.filter((_, k) => k % 2 === 0);
+    const ys = nums.filter((_, k) => k % 2 === 1);
+    ok(bent.type === 'shape' && bent.spec.kind === 'path' && Math.max(...ys) > 19.9 && Math.min(...ys) > -0.1 && Math.max(...xs.map(Math.abs)) < 1.1, 'Bend: a bar 10 × 2 bent along a line down 20 mm, stretched to its length (along it, 2 wide across)');
+    const box = isoBox([0, 0], 10, 10, 5, '#808080');
+    const faces = box.map((it) => (it.spec as { points: string }).points.split(';').map((q) => q.trim().split(/\s+/).map(Number)));
+    const top = faces[2];
+    ok(box.length === 3 && new Set(box.map((it) => it.group)).size === 1 && Math.abs(Math.hypot(top[1][0] - top[2][0], top[1][1] - top[2][1]) - 10) < 2e-3 && Math.abs(top[0][0] - top[2][0]) < 2e-3 && Math.abs(faces[0][2][1] - faces[0][1][1] - 5) < 1e-9, 'Isometric box: three faces in one group, its edges 10 mm long at 30°, 5 mm high');
+    ok(isoStack([0, 0], 10, 10, [1, 2], ['#000000', '#ffffff']).length === 6, 'Isometric stack: a box for every layer');
+    const simp = simplifyPath(`M0 0${Array.from({ length: 50 }, (_, k) => ` L${k + 1} ${Math.sin(k) * 0.01}`).join('')}`, 0.1, false);
+    ok(simp === 'M0 0 L50 -0.0095', `Simplify: a line of 51 points almost straight, its two ends (${simp})`);
+    const sq = simplifyPath('M0 0 L5 0 L10 0 L10 5 L10 10 L5 10 L0 10 L0 5 Z', 0.01, false);
+    ok(nodeCount(sq) === 5 && sq.endsWith('Z'), `Simplify: a square with a node in the middle of each side, its four corners, closed (${sq})`);
+    ok(panelOrder(['a', 'b', 'c'], ['c', 'a']).join() === 'c,a,b' && panelOrder(['a', 'b'], undefined).join() === 'a,b', 'Merge: the panels in the order chosen, the others after them in the order connected');
+    // the faces of an isometric box: an object on one keeps its own shape, drawn through the face's projection
+    const near2 = (p: number[], q: number[], e = 1e-6) => Math.hypot(p[0] - q[0], p[1] - q[1]) < e;
+    const place = { face: 'top' as const, at: [3, 4] as [number, number] };
+    ok(near2(isoToFace(place, isoToPage(place, [7, -2])), [7, -2]) && near2(isoToPage({ face: 'left', at: [0, 0] }, [1, 0]), [Math.cos(Math.PI / 6), 0.5]), 'Isometric face: a point to the page and back; the left face, its first edge down to the right at 30°');
+    ok(isoEdges('top').join() === '30,150' && isoEdges('right').join() === '150,90', `Isometric face: the directions of its edges (${isoEdges('top')}, ${isoEdges('right')})`);
+    const flatR: AnnotationItem = { id: 'fr', type: 'shape', spec: { kind: 'rect', x1: 10, y1: 10, x2: 30, y2: 20 } };
+    const onTop = onFace(flatR, 'top');
+    const topBox = geomBox(onTop)!;
+    ok(onTop.iso?.face === 'top' && onTop.type === 'shape' && onTop.spec.kind === 'rect' && near2([topBox.x + topBox.w / 2, topBox.y + topBox.h / 2], [20, 15], 1e-3), `Isometric face: a rectangle put on the top face stays one, its middle where it was (${JSON.stringify(topBox)})`);
+    const back = onFace(onTop, null);
+    ok(!back.iso && back.type === 'shape' && back.spec.x1 === 10 && back.spec.y2 === 20, 'Isometric face: taken off it (Flat), the rectangle back as it was');
+    const movedTop = moveItem(onTop, 5, -1);
+    ok(movedTop.iso && near2(movedTop.iso.at, [onTop.iso!.at[0] + 5, onTop.iso!.at[1] - 1], 1e-3) && movedTop.type === 'shape' && movedTop.spec.x1 === 10, 'Isometric face: moved on the page, its place moved, its own points kept');
+    const baked = bakeIso(onTop);
+    const bb = baked.type === 'shape' ? pathBox(parsePath(String(baked.spec.d))) : null;
+    ok(!baked.iso && baked.type === 'shape' && baked.spec.kind === 'path' && !!bb && Math.abs(bb.w - topBox.w) < 1e-2 && Math.abs(bb.h - topBox.h) < 1e-2, 'Isometric face: drawn as it is (for Path and Make), a path on the page in the same place');
+    const flippedTop = transformItem(onTop, flipAcross([20, 15]));
+    const fb2 = flippedTop ? geomBox(flippedTop) : null;
+    ok(!!flippedTop?.iso && !!fb2 && Math.abs(fb2.w - topBox.w) < 1e-2 && Math.abs(fb2.x + fb2.w / 2 - 20) < 1e-2, 'Isometric face: flipped on the page, it stays on its face, mirrored about its middle');
+    const isoFig = evaluateGraph([
+      { id: 'di', type: 'drawing', position: { x: 0, y: 0 }, data: { ...DRAWING_DEFAULTS, annotations: [onTop, { id: 'tx', type: 'text', iso: { face: 'right', at: [1, 2], upright: true }, spec: { text: 'A', x: 4, y: 0 } }] } } as AppNode,
+    ], []).get('di')!.view.figure!.axes[0].annotations;
+    const upr = isoFig[1];
+    ok(isoFig[0].iso?.length === 6 && near2(isoFig[0].iso.slice(4), onTop.iso!.at) && !upr.iso && upr.kind === 'text' && near2([upr.text.x, upr.text.y], [1 + 4 * Math.cos(Math.PI / 6), 2 - 2]), 'Isometric face: drawn through its projection; an upright text only placed on its face');
+  }
   const g = evaluateGraph(
     [
       { id: 'bi', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, text: 'x;y\n0;0\n4;1\n', textId: 'bi' } } as AppNode,

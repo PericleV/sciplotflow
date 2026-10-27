@@ -56,3 +56,35 @@ export async function strokeOutline(d: string, width: number, cap: 'butt' | 'rou
   const res = off.offsetStroke(item, width / 2, { cap: cap === 'square' ? 'butt' : cap, join, insert: false });
   return clean(res.pathData);
 }
+
+// Every region the closed paths make together (Shape builder): where some of them overlap and the others do not, each
+// once; the parts of a region apart from each other are regions of their own.
+export async function regionsOf(paths: string[]): Promise<string[]> {
+  const { paper } = await load();
+  const opt = { insert: false };
+  let regions: Item[] = [];
+  let covered: Item | null = null;
+  for (const d of paths) {
+    const b = new paper.CompoundPath({ pathData: d, insert: false });
+    const next: Item[] = [];
+    for (const r of regions) next.push(r.intersect(b, opt), r.subtract(b, opt));
+    next.push(covered ? b.subtract(covered, opt) : b);
+    covered = covered ? covered.unite(b, opt) : b;
+    regions = next.filter((r) => !empty(r));
+  }
+  // (a region in pieces apart: each its own; a hole stays with the piece around it)
+  const out: string[] = [];
+  for (const r of regions) {
+    const kids = r instanceof paper.CompoundPath ? (r.children as paper.Path[]) : [r as paper.Path];
+    const outer = kids.filter((k) => !kids.some((o) => o !== k && o.contains(k.firstSegment.point) && Math.abs(o.area) > Math.abs(k.area)));
+    if (outer.length < 2) {
+      out.push(clean(r.pathData));
+      continue;
+    }
+    for (const o of outer) {
+      const holes = kids.filter((k) => k !== o && !outer.includes(k) && o.contains(k.firstSegment.point));
+      out.push(clean([o, ...holes].map((k) => k.pathData).join(' ')));
+    }
+  }
+  return out;
+}

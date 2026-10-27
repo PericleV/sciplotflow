@@ -129,6 +129,8 @@
 .quick-bar .color-field { padding: 2px 5px 2px 3px; }
 .quick-bar .color-name { display: none; }
 .quick-bar .pic-pick { height: 26px; }
+.quick-bar .qb-grip { display: inline-flex; align-items: center; margin: -4px 0 -4px -5px; padding: 4px 1px; cursor: grab; color: var(--muted); touch-action: none; }
+.quick-bar .qb-grip:active { cursor: grabbing; }
 .qb-sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 2px; }
 .qb-size { min-width: 22px; text-align: center; font-variant-numeric: tabular-nums; }
 .qb-word { color: var(--muted); }

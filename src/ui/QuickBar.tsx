@@ -4,8 +4,8 @@
 // colour, size, bold, italic and box —, its layer, its removal, and × to hide the bar. Every other setting stays in its
 // panel. The changes go to every object given of the same kind as the first.
 import { ActionIcon, Tooltip, UnstyledButton } from '@mantine/core';
-import { ArrowDownToLine, ArrowUpToLine, Trash2, X } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { ArrowDownToLine, ArrowUpToLine, GripVertical, Pin, Trash2, X } from 'lucide-react';
+import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import type { ArrowHead, ShapeSpec, TextSpec } from '../figure/spec.ts';
 import { ColorField, OpacityPick, PicturePick, WidthPick } from './props.tsx';
 import { BoxIcon, HeadIcon } from './propIcons.tsx';
@@ -22,8 +22,9 @@ const ownKeys = (e: React.KeyboardEvent) => {
 
 export type QuickTarget = { kind: 'shape'; s: ShapeSpec } | { kind: 'text'; s: TextSpec };
 
-// front / back: the object over the others or under them (one step, or to the top / bottom); remove: it removed
-export function QuickBar({ target, onShape, onText, front, back, remove, style }: { target: QuickTarget; onShape: (p: Partial<ShapeSpec>) => void; onText: (p: Partial<TextSpec>) => void; front?: () => void; back?: () => void; remove?: () => void; style?: React.CSSProperties }) {
+// front / back: the object over the others or under them (one step, or to the top / bottom); remove: it removed;
+// grip: the bar dragged by its handle (it stays where it is dropped), unplace: back by the objects
+export function QuickBar({ target, onShape, onText, front, back, remove, style, grip, unplace }: { target: QuickTarget; onShape: (p: Partial<ShapeSpec>) => void; onText: (p: Partial<TextSpec>) => void; front?: () => void; back?: () => void; remove?: () => void; style?: React.CSSProperties; grip?: (e: ReactPointerEvent) => void; unplace?: () => void }) {
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const sep = <span className="qb-sep" />;
   let tools: ReactNode;
@@ -87,6 +88,11 @@ export function QuickBar({ target, onShape, onText, front, back, remove, style }
   }
   return (
     <div className="quick-bar nodrag nowheel" style={style} onPointerDown={stop} onClick={stop} onDoubleClick={stop} onKeyDown={ownKeys} role="toolbar" aria-label="Quick settings">
+      {grip && (
+        <span className="qb-grip" title="Drag the bar anywhere: it stays there (a double-click: back by the objects)" onPointerDown={grip} onDoubleClick={unplace}>
+          <GripVertical size={14} />
+        </span>
+      )}
       {tools}
       {(front || back || remove) && sep}
       {front && (
@@ -107,6 +113,13 @@ export function QuickBar({ target, onShape, onText, front, back, remove, style }
         <Tooltip label="Remove it">
           <ActionIcon size="sm" color="red" onClick={remove} aria-label="Remove">
             <Trash2 size={14} />
+          </ActionIcon>
+        </Tooltip>
+      )}
+      {unplace && (
+        <Tooltip label="Back by the objects selected (it follows them)">
+          <ActionIcon size="sm" onClick={unplace} aria-label="Back by the objects">
+            <Pin size={14} />
           </ActionIcon>
         </Tooltip>
       )}

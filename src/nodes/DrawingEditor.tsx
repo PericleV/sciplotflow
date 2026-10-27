@@ -1,24 +1,26 @@
-// The editor of a Figure Drawing, over the whole window: the tools on top (what the next drag on the page draws, the
-// alignment, the grid and snapping, the zoom); on the left the layers (the objects, the front one first: shown,
-// locked, named, reordered) and the options of what is selected (the page and the grid when nothing is); the page in
-// the middle, with rulers in mm and the grid. Objects are selected by a click (Shift / Ctrl: more), a box dragged
+// The editor of a Figure Drawing, over the whole window: on the left the tools, in groups (what the next drag on the
+// page draws); on top the selection bar (the place and size of what is selected, its alignment, flips), Snap and View
+// (the grid, snapping, guides), the zoom; on the right the options of what is selected, by tab (style, arrangement,
+// paths, what is made of it; the page when nothing is), and under them the layers (the objects, the front one first:
+// shown, locked, named, reordered), components and library; at the bottom what the tool does and where the mouse is;
+// the page in the middle, with rulers in mm and the grid. Objects are selected by a click (Shift / Ctrl: more), a box dragged
 // around them or in the layers; dragged to move them (snapped to the grid and to the edges and middles of the others
 // and of the page: guides show it; Alt: no snapping), their handles change their points; the keyboard moves, copies
 // and removes them.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useReactFlow } from '@xyflow/react';
-import { pageText, plotMapping, shapeSpec } from '../engine/evaluate.ts';
+import { drawingView, pageText, plotMapping, shapeSpec } from '../engine/evaluate.ts';
 import { PageTextContext } from '../ui/pageText.ts';
 import { QuickBar } from '../ui/QuickBar.tsx';
-import { setQuickBar, useQuickBar } from '../ui/quickBarStore.ts';
+import { setQuickBar, setQuickBarAt, useQuickBar, useQuickBarAt } from '../ui/quickBarStore.ts';
 import { anchorOf } from '../engine/drawingItems.ts';
 import { FigureSvg } from '../figure/render.tsx';
-import { dragKeys, HandleScale, Interactive, PickedNodes, type DragInfo } from '../figure/interactive.ts';
+import { dragKeys, HandlesFor, HandleScale, Interactive, PickedNodes, type DragInfo } from '../figure/interactive.ts';
 import { DASHES } from './figureOptions.ts';
 import { TEXT_SPEC_DEFAULTS, toPt, type Dash, type Figure, type ShapeSpec, type TextSpec } from '../figure/spec.ts';
 import { DRAWING_GRID_DEFAULTS, newAnnotation } from '../defaults.ts';
-import type { AnnotationItem, AppNode, DrawingData, DrawingGrid } from '../types.ts';
+import type { AnnotationItem, AppNode, DrawingData, DrawingGrid, IsoFace, IsoPlace } from '../types.ts';
 import { ShapeEditor, TextEditor } from './AnnotationsEditor.tsx';
 import { describe } from './annotationNames.ts';
 import { ICON, TOOL_ICONS, type ToolIcon } from './drawIconMap.ts';
@@ -34,38 +36,48 @@ import {
   ArrowDown,
   ArrowUp,
   BringToFront,
+  ChevronDown,
   Component,
   Copy,
   DraftingCompass,
   Eye,
   EyeOff,
+  FlipHorizontal2,
+  FlipVertical2,
+  Grid3x3,
   Layers,
   Library,
   Lock,
   LockOpen,
+  Magnet,
   SendToBack,
   Trash,
   X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { ComponentsTab, LibraryTab, ObjectOps, TextPathFields, type Ctx } from './DrawingPanels.tsx';
+import { ComponentsTab, IsoMaker, LibraryTab, ObjectOps, TextPathFields, type Ctx, type OpsPart } from './DrawingPanels.tsx';
+import { flipAcross, flipDown, transformAll } from './drawingTransform.ts';
+import { combine, regionsOf } from './pathOps.ts';
 import { copyStyle, pasteStyle } from './figureLibrary.ts';
-import { CORNERED, cornersOf, cornersText, deleteNode, insertNode, parsePath, pathText, radiiOf, shapeToPath, toggleNode } from '../figure/paths.ts';
+import { CORNERED, cornersOf, cornersText, deleteNode, insertNode, isClosed, parsePath, pathPolylines, pathText, radiiOf, shapeToPath, simplifyPath, toggleNode } from '../figure/paths.ts';
 import { PageControls } from './FigureView.tsx';
 import { OptColor } from './fields.tsx';
 import { Check, Field, NumInput, Select } from './ui.tsx';
-import { alignMoves, copiedItems, copyItems, distributeMoves, groupItems, toPathItem, ungroupItems, geomBox, mapItem, MM, moveItem, snapAxis, union, type AlignHow, type Rect } from './drawingOps.ts';
+import { alignMoves, bakeIso, copiedItems, copyItems, distributeMoves, flatBox, groupItems, isoToFace, isoToPage, onFace, pathOf, toPathItem, ungroupItems, geomBox, mapItem, MM, moveItem, snapAxis, union, type AlignHow, type Rect } from './drawingOps.ts';
+import { isoDeltaToPage, isoEdges } from '../engine/isoPlane.ts';
 import type { Pt, StickSide } from '../figure/shapes.ts';
 import { IMAGE_ACCEPT, imageUrl } from '../imageFile.ts';
 import { ask, notify } from '../ui/dialogStore.ts';
 
-type Tool = 'select' | 'corner' | 'pen' | 'image' | 'text' | 'line' | 'arrow' | 'double' | 'curved' | 'elbow' | 'equilibrium' | 'retro' | 'dimension' | 'rect' | 'ellipse' | 'polygon' | 'polyline' | 'star' | 'regular' | 'arc' | 'pie' | 'bracket' | 'brace' | 'callout';
+type Tool = 'select' | 'corner' | 'pen' | 'pencil' | 'builder' | 'image' | 'text' | 'line' | 'arrow' | 'double' | 'curved' | 'elbow' | 'equilibrium' | 'retro' | 'dimension' | 'rect' | 'ellipse' | 'polygon' | 'polyline' | 'star' | 'regular' | 'arc' | 'pie' | 'bracket' | 'brace' | 'callout';
 // what each tool draws: its first look (the points come from the drag)
 const TOOLS: { tool: Tool; title: string; key?: string; spec?: Partial<ShapeSpec> }[] = [
   { tool: 'select', title: 'Select and move (V): click an object, Shift / Ctrl + click more, or drag a box around them', key: 'v' },
   { tool: 'corner', title: 'Corners (K): click a shape, then its corners (Shift: more) and drag one inward to round them; as much as you drag (its radius also typed in the options)', key: 'k' },
   { tool: 'pen', title: 'Pen (B): click for a corner, drag for a smooth node (its curve); click the first node to close the path, double-click (or Enter) to end it open', key: 'b' },
+  { tool: 'pencil', title: 'Pencil (F): draw freely, the line made smooth (fewer nodes) when you let go; back on its start: closed', key: 'f' },
+  { tool: 'builder', title: 'Shape builder (X): select two or more closed shapes first; then click the parts they make to join them, Alt + click a part to take it away; Apply (Enter)', key: 'x' },
   { tool: 'image', title: 'Image (I): a picture from a file (PNG, JPEG, TIFF, SVG …): also paste one (Ctrl+V) or drop it on the page', key: 'i' },
   { tool: 'text', title: 'Text (T): click where it goes', key: 't' },
   { tool: 'line', title: 'Line (L): drag from its start to its end (Shift: by 15°)', key: 'l', spec: { kind: 'line', head2: 'none' } },
@@ -87,7 +99,102 @@ const TOOLS: { tool: Tool; title: string; key?: string; spec?: Partial<ShapeSpec
   { tool: 'brace', title: 'Curly brace: drag from one end to the other', spec: { kind: 'bracket', orient: 'free', bstyle: 'curly', headSize: 6, text: '' } },
   { tool: 'callout', title: 'Callout: drag from the box of its text to the point it shows', spec: { kind: 'callout', text: 'Note', fill: '#ffffff', fillOpacity: 1, width: 0.5, head2: 'triangle', headSize: 4, pad: 2, radius: 2 } },
 ];
+// the tools in groups, on the left (each group shows its last tool used; held, right-clicked or its small corner: all)
+const TOOL_GROUPS: { name: string; tools: Tool[] }[] = [
+  { name: 'Select', tools: ['select', 'corner'] },
+  { name: 'Draw', tools: ['pen', 'pencil', 'builder'] },
+  { name: 'Shapes', tools: ['rect', 'ellipse', 'polygon', 'polyline', 'star', 'arc', 'pie'] },
+  { name: 'Lines and arrows', tools: ['line', 'arrow', 'double', 'curved', 'elbow', 'equilibrium', 'retro', 'dimension', 'bracket', 'brace'] },
+  { name: 'Text', tools: ['text', 'callout'] },
+  { name: 'Picture', tools: ['image'] },
+];
+const toolOf = (t: Tool) => TOOLS.find((x) => x.tool === t)!;
+// a tool's name (its title up to its key) and what it does (after it)
+const toolName = (t: Tool) => toolOf(t).title.split(/[:(]/)[0].trim();
+const toolHint = (t: Tool) => {
+  const s = toolOf(t).title;
+  const k = s.indexOf(': ');
+  return k >= 0 ? `${toolName(t)}: ${s.slice(k + 2)}` : s;
+};
+const OPS_TABS: [OpsPart, string, string][] = [
+  ['style', 'Style', 'Its look: line, fill, heads, text; styles copied and saved, its colours'],
+  ['arrange', 'Arrange', 'Its layer, pinned to the data, transformed (flipped, turned, scaled, skewed, isometric), the same ones selected, clipped, masked, grouped'],
+  ['path', 'Path', 'Converted to paths, combined, offset, simplified, corners rounded, nodes added, removed, joined'],
+  ['make', 'Make', 'Blends, components, copies in a grid, along a path or round a circle, bent along a path'],
+];
+const keep = <T,>(key: string, fallback: T): T => {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : (JSON.parse(v) as T);
+  } catch {
+    return fallback;
+  }
+};
+const store = (key: string, v: unknown) => {
+  try {
+    localStorage.setItem(key, JSON.stringify(v));
+  } catch {
+    // storage unavailable: for this visit
+  }
+};
+// a button opening a small menu under it (closed by a click elsewhere)
+function Drop({ label, title, children }: { label: ReactNode; title: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener('pointerdown', away);
+    return () => window.removeEventListener('pointerdown', away);
+  }, [open]);
+  return (
+    <span className="de-drop" ref={ref}>
+      <button className={`nodrag${open ? ' on' : ''}`} title={title} onClick={() => setOpen(!open)}>
+        {label} <ChevronDown size={12} />
+      </button>
+      {open && <div className="de-drop-menu">{children}</div>}
+    </span>
+  );
+}
+
+// The cube of the isometric mode: its faces (click: the face new objects are drawn on; Shift + click: the objects
+// selected put on it), Flat (drawn on the page), × (the mode off). The face chosen filled, the selection's outlined.
+const CUBE: [IsoFace, string, Pt][] = [
+  ['top', '45,8 77,26.5 45,45 13,26.5', [45, 28]],
+  ['left', '13,26.5 45,45 45,82 13,63.5', [29, 57]],
+  ['right', '45,45 77,26.5 77,63.5 45,82', [61, 57]],
+];
+function IsoCube({ plane, of, pick, close }: { plane: IsoFace | null; of: IsoFace | null; pick: (f: IsoFace | 'flat', put: boolean) => void; close: () => void }) {
+  return (
+    <div className="de-cube nodrag" onPointerDown={(e) => e.stopPropagation()}>
+      <svg width={90} height={90} viewBox="0 0 90 90" role="group" aria-label="Isometric faces">
+        {CUBE.map(([f, pts, [tx, ty]]) => (
+          <g key={f} className={`de-cube-face${plane === f ? ' on' : ''}${of === f ? ' of' : ''}`} onClick={(e) => pick(f, e.shiftKey)}>
+            <title>{`${f[0].toUpperCase()}${f.slice(1)}: new objects drawn on this face (Shift + click: the objects selected put on it)`}</title>
+            <polygon points={pts} />
+            <text x={tx} y={ty} textAnchor="middle" dominantBaseline="middle">
+              {f[0].toUpperCase() + f.slice(1)}
+            </text>
+          </g>
+        ))}
+      </svg>
+      <span className="row">
+        <button className={`nodrag${plane ? '' : ' on'}`} title="Draw on the page, flat (Shift + click: the objects selected taken off their face)" onClick={(e) => pick('flat', e.shiftKey)}>
+          Flat
+        </button>
+        <button className="nodrag" title="Leave the isometric mode (the objects on faces stay on them)" onClick={close}>
+          <X size={13} />
+        </button>
+      </span>
+    </div>
+  );
+}
+
 const BOXED = new Set<Tool>(['rect', 'ellipse', 'star', 'regular', 'arc', 'pie']);
+// the tools that draw on the face of the isometric mode (the others: on the page, flat)
+const ON_FACE = new Set<Tool>([...BOXED, 'line', 'polygon', 'polyline', 'pen', 'pencil', 'text', 'image']);
 // the tools that draw lines whose ends stick to the shapes they start or end on
 const LINES = new Set<Tool>(['line', 'arrow', 'double', 'curved', 'elbow', 'equilibrium', 'retro']);
 const lineLike = (it: AnnotationItem | undefined) => it?.type === 'shape' && ['line', 'arrow', 'dimension', 'bracket', 'scalebar', 'vline', 'hline'].includes(shapeSpec(it.spec).kind);
@@ -109,9 +216,22 @@ const ZOOMS = [0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 12, 16];
 // under: a figure connected under the drawing (its page the drawing's): in the output already, or (a guide) drawn here
 // beneath the page only
 // pinShift: how far the objects pinned to the data of the figure under it are drawn moved (mm)
-export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }: { id: string; data: DrawingData; fig: Figure | undefined; under?: Figure; pinShift?: Record<string, [number, number]>; onClose: () => void; first?: string }) {
+export function DrawingEditor({ id, data, fig: figIn, under, pinShift: pinIn, onClose, first }: { id: string; data: DrawingData; fig: Figure | undefined; under?: Figure; pinShift?: Record<string, [number, number]>; onClose: () => void; first?: string }) {
   const { updateNodeData, getNode } = useReactFlow<AppNode>();
-  const items = useMemo(() => data.annotations ?? [], [data.annotations]);
+  // while an object is dragged by a handle (turned, stretched, its corners rounded): its objects as they are now, drawn
+  // here at once (the drawing's node gets them when the mouse is let go)
+  const [draft, setDraft] = useState<AnnotationItem[] | null>(null);
+  const items = useMemo(() => draft ?? data.annotations ?? [], [draft, data.annotations]);
+  // the drawing as drawn, made here (not waiting for the evaluation of the whole graph)
+  const live = useMemo(() => drawingView(id, draft ? { ...data, annotations: draft } : data, under ?? null), [id, data, draft, under]);
+  const fig = 'errors' in live ? figIn : live.figure;
+  const pinShift = 'errors' in live ? pinIn : live.pinShift;
+  // the objects shown moved (a transform on them) until the drawing is drawn where they were dropped: no jump back
+  const shownMoved = useRef<Element[]>([]);
+  useLayoutEffect(() => {
+    for (const el of shownMoved.current) el.removeAttribute('transform');
+    shownMoved.current = [];
+  }, [fig]);
   const grid: DrawingGrid = { ...DRAWING_GRID_DEFAULTS, ...data.grid };
   const set = (p: Partial<DrawingData>) => updateNodeData(id, p);
   const setItems = (annotations: AnnotationItem[]) => set({ annotations });
@@ -159,7 +279,8 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
     svgOf()
       ?.querySelectorAll('[data-part^="ann:"]')
       .forEach((el) => el.classList.toggle('is-selected', sel.includes(el.getAttribute('data-part')!.slice(4))));
-    // their boxes, once drawn
+    // their boxes, once drawn (not while a handle is dragged)
+    if (draft) return;
     const frame = requestAnimationFrame(() => {
       const out: Record<string, Rect> = {};
       for (const it of items) {
@@ -167,7 +288,12 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
         if (!body) continue;
         try {
           const b = body.getBBox();
-          out[it.id] = { x: b.x, y: b.y, w: b.width, h: b.height };
+          const iso = it.iso;
+          if (iso) {
+            const cs = [[b.x, b.y], [b.x + b.width, b.y], [b.x, b.y + b.height], [b.x + b.width, b.y + b.height]].map(([x, y]) => isoToPage(iso, [x / MM, y / MM]));
+            const [xs, ys] = [cs.map((q) => q[0] * MM), cs.map((q) => q[1] * MM)];
+            out[it.id] = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+          } else out[it.id] = { x: b.x, y: b.y, w: b.width, h: b.height };
         } catch {
           // not drawn yet
         }
@@ -175,7 +301,7 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
       setMeasured((m) => (JSON.stringify(m) === JSON.stringify(out) ? m : out));
     });
     return () => cancelAnimationFrame(frame);
-  }, [fig, sel, items]);
+  }, [fig, sel, items, draft]);
   // an object's box (pt): from its points when they give it, else as drawn — where it is drawn (pinned: moved with the data)
   const shiftMm = (it: AnnotationItem): [number, number] => pinShift?.[it.id] ?? [0, 0];
   const boxPt = (it: AnnotationItem): Rect | null => {
@@ -189,14 +315,71 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
     return b ? { x: b.x / MM, y: b.y / MM, w: b.w / MM, h: b.h / MM } : null;
   };
   const selected = items.filter((it) => sel.includes(it.id));
+  const selSet = useMemo(() => new Set(sel), [sel]);
   const selBox = union(selected.map(boxMm).filter((b): b is Rect => !!b));
 
   // ---- snapping: the grid step (pt), how near counts (6 px), the edges and middles of the others and of the page ----
-  const step = grid.snap ? (grid.unit === 'pt' ? grid.step : grid.step * MM) : 0;
+  const step = grid.snap && !grid.iso ? (grid.unit === 'pt' ? grid.step : grid.step * MM) : 0;
+  // the isometric grid's points (pt): verticals a·cos 30° apart, a point every step down them, every other one moved
+  // half a step
+  const isoStep = grid.snap && grid.iso ? (grid.unit === 'pt' ? grid.step : grid.step * MM) : 0;
+  const isoNear = (p: Pt): Pt => {
+    const ax = isoStep * Math.cos(Math.PI / 6);
+    const i0 = Math.round(p[0] / ax);
+    let best: Pt = p;
+    let bd = Infinity;
+    for (const i of [i0 - 1, i0, i0 + 1]) {
+      const off = (((i % 2) + 2) % 2) * (isoStep / 2);
+      const q: Pt = [i * ax, Math.round((p[1] - off) / isoStep) * isoStep + off];
+      const d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      if (d < bd) [bd, best] = [d, q];
+    }
+    return best;
+  };
   const tol = 6 / zoom;
+  // ---- the isometric mode: the face new objects are drawn on (null: the page), the guides along the edges ----
+  const isoM = data.isoMode ?? {};
+  const isoOn = !!isoM.on;
+  const plane: IsoFace | null = isoOn && isoM.plane && isoM.plane !== 'flat' ? isoM.plane : null;
+  const setIso = (p: Partial<NonNullable<DrawingData['isoMode']>>) => set({ isoMode: { ...isoM, ...p } });
+  const facePlace = (face: IsoFace, upright?: boolean): IsoPlace => ({ face, at: [0, 0], ...(upright ? { upright: true } : {}) });
+  // a place on the page (pt) as a point of the face drawn on (mm), when the tool draws on it; else on the page (mm)
+  const drawsOnFace = (t: Tool) => !!plane && ON_FACE.has(t);
+  const mmAt = (t: Tool, q: Pt): Pt => (drawsOnFace(t) ? isoToFace(facePlace(plane!), [q[0] / MM, q[1] / MM]) : [q[0] / MM, q[1] / MM]);
+  const placed = (t: Tool, it: AnnotationItem): AnnotationItem => (drawsOnFace(t) ? { ...it, iso: facePlace(plane!, it.type === 'text' && isoM.upright) } : it);
+  // an object's own points (pt) and the page's, for the handles of an object on a face
+  const toLocal = (iso: IsoPlace | undefined, q: Pt): Pt => {
+    if (!iso) return q;
+    const r = isoToFace(iso, [q[0] / MM, q[1] / MM]);
+    return [r[0] * MM, r[1] * MM];
+  };
+  const fromLocal = (iso: IsoPlace | undefined, q: Pt): Pt => {
+    if (!iso) return q;
+    const r = isoToPage(iso, [q[0] / MM, q[1] / MM]);
+    return [r[0] * MM, r[1] * MM];
+  };
+  const isoGuides = data.guides?.hidden ? [] : (data.guides?.iso ?? []);
+  // the nearest point of the guides along the edges within tol of p (pt); null: none
+  const onIsoGuide = (p: Pt): Pt | null => {
+    let best: Pt | null = null;
+    let bd = tol;
+    for (const g of isoGuides) {
+      const a = (g.deg * Math.PI) / 180;
+      const [ux, uy] = [Math.cos(a), Math.sin(a)];
+      const [ox, oy] = [g.at[0] * MM, g.at[1] * MM];
+      const t = (p[0] - ox) * ux + (p[1] - oy) * uy;
+      const q: Pt = [ox + t * ux, oy + t * uy];
+      const dd = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      if (dd < bd) [bd, best] = [dd, q];
+    }
+    return best;
+  };
+  // the guides (pt), shown or not
+  const guideXs = data.guides?.hidden ? [] : (data.guides?.x ?? []).map((v) => v * MM);
+  const guideYs = data.guides?.hidden ? [] : (data.guides?.y ?? []).map((v) => v * MM);
   const targets = (skip: string[]) => {
-    const xs = [0, W / 2, W];
-    const ys = [0, H / 2, H];
+    const xs = [0, W / 2, W, ...guideXs];
+    const ys = [0, H / 2, H, ...guideYs];
     if (data.snapObjects !== false)
       for (const it of items) {
         if (it.hidden || skip.includes(it.id)) continue;
@@ -208,8 +391,72 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
     return { xs, ys };
   };
   const [guides, setGuides] = useState<{ x: number | null; y: number | null }>({ x: null, y: null });
+  // the nodes of the other objects (pt): the ends and corners of their outlines, the corners and middles of their boxes
+  const nodesOf = useMemo(() => {
+    const out = new Map<string, Pt[]>();
+    for (const it of items) {
+      if (it.hidden) continue;
+      const pts: Pt[] = [];
+      const d = it.type === 'shape' ? pathOf(it) : null;
+      if (d) for (const q of parsePath(d)) if (q.c !== 'Z' && q.p.length >= 2) pts.push([q.p[q.p.length - 2] * MM, q.p[q.p.length - 1] * MM]);
+      out.set(it.id, pts);
+    }
+    return out;
+  }, [items]);
+  // the nearest node or crossing of the outlines of the others within tol of p (pt); null: none
+  const snapNode = (p: Pt, skip: string[]): Pt | null => {
+    if (data.snapNodes === false) return null;
+    let best: Pt | null = null;
+    let bd = tol;
+    const near = items.filter((it) => {
+      if (it.hidden || skip.includes(it.id)) return false;
+      const b = boxPt(it);
+      return !!b && p[0] >= b.x - tol && p[0] <= b.x + b.w + tol && p[1] >= b.y - tol && p[1] <= b.y + b.h + tol;
+    });
+    for (const it of near) {
+      const b = boxPt(it)!;
+      for (const q of [...(nodesOf.get(it.id) ?? []), [b.x + b.w / 2, b.y + b.h / 2] as Pt]) {
+        const dd = Math.hypot(q[0] - p[0], q[1] - p[1]);
+        if (dd < bd) [bd, best] = [dd, q];
+      }
+    }
+    if (best) return best;
+    // where two outlines cross near it (their pieces within tol of the point)
+    const pieces: [Pt, Pt][] = [];
+    for (const it of near) {
+      const d = it.type === 'shape' ? pathOf(it) : null;
+      if (!d) continue;
+      for (const l of pathPolylines(parsePath(d), 8))
+        for (let k = 1; k < l.length; k++) {
+          const [a, c] = [[l[k - 1][0] * MM, l[k - 1][1] * MM] as Pt, [l[k][0] * MM, l[k][1] * MM] as Pt];
+          if (Math.min(a[0], c[0]) - tol <= p[0] && Math.max(a[0], c[0]) + tol >= p[0] && Math.min(a[1], c[1]) - tol <= p[1] && Math.max(a[1], c[1]) + tol >= p[1]) pieces.push([a, c]);
+        }
+    }
+    for (let i = 0; i < pieces.length; i++)
+      for (let j = i + 1; j < pieces.length; j++) {
+        const [[a, b2], [c, d2]] = [pieces[i], pieces[j]];
+        const den = (b2[0] - a[0]) * (d2[1] - c[1]) - (b2[1] - a[1]) * (d2[0] - c[0]);
+        if (Math.abs(den) < 1e-12) continue;
+        const t = ((c[0] - a[0]) * (d2[1] - c[1]) - (c[1] - a[1]) * (d2[0] - c[0])) / den;
+        const u = ((c[0] - a[0]) * (b2[1] - a[1]) - (c[1] - a[1]) * (b2[0] - a[0])) / den;
+        if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+        const q: Pt = [a[0] + t * (b2[0] - a[0]), a[1] + t * (b2[1] - a[1])];
+        const dd = Math.hypot(q[0] - p[0], q[1] - p[1]);
+        if (dd < bd) [bd, best] = [dd, q];
+      }
+    return best;
+  };
   const snapPoint = (p: Pt, skip: string[], free: boolean): Pt => {
     if (free) return p;
+    const n = snapNode(p, skip) ?? onIsoGuide(p);
+    if (n) {
+      setGuides({ x: n[0], y: n[1] });
+      return n;
+    }
+    if (isoStep > 0) {
+      setGuides({ x: null, y: null });
+      return isoNear(p);
+    }
     const t = targets(skip);
     const sx = snapAxis([p[0]], t.xs, step, tol);
     const sy = snapAxis([p[1]], t.ys, step, tol);
@@ -230,6 +477,47 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
   // the nodes picked on the path selected (a click on a node; Shift: more): its corners rounded or cut alone
   const [picked, setPicked] = useState<{ item: string; nodes: number[] } | null>(null);
   const [hover, setHover] = useState<Pt | null>(null);
+  // the pencil's line while drawn (pt)
+  const [stroke, setStroke] = useState<Pt[] | null>(null);
+  // the shape builder: the parts the shapes selected make (mm), those to join, those taken away
+  const [builder, setBuilder] = useState<{ from: string[]; parts: string[]; join: number[]; drop: number[] } | null>(null);
+  const startBuilder = () => {
+    const shapes = items.filter((it) => sel.includes(it.id) && it.type === 'shape' && !it.locked && (() => {
+      const d = pathOf(it);
+      return !!d && isClosed(parsePath(d));
+    })());
+    if (shapes.length < 2) {
+      notify('Shape builder: select two or more closed shapes first (they overlap, their parts are made from them).');
+      setTool('select');
+      return;
+    }
+    void regionsOf(shapes.map((it) => pathOf(it)!)).then(
+      (parts) => setBuilder({ from: shapes.map((it) => it.id), parts, join: [], drop: [] }),
+      (err: Error) => notify(`Shape builder: ${err.message}`),
+    );
+  };
+  // applied: the parts joined one shape, the others kept but those taken away, in the look of the back shape, where it was
+  const applyBuilder = async () => {
+    if (!builder) return;
+    const back = items.find((it) => builder.from.includes(it.id));
+    const base = back ? toPathItem(bakeIso(back)) : null;
+    if (!base || base.type !== 'shape') return setBuilder(null);
+    const joined = builder.join.length > 1 ? await combine(builder.join.map((k) => builder.parts[k]), 'unite') : builder.join.map((k) => builder.parts[k]);
+    const kept = builder.parts.filter((_, k) => !builder.join.includes(k) && !builder.drop.includes(k));
+    const made = [...joined, ...kept].map((d, k) => ({ ...base, id: k ? newAnnotation('shape').id : base.id, name: undefined, spec: { ...base.spec, d, head1: 'none', head2: 'none' } }) as AnnotationItem);
+    const at = items.findIndex((it) => builder.from.includes(it.id));
+    const rest = items.filter((it) => !builder.from.includes(it.id));
+    const k0 = items.slice(0, at).filter((it) => !builder.from.includes(it.id)).length;
+    setItems([...rest.slice(0, k0), ...made, ...rest.slice(k0)]);
+    setSel(made.map((it) => it.id));
+    setBuilder(null);
+    setTool('select');
+  };
+  useEffect(() => {
+    if (tool === 'builder' && !builder) startBuilder();
+    if (tool !== 'builder' && builder) setBuilder(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tool]);
   const follow = (move: (e: PointerEvent) => void, up: (e: PointerEvent) => void) => {
     const mv = (e: PointerEvent) => move(e);
     const u = (e: PointerEvent) => {
@@ -247,9 +535,9 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
   };
   const create = (t: Tool, a: Pt, b: Pt, stick: { from?: string; to?: string } = {}) => {
     const spec = TOOLS.find((x) => x.tool === t)?.spec ?? {};
-    const [x1, y1, x2, y2] = [a[0] / MM, a[1] / MM, b[0] / MM, b[1] / MM].map((v) => +v.toFixed(3));
+    const [x1, y1, x2, y2] = [...mmAt(t, a), ...mmAt(t, b)].map((v) => +v.toFixed(3));
     const it = newAnnotation('shape', { coords: 'data', ...spec, x1, y1, x2, y2, ...stick });
-    add([it]);
+    add([placed(t, it)]);
   };
   // the shape (or text) under a place on the screen that a line's end sticks to — not a line itself, nor `skip`
   const stuckAt = (cx: number, cy: number, skip?: string): string | undefined => {
@@ -288,12 +576,19 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
     root.current?.focus();
     const p0 = at(e);
     const free = e.altKey;
+    // (Shift: the next point by 15° steps from the last one)
+    const byAngle = (q: Pt, last: Pt | undefined): Pt => {
+      if (!e.shiftKey || !last) return q;
+      const len = Math.hypot(q[0] - last[0], q[1] - last[1]);
+      const ang = Math.round(Math.atan2(q[1] - last[1], q[0] - last[0]) / (Math.PI / 12)) * (Math.PI / 12);
+      return [last[0] + len * Math.cos(ang), last[1] + len * Math.sin(ang)];
+    };
     if (tool === 'polygon' || tool === 'polyline') {
-      setPoly((q) => [...q, snapPoint(p0, [], free)]);
+      setPoly((q) => [...q, byAngle(snapPoint(p0, [], free), q[q.length - 1])]);
       return;
     }
     if (tool === 'pen') {
-      const q = snapPoint(p0, [], free);
+      const q = byAngle(snapPoint(p0, [], free), pen[pen.length - 1]?.p);
       // on the first node: the path closed
       if (pen.length >= 2 && Math.hypot(q[0] - pen[0].p[0], q[1] - pen[0].p[1]) * zoom < 7) return finishPen(true);
       setPen((l) => [...l, { p: q }]);
@@ -308,7 +603,30 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
       );
       return;
     }
-    if (tool === 'image') return;
+    if (tool === 'image' || tool === 'builder') return;
+    if (tool === 'pencil') {
+      const pts: Pt[] = [p0];
+      setStroke(pts);
+      follow(
+        (ev) => {
+          const q = at(ev);
+          const last = pts[pts.length - 1];
+          if (Math.hypot(q[0] - last[0], q[1] - last[1]) * zoom < 1.5) return;
+          pts.push(q);
+          setStroke([...pts]);
+        },
+        () => {
+          setStroke(null);
+          if (pts.length < 2) return;
+          // (back near its start: closed)
+          const closed = pts.length > 4 && Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) * zoom < 10;
+          const raw = `M${pts.map((q) => mmAt('pencil', q).map((v) => +v.toFixed(3)).join(',')).join('L')}${closed ? 'Z' : ''}`;
+          const d = simplifyPath(raw, Math.max(0.05, 1.2 / zoom / MM), true);
+          add([placed('pencil', newAnnotation('shape', { kind: 'path', coords: 'data', d, head1: 'none', head2: 'none', fill: '', width: 1 }))]);
+        },
+      );
+      return;
+    }
     if (tool === 'corner') {
       const it = sel.length === 1 ? items.find((x) => x.id === sel[0]) : undefined;
       const nodes = it ? cornerNodes(it) : [];
@@ -328,13 +646,18 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
         const bl = Math.hypot(ua[0] + ub[0], ua[1] + ub[1]) || 1;
         const bis: Pt = [(ua[0] + ub[0]) / bl, (ua[1] + ub[1]) / bl];
         const r0 = radiusAt(it, near.i);
+        let done: AnnotationItem[] | null = null;
         follow(
           (ev) => {
             const q = at(ev);
             const r = Math.max(0, r0 + (q[0] - p0[0]) * bis[0] + (q[1] - p0[1]) * bis[1]);
-            setItems(items.map((x) => (x.id === it.id ? withRadius(x, list, +r.toFixed(2)) : x)));
+            done = items.map((x) => (x.id === it.id ? withRadius(x, list, +r.toFixed(2)) : x));
+            setDraft(done);
           },
-          () => {},
+          () => {
+            if (done) setItems(done);
+            setDraft(null);
+          },
         );
         return;
       }
@@ -347,7 +670,8 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
     }
     if (tool === 'text') {
       const q = snapPoint(p0, [], free);
-      add([newAnnotation('text', { coords: 'data', x: +(q[0] / MM).toFixed(3), y: +(q[1] / MM).toFixed(3), anchor: 'tl' })]);
+      const [tx, ty] = mmAt('text', q);
+      add([placed('text', newAnnotation('text', { coords: 'data', x: +tx.toFixed(3), y: +ty.toFixed(3), anchor: 'tl' }))]);
       setTool('select');
       return;
     }
@@ -456,17 +780,25 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
       let last: [number, number, boolean] = [0, 0, false];
       let dragged = false;
       const anchorAt = handle.querySelector('[data-anchor]')?.getAttribute('data-anchor');
+      // (on a face: the mouse in the face's own points, snapped on the page)
+      const hIso = hit.iso;
+      const l0 = toLocal(hIso, p0);
       follow(
         (ev) => {
-          const p = at(ev);
-          if (!dragged && Math.hypot(p[0] - p0[0], p[1] - p0[1]) * zoom < 2) return;
+          const pg = at(ev);
+          if (!dragged && Math.hypot(pg[0] - p0[0], pg[1] - p0[1]) * zoom < 2) return;
           dragged = true;
-          let q: Pt = [h0[0] + p[0] - p0[0], h0[1] + p[1] - p0[1]];
-          if (!turning) q = snapPoint(q, [hit.id], ev.altKey);
+          const p = toLocal(hIso, pg);
+          let q: Pt = [h0[0] + p[0] - l0[0], h0[1] + p[1] - l0[1]];
+          if (!turning) q = toLocal(hIso, snapPoint(fromLocal(hIso, q), [hit.id], ev.altKey));
           last = [q[0] - h0[0], q[1] - h0[1], ev.shiftKey];
           dragKeys.ctrl = ev.ctrlKey || ev.metaKey;
           cancelAnimationFrame(frame);
-          frame = requestAnimationFrame(() => updateNodeData(id, tidy(info.apply(last[0], last[1], data0, last[2]), hit.id)));
+          frame = requestAnimationFrame(() => {
+            const patch = tidy(info.apply(last[0], last[1], data0, last[2]), hit.id);
+            if (patch.annotations) setDraft(patch.annotations as AnnotationItem[]);
+            else updateNodeData(id, patch);
+          });
         },
         (ev) => {
           cancelAnimationFrame(frame);
@@ -479,6 +811,7 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
             return;
           }
           // the last move (its frame cancelled above) kept
+          setDraft(null);
           if (!end) {
             if (dragged) updateNodeData(id, tidy(info.apply(last[0], last[1], data0, last[2]), hit.id));
             return;
@@ -493,7 +826,7 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
     // the body: every object selected moves, their box snapped (Alt: not)
     const moving = items.filter((it) => ids.includes(it.id) && !it.locked);
     const b0 = union(moving.map(boxPt).filter((b): b is Rect => !!b));
-    const els = moving.flatMap((it) => Array.from(svgOf()?.querySelectorAll<SVGGElement>(`[data-part="ann:${it.id}"]`) ?? []));
+    const els = moving.flatMap((it) => Array.from(svgOf()?.querySelectorAll<SVGGElement>(`[data-part="ann:${it.id}"]`) ?? []).map((el) => ({ el, iso: it.iso })));
     const t = targets(moving.map((it) => it.id));
     let d: Pt = [0, 0];
     let started = false;
@@ -511,11 +844,18 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
           setGuides({ x: sx.guide, y: sy.guide });
         } else setGuides({ x: null, y: null });
         d = [dx, dy];
-        for (const g of els) g.setAttribute('transform', `translate(${dx.toFixed(3)} ${dy.toFixed(3)})`);
+        for (const g of els) {
+          const [ex, ey] = g.iso ? toLocal({ ...g.iso, at: [0, 0] }, [dx, dy]) : [dx, dy];
+          g.el.setAttribute('transform', `translate(${ex.toFixed(3)} ${ey.toFixed(3)})`);
+        }
       },
       () => {
-        for (const g of els) g.removeAttribute('transform');
-        if (!started) return;
+        if (!started) {
+          for (const g of els) g.el.removeAttribute('transform');
+          return;
+        }
+        // (kept moved until the drawing is drawn there)
+        shownMoved.current = els.map((g) => g.el);
         const [mx, my] = [d[0] / MM, d[1] / MM];
         setItems(items.map((it) => (moving.some((m) => m.id === it.id) ? moveItem(it, mx, my) : it)));
       },
@@ -545,12 +885,12 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
   // the pen's path (mm): straight pieces, or curves where a node has controls; closed back to its first node
   const finishPen = (close: boolean) => {
     const nodes = pen.filter((q, k) => k === 0 || Math.hypot(q.p[0] - pen[k - 1].p[0], q.p[1] - pen[k - 1].p[1]) * zoom > 2);
-    const mm = (q: Pt) => [q[0] / MM, q[1] / MM];
+    const mm = (q: Pt) => mmAt('pen', q);
     const piece = (a: (typeof nodes)[number], b: (typeof nodes)[number]) => (a.cout || b.cin ? { c: 'C' as const, p: [...mm(a.cout ?? a.p), ...mm(b.cin ?? b.p), ...mm(b.p)] } : { c: 'L' as const, p: mm(b.p) });
     if (nodes.length >= 2) {
       const segs = [{ c: 'M' as const, p: mm(nodes[0].p) }, ...nodes.slice(1).map((b, k) => piece(nodes[k], b))];
       if (close && nodes.length > 2) segs.push(piece(nodes[nodes.length - 1], nodes[0]), { c: 'Z' as const, p: [] } as never);
-      add([newAnnotation('shape', { kind: 'path', coords: 'data', d: pathText(segs), head1: 'none', head2: 'none', ...(close ? { fill: '#56B4E9', fillOpacity: 0.3, color: '#0072B2' } : {}) })]);
+      add([placed('pen', newAnnotation('shape', { kind: 'path', coords: 'data', d: pathText(segs), head1: 'none', head2: 'none', ...(close ? { fill: '#56B4E9', fillOpacity: 0.3, color: '#0072B2' } : {}) }))]);
     }
     setPen([]);
     setTool('select');
@@ -569,7 +909,8 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
       const p: Pt = [q.p[q.p.length - 2], q.p[q.p.length - 1]];
       // a closed outline's last node back on its first: one corner
       if (segs[i + 1]?.c === 'Z' && out.length && Math.hypot(p[0] - out[0].p[0] / MM + hx, p[1] - out[0].p[1] / MM + hy) < 1e-6) return;
-      out.push({ i, p: [(p[0] + hx) * MM, (p[1] + hy) * MM] });
+      const r = it.iso ? isoToPage(it.iso, p) : p;
+      out.push({ i, p: [(r[0] + hx) * MM, (r[1] + hy) * MM] });
     });
     return out;
   };
@@ -677,7 +1018,7 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
     if (!it) return;
     if (it.type === 'shape' && it.spec.kind === 'path' && sel.length === 1 && sel[0] === it.id) {
       const segs = parsePath(it.spec.d);
-      const p = at(e);
+      const p = toLocal(it.iso, at(e));
       setSpec(it.id, { d: pathText(anchor ? deleteNode(segs, Number(anchor.getAttribute('data-anchor'))) : insertNode(segs, [p[0] / MM, p[1] / MM])) });
       setPicked(null);
       return;
@@ -689,15 +1030,23 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
     const pts = poly.filter((p, k) => k === 0 || Math.hypot(p[0] - poly[k - 1][0], p[1] - poly[k - 1][1]) * zoom > 2);
     if (pts.length >= 2) {
       const spec = TOOLS.find((x) => x.tool === tool)?.spec ?? {};
-      const points = pts.map(([x, y]) => `${+(x / MM).toFixed(3)} ${+(y / MM).toFixed(3)}`).join('; ');
-      add([newAnnotation('shape', { coords: 'data', ...spec, points, closed: tool === 'polygon' && pts.length > 2 })]);
+      const points = pts.map((q) => mmAt(tool, q).map((v) => +v.toFixed(3)).join(' ')).join('; ');
+      add([placed(tool, newAnnotation('shape', { coords: 'data', ...spec, points, closed: tool === 'polygon' && pts.length > 2 }))]);
     }
     setPoly([]);
     setTool('select');
   };
 
   // ---- the selection: moved, aligned, spread, ordered, copied, removed ----
-  const moveSel = (dx: number, dy: number) => setItems(items.map((it) => (sel.includes(it.id) && !it.locked ? moveItem(it, dx, dy) : it)));
+  // (in the isometric mode, an object on a face along the face's own edges)
+  const moveSel = (dx: number, dy: number) =>
+    setItems(
+      items.map((it) => {
+        if (!sel.includes(it.id) || it.locked) return it;
+        const [mx, my] = it.iso && isoOn ? isoDeltaToPage(it.iso.face, [dx, dy]) : [dx, dy];
+        return moveItem(it, mx, my);
+      }),
+    );
   const align = (how: AlignHow) => {
     const list = selected.filter((it) => !it.locked);
     const boxes = list.map(boxMm);
@@ -781,6 +1130,9 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
       else if (tool !== 'select') setTool('select');
       else if (sel.length) setSel([]);
       else onClose();
+    } else if (e.key === 'Enter' && builder) {
+      stop();
+      void applyBuilder();
     } else if (e.key === 'Enter' && (poly.length || pen.length)) {
       stop();
       if (pen.length) finishPen(false);
@@ -827,8 +1179,26 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
   // ---- the layers: the front object first ----
   const [renaming, setRenaming] = useState<string | null>(null);
   const [dragged, setDragged] = useState<string | null>(null);
-  // the quick bar over the selection: shown (this browser's choice), not while the mouse is pressed on the page
+  // the quick bar over the selection: shown (this browser's choice), not while the mouse is pressed on the page; by the
+  // objects, or where it was dragged (in the room of the page)
   const quickOn = useQuickBar();
+  const quickAt = useQuickBarAt();
+  const body = useRef<HTMLDivElement>(null);
+  const dragQuick = (e: ReactPointerEvent) => {
+    if (e.button !== 0 || !body.current) return;
+    e.preventDefault();
+    const bar = (e.currentTarget as HTMLElement).closest('.quick-bar')!.getBoundingClientRect();
+    const room = body.current.getBoundingClientRect();
+    const [ox, oy] = [e.clientX - bar.left, e.clientY - bar.top];
+    const place = (ev: PointerEvent) => setQuickBarAt({ x: Math.round(Math.max(0, Math.min(room.width - 60, ev.clientX - room.left - ox))), y: Math.round(Math.max(0, Math.min(room.height - 30, ev.clientY - room.top - oy))) });
+    const mv = (ev: PointerEvent) => place(ev);
+    const up = () => {
+      window.removeEventListener('pointermove', mv);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', mv);
+    window.addEventListener('pointerup', up);
+  };
   const [pressing, setPressing] = useState(false);
   useEffect(() => {
     if (!pressing) return;
@@ -876,6 +1246,31 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
     );
   };
   const [sideTab, setSideTab] = useState<'layers' | 'components' | 'library'>('layers');
+  // the tab of the options (kept in this browser), the height of the list under them (px)
+  const [optTab, setOptTabNow] = useState<OpsPart>(() => keep<OpsPart>('graph-flow:de-tab', 'style'));
+  const setOptTab = (t: OpsPart) => (setOptTabNow(t), store('graph-flow:de-tab', t));
+  const [listH, setListH] = useState(() => keep('graph-flow:de-list-h', 260));
+  const dragSplit = (e: ReactPointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const [y0, h0] = [e.clientY, listH];
+    let h = h0;
+    follow(
+      (ev) => {
+        h = Math.round(Math.max(90, Math.min(window.innerHeight - 260, h0 - (ev.clientY - y0))));
+        setListH(h);
+      },
+      () => store('graph-flow:de-list-h', h),
+    );
+  };
+  // where the mouse is on the page (mm), written straight into the status bar
+  const cursorEl = useRef<HTMLSpanElement>(null);
+  const showCursor = (p: Pt | null) => {
+    if (cursorEl.current) cursorEl.current.textContent = p ? `x ${(p[0] / MM).toFixed(1)}  y ${(p[1] / MM).toFixed(1)} mm` : '';
+  };
+  // the selection put on a face (null: taken off it), where it is drawn kept
+  const putOn = (face: IsoFace | null) => setItems(items.map((it) => (sel.includes(it.id) && !it.locked && it.type !== 'colorbar' ? onFace(it, face, it.type === 'text' ? (it.iso?.upright ?? isoM.upright) : undefined) : it)));
+  const selFace: IsoFace | null = selected.length && selected.every((it) => it.iso && it.iso.face === selected[0].iso?.face) ? selected[0].iso!.face : null;
   const ctx: Ctx = { items, setItems, sel, setSel, data, set, boxMm, selBox, pageMm: { w: W / MM, h: H / MM }, nodes: picked && sel.length === 1 && sel[0] === picked.item ? picked.nodes : [] };
   // a line stuck to shapes: its ends where they are drawn (found from the shapes)
   const endsOf = (it: AnnotationItem): Partial<ShapeSpec> => {
@@ -891,52 +1286,196 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
   const mmH = H / MM;
   const gridMm = grid.unit === 'pt' ? grid.step / MM : grid.step;
 
+  // the tools on the left: each group's tool shown (the one in use, else the last used), its flyout open (held 0.35 s,
+  // right-clicked, or its small corner clicked)
+  const [shown, setShown] = useState<Record<string, Tool>>({});
+  useEffect(() => {
+    const g = TOOL_GROUPS.find((x) => x.tools.includes(tool));
+    if (g) setShown((m) => (m[g.name] === tool ? m : { ...m, [g.name]: tool }));
+  }, [tool]);
+  const [fly, setFly] = useState<string | null>(null);
+  const toolsCol = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!fly) return;
+    const away = (e: PointerEvent) => {
+      if (!toolsCol.current?.contains(e.target as Node)) setFly(null);
+    };
+    window.addEventListener('pointerdown', away);
+    return () => window.removeEventListener('pointerdown', away);
+  }, [fly]);
+  const hold = useRef<{ timer: number; held: boolean }>({ timer: 0, held: false });
+  const choose = (t: Tool) => {
+    if (t === 'image') pickImage();
+    else setTool(t);
+    setPoly([]);
+    setPen([]);
+    setFly(null);
+  };
+  const tools = (
+    <div className="de-tools" ref={toolsCol}>
+      {TOOL_GROUPS.map((g) => {
+        const t = g.tools.includes(tool) ? tool : (shown[g.name] ?? g.tools[0]);
+        const I = TOOL_ICONS[t];
+        const many = g.tools.length > 1;
+        return (
+          <div key={g.name} className="de-tool-slot">
+            <button
+              className={`nodrag de-tool${g.tools.includes(tool) ? ' on' : ''}`}
+              title={many ? `${toolOf(t).title}\n(held, right-clicked or its corner: the other ${g.name.toLowerCase()})` : toolOf(t).title}
+              onPointerDown={(e) => {
+                if (e.button !== 0 || !many) return;
+                hold.current.held = false;
+                hold.current.timer = window.setTimeout(() => {
+                  hold.current.held = true;
+                  setFly(g.name);
+                }, 350);
+              }}
+              onPointerUp={() => clearTimeout(hold.current.timer)}
+              onPointerLeave={() => clearTimeout(hold.current.timer)}
+              onClick={() => !hold.current.held && choose(t)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                if (many) setFly(fly === g.name ? null : g.name);
+              }}
+            >
+              <I {...ICON} />
+              {many && (
+                <span
+                  className="de-tool-more"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFly(fly === g.name ? null : g.name);
+                  }}
+                />
+              )}
+            </button>
+            {fly === g.name && (
+              <div className="de-flyout" role="menu" aria-label={g.name}>
+                <div className="de-flyout-head">{g.name}</div>
+                {g.tools.map((x) => {
+                  const J = TOOL_ICONS[x];
+                  const k = toolOf(x).key;
+                  return (
+                    <button key={x} className={`nodrag${tool === x ? ' on' : ''}`} title={toolOf(x).title} onClick={() => choose(x)}>
+                      <J {...ICON} />
+                      <span className="grow">{toolName(x)}</span>
+                      {k && <span className="muted">{k.toUpperCase()}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+  const flipSel = (down: boolean) => {
+    if (!selBox) return;
+    const mid: Pt = [selBox.x + selBox.w / 2, selBox.y + selBox.h / 2];
+    setItems(transformAll(items, sel, down ? flipDown(mid) : flipAcross(mid)));
+  };
+
   const toolbar: ReactNode = (
     <div className="de-toolbar">
       <span className="de-title" title={`Figure Drawing: ${data.name || 'drawing'}`}>
         <DraftingCompass {...ICON} />
-        <span>Figure Drawing</span>
-        <span className="muted">· {data.name || 'drawing'}</span>
+        <span className="muted">{data.name || 'drawing'}</span>
       </span>
-      <span className="de-group">
-        {TOOLS.map((t) => (
-          <button key={t.tool} className={`nodrag de-tool${tool === t.tool ? ' on' : ''}`} title={t.title} onClick={() => (t.tool === 'image' ? pickImage() : setTool(t.tool), setPoly([]), setPen([]))}>
-            {(() => {
-              const I = TOOL_ICONS[t.tool];
-              return <I {...ICON} />;
-            })()}
+      {selected.length > 0 && selBox ? (
+        <span className="de-selbar" title="The selection: its place and size (typed: moved, or stretched from its top-left corner), aligned, flipped">
+          <span className="de-selbar-name ellipsis">{one ? nameOf(one) : `${selected.length} objects`}</span>
+          <span className="de-xy">
+            <span className="muted">X</span>
+            <NumInput className="short" step={0.5} value={sMm(selBox.x)} onChange={(x) => Number.isFinite(x) && setBox({ x })} />
+            <span className="muted">Y</span>
+            <NumInput className="short" step={0.5} value={sMm(selBox.y)} onChange={(y) => Number.isFinite(y) && setBox({ y })} />
+            <span className="muted">W</span>
+            <NumInput className="short" min={0.01} step={0.5} value={sMm(selBox.w)} onChange={(w) => w > 0 && setBox({ w })} />
+            <span className="muted">H</span>
+            <NumInput className="short" min={0.01} step={0.5} value={sMm(selBox.h)} onChange={(h) => h > 0 && setBox({ h })} />
+            <span className="muted">mm</span>
+          </span>
+          <span className="de-group" title="Align the selected objects (one object: to the page)">
+            {ALIGN.map(([how, I, title]) => (
+              <button key={how} className="nodrag de-tool" title={title} onClick={() => align(how)}>
+                <I {...ICON} />
+              </button>
+            ))}
+            <Check label="to the page" title="Align to the page (else: to the box of the objects selected)" value={toPage} onChange={setToPage} />
+            <button className="nodrag de-tool" title="Spread out across: equal gaps between them (3 objects or more)" disabled={selected.length < 3} onClick={() => distribute('h')}>
+              <AlignHorizontalDistributeCenter {...ICON} />
+            </button>
+            <button className="nodrag de-tool" title="Spread out down: equal gaps between them (3 objects or more)" disabled={selected.length < 3} onClick={() => distribute('v')}>
+              <AlignVerticalDistributeCenter {...ICON} />
+            </button>
+          </span>
+          <span className="de-group">
+            <button className="nodrag de-tool" title="Flip across: mirrored left to right, about the middle of the selection" onClick={() => flipSel(false)}>
+              <FlipHorizontal2 {...ICON} />
+            </button>
+            <button className="nodrag de-tool" title="Flip down: mirrored top to bottom, about the middle of the selection" onClick={() => flipSel(true)}>
+              <FlipVertical2 {...ICON} />
+            </button>
+          </span>
+        </span>
+      ) : (
+        <span className="de-selbar muted">{tool === 'select' ? 'Nothing selected: click an object, or drag a box around several' : toolName(tool)}</span>
+      )}
+      <span className="grow" />
+      <Drop
+        label={
+          <>
+            <Magnet {...ICON} /> Snap
+          </>
+        }
+        title="Snapping: to the grid, to the other objects and their nodes, to the guides"
+      >
+        <Check label="To the grid" title="Objects and points snapped to the grid (Alt while dragging: free)" value={grid.snap} onChange={(snap) => set({ grid: { ...grid, snap } })} />
+        <span className="row">
+          <span className="muted">Step</span>
+          <NumInput className="tiny" min={0.01} step={0.5} value={grid.step} title="The grid's step" onChange={(v) => set({ grid: { ...grid, step: v > 0 ? v : 1 } })} />
+          <Select<'mm' | 'pt'> seg
+            value={grid.unit}
+            options={[
+              ['mm', 'mm'],
+              ['pt', 'pt'],
+            ]}
+            onChange={(unit) => set({ grid: { ...grid, unit } })}
+          />
+        </span>
+        <Check label="To objects" title="To the edges and middles of the other objects and of the page (guides show it)" value={data.snapObjects !== false} onChange={(snapObjects) => set({ snapObjects })} />
+        <Check label="To nodes" title="A point drawn or dragged snapped to the nodes of the other objects (their ends, corners, middles) and to where their outlines cross; Shift while drawing a polygon or a path: the next point by 15°" value={data.snapNodes !== false} onChange={(snapNodes) => set({ snapNodes: snapNodes ? undefined : false })} />
+        <Check label="Guides" title="Guides: drag one out of a ruler (the top one: across, the left one: down); drag it to move it, back onto its ruler to remove it; objects snap to them" value={!data.guides?.hidden} onChange={(on) => set({ guides: { ...data.guides, hidden: on ? undefined : true } })} />
+        {isoOn && <Check label="Guides along the face" title="In the isometric mode, on a face: a guide out of the top ruler goes along the face's first edge, out of the left one along its other edge" value={!!isoM.guides} onChange={(guides) => setIso({ guides: guides || undefined })} />}
+        {data.guides?.x?.length || data.guides?.y?.length || data.guides?.iso?.length ? (
+          <button className="nodrag" title="Remove every guide" onClick={() => set({ guides: undefined })}>
+            Clear guides
           </button>
-        ))}
-      </span>
-      <span className="de-group" title="Align the selected objects (one object: to the page)">
-        {ALIGN.map(([how, I, title]) => (
-          <button key={how} className="nodrag de-tool" title={title} disabled={!sel.length} onClick={() => align(how)}>
-            <I {...ICON} />
-          </button>
-        ))}
-        <Check label="to the page" title="Align to the page (else: to the box of the objects selected)" value={toPage} onChange={setToPage} />
-        <button className="nodrag de-tool" title="Spread out across: equal gaps between them (3 objects or more)" disabled={selected.length < 3} onClick={() => distribute('h')}>
-          <AlignHorizontalDistributeCenter {...ICON} />
-        </button>
-        <button className="nodrag de-tool" title="Spread out down: equal gaps between them (3 objects or more)" disabled={selected.length < 3} onClick={() => distribute('v')}>
-          <AlignVerticalDistributeCenter {...ICON} />
-        </button>
-      </span>
-      <span className="de-group">
+        ) : null}
+      </Drop>
+      <Drop
+        label={
+          <>
+            <Grid3x3 {...ICON} /> View
+          </>
+        }
+        title="What is shown: the grid (square or isometric), the quick bar"
+      >
         <Check label="Grid" title="Show the grid (only here: not drawn in the figure)" value={grid.show} onChange={(show) => set({ grid: { ...grid, show } })} />
-        <Check label="Snap" title="Objects and points snapped to the grid (Alt while dragging: free)" value={grid.snap} onChange={(snap) => set({ grid: { ...grid, snap } })} />
-        <NumInput className="tiny" min={0.01} step={0.5} value={grid.step} title="The grid's step" onChange={(v) => set({ grid: { ...grid, step: v > 0 ? v : 1 } })} />
-        <Select<'mm' | 'pt'> seg
-          value={grid.unit}
-          options={[
-            ['mm', 'mm'],
-            ['pt', 'pt'],
-          ]}
-          onChange={(unit) => set({ grid: { ...grid, unit } })}
+        <Check label="Isometric grid" title="An isometric grid: lines at 30° either way and down, its points a step apart (points snapped to them)" value={!!grid.iso} onChange={(iso) => set({ grid: { ...grid, iso: iso || undefined } })} />
+        <Check label="Quick bar" title="A bar over the objects selected: their colour, width, size … one click away (drag it by its handle anywhere; its × hides it)" value={quickOn} onChange={setQuickBar} />
+        <Check
+          label="Isometric mode"
+          title="The cube of the faces: new objects drawn on the face chosen (top, left, right) or flat; the objects on a face scaled along its edges; the isometric grid"
+          value={isoOn}
+          onChange={(on) => {
+            set({ isoMode: { ...isoM, on: on || undefined, plane: isoM.plane ?? 'top' }, ...(on ? { grid: { ...grid, iso: true, show: true } } : {}) });
+          }}
         />
-        <Check label="Snap to objects" title="To the edges and middles of the other objects and of the page (guides show it)" value={data.snapObjects !== false} onChange={(snapObjects) => set({ snapObjects })} />
-        <Check label="Quick bar" title="A bar over the objects selected: their colour, width, size … one click away (its × hides it)" value={quickOn} onChange={setQuickBar} />
-      </span>
+        {isoOn && <Check label="Texts upright" title="New texts on a face: their letters level (else slanted with the face)" value={!!isoM.upright} onChange={(upright) => setIso({ upright: upright || undefined })} />}
+      </Drop>
       <span className="de-group">
         <button className="nodrag de-tool" title="Zoom out (Ctrl + wheel)" onClick={() => zoomBy(1 / 1.25)}>
           <ZoomOut {...ICON} />
@@ -954,7 +1493,6 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
           <ZoomIn {...ICON} />
         </button>
       </span>
-      <span className="grow" />
       <button className="nodrag de-close" title="Close the editor (Esc with nothing selected); Ctrl+Z undoes" onClick={onClose}>
         <X {...ICON} /> Close
       </button>
@@ -986,7 +1524,7 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
         </button>
       </div>
       <div className="de-list">
-        {!items.length && <div className="hint">No objects yet: choose a tool above and drag on the page.</div>}
+        {!items.length && <div className="hint">No objects yet: choose a tool on the left and drag on the page.</div>}
         {items
           .slice()
           .reverse()
@@ -1040,12 +1578,12 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
         <>
           <div className="de-head">Page</div>
           <PageControls page={data} set={(p) => set(p)} fixed={under ? `Size: ${under.width} × ${under.height} ${under.unit}; the figure under the drawing's (${guide ? 'only a guide' : 'drawn with it'}).` : undefined} />
-          <div className="hint">The grid: in the bar above (shown, snapped, its step). Objects: a tool, then drag on the page.</div>
+          <div className="hint">The grid and snapping: Snap and View in the bar above. Objects: a tool on the left, then drag on the page.</div>
+          <IsoMaker ctx={ctx} />
         </>
       )}
-      {selected.length > 0 && (
+      {selected.length > 0 && optTab === 'arrange' && (
         <>
-          <div className="de-head">{one ? nameOf(one) : `${selected.length} objects`}</div>
           {under && !guide && (
             <Field label="Layer" title="Over the figure under the drawing: in front of everything, or behind its data (under its curves, over its frame's ground and grid)">
               <Select<'front' | 'behind'>
@@ -1070,16 +1608,31 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
               </span>
             </Field>
           )}
-          {selBox && (
-            <Field label="Box x, y, w, h mm" title="The place and size of the selection (typed: moved, or stretched from its top-left corner)">
-              <span className="row">
-                <NumInput className="short" step={0.5} value={sMm(selBox.x)} onChange={(x) => Number.isFinite(x) && setBox({ x })} />
-                <NumInput className="short" step={0.5} value={sMm(selBox.y)} onChange={(y) => Number.isFinite(y) && setBox({ y })} />
-                <NumInput className="short" min={0.01} step={0.5} value={sMm(selBox.w)} onChange={(w) => w > 0 && setBox({ w })} />
-                <NumInput className="short" min={0.01} step={0.5} value={sMm(selBox.h)} onChange={(h) => h > 0 && setBox({ h })} />
-              </span>
-            </Field>
+          <Field label="Isometric face" title="The objects put on a face of an isometric box (their own shape kept: a rectangle stays one; its handles move along the face's edges), or taken off it (Flat); where they are stays">
+            <span className="row wrap">
+              {(['top', 'left', 'right'] as IsoFace[]).map((f) => (
+                <button key={f} className={`nodrag${selected.every((it) => it.iso?.face === f) ? ' on' : ''}`} onClick={() => putOn(f)}>
+                  {f[0].toUpperCase() + f.slice(1)}
+                </button>
+              ))}
+              <button className={`nodrag${selected.every((it) => !it.iso) ? ' on' : ''}`} onClick={() => putOn(null)}>
+                Flat
+              </button>
+            </span>
+          </Field>
+          {selected.some((it) => it.type === 'text' && it.iso) && (
+            <Check
+              label="Text upright"
+              title="A text on a face: its letters level (else slanted with the face)"
+              value={selected.filter((it) => it.type === 'text' && it.iso).every((it) => it.iso?.upright)}
+              onChange={(up) => setItems(items.map((it) => (sel.includes(it.id) && it.type === 'text' && it.iso ? { ...it, iso: { ...it.iso, upright: up || undefined } } : it)))}
+            />
           )}
+          <ObjectOps ctx={ctx} part="arrange" />
+        </>
+      )}
+      {selected.length > 0 && optTab === 'style' && (
+        <>
           {one?.type === 'shape' && CORNERED.has(shapeSpec(one.spec).kind) && (
             <Field label="Corners" title="Their radius, pt: every corner (all), or the corners picked with the Corners tool (K: click a shape, then its corners)">
               <span className="row wrap">
@@ -1106,8 +1659,14 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
               <TextEditor s={{ ...TEXT_SPEC_DEFAULTS, ...one.spec, coords: 'data' }} where="drawing" set={(p) => setSpec(one.id, p)} extra={<TextPathFields it={one} items={items} set={(p) => setSpec(one.id, p)} />} />
             </PageTextContext.Provider>
           )}
-          <ObjectOps ctx={ctx} />
           {!one && shapesSel.length > 0 && <CommonStroke items={shapesSel} set={(patch) => setItems(items.map((it) => (shapesSel.includes(it) ? ({ ...it, spec: { ...it.spec, ...patch } } as AnnotationItem) : it)))} />}
+          <ObjectOps ctx={ctx} part="style" />
+        </>
+      )}
+      {selected.length > 0 && (optTab === 'path' || optTab === 'make') && (
+        <>
+          {selected.some((it) => it.iso) && <div className="hint">On an isometric face: what is done here takes them off it (as they are drawn).</div>}
+          <ObjectOps ctx={selected.some((it) => it.iso) ? { ...ctx, items: items.map((it) => (sel.includes(it.id) && it.iso ? bakeIso(it) : it)) } : ctx} part={optTab} />
         </>
       )}
     </div>
@@ -1133,7 +1692,9 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
         front={() => reorder('front')}
         back={() => reorder('back')}
         remove={remove}
-        style={{ left: Math.max(0, x), top: y }}
+        style={quickAt ? { left: quickAt.x, top: quickAt.y } : { left: Math.max(0, x), top: y }}
+        grip={dragQuick}
+        unplace={quickAt ? () => setQuickBarAt(null) : undefined}
       />
     );
   })();
@@ -1141,6 +1702,21 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
   // the grid (only here), in pt of the page
   const gridLines = (() => {
     if (!grid.show || !(gridMm > 0)) return null;
+    if (grid.iso) {
+      const a = gridMm * MM;
+      const ax = a * Math.cos(Math.PI / 6);
+      if (a * zoom < 4) return null;
+      const t = Math.tan(Math.PI / 6);
+      const d: string[] = [];
+      for (let x = 0; x <= W + 1e-9; x += ax) d.push(`M${x.toFixed(2)},0V${H.toFixed(2)}`);
+      // (the lines at ±30°: one every step down the left edge, from above the page to below it)
+      const reach = W * t;
+      for (let y0 = -reach; y0 <= H + reach + 1e-9; y0 += a) {
+        d.push(`M0,${y0.toFixed(2)}L${W.toFixed(2)},${(y0 + reach).toFixed(2)}`);
+        d.push(`M0,${y0.toFixed(2)}L${W.toFixed(2)},${(y0 - reach).toFixed(2)}`);
+      }
+      return <path d={d.join('')} fill="none" stroke="#5aa9e6" strokeOpacity={0.3} strokeWidth={0.6 / zoom} />;
+    }
     // the lines of every step (when they are 5 px apart or more), every 10th one stronger
     const minor = gridMm * MM * zoom >= 5;
     const d: string[] = [];
@@ -1186,6 +1762,124 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
     );
   };
   const handleK = 9 / (5.6 * zoom);
+  // a guide dragged (k: its number; −1: a new one, out of a ruler): where it goes (pt), snapped to the grid; dropped off
+  // the page, removed
+  const [newGuide, setNewGuide] = useState<{ axis: 'x' | 'y'; at: number } | null>(null);
+  const dragGuide = (e: ReactPointerEvent, axis: 'x' | 'y', k: number) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const list = [...(data.guides?.[axis] ?? [])];
+    const place = (ev: { clientX: number; clientY: number }) => {
+      const p = at(ev)[axis === 'x' ? 0 : 1];
+      const g = gridMm > 0 && grid.snap ? Math.round(p / MM / gridMm) * gridMm * MM : p;
+      return { at: g, off: p < 0 || p > (axis === 'x' ? W : H) };
+    };
+    const rest = k >= 0 ? list.filter((_, j) => j !== k) : list;
+    if (k >= 0) set({ guides: { ...data.guides, [axis]: rest } });
+    follow(
+      (ev) => setNewGuide({ axis, at: place(ev).at }),
+      (ev) => {
+        setNewGuide(null);
+        const q = place(ev);
+        set({ guides: { ...data.guides, hidden: undefined, [axis]: q.off ? rest : [...rest, +(q.at / MM).toFixed(3)] } });
+      },
+    );
+  };
+
+  // a guide along a face's edge (deg) dragged (k: its number; −1: a new one, out of a ruler): through the mouse (on the
+  // isometric grid's points when snapped); dropped off the page, removed
+  const [newIsoGuide, setNewIsoGuide] = useState<{ at: Pt; deg: number } | null>(null);
+  const dragIsoGuide = (e: ReactPointerEvent, deg: number, k: number) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const list = [...(data.guides?.iso ?? [])];
+    const rest = k >= 0 ? list.filter((_, j) => j !== k) : list;
+    if (k >= 0) set({ guides: { ...data.guides, iso: rest } });
+    const place = (ev: { clientX: number; clientY: number }) => {
+      const p = at(ev);
+      return { at: (isoStep > 0 ? isoNear(p) : p) as Pt, off: p[0] < 0 || p[1] < 0 || p[0] > W || p[1] > H };
+    };
+    follow(
+      (ev) => setNewIsoGuide({ at: place(ev).at, deg }),
+      (ev) => {
+        setNewIsoGuide(null);
+        const q = place(ev);
+        set({ guides: { ...data.guides, hidden: undefined, iso: q.off ? rest : [...rest, { at: [+(q.at[0] / MM).toFixed(3), +(q.at[1] / MM).toFixed(3)], deg }] } });
+      },
+    );
+  };
+  const isoRulers = isoOn && !!isoM.guides && !!plane;
+  const isoLine = (g: { at: Pt; deg: number }, mm: boolean, props: object) => {
+    const a = (g.deg * Math.PI) / 180;
+    const L = (W + H) * 2;
+    const [ox, oy] = mm ? [g.at[0] * MM, g.at[1] * MM] : g.at;
+    return <line x1={ox - L * Math.cos(a)} y1={oy - L * Math.sin(a)} x2={ox + L * Math.cos(a)} y2={oy + L * Math.sin(a)} {...props} />;
+  };
+
+  // what the tool does now (the bar at the bottom)
+  const statusHint = builder
+    ? 'Shape builder: click the parts to join them, Alt + click those to take away; Enter applies, Esc cancels'
+    : pen.length
+      ? 'Pen: click a corner, drag a curve; click the first node to close the path, Enter or a double-click ends it open'
+      : poly.length
+        ? `${toolName(tool)}: click the next point (Shift: by 15°); Enter or a double-click ends it`
+        : tool !== 'select'
+          ? toolHint(tool)
+          : selected.length
+            ? 'Drag to move (Alt: no snapping); the handles change it; arrows move it (Shift: ×10, Alt: 0.1 mm); right-click: more'
+            : 'Click an object (Shift / Ctrl: more), or drag a box around several; right-click the page: add an object';
+
+  const side = (
+    <div className="de-side node inspector-options">
+      {selected.length > 0 && (
+        <>
+          <div className="de-head de-side-name ellipsis">{one ? nameOf(one) : `${selected.length} objects`}</div>
+          <div className="de-tabs">
+            {OPS_TABS.map(([k, label, title]) => (
+              <button key={k} className={`nodrag${optTab === k ? ' on' : ''}`} title={title} onClick={() => setOptTab(k)}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+      {options}
+      <div className="de-split" title="Drag: the height of the list under it" onPointerDown={dragSplit} />
+      <div className="de-bottom" style={{ height: listH }}>
+        <div className="de-tabs">
+          {(
+            [
+              ['layers', 'Layers', Layers],
+              ['components', `Components${data.components?.length ? ` (${data.components.length})` : ''}`, Component],
+              ['library', 'Library', Library],
+            ] as const
+          ).map(([k, label, I]) => (
+            <button key={k} className={`nodrag${sideTab === k ? ' on' : ''}`} onClick={() => setSideTab(k)}>
+              <I {...ICON} size={14} /> {label}
+            </button>
+          ))}
+        </div>
+        {sideTab === 'layers' && layers}
+        {sideTab === 'components' && <div className="de-layers">{<ComponentsTab ctx={ctx} />}</div>}
+        {sideTab === 'library' && <div className="de-layers">{<LibraryTab ctx={ctx} />}</div>}
+      </div>
+    </div>
+  );
+  const status = (
+    <div className="de-status">
+      <span className="de-status-hint ellipsis">{statusHint}</span>
+      <span className="grow" />
+      <span ref={cursorEl} className="de-status-xy" />
+      <span>{sel.length ? `${sel.length} selected` : `${items.length} object${items.length === 1 ? '' : 's'}`}</span>
+    </div>
+  );
+  // while a handle is dragged only the drawing is drawn again: the bars and panels kept as they were (the same
+  // elements: React leaves them)
+  const frozen = useRef<{ toolbar: ReactNode; tools: ReactNode; side: ReactNode; status: ReactNode } | null>(null);
+  if (!draft || !frozen.current) frozen.current = { toolbar, tools, side, status };
+  const ui = frozen.current;
 
   return createPortal(
     <div
@@ -1203,7 +1897,7 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
         files.forEach(addImage);
       }}
     >
-      {toolbar}
+      {ui.toolbar}
       {menu && (
         <>
           <div className="de-menu-shade" onPointerDown={() => setMenu(null)} onContextMenu={(e) => (e.preventDefault(), setMenu(null))} />
@@ -1228,26 +1922,20 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
           </div>
         </>
       )}
-      <div className="de-body">
-        <div className="de-side node inspector-options">
-          <div className="de-tabs">
-            {(
-              [
-                ['layers', 'Layers', Layers],
-                ['components', `Components${data.components?.length ? ` (${data.components.length})` : ''}`, Component],
-                ['library', 'Library', Library],
-              ] as const
-            ).map(([k, label, I]) => (
-              <button key={k} className={`nodrag${sideTab === k ? ' on' : ''}`} onClick={() => setSideTab(k)}>
-                <I {...ICON} size={14} /> {label}
-              </button>
-            ))}
-          </div>
-          {sideTab === 'layers' && layers}
-          {sideTab === 'components' && <div className="de-layers">{<ComponentsTab ctx={ctx} />}</div>}
-          {sideTab === 'library' && <div className="de-layers">{<LibraryTab ctx={ctx} />}</div>}
-          {options}
-        </div>
+      <div className="de-body" ref={body}>
+        {ui.tools}
+        {quickAt && quickBar}
+        {isoOn && (
+          <IsoCube
+            plane={plane}
+            of={selFace}
+            pick={(f, put) => {
+              if (put && sel.length) putOn(f === 'flat' ? null : f);
+              else setIso({ plane: f });
+            }}
+            close={() => setIso({ on: undefined })}
+          />
+        )}
         <div
           className="de-area"
           ref={area}
@@ -1262,11 +1950,24 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
           }}
         >
           <div className="de-stage" style={{ width: dispW + 60, height: dispH + 60 }}>
-            {quickBar}
-            <div className="de-rulers" style={{ left: 40, top: 22 }}>
+            {!quickAt && quickBar}
+            {builder && (
+              <div className="de-builder-bar">
+                <span>
+                  Shape builder: click the parts to join ({builder.join.length}), Alt + click those to take away ({builder.drop.length})
+                </span>
+                <button className="nodrag btn-run" disabled={!builder.join.length && !builder.drop.length} onClick={() => void applyBuilder()}>
+                  Apply
+                </button>
+                <button className="nodrag" onClick={() => setTool('select')}>
+                  Cancel
+                </button>
+              </div>
+            )}
+            <div className="de-rulers" style={{ left: 40, top: 22 }} title={isoRulers ? "Drag onto the page: a guide along the face's first edge" : 'Drag down onto the page: a guide across'} onPointerDown={(e) => (isoRulers ? dragIsoGuide(e, isoEdges(plane!)[0], -1) : dragGuide(e, 'y', -1))}>
               {ruler(mmW, true)}
             </div>
-            <div className="de-rulers" style={{ left: 22, top: 40 }}>
+            <div className="de-rulers" style={{ left: 22, top: 40 }} title={isoRulers ? "Drag onto the page: a guide along the face's other edge" : 'Drag onto the page: a guide down'} onPointerDown={(e) => (isoRulers ? dragIsoGuide(e, isoEdges(plane!)[1], -1) : dragGuide(e, 'x', -1))}>
               {ruler(mmH, false)}
             </div>
             <div
@@ -1277,7 +1978,11 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
                 setPressing(true);
                 down(e);
               }}
-              onPointerMove={(e) => (((tool === 'polygon' || tool === 'polyline') && poly.length) || (tool === 'pen' && pen.length)) && setHover(at(e))}
+              onPointerMove={(e) => {
+                showCursor(at(e));
+                if (((tool === 'polygon' || tool === 'polyline') && poly.length) || (tool === 'pen' && pen.length)) setHover(at(e));
+              }}
+              onPointerLeave={() => showCursor(null)}
               onDoubleClick={dbl}
               onContextMenu={openMenu}
             >
@@ -1291,15 +1996,77 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
                   <Interactive.Provider value={true}>
                     <HandleScale.Provider value={handleK}>
                       <PickedNodes.Provider value={picked && sel.length === 1 && sel[0] === picked.item ? picked : null}>
-                        <FigureSvg fig={guide ? { ...fig, background: 'none' } : fig} display={{ width: dispW, height: dispH }} idPrefix={`de-${id}`} />
+                        <HandlesFor.Provider value={selSet}>
+                          <FigureSvg fig={guide ? { ...fig, background: 'none' } : fig} display={{ width: dispW, height: dispH }} idPrefix={`de-${id}`} />
+                        </HandlesFor.Provider>
                       </PickedNodes.Provider>
                     </HandleScale.Provider>
                   </Interactive.Provider>
                 )}
               </div>
+              {builder && (
+                <svg className="de-overlay de-builder" width={dispW} height={dispH} viewBox={`0 0 ${W.toFixed(3)} ${H.toFixed(3)}`}>
+                  <g transform={`scale(${MM})`}>
+                    {builder.parts.map((d, k) => (
+                      <path
+                        key={k}
+                        d={d}
+                        className={builder.join.includes(k) ? 'join' : builder.drop.includes(k) ? 'drop' : ''}
+                        strokeWidth={1 / zoom / MM}
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          const toggle = (l: number[]) => (l.includes(k) ? l.filter((x) => x !== k) : [...l, k]);
+                          setBuilder(e.altKey ? { ...builder, drop: toggle(builder.drop), join: builder.join.filter((x) => x !== k) } : { ...builder, join: toggle(builder.join), drop: builder.drop.filter((x) => x !== k) });
+                        }}
+                      />
+                    ))}
+                  </g>
+                </svg>
+              )}
+              {!data.guides?.hidden && (
+                <svg className="de-overlay de-guides" width={dispW} height={dispH} viewBox={`0 0 ${W.toFixed(3)} ${H.toFixed(3)}`}>
+                  {/* (each drawn thin, caught by a wide line under it: 5 px either side) */}
+                  {(data.guides?.x ?? []).map((v, k) => (
+                    <g key={`x${k}`} onPointerDown={(e) => dragGuide(e, 'x', k)}>
+                      <title>{`x = ${+v.toFixed(2)} mm: drag it (back onto the ruler: removed)`}</title>
+                      <line className="grab" x1={v * MM} x2={v * MM} y1={-40 / zoom} y2={H + 40 / zoom} strokeWidth={10 / zoom} />
+                      <line x1={v * MM} x2={v * MM} y1={-40 / zoom} y2={H + 40 / zoom} strokeWidth={1 / zoom} />
+                    </g>
+                  ))}
+                  {(data.guides?.y ?? []).map((v, k) => (
+                    <g key={`y${k}`} onPointerDown={(e) => dragGuide(e, 'y', k)}>
+                      <title>{`y = ${+v.toFixed(2)} mm: drag it (back onto the ruler: removed)`}</title>
+                      <line className="grab" y1={v * MM} y2={v * MM} x1={-40 / zoom} x2={W + 40 / zoom} strokeWidth={10 / zoom} />
+                      <line y1={v * MM} y2={v * MM} x1={-40 / zoom} x2={W + 40 / zoom} strokeWidth={1 / zoom} />
+                    </g>
+                  ))}
+                  {/* (the guides along a face's edges cut at the page, as far out as the others) */}
+                  <defs>
+                    <clipPath id={`de-iso-${id}`}>
+                      <rect x={-40 / zoom} y={-40 / zoom} width={W + 80 / zoom} height={H + 80 / zoom} />
+                    </clipPath>
+                  </defs>
+                  <g clipPath={`url(#de-iso-${id})`}>
+                    {isoGuides.map((g, k) => (
+                      <g key={`i${k}`} onPointerDown={(e) => dragIsoGuide(e, g.deg, k)}>
+                        <title>{`A guide at ${g.deg}°: drag it (off the page: removed)`}</title>
+                        {isoLine(g, true, { className: 'grab', strokeWidth: 10 / zoom })}
+                        {isoLine(g, true, { strokeWidth: 1 / zoom })}
+                      </g>
+                    ))}
+                    {newIsoGuide && isoLine(newIsoGuide, false, { strokeWidth: 1 / zoom, className: 'moving' })}
+                  </g>
+                  {newGuide && (newGuide.axis === 'x' ? <line x1={newGuide.at} x2={newGuide.at} y1={0} y2={H} strokeWidth={1 / zoom} className="moving" /> : <line y1={newGuide.at} y2={newGuide.at} x1={0} x2={W} strokeWidth={1 / zoom} className="moving" />)}
+                </svg>
+              )}
               <svg className="de-overlay" width={dispW} height={dispH} viewBox={`0 0 ${W.toFixed(3)} ${H.toFixed(3)}`}>
                 {gridLines}
                 {selected.map((it) => {
+                  const fb = it.iso ? flatBox(it) : null;
+                  if (it.iso && fb) {
+                    const pts = [[fb.x, fb.y], [fb.x + fb.w, fb.y], [fb.x + fb.w, fb.y + fb.h], [fb.x, fb.y + fb.h]].map(([x, y]) => isoToPage(it.iso!, [x, y]).map((v) => (v * MM).toFixed(2)).join(','));
+                    return <polygon key={it.id} points={pts.join(' ')} fill="none" stroke="var(--select)" strokeWidth={1 / zoom} strokeDasharray={`${4 / zoom} ${3 / zoom}`} />;
+                  }
                   const b = boxPt(it);
                   return b ? <rect key={it.id} x={b.x} y={b.y} width={Math.max(b.w, 0.01)} height={Math.max(b.h, 0.01)} fill="none" stroke="var(--select)" strokeWidth={1 / zoom} strokeDasharray={`${4 / zoom} ${3 / zoom}`} /> : null;
                 })}
@@ -1308,11 +2075,23 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
                 {guides.y !== null && <line y1={guides.y} y2={guides.y} x1={0} x2={W} stroke="#e6007e" strokeWidth={1 / zoom} />}
                 {marquee && <rect x={marquee.x} y={marquee.y} width={marquee.w} height={marquee.h} fill="var(--select)" fillOpacity={0.08} stroke="var(--select)" strokeWidth={1 / zoom} />}
                 {preview &&
-                  (BOXED.has(tool) ? (
+                  (BOXED.has(tool) && plane ? (
+                    <polygon
+                      points={(() => {
+                        const [a, b] = [mmAt(tool, preview.a), mmAt(tool, preview.b)];
+                        return [[a[0], a[1]], [b[0], a[1]], [b[0], b[1]], [a[0], b[1]]].map((q) => isoToPage(facePlace(plane), q as Pt).map((v) => (v * MM).toFixed(2)).join(',')).join(' ');
+                      })()}
+                      fill="none"
+                      stroke="var(--select)"
+                      strokeWidth={1 / zoom}
+                      strokeDasharray={`${4 / zoom} ${3 / zoom}`}
+                    />
+                  ) : BOXED.has(tool) ? (
                     <rect x={Math.min(preview.a[0], preview.b[0])} y={Math.min(preview.a[1], preview.b[1])} width={Math.abs(preview.b[0] - preview.a[0])} height={Math.abs(preview.b[1] - preview.a[1])} fill="none" stroke="var(--select)" strokeWidth={1 / zoom} strokeDasharray={`${4 / zoom} ${3 / zoom}`} />
                   ) : (
                     <line x1={preview.a[0]} y1={preview.a[1]} x2={preview.b[0]} y2={preview.b[1]} stroke="var(--select)" strokeWidth={1 / zoom} strokeDasharray={`${4 / zoom} ${3 / zoom}`} />
                   ))}
+                {stroke && <polyline points={stroke.map((p) => p.join(',')).join(' ')} fill="none" stroke="var(--select)" strokeWidth={1.2 / zoom} />}
                 {poly.length > 0 && <polyline points={[...poly, ...(hover ? [hover] : [])].map((p) => p.join(',')).join(' ')} fill="none" stroke="var(--select)" strokeWidth={1 / zoom} strokeDasharray={`${4 / zoom} ${3 / zoom}`} />}
                 {poly.map((p, k) => (
                   <circle key={k} cx={p[0]} cy={p[1]} r={3 / zoom} fill="var(--select)" />
@@ -1338,7 +2117,9 @@ export function DrawingEditor({ id, data, fig, under, pinShift, onClose, first }
             </div>
           </div>
         </div>
+        {ui.side}
       </div>
+      {ui.status}
     </div>,
     document.body,
   );

@@ -4,12 +4,18 @@ import { SHAPE_DEFAULTS, TEXT_SPEC_DEFAULTS, type ShapeSpec } from '../figure/sp
 import { bendPoints, bendText, type Pt } from '../figure/shapes.ts';
 import { mapPath } from '../figure/paths.ts';
 import type { AnnotationItem, DrawingComponent } from '../types.ts';
+import { isoToFace, isoToPage } from './isoPlane.ts';
 
 const rr = (v: number) => +v.toFixed(4);
 const full = (d: Partial<ShapeSpec>): ShapeSpec => ({ ...SHAPE_DEFAULTS, ...d });
 
-// Every point of an object through f (mm → mm): its ends, corners, bends, points, outline or place.
+// Every point of an object through f (mm → mm): its ends, corners, bends, points, outline or place; on an isometric
+// face, f is on the page (its points in the face: to the page, through f, back)
 export function mapItem(it: AnnotationItem, f: (p: Pt) => Pt): AnnotationItem {
+  const iso = it.iso;
+  return iso ? mapFlat(it, (p) => isoToFace(iso, f(isoToPage(iso, p)))) : mapFlat(it, f);
+}
+function mapFlat(it: AnnotationItem, f: (p: Pt) => Pt): AnnotationItem {
   if (it.type === 'text') {
     const s = { ...TEXT_SPEC_DEFAULTS, ...it.spec };
     const [x, y] = f([s.x, s.y]);
@@ -52,7 +58,8 @@ export function mapItem(it: AnnotationItem, f: (p: Pt) => Pt): AnnotationItem {
   if (s.bends) p.bends = bendText(bendPoints(s.bends).map(f));
   return { ...it, spec: { ...it.spec, ...p } };
 }
-export const moveItem = (it: AnnotationItem, dx: number, dy: number) => mapItem(it, ([x, y]) => [x + dx, y + dy]);
+// (on an isometric face: its place moved, its points in the face kept)
+export const moveItem = (it: AnnotationItem, dx: number, dy: number): AnnotationItem => (it.iso ? { ...it, iso: { ...it.iso, at: [rr(it.iso.at[0] + dx), rr(it.iso.at[1] + dy)] } } : mapItem(it, ([x, y]) => [x + dx, y + dy]));
 
 // An object turned by deg (clockwise, y down) about c: a box shape or a text moved and its own turn added, the others'
 // points turned.

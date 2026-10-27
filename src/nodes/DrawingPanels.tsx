@@ -6,16 +6,19 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { drawingFigure, shapeSpec } from '../engine/evaluate.ts';
 import { placeComponent } from '../engine/drawingItems.ts';
 import { FigureSvg } from '../figure/render.tsx';
-import { breakAt, deleteNode, isClosed, joinPaths, longestSegment, parsePath, pathText, reversePath, roundCorners, setClosed, sharpAll, smoothAll, splitSegment } from '../figure/paths.ts';
+import { breakAt, deleteNode, isClosed, joinPaths, nodeCount, simplifyPath, longestSegment, parsePath, pathText, reversePath, roundCorners, setClosed, sharpAll, smoothAll, splitSegment } from '../figure/paths.ts';
 import { DRAWING_DEFAULTS, newAnnotation } from '../defaults.ts';
 import type { AnnotationItem, DrawingComponent, DrawingData } from '../types.ts';
 import { Check, Field, NumInput, Select, TextInput } from './ui.tsx';
 import { circleArray, colorsOf, copiesOf, gridArray, pathArray, groupItems, ungroupItems, mapItem, newId, pathOf, recolor, toPathItem, type Rect } from './drawingOps.ts';
 import { combine, offsetPath, strokeOutline, type BoolOp } from './pathOps.ts';
+import { flipAcross, flipDown, scaleAbout, skewAbout, transformAll, transformItem, turnAbout, type Affine } from './drawingTransform.ts';
+import { bendItems, blendItems, isoBox, isoStack } from './drawingMake.ts';
+import { PALETTE } from '../figure/spec.ts';
 import { copyStyle, deleteFigure, libraryFile, pasteStyle, listFigures, listStyles, newFigureId, readLibraryFile, saveFigure, saveStyles, styleOf, type LibFigure, type SavedStyle } from './figureLibrary.ts';
 import { importSvg } from './svgImport.ts';
 import { describe } from './annotationNames.ts';
-import { ChevronDown, ChevronRight, Plus, Split, SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, FlipHorizontal2, FlipVertical2, Plus, Split, SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
 import { ask, notify } from '../ui/dialogStore.ts';
 
@@ -68,7 +71,56 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 // ---- what can be done with the selection ----
-export function ObjectOps({ ctx }: { ctx: Ctx }) {
+// Isometric boxes (nothing selected): one box, or a stack of layers (a device's films, the bottom one first), its
+// faces shaded, placed in the middle of the page (a group)
+export function IsoMaker({ ctx }: { ctx: Ctx }) {
+  const [b, setB] = useState({ w: 30, d: 20, h: 6, layers: '4, 1, 0.5, 2', fill: '#56B4E9' });
+  const centre: [number, number] = [ctx.pageMm.w / 2, ctx.pageMm.h / 2];
+  const add = (list: AnnotationItem[]) => {
+    ctx.setItems([...ctx.items, ...list]);
+    ctx.setSel(list.map((it) => it.id));
+  };
+  const thick = b.layers
+    .split(/[,;\s]+/)
+    .map(Number)
+    .filter((v) => v > 0);
+  return (
+    <Section title="Isometric">
+      <Field label="Size" title="Width (along its left face), depth (along its right face), mm">
+        <span className="row">
+          <NumInput className="tiny" min={0.5} step={1} value={b.w} onChange={(w) => setB({ ...b, w: w > 0 ? w : 30 })} />
+          <NumInput className="tiny" min={0.5} step={1} value={b.d} onChange={(d) => setB({ ...b, d: d > 0 ? d : 20 })} />
+          <span className="muted">mm</span>
+        </span>
+      </Field>
+      <Field label="Box" title="A box so high (mm) in the colour given: its top lighter, its right side darker">
+        <span className="row">
+          <NumInput className="tiny" min={0.1} step={1} value={b.h} onChange={(h) => setB({ ...b, h: h > 0 ? h : 6 })} />
+          <span className="muted">mm</span>
+          <input className="nodrag color" type="color" value={b.fill} onChange={(e) => setB({ ...b, fill: e.target.value })} />
+          <button className="nodrag" onClick={() => add(isoBox([centre[0] + (b.w - b.d) * 0.43 / 2, centre[1] - b.h / 2 + (b.w + b.d) / 8], b.w, b.d, b.h, b.fill))}>
+            Add
+          </button>
+        </span>
+      </Field>
+      <Field label="Stack" title="Layers of these thicknesses (mm, the bottom one first), each its colour: a device's films">
+        <span className="row">
+          <input className="nodrag grow" value={b.layers} onChange={(e) => setB({ ...b, layers: e.target.value })} />
+          <button className="nodrag" disabled={!thick.length} onClick={() => add(isoStack([centre[0], centre[1] + thick.reduce((a, v) => a + v, 0) / 2], b.w, b.d, thick, PALETTE.slice(1)))}>
+            Add
+          </button>
+        </span>
+      </Field>
+      <div className="hint">Snap them on one another with Snap ▸ to nodes; the grid can be isometric too (View ▸ Isometric grid).</div>
+    </Section>
+  );
+}
+
+// What can be done with the selection, by the tab of the editor's panel: its style (copied, saved, its colours), its
+// arrangement (transformed, the same ones selected, clipped, grouped), its paths, what is made of it (blends, components,
+// arrays)
+export type OpsPart = 'style' | 'arrange' | 'path' | 'make';
+export function ObjectOps({ ctx, part }: { ctx: Ctx; part: OpsPart }) {
   const { items, setItems, sel, setSel, selBox } = ctx;
   const selected = items.filter((it) => sel.includes(it.id));
   // the shapes paths can be made of (not instances nor pictures)
@@ -130,6 +182,24 @@ export function ObjectOps({ ctx }: { ctx: Ctx }) {
       setItems(list);
       setSel(made);
     });
+  // simplified: the shapes made paths with fewer nodes (within simp.tol mm of the outline), smooth or straight
+  const [simp, setSimp] = useState({ tol: 0.3, smooth: true });
+  const [simpMsg, setSimpMsg] = useState('');
+  const simplify = () => {
+    let [was, now] = [0, 0];
+    const map = new Map(
+      shapes.flatMap((it) => {
+        const p = toPathItem(it);
+        if (!p || p.type !== 'shape' || !p.spec.d) return [];
+        const d = simplifyPath(p.spec.d, simp.tol, simp.smooth);
+        was += nodeCount(p.spec.d);
+        now += nodeCount(d);
+        return [[it.id, { ...p, spec: { ...p.spec, d } } as AnnotationItem]];
+      }),
+    );
+    setItems(items.map((it) => map.get(it.id) ?? it));
+    setSimpMsg(`${was} nodes → ${now}`);
+  };
   const toPaths = () => {
     const map = new Map(shapes.map((it) => [it.id, toPathItem(it)]));
     setItems(items.map((it) => map.get(it.id) ?? it));
@@ -220,9 +290,31 @@ export function ObjectOps({ ctx }: { ctx: Ctx }) {
     const dy = Number.isFinite(grid.dy) ? grid.dy : selBox.h + 2;
     setItems([...items, ...gridArray(selected, Math.max(1, grid.rows), Math.max(1, grid.cols), dx, dy)]);
   };
+  // blend: the two shapes selected (the back one first)
+  const blendPair = selected.length === 2 && selected.every((it) => it.type === 'shape' && !!pathOf(it)) ? selected : null;
+  const [blendSteps, setBlendSteps] = useState(5);
+  const doBlend = () => {
+    if (!blendPair) return;
+    const made = blendItems(blendPair[0], blendPair[1], blendSteps);
+    if (!made.length) return notify('Blend: their outlines could not be read');
+    const at = items.findIndex((it) => it.id === blendPair[0].id);
+    setItems([...items.slice(0, at + 1), ...made, ...items.slice(at + 1)]);
+  };
   // along a path: the front object selected with an outline is the path, the others are copied along it
   const guide = selected.length >= 2 ? [...selected].reverse().find((it) => it.type === 'shape' && !!pathOf(it)) : undefined;
   const [along, setAlong] = useState({ n: 8, turn: true });
+  const [bendStretch, setBendStretch] = useState(true);
+  const doBend = () => {
+    if (!guide) return;
+    const rest = selected.filter((it) => it.id !== guide.id && !it.locked);
+    const boxes = rest.map(ctx.boxMm).filter((b): b is Rect => !!b);
+    if (!boxes.length) return;
+    const x0 = Math.min(...boxes.map((b) => b.x));
+    const y0 = Math.min(...boxes.map((b) => b.y));
+    const box = { x: x0, y: y0, w: Math.max(...boxes.map((b) => b.x + b.w)) - x0, h: Math.max(...boxes.map((b) => b.y + b.h)) - y0 };
+    const bent = new Map(bendItems(rest, pathOf(guide)!, box, bendStretch).map((it) => [it.id, it]));
+    setItems(items.map((it) => bent.get(it.id) ?? it));
+  };
   const doAlong = () => {
     if (!guide) return;
     const rest = selected.filter((it) => it.id !== guide.id);
@@ -246,10 +338,110 @@ export function ObjectOps({ ctx }: { ctx: Ctx }) {
   const kind = selected[0]?.type === 'text' ? 'text' : 'shape';
   const applyStyle = (st: Record<string, unknown>, k: string) => setItems(items.map((it) => (sel.includes(it.id) && it.type === k ? ({ ...it, spec: { ...it.spec, ...st } } as AnnotationItem) : it)));
   const colors = colorsOf(selected);
+  // ---- transformed about the middle of the selection: flipped, turned, scaled, skewed ----
+  const [tf, setTf] = useState({ turn: 15, sx: 100, sy: 100, kx: 0, ky: 0, lock: true });
+  const mid: [number, number] | null = selBox ? [selBox.x + selBox.w / 2, selBox.y + selBox.h / 2] : null;
+  const unable = selected.filter((it) => !it.locked && !transformItem(it, flipAcross([0, 0]))).length;
+  const doTransform = (m: Affine | null) => m && setItems(transformAll(items, sel, m));
+  // ---- the objects like the first one selected: of its kind, its fill, its line, or all of its look ----
+  const first = selected[0];
+  const look = (it: AnnotationItem) => (it.type === 'shape' ? shapeSpec(it.spec) : null);
+  const like = (how: 'kind' | 'fill' | 'line' | 'look') => {
+    if (!first) return;
+    const a = look(first);
+    const same = (it: AnnotationItem) => {
+      if (it.hidden || it.locked) return false;
+      if (how === 'kind') return it.type === first.type && (it.type !== 'shape' || (a && shapeSpec(it.spec).kind === a.kind));
+      const b = look(it);
+      if (!a || !b) return false;
+      const fill = (b.fill || '').toLowerCase() === (a.fill || '').toLowerCase();
+      const line = (b.color || '').toLowerCase() === (a.color || '').toLowerCase() && b.width === a.width;
+      return how === 'fill' ? fill : how === 'line' ? line : fill && line && b.dash === a.dash && (b.dashPattern ?? '') === (a.dashPattern ?? '');
+    };
+    setSel(items.filter(same).map((it) => it.id));
+  };
   return (
     <div className="de-ops">
       {busy && <div className="hint">{busy}…</div>}
-      {shapes.length > 0 && (
+      {part === 'path' && !shapes.length && <div className="hint">Paths: select a shape (not a text, a picture or a component).</div>}
+      {part === 'make' && selected.length > 0 && !blendPair && <div className="hint">Blend: select two shapes. Along a path, bend: select the objects and, in front of them, the path.</div>}
+      {part === 'arrange' && selected.length > 0 && mid && (
+        <Section title="Transform">
+          <div className="row wrap">
+            <button className="nodrag" title="Flip across: mirrored left to right, about the middle of the selection" onClick={() => doTransform(flipAcross(mid))}>
+              <FlipHorizontal2 {...IC} /> Flip across
+            </button>
+            <button className="nodrag" title="Flip down: mirrored top to bottom, about the middle of the selection" onClick={() => doTransform(flipDown(mid))}>
+              <FlipVertical2 {...IC} /> Flip down
+            </button>
+          </div>
+          <Field label="Turn by" title="Turned by so many degrees (clockwise), all together about the middle of the selection">
+            <span className="row wrap">
+              <NumInput className="tiny" step={5} value={tf.turn} onChange={(turn) => setTf({ ...tf, turn: Number.isFinite(turn) ? turn : 0 })} />
+              <span className="muted">°</span>
+              <button className="nodrag" onClick={() => doTransform(turnAbout(mid, tf.turn))}>
+                Turn
+              </button>
+              <button className="nodrag" title="The other way" onClick={() => doTransform(turnAbout(mid, -tf.turn))}>
+                −
+              </button>
+            </span>
+          </Field>
+          <Field label="Scale" title="Scaled about the middle of the selection, % across and down (linked: the same); a text's letters with it">
+            <span className="row wrap">
+              <NumInput className="tiny" min={1} step={5} value={tf.sx} onChange={(sx) => setTf({ ...tf, sx: sx > 0 ? sx : 100, ...(tf.lock ? { sy: sx > 0 ? sx : 100 } : {}) })} />
+              <NumInput className="tiny" min={1} step={5} value={tf.sy} disabled={tf.lock} onChange={(sy) => setTf({ ...tf, sy: sy > 0 ? sy : 100 })} />
+              <span className="muted">%</span>
+              <Check label="linked" value={tf.lock} onChange={(lock) => setTf({ ...tf, lock, sy: lock ? tf.sx : tf.sy })} />
+              <button className="nodrag" onClick={() => doTransform(scaleAbout(mid, tf.sx / 100, (tf.lock ? tf.sx : tf.sy) / 100))}>
+                Scale
+              </button>
+            </span>
+          </Field>
+          <Field label="Skew" title="Leaned: across (the verticals turn by so many degrees) and down (the horizontals); a shape that cannot stay itself becomes a path">
+            <span className="row wrap">
+              <NumInput className="tiny" min={-80} max={80} step={5} value={tf.kx} onChange={(kx) => setTf({ ...tf, kx: Number.isFinite(kx) ? Math.max(-80, Math.min(80, kx)) : 0 })} />
+              <NumInput className="tiny" min={-80} max={80} step={5} value={tf.ky} onChange={(ky) => setTf({ ...tf, ky: Number.isFinite(ky) ? Math.max(-80, Math.min(80, ky)) : 0 })} />
+              <span className="muted">°</span>
+              <button className="nodrag" disabled={!tf.kx && !tf.ky} onClick={() => doTransform(skewAbout(mid, tf.kx, tf.ky))}>
+                Skew
+              </button>
+            </span>
+          </Field>
+          {unable > 0 && <div className="hint">{unable} of them (components, data bands) only move.</div>}
+        </Section>
+      )}
+      {part === 'make' && blendPair && (
+        <Section title="Blend">
+          <Field label="Steps" title="So many shapes between the two selected: their outlines, line and fill changing in steps from one to the other (a group, between them)">
+            <span className="row wrap">
+              <NumInput className="tiny" min={1} max={100} step={1} value={blendSteps} onChange={(v) => setBlendSteps(Math.max(1, Math.min(100, Math.round(v) || 1)))} />
+              <button className="nodrag" onClick={doBlend}>
+                Blend
+              </button>
+            </span>
+          </Field>
+        </Section>
+      )}
+      {part === 'arrange' && first && (
+        <Section title="Select the same">
+          <div className="row wrap">
+            <button className="nodrag" title={`Every object of the same kind as ${nameOf(first)}`} onClick={() => like('kind')}>
+              Kind
+            </button>
+            <button className="nodrag" disabled={first.type !== 'shape'} title="Every object filled with the same colour" onClick={() => like('fill')}>
+              Fill
+            </button>
+            <button className="nodrag" disabled={first.type !== 'shape'} title="Every object with the same line (colour and width)" onClick={() => like('line')}>
+              Line
+            </button>
+            <button className="nodrag" disabled={first.type !== 'shape'} title="Every object that looks the same: fill, line, width and dashes" onClick={() => like('look')}>
+              Look
+            </button>
+          </div>
+        </Section>
+      )}
+      {part === 'path' && shapes.length > 0 && (
         <Section title="Path">
           <div className="row wrap">
             {shapes.length > paths.length && (
@@ -294,6 +486,17 @@ export function ObjectOps({ ctx }: { ctx: Ctx }) {
               </span>
             </Field>
           )}
+          <Field label="Simplify" title="Fewer nodes: the points that matter kept (none more than so many mm off the outline), joined by a smooth curve or straight; for a line drawn by hand or a figure imported (the shapes become paths)">
+            <span className="row wrap">
+              <NumInput className="tiny" min={0.01} step={0.1} value={simp.tol} onChange={(tol) => setSimp({ ...simp, tol: tol > 0 ? tol : 0.3 })} />
+              <span className="muted">mm</span>
+              <Check label="smooth" value={simp.smooth} onChange={(smooth) => setSimp({ ...simp, smooth })} />
+              <button className="nodrag" onClick={simplify}>
+                Simplify
+              </button>
+              {simpMsg && <span className="muted">{simpMsg}</span>}
+            </span>
+          </Field>
           <Field label={ctx.nodes.length ? `Corners (${ctx.nodes.length} node${ctx.nodes.length > 1 ? 's' : ''})` : 'Corners'} title="The corners between two straight pieces rounded (fillet, its radius) or cut (chamfer, so far from the corner), in mm: every one, or only the nodes picked (click a node; Shift + click: more)">
             <span className="row">
               <NumInput className="tiny" min={0.01} step={0.25} value={corner} onChange={(v) => setCorner(v > 0 ? v : 1)} />
@@ -340,7 +543,7 @@ export function ObjectOps({ ctx }: { ctx: Ctx }) {
           )}
         </Section>
       )}
-      {selected.length > 0 && (
+      {part === 'arrange' && selected.length > 0 && (
         <Section title="Clip, mask, group">
           <div className="row wrap">
             {selected.length >= 2 && top?.type === 'shape' && (
@@ -371,7 +574,7 @@ export function ObjectOps({ ctx }: { ctx: Ctx }) {
           </div>
         </Section>
       )}
-      {selected.length > 0 && (
+      {part === 'make' && selected.length > 0 && (
         <Section title="Component">
           <div className="row wrap">
             <button className="nodrag" title="Keep these objects once, as a component: an instance takes their place; insert more from the Components tab: every instance changes with the component" onClick={makeComponent}>
@@ -395,7 +598,7 @@ export function ObjectOps({ ctx }: { ctx: Ctx }) {
           )}
         </Section>
       )}
-      {selected.length > 0 && (
+      {part === 'make' && selected.length > 0 && (
         <Section title="Array">
           <Field label="Grid" title="Copies in rows × columns, so many mm apart (empty: the size of the selection + 2 mm)">
             <span className="row wrap">
@@ -419,6 +622,16 @@ export function ObjectOps({ ctx }: { ctx: Ctx }) {
               </span>
             </Field>
           )}
+          {guide && (
+            <Field label="Bend along it" title={`The other objects selected bent along “${nameOf(guide)}” (the front one with an outline), as if drawn on it: across their box along it, stretched to its length or as long as they are; shapes become paths, texts turn with it`}>
+              <span className="row wrap">
+                <Check label="stretched" value={bendStretch} onChange={setBendStretch} />
+                <button className="nodrag" onClick={doBend}>
+                  Bend
+                </button>
+              </span>
+            </Field>
+          )}
           <Field label="Circle" title="So many round a circle (the selection the first, at its top), its radius in mm, turned with it or not">
             <span className="row wrap">
               <NumInput className="tiny" min={2} step={1} value={ring.n} onChange={(v) => setRing({ ...ring, n: Math.max(2, Math.round(v) || 2) })} />
@@ -431,7 +644,7 @@ export function ObjectOps({ ctx }: { ctx: Ctx }) {
           </Field>
         </Section>
       )}
-      {selected.length > 0 && (
+      {part === 'style' && selected.length > 0 && (
         <Section title="Style">
           <div className="row wrap">
             <button className="nodrag" title="Copy the look of the first object selected (Ctrl+Shift+C)" onClick={() => copyStyle(selected[0])}>

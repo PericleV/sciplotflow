@@ -8,6 +8,7 @@ import { markMathAsked, mathSizesVersion, resetMathAsked } from '../math/sizes.t
 import { bendPoints, outlinePoint, type Outline, type Pt, type StickSide } from '../figure/shapes.ts';
 import { parsePath, pathBox, pathText, reversePath, shapeToPath } from '../figure/paths.ts';
 import { placeComponent } from './drawingItems.ts';
+import { isoMatrix, isoToPage } from './isoPlane.ts';
 import { suspendedOf } from './reliability.ts';
 import { generatedValues } from './gencol.ts';
 import { withColumnFunctions } from './colfns.ts';
@@ -2364,6 +2365,41 @@ function phaseNodeOut(id: string, d: PhaseDiagramData): Out {
   }
   return { outputs, warnings, view: { figure: fixed(figure), ...(coolFig ? { cooling: coolFig } : {}), report: r.summary } };
 }
+// A Figure Drawing as drawn: its page (or the figure under it: its page the drawing's, the drawing over it, or the
+// figure only a guide); its objects pinned to the data of that figure moved to where their data point is now. Also the
+// editor's own preview (drawn at once while an object is dragged).
+export function drawingView(id: string, data: DrawingData, under: Figure | null): { figure: Figure; under?: Figure; pinShift?: Record<string, [number, number]> } | { errors: string[] } {
+  const d = under ? { ...data, width: under.width, height: under.height, unit: under.unit } : data;
+  if (!(d.width > 0) || !(d.height > 0)) return { errors: ['The width and the height must be positive.'] };
+  if (toPt(d.width, d.unit) > 72 * 60 || toPt(d.height, d.unit) > 72 * 60) return { errors: ['At most 60 inches (1.5 m) on a side.'] };
+  const map = under ? plotMapping(under) : null;
+  const pinShift: Record<string, [number, number]> = {};
+  const shiftOf = (it: AnnotationItem): [number, number] | null => {
+    if (!map || !it.pin) return null;
+    const now = map.fromData(it.pin.at);
+    if (!now.every(Number.isFinite)) return null;
+    const sh: [number, number] = [+(now[0] - it.pin.ref[0]).toFixed(4), +(now[1] - it.pin.ref[1]).toFixed(4)];
+    pinShift[it.id] = sh;
+    return sh[0] || sh[1] ? sh : null;
+  };
+  const own = drawingFigure(id, d, shiftOf);
+  if (!under) return { figure: own };
+  // the objects behind the data: a second overlay, drawn inside the Plot's frame under its curves
+  const behind = new Set((data.annotations ?? []).filter((it) => it.behind).map((it) => it.id));
+  const host = under.axes.find((a) => !a.inset && !a.drawing)?.key;
+  const isBehind = (a: Annotation) => a.owner?.field === 'annotations' && behind.has(a.owner.item);
+  const drawn = own.axes[0];
+  const overlays: AxesFig[] =
+    behind.size && host
+      ? [
+          { ...drawn, key: `${drawn.key}:behind`, annotations: drawn.annotations.filter(isBehind), overlay: true, beneath: host },
+          { ...drawn, annotations: drawn.annotations.filter((a) => !isBehind(a)), overlay: true },
+        ]
+      : [{ ...drawn, overlay: true }];
+  const figure: Figure = data.under === 'guide' ? own : { ...under, key: id, axes: [...under.axes, ...overlays] };
+  return { figure, under, pinShift };
+}
+
 
 // The Image analysis node: the image through its steps; the matrix of the result, a figure — the image on a page of
 // its proportions, its selections, a scale bar when calibrated —, the measurements of the selections as a workbook
@@ -2509,7 +2545,15 @@ function drawingAnnotations(id: string, items: AnnotationItem[], components: Dra
     const clip = it.clipBy ? outline(it.clipBy) : null;
     const maskItem = byId(it.maskBy);
     const shift = shiftOf?.(it) ?? null;
-    const base = { key, owner: { node: id, field: 'annotations' as const, item: inst?.item ?? it.id }, ...(it.locked || inst ? { locked: true } : {}), ...(clip ? { clip } : {}), ...(maskItem?.type === 'shape' ? { mask: { ...shapeSpec(maskItem.spec), coords: 'data' as const } } : {}), ...(shift ? { shift } : {}) };
+    // on an isometric face: drawn through its projection (an upright text: only its place on the face)
+    const upright = it.type === 'text' && it.iso?.upright;
+    const iso = it.iso && !upright ? { iso: isoMatrix(it.iso) } : {};
+    const base = { key, owner: { node: id, field: 'annotations' as const, item: inst?.item ?? it.id }, ...(it.locked || inst ? { locked: true } : {}), ...(clip ? { clip } : {}), ...(maskItem?.type === 'shape' ? { mask: { ...shapeSpec(maskItem.spec), coords: 'data' as const } } : {}), ...(shift ? { shift } : {}), ...iso };
+    if (it.type === 'text' && it.iso && upright) {
+      const s = { ...TEXT_SPEC_DEFAULTS, ...it.spec };
+      const [x, y] = isoToPage(it.iso, [s.x, s.y]);
+      return [{ ...base, kind: 'text', text: { ...s, x, y, coords: 'data', z } }];
+    }
     if (it.type === 'text') {
       const along = it.spec.onPath ? outline(it.spec.onPath) : null;
       const pathD = along && it.spec.pathFlip ? pathText(reversePath(parsePath(along))) : along;
@@ -2519,7 +2563,7 @@ function drawingAnnotations(id: string, items: AnnotationItem[], components: Dra
     if (s.kind === 'component') {
       const comp = components.find((c) => c.id === s.ref);
       if (!comp || depth > 4) return [];
-      const placed = stuckLines(placeComponent(s, comp, `${it.id}:`), text);
+      const placed = stuckLines(placeComponent(s, comp, `${it.id}:`), text).map((p) => (it.iso && !p.iso ? { ...p, iso: it.iso } : p));
       // an instance pinned: its objects moved with it
       return drawingAnnotations(id, placed, components, text, depth + 1, { item: inst?.item ?? it.id, z, key }, shift ? () => shift : undefined);
     }
@@ -2724,8 +2768,18 @@ const convert = (v: number, from: LengthUnit, to: LengthUnit) => (toPt(v, from) 
 // The Merge's page: every Plot in its box (a cell of the grid, or its own box), its frame placed again there (by its
 // margins, or as on its own page); shared axes get one range and, unless `inner`, numbers and titles on the outer
 // panels only; its own annotations on the page.
-export function canvasFigure(id: string, d: CanvasData, figsIn: Figure[], warnings: string[]): Figure {
+// The order of the figures in a Merge: as chosen (its Grid tab), the others after them in the order they were connected
+export function panelOrder(keys: string[], order: string[] | undefined): string[] {
+  const at = (k: string) => {
+    const i = order?.indexOf(k) ?? -1;
+    return i >= 0 ? i : Infinity;
+  };
+  return keys.map((k, j) => ({ k, j })).sort((a, b) => at(a.k) - at(b.k) || a.j - b.j).map((q) => q.k);
+}
+export function canvasFigure(id: string, d: CanvasData, figsUnordered: Figure[], warnings: string[]): Figure {
   const L0: CanvasLayout = { ...CANVAS_LAYOUT_DEFAULTS, ...d.layout };
+  const order = panelOrder(figsUnordered.map((f) => f.key ?? ''), d.order);
+  const figsIn = [...figsUnordered].sort((a, b) => order.indexOf(a.key ?? '') - order.indexOf(b.key ?? ''));
   // a Plot split into facets: a panel for every curve it shows (its axes, legend and styles), in its place
   const figs = figsIn.flatMap((f): Figure[] => {
     const ax0 = f.axes[0];
@@ -5103,39 +5157,9 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
     case 'phasediagram':
       return phaseNodeOut(n.id, n.data);
     case 'drawing': {
-      // a figure under it: its page the drawing's, the drawing over it (or the figure only a guide)
       const below = one('under');
-      const under = below?.t === 'figure' ? below.v : null;
-      const d = under ? { ...n.data, width: under.width, height: under.height, unit: under.unit } : n.data;
-      if (!(d.width > 0) || !(d.height > 0)) return { errors: ['The width and the height must be positive.'] };
-      if (toPt(d.width, d.unit) > 72 * 60 || toPt(d.height, d.unit) > 72 * 60) return { errors: ['At most 60 inches (1.5 m) on a side.'] };
-      // its objects pinned to the data of the figure under it: moved to where their data point is now
-      const map = under ? plotMapping(under) : null;
-      const pinShift: Record<string, [number, number]> = {};
-      const shiftOf = (it: AnnotationItem): [number, number] | null => {
-        if (!map || !it.pin) return null;
-        const now = map.fromData(it.pin.at);
-        if (!now.every(Number.isFinite)) return null;
-        const sh: [number, number] = [+(now[0] - it.pin.ref[0]).toFixed(4), +(now[1] - it.pin.ref[1]).toFixed(4)];
-        pinShift[it.id] = sh;
-        return sh[0] || sh[1] ? sh : null;
-      };
-      const own = drawingFigure(n.id, d, shiftOf);
-      if (!under) return { outputs: { figure: { t: 'figure', v: own } }, view: { figure: own } };
-      // the objects behind the data: a second overlay, drawn inside the Plot's frame under its curves
-      const behind = new Set((n.data.annotations ?? []).filter((it) => it.behind).map((it) => it.id));
-      const host = under.axes.find((a) => !a.inset && !a.drawing)?.key;
-      const isBehind = (a: Annotation) => a.owner?.field === 'annotations' && behind.has(a.owner.item);
-      const drawn = own.axes[0];
-      const overlays: AxesFig[] =
-        behind.size && host
-          ? [
-              { ...drawn, key: `${drawn.key}:behind`, annotations: drawn.annotations.filter(isBehind), overlay: true, beneath: host },
-              { ...drawn, annotations: drawn.annotations.filter((a) => !isBehind(a)), overlay: true },
-            ]
-          : [{ ...drawn, overlay: true }];
-      const figure: Figure = n.data.under === 'guide' ? own : { ...under, key: n.id, axes: [...under.axes, ...overlays] };
-      return { outputs: { figure: { t: 'figure', v: figure } }, view: { figure, under, pinShift } };
+      const v = drawingView(n.id, n.data, below?.t === 'figure' ? below.v : null);
+      return 'errors' in v ? { errors: v.errors } : { outputs: { figure: { t: 'figure', v: v.figure } }, view: v };
     }
     case 'reroute': {
       const v = one('in');

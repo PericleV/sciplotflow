@@ -2,11 +2,13 @@
 // snapping of a place to the grid and to the edges and middles of the other objects.
 import { shapeSpec } from '../engine/evaluate.ts';
 import type { Pt } from '../figure/shapes.ts';
-import { isClosed, parsePath, pathBox, pathPolylines, shapeToPath } from '../figure/paths.ts';
+import { isClosed, mapSegs, parsePath, pathBox, pathPolylines, pathText, shapeToPath } from '../figure/paths.ts';
 import { lineLength, pointAlong } from '../figure/shapes.ts';
 import { newAnnotation } from '../defaults.ts';
 import { moveItem, rotateItem } from '../engine/drawingItems.ts';
-import type { AnnotationItem } from '../types.ts';
+import { ISO_FACES, isoToFace, isoToPage } from '../engine/isoPlane.ts';
+import type { AnnotationItem, IsoFace } from '../types.ts';
+import { TEXT_SPEC_DEFAULTS } from '../figure/spec.ts';
 
 export const MM = 72 / 25.4; // pt in a mm
 
@@ -21,8 +23,16 @@ export type Rect = { x: number; y: number; w: number; h: number };
 export { mapItem, moveItem, rotateItem } from '../engine/drawingItems.ts';
 
 // The box of an object from its points (mm), when they give it (not turned, no text, no curve bulging out); else null
-// (then measured on the drawing).
+// (then measured on the drawing). On an isometric face: the box of its outline as drawn on the page.
 export function geomBox(it: AnnotationItem): Rect | null {
+  if (it.iso) {
+    const d = pathOf(it);
+    return d ? pathBox(parsePath(d)) : null;
+  }
+  return flatBox(it);
+}
+// (its box in its own plane)
+export function flatBox(it: AnnotationItem): Rect | null {
   if (it.type !== 'shape') return null;
   const s = shapeSpec(it.spec);
   // turned, or stuck to other shapes (its ends found when drawn): measured
@@ -137,20 +147,67 @@ export function distributeMoves(boxes: Rect[], dir: 'h' | 'v'): Pt[] {
 }
 
 // ---- paths, colours, arrays ----
-// an object's outline as a path (mm): a shape's own, a path's; a text has none
-export function pathOf(it: AnnotationItem): string | null {
+// an object's outline as a path (mm): a shape's own, a path's; a text has none. On an isometric face: as drawn on the
+// page (flatPathOf: in the face)
+export function flatPathOf(it: AnnotationItem): string | null {
   if (it.type !== 'shape') return null;
   return shapeToPath({ ...shapeSpec(it.spec), coords: 'data' }, MM);
 }
-// a shape turned into a path (its look kept; its corners, turn and curves in the points)
+export function pathOf(it: AnnotationItem): string | null {
+  const d = flatPathOf(it);
+  const iso = it.iso;
+  return d && iso ? pathText(mapSegs(parsePath(d), (p) => isoToPage(iso, p))) : d;
+}
+// a shape turned into a path (its look kept; its corners, turn and curves in the points; on a face: still on it)
 export function toPathItem(it: AnnotationItem): AnnotationItem | null {
-  const d = pathOf(it);
+  const d = flatPathOf(it);
   if (!d || it.type !== 'shape') return null;
   const s = shapeSpec(it.spec);
   const keep = Object.fromEntries(Object.entries(it.spec).filter(([k]) => !['x1', 'y1', 'x2', 'y2', 'points', 'bends', 'curve', 'route', 'elbowAt', 'body', 'n', 'inner', 'a1', 'a2', 'sector', 'hole', 'smooth', 'closed', 'rotation', 'radius', 'from', 'to', 'fromAt', 'toAt', 'text', 'text2', 'orient', 'bstyle', 'offset', 'dec', 'unit', 'href', 'ref'].includes(k)));
   const open = !isClosed(parsePath(d));
   return { ...it, spec: { ...keep, kind: 'path', d, ...(open ? { head1: s.head1, head2: s.head2 } : { head1: 'none', head2: 'none' }) } } as AnnotationItem;
 }
+// ---- the faces of an isometric box ----
+// an object's middle in its own plane (mm)
+function flatMiddle(it: AnnotationItem): Pt | null {
+  if (it.type === 'text') {
+    const s = { ...TEXT_SPEC_DEFAULTS, ...it.spec };
+    return [s.x, s.y];
+  }
+  const d = flatPathOf(it);
+  const b = d ? pathBox(parsePath(d)) : flatBox(it);
+  return b ? [b.x + b.w / 2, b.y + b.h / 2] : null;
+}
+// put on a face (or taken off it: null), its middle staying where it is drawn; a text slanted with the face, or upright
+export function onFace(it: AnnotationItem, face: IsoFace | null, upright?: boolean): AnnotationItem {
+  const m = flatMiddle(it);
+  if (!m) return it;
+  const at: Pt = it.iso ? isoToPage(it.iso, m) : m;
+  const { iso: _, ...flat } = it;
+  const off = moveItem(flat as AnnotationItem, at[0] - m[0], at[1] - m[1]);
+  if (!face) return off;
+  const [a, b, c, d] = ISO_FACES[face];
+  const up = it.type === 'text' ? (upright ?? it.iso?.upright) : undefined;
+  return { ...off, iso: { face, at: [+(at[0] - (a * at[0] + c * at[1])).toFixed(4), +(at[1] - (b * at[0] + d * at[1])).toFixed(4)], ...(up ? { upright: true } : {}) } } as AnnotationItem;
+}
+// drawn as it is, off its face: a shape a path on the page, a text upright at its place
+export function bakeIso(it: AnnotationItem): AnnotationItem {
+  const iso = it.iso;
+  if (!iso) return it;
+  const { iso: _, ...rest } = it;
+  if (it.type === 'shape') {
+    const p = toPathItem(rest as AnnotationItem);
+    if (p?.type === 'shape' && p.spec.d) return { ...p, spec: { ...p.spec, d: pathText(mapSegs(parsePath(p.spec.d), (q) => isoToPage(iso, q))) } } as AnnotationItem;
+    return rest as AnnotationItem;
+  }
+  if (it.type === 'text') {
+    const s = { ...TEXT_SPEC_DEFAULTS, ...it.spec };
+    const [x, y] = isoToPage(iso, [s.x, s.y]);
+    return { ...rest, spec: { ...it.spec, x: +x.toFixed(3), y: +y.toFixed(3) } } as AnnotationItem;
+  }
+  return rest as AnnotationItem;
+}
+export { isoToFace, isoToPage };
 export const newId = () => newAnnotation('shape').id;
 export const fresh = (it: AnnotationItem): AnnotationItem => ({ ...structuredClone(it), id: newId() });
 // copies of a set of objects, each set in a new group when the objects were in one (their links kept among them)
