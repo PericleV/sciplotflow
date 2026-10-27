@@ -62,7 +62,7 @@
         ]
       ],
       "kind": "clear",
-      "example": "Rows to columns: a voltage sweep turned into spectra"
+      "example": "Transpose: a voltage sweep turned into spectra"
     },
     {
       "q": "find the peak wavelenght of every spectrum in a folder and plot it against temperature",
@@ -573,7 +573,7 @@
         "convert"
       ],
       "kind": "jargon",
-      "example": "Rows to columns: a voltage sweep turned into spectra"
+      "example": "Transpose: a voltage sweep turned into spectra"
     },
     {
       "q": "transpose",

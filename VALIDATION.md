@@ -891,9 +891,9 @@ then run a script, for example `python scripts/fixtures/sigpack-ref.py`. The ver
 - ✓ example “Four runs in a workbook: Sheets to columns” has no errors
 - ✓ example “Four runs in a workbook: Sheets to columns” draws curves
 - ✓ example “Four runs in a workbook: Sheets to columns” saves and opens
-- ✓ example “Rows to columns: a voltage sweep turned into spectra” has no errors
-- ✓ example “Rows to columns: a voltage sweep turned into spectra” draws curves
-- ✓ example “Rows to columns: a voltage sweep turned into spectra” saves and opens
+- ✓ example “Transpose: a voltage sweep turned into spectra” has no errors
+- ✓ example “Transpose: a voltage sweep turned into spectra” draws curves
+- ✓ example “Transpose: a voltage sweep turned into spectra” saves and opens
 - ✓ example “Batch: the peak of every spectrum in a folder” has no errors
 - ✓ example “Batch: the peak of every spectrum in a folder” draws curves
 - ✓ example “Batch: the peak of every spectrum in a folder” saves and opens

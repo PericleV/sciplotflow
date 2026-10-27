@@ -2029,3 +2029,16 @@ input[type='checkbox']:disabled, input[type='radio']:disabled { cursor: default;
 .image-editor .ie-paint { pointer-events: none; image-rendering: pixelated; }
 .image-editor .ie-brush-cursor { position: absolute; transform: translate(-50%, -50%); border: 1.5px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px rgb(0 0 0 / 0.6); pointer-events: none; z-index: 4; }
 .image-editor .ie-brush-cursor.erase { border-style: dashed; }
+/* the parts of a group of nodes (the panel and the canvas menu) */
+.palette-sub { display: flex; align-items: center; gap: 4px; text-align: left; background: transparent; border: none; box-shadow: none; border-radius: 6px; padding: 3px 2px 1px 10px; font-size: var(--fs-tiny); color: var(--muted); min-height: 0; }
+.palette-sub:hover { background: var(--input); }
+.palette-sub .chev { display: inline-flex; width: 1em; }
+.ctx-sub { font-size: var(--fs-tiny); color: var(--muted); padding: 3px 8px 1px 14px; }
+/* Data manipulation ▸ Pick: the point picked, its values; the points selected, listed */
+.manip-pick { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.manip-sel-list { max-height: 140px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.manip-sel-row { display: grid; grid-template-columns: 3em 1fr 1fr auto; gap: 6px; align-items: center; padding: 1px 6px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.manip-sel-row:hover { background: var(--input); }
+.manip-sel-row.on { background: color-mix(in srgb, #d6568f 14%, transparent); }
+.manip-pick > .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.manip-pick > .row input { width: 8em; flex: none; }

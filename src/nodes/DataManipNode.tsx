@@ -1,5 +1,6 @@
 // Data manipulation: the points of two columns on a graph of their own, chosen with the mouse (click, rectangle,
-// lasso) or by a condition, then masked, deleted or moved. The changes are a list of operations kept in the node; on
+// lasso; Pick: one at a time, as the reader finds them, its exact values changed) or by a condition, then masked,
+// deleted or moved. The changes are a list of operations kept in the node; on
 // request the deletions and moved values are written into the worksheet of the Import the data come from.
 import { useContext, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { rescaleAxis, usePlotZoom, viewBox, zoomAt, type View, type ZoomMode } from './plotZoom.ts';
@@ -17,13 +18,14 @@ import { niceStep } from '../figure/ticks.ts';
 import type { AppNode, DataManipData, DataManipNode, ImportData } from '../types.ts';
 import { Field, InPort, Messages, NumInput, OutPort, Select, TextInput } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
-import { Maximize2, Move, Plus, SquareDashedMousePointer, X } from 'lucide-react';
+import { Crosshair, Maximize2, Move, Plus, SquareDashedMousePointer, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
 import { ReaderButton, ReaderLayer, ReaderOptions, type ReaderProp } from './CanvasReader.tsx';
 import { READER_OFF, type ReaderState } from './readerState.ts';
 import { ask, notify } from '../ui/dialogStore.ts';
 
-type Tool = 'select' | 'move' | 'add';
+// (pick: one point at a time, the nearest to the mouse, as the reader; its values changed exactly)
+type Tool = 'select' | 'move' | 'add' | 'pick';
 type Box = { x0: number; x1: number; y0: number; y1: number };
 const M = { l: 48, r: 10, t: 8, b: 30 };
 const COLORS = { point: '#1f6fd6', line: '#9aa4b2', masked: '#b4b4b4', deleted: '#e04848', changed: '#e69f00', selected: '#d6568f', added: '#009e73' };
@@ -52,6 +54,12 @@ function ManipPlot(props: {
   onView?: (v: View | null) => void;
   zoomOut?: number;
   reader?: ReaderProp;
+  // Pick: the point picked (its crosshair) and the one under the mouse; a click on one (how: only it, added, taken
+  // away); a key while the graph has the focus (true: used)
+  cur?: number | null;
+  near?: number | null;
+  onPick?: (row: number, how: 'set' | 'add' | 'remove') => void;
+  onKey?: (key: string) => boolean;
 }) {
   const { x, y, state, sel, tool, width: W, height: H } = props;
   const cv = useRef<HTMLCanvasElement>(null);
@@ -233,6 +241,12 @@ function ManipPlot(props: {
     const p = at(e);
     if (z.down(p[0], p[1], e)) return;
     const mods = { add: e.ctrlKey || e.metaKey, remove: e.altKey && tool === 'select', onlyY: e.shiftKey, onlyX: e.altKey };
+    if (tool === 'pick') {
+      // (the nearest point, however far: as the reader snaps)
+      const k = nearest(p[0], p[1], Infinity);
+      if (k >= 0) props.onPick?.(k, e.altKey ? 'remove' : e.ctrlKey || e.metaKey ? 'add' : 'set');
+      return;
+    }
     if (tool === 'add') {
       const k = nearest(p[0], p[1], 8, true);
       return setDrag(k >= 0 ? { kind: 'addmove', pts: [p], mods, k } : { kind: 'addnew', pts: [p], mods });
@@ -244,7 +258,7 @@ function ManipPlot(props: {
     if (z.move(p[0], p[1])) return;
     const drag = dragRef.current;
     if (!drag) {
-      const k = nearest(p[0], p[1]);
+      const k = nearest(p[0], p[1], tool === 'pick' ? Infinity : 8);
       props.onHover(k >= 0 ? k : null);
       return;
     }
@@ -304,7 +318,7 @@ function ManipPlot(props: {
     <div
       className="manip-plot nodrag nowheel"
       tabIndex={0}
-      style={{ width: W, height: H, cursor: props.zoom === 'pan' ? 'grab' : tool === 'move' && props.zoom !== 'zoom' ? 'move' : tool === 'add' && props.zoom === 'none' ? 'copy' : 'crosshair' }}
+      style={{ width: W, height: H, cursor: props.zoom === 'pan' ? 'grab' : tool === 'move' && props.zoom !== 'zoom' ? 'move' : tool === 'add' && props.zoom === 'none' ? 'copy' : tool === 'pick' && props.zoom === 'none' ? 'pointer' : 'crosshair' }}
       onPointerDown={down}
       onPointerMove={move}
       onPointerUp={up}
@@ -320,6 +334,11 @@ function ManipPlot(props: {
         z.wheel(p[0], p[1], e.deltaY, e);
       }}
       onKeyDown={(e) => {
+        if (tool === 'pick' && props.onKey?.(e.key)) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
           e.preventDefault();
           e.stopPropagation();
@@ -333,6 +352,21 @@ function ManipPlot(props: {
         {z.rect && <rect x={Math.min(z.rect.x0, z.rect.x1)} y={Math.min(z.rect.y0, z.rect.y1)} width={Math.abs(z.rect.x1 - z.rect.x0)} height={Math.abs(z.rect.y1 - z.rect.y0)} fill="none" stroke="#1f6fd6" strokeDasharray="4 3" />}
         {drag?.kind === 'rect' && a && b && <rect x={Math.min(a[0], b[0])} y={Math.min(a[1], b[1])} width={Math.abs(b[0] - a[0])} height={Math.abs(b[1] - a[1])} fill="#d6568f" fillOpacity={0.1} stroke="#d6568f" strokeDasharray="3 2" />}
         {drag?.kind === 'lasso' && <polygon points={drag.pts.map((p) => p.join(',')).join(' ')} fill="#d6568f" fillOpacity={0.1} stroke="#d6568f" strokeDasharray="3 2" />}
+        {/* Pick: the point under the mouse (a ring), the one picked (a crosshair and its values) */}
+        {tool === 'pick' && props.near != null && props.near !== props.cur && Number.isFinite(x[props.near]) && <circle cx={fx(x[props.near])} cy={fy(y[props.near])} r={6} fill="none" stroke="#1f6fd6" strokeWidth={1.2} />}
+        {tool === 'pick' && props.cur != null && Number.isFinite(x[props.cur]) && Number.isFinite(y[props.cur]) && (() => {
+          const [px, py] = [fx(x[props.cur]), fy(y[props.cur])];
+          const right = px < M.l + pw - 150;
+          return (
+            <g className="manip-cross">
+              <path d={`M${M.l},${py}H${M.l + pw}M${px},${M.t}V${M.t + ph}`} stroke="#d6568f" strokeWidth={0.8} strokeDasharray="4 3" />
+              <circle cx={px} cy={py} r={7} fill="none" stroke="#d6568f" strokeWidth={1.6} />
+              <text x={px + (right ? 10 : -10)} y={Math.max(M.t + 12, py - 8)} textAnchor={right ? 'start' : 'end'} fontSize={11} fill="#333" stroke="#fff" strokeWidth={3} paintOrder="stroke">
+                {`row ${props.cur + 1}: ${fmtNum(x[props.cur], 5)}, ${fmtNum(y[props.cur], 5)}`}
+              </text>
+            </g>
+          );
+        })()}
       </svg>
     </div>
   );
@@ -367,6 +401,19 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
   const [condErr, setCondErr] = useState('');
   const [d, setD] = useState({ dx: NaN, dy: NaN, factor: NaN, value: NaN, axis: 'y' as 'x' | 'y' });
   const n = m?.nIn ?? 0;
+  // Pick: the point picked (a row of the input), its X and Y as typed
+  const [cur, setCur] = useState<number | null>(null);
+  const [typed, setTyped] = useState({ x: NaN, y: NaN });
+  useEffect(() => {
+    if (m && cur !== null && cur < n) setTyped({ x: m.x[cur], y: m.y[cur] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cur, m]);
+  // (the rows kept, in the order of X: ← → go along them)
+  const byX = useMemo(() => {
+    if (!m) return [];
+    const rows = Array.from({ length: n }, (_, i) => i).filter((i) => !(m.state[i] & ROW_DELETED) && Number.isFinite(m.x[i]) && Number.isFinite(m.y[i]));
+    return rows.sort((a, b) => m.x[a] - m.x[b] || a - b);
+  }, [m, n]);
   const live = [...sel].filter((i) => i < n && !(m!.state[i] & ROW_DELETED));
   const canRestore = [...sel].some((i) => i < n && (m!.state[i] & (ROW_MASKED | ROW_DELETED)));
   const onRestore = () => {
@@ -391,6 +438,38 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
       }
       return next;
     });
+  // Pick: a point picked by a click (only it, added to the selection, taken out of it)
+  const onPick = (row: number, how: 'set' | 'add' | 'remove') => {
+    setCur(row);
+    onSelect([row], how);
+  };
+  // the keys of Pick: ← → the next point along X, + adds it to the selection, − takes it out, Space either, Esc none
+  const onPickKey = (key: string) => {
+    if (key === 'ArrowLeft' || key === 'ArrowRight') {
+      if (!byX.length) return true;
+      const at = cur === null ? -1 : byX.indexOf(cur);
+      const next = at < 0 ? (key === 'ArrowRight' ? 0 : byX.length - 1) : Math.min(byX.length - 1, Math.max(0, at + (key === 'ArrowRight' ? 1 : -1)));
+      setCur(byX[next]);
+      return true;
+    }
+    if (cur === null) return false;
+    if (key === '+' || key === '=') onSelect([cur], 'add');
+    else if (key === '-' || key === '_') onSelect([cur], 'remove');
+    else if (key === ' ') onSelect([cur], sel.has(cur) ? 'remove' : 'add');
+    else if (key === 'Escape') setCur(null);
+    else return false;
+    return true;
+  };
+  // its values as typed: an operation Set on its row for each that changed
+  const applyTyped = () => {
+    if (!m || cur === null || cur >= n) return;
+    const ops: ManipOp[] = [];
+    for (const axis of ['x', 'y'] as const) {
+      const v = typed[axis];
+      if (Number.isFinite(v) && v !== (axis === 'x' ? m.x[cur] : m.y[cur])) ops.push({ kind: 'set', axis, value: v, rows: String(cur + 1), n });
+    }
+    if (ops.length) set({ ops: [...data.ops, ...ops] });
+  };
   // points chosen by a condition on x, y, i (the row), n and the means / SDs
   const byCondition = () => {
     if (!m) return;
@@ -489,8 +568,54 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
         view={view}
         onView={setView}
         zoomOut={out}
+        cur={cur}
+        near={hover}
+        onPick={onPick}
+        onKey={onPickKey}
       />
     );
+  // Pick: the point picked, its exact values; the points selected, listed
+  const selRows = [...sel].filter((i) => i < n).sort((a, b) => a - b);
+  const pickPanel = tool === 'pick' && m && (
+    <div className="manip-pick">
+      {cur !== null && cur < n ? (
+        <div className="row wrap">
+          <b>Row {cur + 1}</b>
+          {m.state[cur] & ROW_DELETED ? <span className="muted">deleted</span> : m.state[cur] & ROW_MASKED ? <span className="muted">masked</span> : null}
+          <span>X</span>
+          <NumInput className="short" value={typed.x} title={`${m.xName || 'row number'}: its value (Set: an operation of the list)`} onChange={(x) => setTyped((t) => ({ ...t, x }))} />
+          <span>Y</span>
+          <NumInput className="short" value={typed.y} title={`${m.yName}: its value (Set: an operation of the list)`} onChange={(y) => setTyped((t) => ({ ...t, y }))} />
+          <button className="nodrag" disabled={!(Number.isFinite(typed.x) && typed.x !== m.x[cur]) && !(Number.isFinite(typed.y) && typed.y !== m.y[cur])} title="The point given these values (an operation of the list, undone as the others)" onClick={applyTyped}>
+            Set
+          </button>
+          <button className="nodrag" disabled={sel.has(cur)} title="Add it to the selection (+)" onClick={() => onSelect([cur], 'add')}>
+            + Selection
+          </button>
+          <button className="nodrag" disabled={!sel.has(cur)} title="Take it out of the selection (−)" onClick={() => onSelect([cur], 'remove')}>
+            − Selection
+          </button>
+        </div>
+      ) : (
+        <div className="hint">Click a point (the nearest to the mouse is picked): only it is selected; Ctrl + click adds it to the selection, Alt + click takes it out. ← → go to the next point along X, + and − add it or take it out, Space either.</div>
+      )}
+      {selRows.length > 0 && (
+        <div className="manip-sel-list">
+          {selRows.slice(0, 200).map((i) => (
+            <div key={i} className={`manip-sel-row${i === cur ? ' on' : ''}`} title="Click: pick it" onClick={() => setCur(i)}>
+              <span className="muted">{i + 1}</span>
+              <span>{fmtNum(m.x[i], 6)}</span>
+              <span>{fmtNum(m.y[i], 6)}</span>
+              <button className="nodrag ts-btn" title="Take it out of the selection" onClick={(e) => (e.stopPropagation(), onSelect([i], 'remove'))}>
+                <X {...IC} />
+              </button>
+            </div>
+          ))}
+          {selRows.length > 200 && <div className="hint">… and {selRows.length - 200} more</div>}
+        </div>
+      )}
+    </div>
+  );
   const readout = hover !== null && m ? `row ${hover + 1}: x = ${fmtNum(m.x[hover])}, y = ${fmtNum(m.y[hover])}${m.state[hover] & ROW_MASKED ? ' (masked)' : ''}` : `${live.length} selected · ${counts.masked} masked · ${counts.deleted} deleted · ${counts.changed} moved${added.length ? ` · ${added.length} added` : ''}`;
   const quickActions = (
     <div className="row wrap manip-actions" style={{ marginTop: 4, marginBottom: 4 }}>
@@ -530,6 +655,17 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
         }}
       >
         <Move {...IC} /> Move
+      </button>
+      <button
+        className={`nodrag${tool === 'pick' && zoom === 'none' ? ' on' : ''}`}
+        title="Pick: one point at a time, the nearest to the mouse (as the reader): click it, Ctrl + click adds it to the selection, Alt + click takes it out; ← → the next along X, + and −; its exact X and Y changed under the graph"
+        onClick={() => {
+          setTool('pick');
+          setZoom('none');
+          setRd((q) => ({ ...q, on: false }));
+        }}
+      >
+        <Crosshair {...IC} /> Pick
       </button>
       <button
         className={`nodrag${tool === 'add' && zoom === 'none' ? ' on' : ''}`}
@@ -584,6 +720,7 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
         <>
           {toolbar}
           {plot(plotW, 300)}
+          {pickPanel}
           {quickActions}
           <div className="row">
             <span className="muted ellipsis grow">{readout}</span>
@@ -716,6 +853,7 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
             <div className="manip-big">
               {toolbar}
               {plot(Math.max(480, Math.min((window.innerWidth || 1200) * 0.86, 1400)), Math.max(320, Math.min((window.innerHeight || 800) * 0.72, 800)))}
+              {pickPanel}
               {quickActions}
               <div className="muted">{readout}</div>
             </div>

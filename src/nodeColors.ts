@@ -130,7 +130,7 @@ export const NODE_TITLES: Record<NodeType, string> = {
   datamanip: 'Data manipulation',
   unstack: 'Split into columns',
   convert: 'Convert columns',
-  transpose: 'Rows to columns',
+  transpose: 'Transpose',
   stack: 'Stack columns',
   combine: 'Combine columns',
   fit: 'Fit',
@@ -209,7 +209,7 @@ export const NODE_TITLES: Record<NodeType, string> = {
   groupout: 'Group output',
 };
 
-export const nodeTitle = (n: AppNode): string => (n.type === 'subgraph' && n.data.batch ? 'Batch' : n.type === 'transpose' && n.data.as === 'cols' ? 'Columns to rows' : NODE_TITLES[n.type]);
+export const nodeTitle = (n: AppNode): string => (n.type === 'subgraph' && n.data.batch ? 'Batch' : NODE_TITLES[n.type]);
 
 // A short name of a node for tooltips: its type and its own name / label / caption when it has one.
 export function nodeDisplayName(n: AppNode): string {

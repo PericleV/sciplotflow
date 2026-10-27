@@ -36,6 +36,7 @@ const CollabPanel = lazy(() => import('./CollabPanel.tsx').then((m) => ({ defaul
 import { download } from './figure/export.ts';
 import { PALETTE } from './figure/spec.ts';
 import { ContextMenu, type MenuAction, type MenuItem, type MenuState } from './ContextMenu.tsx';
+import { loadRecent, pushRecent } from './recentNodes.ts';
 import { groupNodes, releaseChildren, removeFromGroup, ungroup } from './groups.ts';
 import { useHistory } from './history.ts';
 import { Inspector } from './Inspector.tsx';
@@ -226,8 +227,9 @@ const MULTI_KEYS = ['Shift', 'Control', 'Meta'];
 const DELETE_KEYS = ['Delete', 'Backspace'];
 
 // hidden: not offered in the nodes panel nor the canvas menu (the node still opens in saved projects)
-// key: its id in the menus when two share a type (Rows to columns and Columns to rows)
-type Template = { type: AppNode['type']; label: string; data: AppNode['data']; hidden?: boolean; key?: string };
+// key: its id in the menus when two share a type; sub: the part of its group it is listed in; search: other words it
+// is found by
+type Template = { type: AppNode['type']; label: string; data: AppNode['data']; hidden?: boolean; key?: string; sub?: string; search?: string };
 // the Nodes panel's Batch: a group of no steps yet that runs on every file
 const BATCH_NEW = 'batch:new';
 
@@ -235,108 +237,108 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
   {
     name: 'Data',
     items: [
-      { type: 'import', label: 'Import', data: IMPORT_DEFAULTS },
-      { type: 'digitizer', label: 'Digitizer', data: DIGITIZER_DEFAULTS },
-      { type: 'phasedigitizer', label: 'Phase digitizer', data: PHASE_DIGITIZER_DEFAULTS },
-      { type: 'image', label: 'Image analysis', data: IMAGE_DEFAULTS },
-      { type: 'book', label: 'Workbook', data: WORKBOOK_DEFAULTS },
-      { type: 'extract', label: 'Extract column', data: EXTRACT_DEFAULTS },
-      { type: 'autoextract', label: 'Sheets to columns', data: AUTOEXTRACT_DEFAULTS },
-      { type: 'tosheets', label: 'Columns to sheets', data: TOSHEETS_DEFAULTS },
-      { type: 'datamanip', label: 'Data manipulation', data: DATAMANIP_DEFAULTS },
-      { type: 'mathcol', label: 'Math column', data: MATHCOL_DEFAULTS },
-      { type: 'gencol', label: 'Generate column', data: GENCOL_DEFAULTS },
-      { type: 'matrix', label: 'Matrix', data: MATRIX_DEFAULTS },
-      { type: 'columns', label: 'Columns', data: COLUMNS_DEFAULTS },
-      { type: 'unstack', label: 'Split into columns', data: UNSTACK_DEFAULTS },
-      { type: 'stack', label: 'Stack columns', data: STACK_DEFAULTS },
-      { type: 'transpose', label: 'Rows to columns', data: TRANSPOSE_DEFAULTS },
-      { type: 'transpose', key: 'transpose:cols', label: 'Columns to rows', data: { ...TRANSPOSE_DEFAULTS, as: 'cols' } },
-      { type: 'convert', label: 'Convert columns', data: CONVERT_DEFAULTS },
-      { type: 'combine', label: 'Combine columns', data: COMBINE_DEFAULTS },
-      { type: 'translate', label: 'Translate & resize', data: TRANSLATE_DEFAULTS },
-      { type: 'filterrows', label: 'Filter & sort rows', data: FILTER_DEFAULTS },
-      { type: 'clean', label: 'Clean data', data: CLEAN_DEFAULTS },
+      { sub: 'Sources', type: 'import', label: 'Import', data: IMPORT_DEFAULTS },
+      { sub: 'Sources', type: 'digitizer', label: 'Digitizer', data: DIGITIZER_DEFAULTS },
+      { sub: 'Sources', type: 'phasedigitizer', label: 'Phase digitizer', data: PHASE_DIGITIZER_DEFAULTS },
+      { sub: 'Sources', type: 'image', label: 'Image analysis', data: IMAGE_DEFAULTS },
+      { sub: 'Sources', type: 'gencol', label: 'Generate column', data: GENCOL_DEFAULTS },
+      { sub: 'Workbook and sheets', type: 'book', label: 'Workbook', data: WORKBOOK_DEFAULTS },
+      { sub: 'Workbook and sheets', type: 'extract', label: 'Extract column', data: EXTRACT_DEFAULTS },
+      { sub: 'Workbook and sheets', type: 'autoextract', label: 'Sheets to columns', data: AUTOEXTRACT_DEFAULTS },
+      { sub: 'Workbook and sheets', type: 'tosheets', label: 'Columns to sheets', data: TOSHEETS_DEFAULTS },
+      { sub: 'Columns', type: 'columns', label: 'Columns', data: COLUMNS_DEFAULTS },
+      { sub: 'Columns', type: 'mathcol', label: 'Math column', data: MATHCOL_DEFAULTS },
+      { sub: 'Columns', type: 'unstack', label: 'Split into columns', data: UNSTACK_DEFAULTS },
+      { sub: 'Columns', type: 'stack', label: 'Stack columns', data: STACK_DEFAULTS },
+      { sub: 'Columns', type: 'combine', label: 'Combine columns', data: COMBINE_DEFAULTS },
+      { sub: 'Columns', type: 'convert', label: 'Convert columns', data: CONVERT_DEFAULTS },
+      // (one node both ways: twice gives the table back)
+      { sub: 'Columns', type: 'transpose', label: 'Transpose', data: TRANSPOSE_DEFAULTS, search: 'rows to columns, columns to rows, swap rows and columns' },
+      { sub: 'Rows and values', type: 'datamanip', label: 'Data manipulation', data: DATAMANIP_DEFAULTS, search: 'mask delete move points by hand' },
+      { sub: 'Rows and values', type: 'filterrows', label: 'Filter & sort rows', data: FILTER_DEFAULTS },
+      { sub: 'Rows and values', type: 'clean', label: 'Clean data', data: CLEAN_DEFAULTS },
+      { sub: 'Rows and values', type: 'translate', label: 'Translate & resize', data: TRANSLATE_DEFAULTS },
+      { sub: 'Matrix', type: 'matrix', label: 'Matrix', data: MATRIX_DEFAULTS },
     ],
   },
   {
     name: 'Statistics',
     items: [
-      { type: 'stats', label: 'Descriptive statistics', data: STATS_DEFAULTS },
-      { type: 'normality', label: 'Normality & outliers', data: NORM_DEFAULTS },
-      { type: 'ttest', label: 't-tests & variances', data: TTEST_DEFAULTS },
-      { type: 'anova', label: 'ANOVA', data: ANOVA_DEFAULTS },
-      { type: 'nonparam', label: 'Nonparametric tests', data: NONPAR_DEFAULTS },
-      { type: 'correl', label: 'Correlation', data: CORR_DEFAULTS },
-      { type: 'regress', label: 'Linear regression', data: REGRESS_DEFAULTS },
-      { type: 'logistic', label: 'Logistic regression', data: LOGISTIC_DEFAULTS },
-      { type: 'contingency', label: 'Contingency tables', data: CONTINGENCY_DEFAULTS },
-      { type: 'survival', label: 'Survival (Kaplan–Meier)', data: SURVIVAL_DEFAULTS },
-      { type: 'roc', label: 'ROC curve', data: ROC_DEFAULTS },
-      { type: 'padjust', label: 'Adjust p-values', data: PADJUST_DEFAULTS },
-      { type: 'distfit', label: 'Distribution fit', data: DISTFIT_DEFAULTS },
-      { type: 'agree', label: 'Agreement & reliability', data: AGREE_DEFAULTS },
-      { type: 'methcomp', label: 'Method comparison', data: METHCOMP_DEFAULTS },
-      { type: 'resample', label: 'Bootstrap & permutation', data: RESAMPLE_DEFAULTS },
-      { type: 'power', label: 'Power & sample size', data: POWER_DEFAULTS },
+      { sub: 'Describe', type: 'stats', label: 'Descriptive statistics', data: STATS_DEFAULTS },
+      { sub: 'Describe', type: 'normality', label: 'Normality & outliers', data: NORM_DEFAULTS },
+      { sub: 'Describe', type: 'distfit', label: 'Distribution fit', data: DISTFIT_DEFAULTS },
+      { sub: 'Compare groups', type: 'ttest', label: 't-tests & variances', data: TTEST_DEFAULTS },
+      { sub: 'Compare groups', type: 'anova', label: 'ANOVA', data: ANOVA_DEFAULTS },
+      { sub: 'Compare groups', type: 'nonparam', label: 'Nonparametric tests', data: NONPAR_DEFAULTS },
+      { sub: 'Compare groups', type: 'contingency', label: 'Contingency tables', data: CONTINGENCY_DEFAULTS },
+      { sub: 'Compare groups', type: 'padjust', label: 'Adjust p-values', data: PADJUST_DEFAULTS },
+      { sub: 'Compare groups', type: 'resample', label: 'Bootstrap & permutation', data: RESAMPLE_DEFAULTS },
+      { sub: 'Compare groups', type: 'power', label: 'Power & sample size', data: POWER_DEFAULTS },
+      { sub: 'Relations', type: 'correl', label: 'Correlation', data: CORR_DEFAULTS },
+      { sub: 'Relations', type: 'regress', label: 'Linear regression', data: REGRESS_DEFAULTS },
+      { sub: 'Relations', type: 'logistic', label: 'Logistic regression', data: LOGISTIC_DEFAULTS },
+      { sub: 'Methods and diagnostics', type: 'agree', label: 'Agreement & reliability', data: AGREE_DEFAULTS },
+      { sub: 'Methods and diagnostics', type: 'methcomp', label: 'Method comparison', data: METHCOMP_DEFAULTS },
+      { sub: 'Methods and diagnostics', type: 'roc', label: 'ROC curve', data: ROC_DEFAULTS },
+      { sub: 'Methods and diagnostics', type: 'survival', label: 'Survival (Kaplan–Meier)', data: SURVIVAL_DEFAULTS },
     ],
   },
   {
     name: 'Analysis',
     items: [
-      { type: 'fit', label: 'Fit', data: FIT_DEFAULTS },
-      { type: 'eis', label: 'Equivalent circuit (EIS)', data: EIS_DEFAULTS },
-      { type: 'python', label: 'Python script', data: PYTHON_DEFAULTS },
-      { type: 'calculus', label: 'Differentiate / Integrate', data: CALCULUS_DEFAULTS },
-      { type: 'peaks', label: 'Peak analyzer', data: PEAK_DEFAULTS },
-      { type: 'peakwidth', label: 'Peak width', data: PEAKWIDTH_DEFAULTS },
-      { type: 'pick', label: 'Pick points', data: PICK_DEFAULTS },
-      { type: 'curvemath', label: 'Curve math', data: CURVEMATH_DEFAULTS },
-      { type: 'matcomp', label: 'Matrix computation', data: MATCOMP_DEFAULTS },
-      { type: 'kk', label: 'Kramers–Kronig', data: KK_DEFAULTS },
+      { sub: 'Fitting', type: 'fit', label: 'Fit', data: FIT_DEFAULTS },
+      { sub: 'Fitting', type: 'eis', label: 'Equivalent circuit (EIS)', data: EIS_DEFAULTS },
+      { sub: 'Fitting', type: 'kk', label: 'Kramers–Kronig', data: KK_DEFAULTS },
+      { sub: 'Peaks and points', type: 'peaks', label: 'Peak analyzer', data: PEAK_DEFAULTS },
+      { sub: 'Peaks and points', type: 'peakwidth', label: 'Peak width', data: PEAKWIDTH_DEFAULTS },
+      { sub: 'Peaks and points', type: 'pick', label: 'Pick points', data: PICK_DEFAULTS },
+      { sub: 'Calculus', type: 'calculus', label: 'Differentiate / Integrate', data: CALCULUS_DEFAULTS },
+      { sub: 'Calculus', type: 'curvemath', label: 'Curve math', data: CURVEMATH_DEFAULTS },
+      { sub: 'Calculus', type: 'matcomp', label: 'Matrix computation', data: MATCOMP_DEFAULTS },
+      { sub: 'Other', type: 'python', label: 'Python script', data: PYTHON_DEFAULTS },
       // hidden (2026-10-20): not offered for now; saved projects with it still open
-      { type: 'phasediagram', label: 'Phase diagram', data: PHASE_DEFAULTS, hidden: true },
+      { sub: 'Other', type: 'phasediagram', label: 'Phase diagram', data: PHASE_DEFAULTS, hidden: true },
     ],
   },
   {
     name: 'Signal',
     items: [
-      { type: 'siggen', label: 'Signal generator', data: SIGGEN_DEFAULTS },
-      { type: 'smooth', label: 'Smooth', data: SMOOTH_DEFAULTS },
-      { type: 'baseline', label: 'Baseline correction', data: BASELINE_DEFAULTS },
-      { type: 'waveform', label: 'Waveform measurements', data: WAVEFORM_DEFAULTS },
-      { type: 'steps', label: 'Step detection', data: STEPS_DEFAULTS },
-      { type: 'events', label: 'Event averaging', data: EVENTS_DEFAULTS },
-      { type: 'wavelet', label: 'Wavelet', data: WAVELET_DEFAULTS },
-      { type: 'fraccalc', label: 'Fractional calculus', data: FRAC_DEFAULTS },
-      { type: 'frft', label: 'Fractional FFT', data: FRFT_DEFAULTS },
-      { type: 'interp', label: 'Interpolate / Extrapolate', data: INTERP_DEFAULTS },
-      { type: 'normalize', label: 'Normalize', data: NORMALIZE_DEFAULTS },
-      { type: 'fft', label: 'FFT', data: FFT_DEFAULTS },
-      { type: 'convolve', label: 'Convolution', data: CONV_DEFAULTS },
-      { type: 'average', label: 'Average curves', data: AVERAGE_DEFAULTS },
+      { sub: 'Make and clean', type: 'siggen', label: 'Signal generator', data: SIGGEN_DEFAULTS },
+      { sub: 'Make and clean', type: 'smooth', label: 'Smooth', data: SMOOTH_DEFAULTS },
+      { sub: 'Make and clean', type: 'baseline', label: 'Baseline correction', data: BASELINE_DEFAULTS },
+      { sub: 'Make and clean', type: 'normalize', label: 'Normalize', data: NORMALIZE_DEFAULTS },
+      { sub: 'Make and clean', type: 'interp', label: 'Interpolate / Extrapolate', data: INTERP_DEFAULTS },
+      { sub: 'Measure', type: 'waveform', label: 'Waveform measurements', data: WAVEFORM_DEFAULTS },
+      { sub: 'Measure', type: 'steps', label: 'Step detection', data: STEPS_DEFAULTS },
+      { sub: 'Measure', type: 'events', label: 'Event averaging', data: EVENTS_DEFAULTS },
+      { sub: 'Measure', type: 'average', label: 'Average curves', data: AVERAGE_DEFAULTS },
+      { sub: 'Transforms', type: 'fft', label: 'FFT', data: FFT_DEFAULTS },
+      { sub: 'Transforms', type: 'wavelet', label: 'Wavelet', data: WAVELET_DEFAULTS },
+      { sub: 'Transforms', type: 'convolve', label: 'Convolution', data: CONV_DEFAULTS },
+      { sub: 'Transforms', type: 'fraccalc', label: 'Fractional calculus', data: FRAC_DEFAULTS },
+      { sub: 'Transforms', type: 'frft', label: 'Fractional FFT', data: FRFT_DEFAULTS },
     ],
   },
   {
     name: 'Graph',
     items: [
-      { type: 'plot1d', label: '1D plot', data: PLOT1D_DEFAULTS },
-      { type: 'histogram', label: 'Histogram', data: HISTOGRAM_DEFAULTS },
-      { type: 'barchart', label: 'Bar chart', data: BARCHART_DEFAULTS },
-      { type: 'boxviolin', label: 'Box & violin', data: BOXVIOLIN_DEFAULTS },
-      { type: 'pie', label: 'Pie chart', data: PIE_DEFAULTS },
-      { type: 'waterfall', label: 'Waterfall', data: WATERFALL_DEFAULTS },
-      { type: 'plot3d', label: '3D plot', data: PLOT3D_DEFAULTS },
-      { type: 'contour', label: 'Contour / heatmap', data: CONTOUR_DEFAULTS },
-      { type: 'polar', label: 'Polar / radar', data: POLAR_DEFAULTS },
-      { type: 'smith', label: 'Smith chart', data: SMITH_DEFAULTS },
+      { sub: 'XY', type: 'plot1d', label: '1D plot', data: PLOT1D_DEFAULTS },
+      { sub: 'XY', type: 'waterfall', label: 'Waterfall', data: WATERFALL_DEFAULTS },
+      { sub: 'XY', type: 'probplot', label: 'Probability plot', data: PROBPLOT_DEFAULTS },
+      { sub: 'XY', type: 'blandaltman', label: 'Bland–Altman', data: BLANDALTMAN_DEFAULTS },
+      { sub: 'XY', type: 'polar', label: 'Polar / radar', data: POLAR_DEFAULTS },
+      { sub: 'XY', type: 'smith', label: 'Smith chart', data: SMITH_DEFAULTS },
+      { sub: 'XY', type: 'ternary', label: 'Ternary', data: TERNARY_DEFAULTS },
+      { sub: 'Distributions and categories', type: 'histogram', label: 'Histogram', data: HISTOGRAM_DEFAULTS },
+      { sub: 'Distributions and categories', type: 'barchart', label: 'Bar chart', data: BARCHART_DEFAULTS },
+      { sub: 'Distributions and categories', type: 'boxviolin', label: 'Box & violin', data: BOXVIOLIN_DEFAULTS },
+      { sub: 'Distributions and categories', type: 'pie', label: 'Pie chart', data: PIE_DEFAULTS },
       // hidden for now (2026-10-16): to be worked on before it is offered again
-      { type: 'scattermatrix', label: 'Scatter matrix', data: SCATTERMATRIX_DEFAULTS, hidden: true },
-      { type: 'ternary', label: 'Ternary', data: TERNARY_DEFAULTS },
-      { type: 'probplot', label: 'Probability plot', data: PROBPLOT_DEFAULTS },
-      { type: 'blandaltman', label: 'Bland–Altman', data: BLANDALTMAN_DEFAULTS },
-      { type: 'canvas', label: 'Merge plots', data: CANVAS_DEFAULTS },
-      { type: 'drawing', label: 'Figure Drawing', data: DRAWING_DEFAULTS },
+      { sub: 'Distributions and categories', type: 'scattermatrix', label: 'Scatter matrix', data: SCATTERMATRIX_DEFAULTS, hidden: true },
+      { sub: 'Surfaces', type: 'plot3d', label: '3D plot', data: PLOT3D_DEFAULTS },
+      { sub: 'Surfaces', type: 'contour', label: 'Contour / heatmap', data: CONTOUR_DEFAULTS },
+      { sub: 'Layout', type: 'canvas', label: 'Merge plots', data: CANVAS_DEFAULTS },
+      { sub: 'Layout', type: 'drawing', label: 'Figure Drawing', data: DRAWING_DEFAULTS },
     ],
   },
   {
@@ -1311,20 +1313,32 @@ function Flow() {
   };
   const miniStroke = (n: Node) => (engine.results.get(n.id)?.errors.length ? ERROR_RED : nodeColor(n as AppNode));
 
-  const menuItems: MenuItem[] = useMemo(() => GROUPS.flatMap((g) => g.items.filter((i) => !i.hidden).map((i) => ({ type: (i.key ?? i.type) as AppNode['type'], label: i.label, group: g.name }))), []);
+  // the nodes added last (the Recent group of the panel and the menu)
+  const [recent, setRecent] = useState<string[]>(loadRecent);
+  const offered = useMemo(() => GROUPS.flatMap((g) => g.items.filter((i) => !i.hidden).map((i) => ({ i, g: g.name }))), []);
+  const recentOf = <T,>(make: (q: (typeof offered)[number]) => T) => recent.flatMap((k) => offered.filter((q) => (q.i.key ?? q.i.type) === k).map(make));
+  const menuItems: MenuItem[] = useMemo(
+    () => [
+      ...recentOf(({ i }) => ({ type: (i.key ?? i.type) as AppNode['type'], label: i.label, group: 'Recent', search: i.search })),
+      ...offered.map(({ i, g }) => ({ type: (i.key ?? i.type) as AppNode['type'], label: i.label, group: g, sub: i.sub, search: i.search })),
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [recent],
+  );
   const closeMenu = useCallback(() => setMenu(null), []);
 
   // the nodes panel (left): the sections of GROUPS with the colours of their nodes
   const templates = useTemplates();
   const paletteGroups: PaletteGroup[] = useMemo(
     () => [
+      ...(recent.length ? [{ name: 'Recent', color: GROUP_COLORS.Notes, items: recentOf(({ i }) => ({ type: (i.key ?? i.type) as AppNode['type'], label: i.label, help: NODE_SHORT[i.type] ?? NODE_HELP[i.type], color: NODE_COLORS[i.type], search: i.search })) }] : []),
       ...GROUPS.map((g) => ({
         name: g.name,
         color: GROUP_COLORS[g.name],
         items: [
-          ...g.items.filter((t) => !t.hidden).map((t) => ({ type: (t.key ?? t.type) as AppNode['type'], label: t.label, help: NODE_SHORT[t.type] ?? NODE_HELP[t.type], color: NODE_COLORS[t.type] })),
+          ...g.items.filter((t) => !t.hidden).map((t) => ({ type: (t.key ?? t.type) as AppNode['type'], label: t.label, help: NODE_SHORT[t.type] ?? NODE_HELP[t.type], color: NODE_COLORS[t.type], sub: t.sub, search: t.search })),
           // a Batch with no steps yet: its steps built inside, on one file
-          ...(g.name === 'Data' ? [{ type: BATCH_NEW as AppNode['type'], label: 'Batch', help: 'The same analysis on every file: connect an Import with several files (or a folder) to “files”, open it, build the steps on one file, connect to “+ keep” what to keep: a table with a row per file comes out.', color: GROUP_COLORS.Groups }] : []),
+          ...(g.name === 'Data' ? [{ type: BATCH_NEW as AppNode['type'], label: 'Batch', help: 'The same analysis on every file: connect an Import with several files (or a folder) to “files”, open it, build the steps on one file, connect to “+ keep” what to keep: a table with a row per file comes out.', color: GROUP_COLORS.Groups, sub: 'Batch' }] : []),
         ],
       })),
       ...(templates.length
@@ -1337,7 +1351,8 @@ function Flow() {
           ]
         : []),
     ],
-    [templates],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [templates, recent],
   );
   const canvasRef = useRef<HTMLDivElement>(null);
   const template = (type: AppNode['type']): Template | undefined => {
@@ -1420,6 +1435,9 @@ function Flow() {
     }
     if (prefs.snap) position = { x: Math.round(position.x / prefs.step) * prefs.step, y: Math.round(position.y / prefs.step) * prefs.step };
     const id = `${t.type}-${crypto.randomUUID().slice(0, 8)}`;
+    // (one of the lists: the first of the Recent ones)
+    const listed = t.key ?? t.type;
+    if (offered.some(({ i }) => (i.key ?? i.type) === listed)) setRecent(pushRecent(listed));
     // a Python script added here: the project's code is the user's own
     if (t.type === 'python') allowProject();
     const data = structuredClone(t.data);

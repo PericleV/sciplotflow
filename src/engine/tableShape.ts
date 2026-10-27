@@ -1,5 +1,5 @@
 // Tables reshaped: Convert columns (text read as numbers, numbers written as text), Transpose (the rows become the
-// columns — shown as Rows to columns or Columns to rows: the same operation, twice gives the table back) and Stack
+// columns — one node either way: twice gives the table back) and Stack
 // columns (columns one under the other: a long table of the name, the X and the value — the reverse of Split into
 // columns). Pure.
 import { columnRuns } from './batch.ts';
@@ -10,7 +10,7 @@ import { maxOf } from './minmax.ts';
 
 // cols: the columns (2-6, B-F, names; empty: none, until chosen)
 export type ConvertData = { to: 'numbers' | 'text'; cols: string; num?: Partial<ToNumberRules>; txt?: Partial<ToTextRules> };
-// as: shown as Columns to rows (the same node); names: the column whose values name the new columns ('': the first,
+// as: once shown as Columns to rows (kept in saved projects, no longer used); names: the column whose values name the new columns ('': the first,
 // '#': the row numbers); fmt: how a number is written as a name (its template: “{v} V”); head: the old names, a first
 // column of text, of the numbers in them, or left out; headName: that column's name (empty: found from the names)
 export type TransposeData = { as?: 'cols'; names: string; fmt?: Partial<ToTextRules>; head: 'text' | 'number' | 'none'; headName?: string };

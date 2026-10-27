@@ -1,5 +1,5 @@
-// Convert columns (text read as numbers, numbers written as text), Transpose (shown as Rows to columns or Columns to
-// rows) and Stack columns (columns one under the other): their settings, the table that comes out.
+// Convert columns (text read as numbers, numbers written as text), Transpose (rows ↔ columns, one node either
+// way) and Stack columns (columns one under the other): their settings, the table that comes out.
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import { columnLetter } from '../engine/csv.ts';

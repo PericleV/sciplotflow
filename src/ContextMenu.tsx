@@ -1,9 +1,10 @@
 // Right-click menus of the canvas: add a node (with search) on the empty canvas, node actions on a node.
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { NODE_COLORS } from './nodeColors.ts';
 import type { AppNode } from './types.ts';
 
-export type MenuItem = { type: AppNode['type']; label: string; group: string };
+// sub: the part of its group it is listed under; search: other words it is found by
+export type MenuItem = { type: AppNode['type']; label: string; group: string; sub?: string; search?: string };
 // An entry of a node / selection menu; `colors` shows a row of swatches instead of a button.
 export type MenuAction =
   | { label: string; onClick: () => void; danger?: boolean; kbd?: string }
@@ -39,7 +40,8 @@ export function ContextMenu(props: {
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return q ? items.filter((i) => i.label.toLowerCase().includes(q) || i.group.toLowerCase().includes(q) || i.type.includes(q)) : items;
+    // (searching: the Recent ones only in their own groups)
+    return q ? items.filter((i) => i.group !== 'Recent' && (i.label.toLowerCase().includes(q) || i.group.toLowerCase().includes(q) || i.type.includes(q) || !!i.sub?.toLowerCase().includes(q) || !!i.search?.toLowerCase().includes(q))) : items;
   }, [items, query]);
 
   useEffect(() => {
@@ -126,11 +128,12 @@ export function ContextMenu(props: {
             <div className="ctx-group">{g}</div>
             {shown
               .filter((i) => i.group === g)
-              .map((i) => {
+              .map((i, j, inGroup) => {
                 const k = shown.indexOf(i);
                 return (
+                  <Fragment key={`${g}-${i.type}`}>
+                  {i.sub && i.sub !== inGroup[j - 1]?.sub && <div className="ctx-sub">{i.sub}</div>}
                   <button
-                    key={i.type}
                     className={k === active ? 'active' : ''}
                     style={{ '--node-color': NODE_COLORS[i.type] } as CSSProperties}
                     onMouseEnter={() => setActive(k)}
@@ -139,6 +142,7 @@ export function ContextMenu(props: {
                     <i className="ctx-swatch" />
                     {i.label}
                   </button>
+                  </Fragment>
                 );
               })}
           </div>

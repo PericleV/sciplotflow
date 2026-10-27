@@ -897,7 +897,7 @@ function workbookExample(): Project {
   return project(b, 'Four runs in a workbook: Sheets to columns');
 }
 
-// A photocurrent map saved a row per voltage (a column per wavelength): Rows to columns gives a spectrum per voltage
+// A photocurrent map saved a row per voltage (a column per wavelength): Transpose gives a spectrum per voltage
 // (each column keeps its voltage), Stack columns the long table, and Convert columns reads a table of text with units
 function sweepExample(): Project {
   const b = builder();
@@ -921,7 +921,7 @@ function sweepExample(): Project {
   const tx = add(b, 'import', 'sw-text', 0, 1500, { ...IMPORT_DEFAULTS, name: 'samples', fileName: 'samples.csv', text: notes.join('\n'), textId: 'sw-2' });
   const cv = add(b, 'convert', 'sw-convert', 700, 1500, { ...CONVERT_DEFAULTS, cols: 'B-D' });
   link(b, tx, cv, 'in');
-  return project(b, 'Rows to columns: a voltage sweep turned into spectra');
+  return project(b, 'Transpose: a voltage sweep turned into spectra');
 }
 
 // n and k of gold in one file, the k block written under the n block: Split into columns lays
@@ -3501,9 +3501,9 @@ const ABOUT: Record<string, About> = {
     what: 'Three scans on different wavelength grids averaged on a common grid, with their SD as a band; all their points pooled into one table.',
     try: ['In Average curves, switch the grid (every X, the X of the first scan, uniform).', 'Change the error style of the mean in the Plot (band or bars).'],
   },
-  'Rows to columns: a voltage sweep turned into spectra': {
+  'Transpose: a voltage sweep turned into spectra': {
     what: 'A table saved the other way round (a row per voltage) turned so every voltage is a curve; the same spectra stacked into one long table; a table of text with units read as numbers.',
-    try: ['In Rows to columns, set First column to the old names as text, then back to their numbers.', 'Change the template of the names (e.g. V = {v}): the legend follows.', 'In Convert columns, empty Columns: the node proposes the columns whose text looks like numbers.'],
+    try: ['In Transpose, set First column to the old names as text, then back to their numbers.', 'Change the template of the names (e.g. V = {v}): the legend follows.', 'In Convert columns, empty Columns: the node proposes the columns whose text looks like numbers.'],
   },
   'Difference spectrum: sample minus reference': {
     what: 'A sample measured with a 2 nm calibration error, moved back, then compared with its reference: the difference shows the band only the sample has.',
@@ -3813,7 +3813,7 @@ const LIST: { group: string; name: string; desc: string; make: () => Project }[]
   { group: 'Getting started', name: 'Generated data: a damped oscillation and noisy samples', desc: 'Generate column (linspace, random), Math column, one Plot with three curves (one with its own X), legend.', make: generatedExample },
   { group: 'Getting started', name: 'Gold n, k: two blocks in one file (Split into columns)', desc: 'A file of optical constants with wl, n and then wl, k written under it: Split into columns lays the blocks side by side (wl, n, k) and one Plot draws n on the left axis, k on its own right axis.', make: nkExample },
   { group: 'Getting started', name: 'Four runs in a workbook: Sheets to columns', desc: 'A spreadsheet workbook (a sheet per run), Sheets to columns rules (Time = X, Signal = Y, column D = ±Y in every sheet, each Y named by its sheet), one Plot from the designations; Extract column from one sheet.', make: workbookExample },
-  { group: 'Data preparation', name: 'Rows to columns: a voltage sweep turned into spectra', desc: 'A photocurrent map saved a row per voltage, a column per wavelength: Rows to columns turns it into a spectrum per voltage (the wavelengths read from the old names, every column keeping its voltage), drawn in one Plot; Stack columns lays the spectra one under the other (voltage, wavelength, photocurrent), Columns to sheets puts each in a sheet of its own (for a Batch); Convert columns reads a table written as text (300 K, 1.21 ± 0.02 eV, 45 %) as numbers, the units into the names and the errors in their own column.', make: sweepExample },
+  { group: 'Data preparation', name: 'Transpose: a voltage sweep turned into spectra', desc: 'A photocurrent map saved a row per voltage, a column per wavelength: Transpose turns it into a spectrum per voltage (the wavelengths read from the old names, every column keeping its voltage), drawn in one Plot; Stack columns lays the spectra one under the other (voltage, wavelength, photocurrent), Columns to sheets puts each in a sheet of its own (for a Batch); Convert columns reads a table written as text (300 K, 1.21 ± 0.02 eV, 45 %) as numbers, the units into the names and the errors in their own column.', make: sweepExample },
   { group: 'Data preparation', name: 'Batch: the peak of every spectrum in a folder', desc: 'Six photoluminescence spectra, a file each (PL_50K … PL_300K, opened together as from a folder): a Batch smooths every spectrum and picks its maximum; the temperature read from the file names, the files in its order; the peak wavelength against the temperature in a Plot. Open the batch to see its steps on the first file.', make: batchExample },
   { group: 'Data preparation', name: 'Cleaning a sensor log: order, repeats, gaps, spikes', desc: 'A logger file as it comes: Columns leaves the battery out, Filter & sort rows puts the rows in time order and merges the times written twice, Clean data fills the missing temperatures and replaces the spikes (moving median), Data manipulation masks two humidity readings by hand; the raw and the cleaned data in one Plot, the changes in a Workbook.', make: loggerExample },
   { group: 'Data preparation', name: 'Replicate scans: mean ± SD on a common X', desc: 'Three scans on different wavelength grids: Average curves gives their mean ± SD on a common grid (a band in the Plot); Combine columns puts every point of the three scans in one table, in the order of the wavelength.', make: scansExample },

@@ -1,13 +1,14 @@
 // The nodes, in a panel on the left of the canvas: sections that fold, a search field; a node is dragged onto the
 // canvas (dropped where the mouse is) or clicked (added in the middle of the view). The panel folds to a thin strip.
-import { useMemo, useState, type CSSProperties, type DragEvent } from 'react';
+import { Fragment, useMemo, useState, type CSSProperties, type DragEvent } from 'react';
 import { useLeaving } from './useLeaving.ts';
 import type { AppNode } from './types.ts';
 import { ChevronDown, ChevronRight, Search, X } from 'lucide-react';
 import { Tooltip } from '@mantine/core';
 import { IC } from './nodes/iconProps.ts';
 
-export type PaletteItem = { type: AppNode['type']; label: string; help?: string; color: string };
+// sub: the part of its group it is listed under; search: other words it is found by
+export type PaletteItem = { type: AppNode['type']; label: string; help?: string; color: string; sub?: string; search?: string };
 export type PaletteGroup = { name: string; color: string; items: PaletteItem[] };
 
 export const DRAG_TYPE = 'application/x-graphflow-node';
@@ -41,7 +42,11 @@ export function NodePalette({ groups, onAdd }: { groups: PaletteGroup[]; onAdd: 
     });
   const q = query.trim().toLowerCase();
   const shown = useMemo(
-    () => groups.map((g) => ({ ...g, items: q ? g.items.filter((i) => i.label.toLowerCase().includes(q) || g.name.toLowerCase().includes(q) || i.type.includes(q)) : g.items })).filter((g) => g.items.length),
+    () =>
+      groups
+        .map((g) => ({ ...g, items: q ? g.items.filter((i) => i.label.toLowerCase().includes(q) || g.name.toLowerCase().includes(q) || i.type.includes(q) || !!i.sub?.toLowerCase().includes(q) || !!i.search?.toLowerCase().includes(q)) : g.items }))
+        // (searching: the Recent ones are in their own groups too)
+        .filter((g) => g.items.length && !(q && g.name === 'Recent')),
     [groups, q],
   );
   const drag = (e: DragEvent, type: AppNode['type']) => {
@@ -93,25 +98,40 @@ export function NodePalette({ groups, onAdd }: { groups: PaletteGroup[]; onAdd: 
                     <span className="palette-count">{g.items.length}</span>
                   </button>
                   {!folded &&
-                    g.items.map((i) => (
-                      <Tooltip
-                        key={i.type}
-                        position="right"
-                        openDelay={500}
-                        label={
-                          <>
-                            <b>{i.label}</b>
-                            {i.help && <div>{i.help}</div>}
-                            <div className="palette-tip-hint">Drag it onto the canvas, or click to add it in the middle of the view.</div>
-                          </>
-                        }
-                      >
-                        <button className="palette-item" draggable onDragStart={(e) => drag(e, i.type)} onClick={() => onAdd(i.type)} style={{ '--node-color': i.color } as CSSProperties}>
-                          <span className="pi-dot" aria-hidden="true" />
-                          <span className="ellipsis">{i.label}</span>
-                        </button>
-                      </Tooltip>
-                    ))}
+                    g.items.map((i, k) => {
+                      // (a part of the group: its title, folded with what is under it)
+                      const subKey = `${g.name}/${i.sub ?? ''}`;
+                      const head = i.sub && i.sub !== g.items[k - 1]?.sub;
+                      const subFolded = !q && !!i.sub && state.folded.includes(subKey);
+                      return (
+                        <Fragment key={i.type}>
+                          {head && (
+                            <button className="palette-sub" aria-expanded={!subFolded} onClick={() => update({ folded: subFolded ? state.folded.filter((x) => x !== subKey) : [...state.folded, subKey] })}>
+                              <span className="chev">{subFolded ? <ChevronRight size={12} /> : <ChevronDown size={12} />}</span>
+                              <span className="grow">{i.sub}</span>
+                            </button>
+                          )}
+                          {!subFolded && (
+                            <Tooltip
+                              position="right"
+                              openDelay={500}
+                              label={
+                                <>
+                                  <b>{i.label}</b>
+                                  {i.help && <div>{i.help}</div>}
+                                  <div className="palette-tip-hint">Drag it onto the canvas, or click to add it in the middle of the view.</div>
+                                </>
+                              }
+                            >
+                              <button className="palette-item" draggable onDragStart={(e) => drag(e, i.type)} onClick={() => onAdd(i.type)} style={{ '--node-color': i.color } as CSSProperties}>
+                                <span className="pi-dot" aria-hidden="true" />
+                                <span className="ellipsis">{i.label}</span>
+                              </button>
+                            </Tooltip>
+                          )}
+                        </Fragment>
+                      );
+                    })}
                 </section>
               );
             })}
