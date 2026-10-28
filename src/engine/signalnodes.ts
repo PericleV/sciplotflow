@@ -90,7 +90,7 @@ export function signalCurves(ds: Dataset, d: SignalIn): Curve[] | string {
   const cols = ds.columns;
   let Ys: Column[];
   if (d.ys.trim()) {
-    const p = pick(d.ys, cols.map((c) => c.name), true);
+    const p = pick(d.ys, cols.map((c) => c.name), true, cols);
     if (p.missing.length) return `Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`;
     Ys = p.found.map((j) => cols[j]);
   } else Ys = cols.filter((_, j) => roleOf(cols, j) === 'y');

@@ -6,6 +6,7 @@ import { column, withUnit, type Column, type ColumnRole, type Dataset } from './
 import { maxOf } from './minmax.ts';
 import { toNumbers, type ToNumberRules } from './convert.ts';
 import type { ColFormula } from './sheetFormula.ts';
+import { columnId } from './refs.ts';
 
 export type SheetEdits = {
   cells?: Record<string, string>; // "row:col" → the cell as typed
@@ -39,7 +40,8 @@ const withHead = (c: Column, h: ColumnHead): Column => ({
   ...(h.role ? { role: h.role } : {}),
 });
 
-export function applySheet(base: Dataset, e: SheetEdits | undefined, decimal: '.' | ','): { dataset: Dataset; map: SheetMap } {
+// id: the sheet's (refs.ts) — the table's and every column's, by its place as read
+export function applySheet(base: Dataset, e: SheetEdits | undefined, decimal: '.' | ',', id?: string): { dataset: Dataset; map: SheetMap } {
   const baseRows = Math.max(0, maxOf(base.columns.map((c) => c.values.length)));
   const baseCols = base.columns.length;
   const nRows = baseRows + Math.max(0, Math.floor(e?.addRows ?? 0));
@@ -58,7 +60,8 @@ export function applySheet(base: Dataset, e: SheetEdits | undefined, decimal: '.
   sortBy(rows, e?.rowOrder);
   const cells = e?.cells ?? {};
   const edited = new Set(Object.keys(cells).map((k) => Number(k.split(':')[1])));
-  const columns: Column[] = cols.map((c) => {
+  // the column at place c as read
+  const made = (c: number): Column => {
     const src = base.columns[c];
     const head = e?.cols?.[c] ?? {};
     // a column of the file with no cell changed keeps its arrays (no copy), with its header as changed
@@ -87,8 +90,12 @@ export function applySheet(base: Dataset, e: SheetEdits | undefined, decimal: '.
     // cells read as numbers before the first text cell
     if (text) rows.forEach((_, i) => text![i] === '' && Number.isFinite(values[i]) && (text![i] = String(values[i])));
     return withHead(column(src?.name ?? columnLetter(c), values, text), { ...(src?.role ? { role: src.role } : {}), ...head });
+  };
+  const columns: Column[] = cols.map((c) => {
+    const col = made(c);
+    return id === undefined ? col : { ...col, id: columnId(id, c) };
   });
-  return { dataset: { name: base.name, columns }, map: { rows, cols, baseRows, baseCols } };
+  return { dataset: { name: base.name, columns, ...(id === undefined ? {} : { id }) }, map: { rows, cols, baseRows, baseCols } };
 }
 
 // Columns of the worksheet read as numbers (by the rules of Convert columns), written into its changes: every cell read

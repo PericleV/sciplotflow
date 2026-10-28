@@ -24,6 +24,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import './App.css';
 import { EngineContext, useEngine } from './engine/engine.ts';
+import { learnNameIds } from './nameIds.ts';
 import { canConnect, isMultiInput, PORT_COLORS, sourcePort, targetAccepts, type PortContext } from './engine/ports.ts';
 import { SELECTFIG_DEFAULTS, RENAMESHEETS_DEFAULTS, KK_DEFAULTS, CONVERT_DEFAULTS, TRANSPOSE_DEFAULTS, STACK_DEFAULTS, TOSHEETS_DEFAULTS, MATCOMP_DEFAULTS, MATRIX_DEFAULTS, COLUMNS_DEFAULTS, PEAKWIDTH_DEFAULTS, AUTOEXTRACT_DEFAULTS, CANVAS_DEFAULTS, DRAWING_DEFAULTS, COMBINE_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS, CALCULUS_DEFAULTS, FILTER_DEFAULTS, CLEAN_DEFAULTS, SMOOTH_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, FFT_DEFAULTS, CONV_DEFAULTS, AVERAGE_DEFAULTS, DIGITIZER_DEFAULTS, PHASE_DIGITIZER_DEFAULTS, EIS_DEFAULTS, IMAGE_DEFAULTS, PHASE_DEFAULTS, HISTOGRAM_DEFAULTS, BARCHART_DEFAULTS, BOXVIOLIN_DEFAULTS, PROBPLOT_DEFAULTS, BLANDALTMAN_DEFAULTS, PIE_DEFAULTS, CONTOUR_DEFAULTS, POLAR_DEFAULTS, SMITH_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS, WATERFALL_DEFAULTS, PLOT3D_DEFAULTS, CURVEMATH_DEFAULTS, TRANSLATE_DEFAULTS, PEAK_DEFAULTS, NORM_DEFAULTS, TTEST_DEFAULTS, ANOVA_DEFAULTS, NONPAR_DEFAULTS, CORR_DEFAULTS, PADJUST_DEFAULTS, CONTINGENCY_DEFAULTS, ROC_DEFAULTS, SURVIVAL_DEFAULTS, REGRESS_DEFAULTS, POWER_DEFAULTS, RESAMPLE_DEFAULTS, DISTFIT_DEFAULTS, AGREE_DEFAULTS, METHCOMP_DEFAULTS, LOGISTIC_DEFAULTS, BASELINE_DEFAULTS, FRAC_DEFAULTS, FRFT_DEFAULTS, WAVELET_DEFAULTS, WAVEFORM_DEFAULTS, STEPS_DEFAULTS, EVENTS_DEFAULTS, PICK_DEFAULTS, DATAMANIP_DEFAULTS, EXTRACT_DEFAULTS, FIT_DEFAULTS, GENCOL_DEFAULTS, SIGGEN_DEFAULTS, IMPORT_DEFAULTS, MATHCOL_DEFAULTS, PYTHON_DEFAULTS, NOTE_DEFAULTS, NOTE_SIZE,PLOT1D_DEFAULTS, STATS_DEFAULTS } from './defaults.ts';
 import { NODE_HELP, NODE_SHORT } from './help.ts';
@@ -440,6 +441,13 @@ function Flow() {
   const [stack, setStack] = useState<Level[]>([]);
   const root = useMemo(() => (stack.length ? composeRoot(stack, nodes, edges) : { nodes, edges }), [stack, nodes, edges]);
   const rootEngine = useEngine(root.nodes, root.edges);
+  // the ids of the columns and sheets the nodes shown name (and those inside their groups), as the evaluation found
+  // them: kept in the nodes (src/nameIds.ts)
+  useEffect(() => {
+    const prefix = stack.map((l) => `${l.groupId}/`).join('');
+    if (learnNameIds(nodes, rootEngine.results, prefix)) setNodes((ns) => learnNameIds(ns, rootEngine.results, prefix) ?? ns);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rootEngine]);
   // the results of the nodes shown: inside a group, theirs are under `group/…` ids
   const engine = useMemo(() => {
     if (!stack.length) return rootEngine;

@@ -9,6 +9,7 @@ import type { PyResult } from './python.ts';
 import { requestRun } from '../python/runner.ts';
 import { allMathSizes, mathSizesVersion } from '../math/sizes.ts';
 import { onMathDrawn } from '../math/store.ts';
+import { nameIdsKey } from '../nameIds.ts';
 
 export type EngineState = { results: Map<string, NodeResult> };
 export const EngineContext = createContext<EngineState>({ results: new Map() });
@@ -20,7 +21,9 @@ const keyCache = new WeakMap<object, string>();
 const dataKey = (n: AppNode) => {
   const hit = keyCache.get(n.data);
   if (hit !== undefined) return hit;
-  const k = JSON.stringify([n.type, logicalData(n)]);
+  // (and the ids of the names it uses: they are not in its logical data — kept results check them — but a change of them
+  // must reach the evaluation)
+  const k = JSON.stringify([n.type, logicalData(n), nameIdsKey(n)]);
   keyCache.set(n.data, k);
   return k;
 };

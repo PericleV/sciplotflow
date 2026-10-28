@@ -55,7 +55,10 @@ import { bakeIso, onFace, pathArray } from '../src/nodes/drawingOps.ts';
 import { isoEdges, isoToFace, isoToPage } from '../src/engine/isoPlane.ts';
 import { flipAcross, flipDown, scaleAbout, skewAbout, transformItem } from '../src/nodes/drawingTransform.ts';
 import { bendItems, blendItems, isoBox, isoStack } from '../src/nodes/drawingMake.ts';
-import { panelOrder } from '../src/engine/evaluate.ts';
+import { panelOrder, type NodeResult } from '../src/engine/evaluate.ts';
+import { learnNameIds } from '../src/nameIds.ts';
+import { keepPlaces } from '../src/engine/refs.ts';
+import type { Edge } from '@xyflow/react';
 import type { AnnotationItem } from '../src/types.ts';
 import { breakAt, cornersOf, cornersText, joinPaths, longestSegment, nodeCount, roundedRectD, simplifyPath, splitSegment } from '../src/figure/paths.ts';
 import { gradAttrs, linearEnds } from '../src/figure/gradient.ts';
@@ -1397,6 +1400,105 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   const p = parseProject(JSON.stringify(old));
   const ex = typeof p === 'string' ? undefined : p.nodes.find((n) => n.type === 'extract');
   ok(typeof p !== 'string' && p.version === PROJECT_VERSION && p.nodes.length === 3 && ex?.type === 'extract' && ex.data.column === 'A' && ex.data.value === true && p.edges.filter((e) => e.source === ex.id).length === 2 && p.edges.some((e) => e.source === 'f' && e.sourceHandle === 'params' && e.target === ex.id), 'format 2 → 3: a parameter port becomes an Extract column (one value) of the parameters table');
+}
+
+// ---- the ids of the sheets and columns: a node finds what it names renamed, or in another source of the same layout ----
+{
+  const imp = (id: string, text: string, extra: object = {}) => ({ id, type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, text, textId: id, ...extra } }) as AppNode;
+  const ext = (column: string, extra: object = {}) => ({ id: 'x', type: 'extract', position: { x: 0, y: 0 }, data: { ...EXTRACT_DEFAULTS, column, index: 1, ...extra } }) as AppNode;
+  const plot = { id: 'p', type: 'plot1d', position: { x: 0, y: 0 }, data: { ...structuredClone(PLOT1D_DEFAULTS), cols: { x: 'Wavelength (nm)', y: 'Intensity' } } } as AppNode;
+  const wire = (from: string, to: string, port: string, handle = 'out') => ({ id: `${from}-${to}`, source: from, sourceHandle: handle, target: to, targetHandle: port });
+  const A = 'Wavelength (nm);Intensity\n400;1\n500;2\n600;3\n';
+  const B = 'λ (nm);Counts\n400;10\n500;20\n600;30\n';
+  // the ids the evaluation learns, kept in the nodes (as the app does)
+  const learnt = (nodes: AppNode[], edges: Edge[]) => learnNameIds(nodes, evaluateGraph(nodes, edges)) ?? nodes;
+  const colOf = (r: NodeResult | undefined) => (r?.outputs.out?.t === 'column' ? r.outputs.out.v : undefined);
+  const curveY = (r: NodeResult | undefined) => [...(r?.view.curves?.[0]?.series.y.values ?? [])];
+
+  // an Import's sheet and columns: ids by the node, the file read, their place as read (kept when moved, renamed)
+  const r0 = evaluateGraph([imp('i', A, { edits: { cols: { 1: { name: 'I' } }, order: [1, 0] } })], []).get('i')!;
+  const ds0 = r0.outputs.out.t === 'dataset' ? r0.outputs.out.v : null;
+  ok(ds0?.id === 'i~i:s0' && ds0.columns.map((c) => `${c.name}=${c.id}`).join() === 'I=i~i:s0:c1,Wavelength (nm)=i~i:s0:c0', 'ids: an Import’s sheet and columns, by their place as read (moved and renamed: the same ids)');
+
+  // an older project (no ids kept): every name found as before; the ids it names learned
+  const g1 = [imp('i', A), ext('Intensity'), plot];
+  const e1 = [wire('i', 'x', 'in'), wire('i', 'p', 'dataset')];
+  const n1 = learnt(g1, e1);
+  const ids = (n: AppNode | undefined) => n?.data.nameIds;
+  ok(JSON.stringify(ids(n1[1])?.cols?.Intensity) === '["i~i:s0:c1"]' && JSON.stringify(ids(n1[2])?.cols?.['Wavelength (nm)']) === '["i~i:s0:c0"]', 'ids: the names a node uses learned with their ids (Extract column, Plot)');
+  ok(learnNameIds(n1, evaluateGraph(n1, e1)) === null, 'ids: once learned, nothing more to keep');
+
+  // renamed in the Import: still found, by its id, shown by its new name, no warning
+  const renamed = n1.map((n) => (n.id === 'i' ? ({ ...n, data: { ...n.data, edits: { cols: { 1: { name: 'Absorbance' } } } } } as AppNode) : n));
+  const rr = evaluateGraph(renamed, e1);
+  ok(colOf(rr.get('x'))?.name === 'Absorbance' && rr.get('x')!.warnings.length === 0 && rr.get('x')!.found?.aliases.cols?.Intensity === 'Absorbance', 'ids: a column renamed in the Import still found by Extract column, shown by its new name');
+  ok(curveY(rr.get('p')).join() === '1,2,3' && !rr.get('p')!.errors.length && !rr.get('p')!.warnings.some((w) => /no column/.test(w)), 'ids: a column renamed in the Import still drawn by the Plot');
+  // (without the ids: not found, as before)
+  ok(!colOf(evaluateGraph([renamed[0], g1[1]], e1).get('x')), 'ids: without them a renamed column is not found');
+
+  // the same steps on another Import, other names: found by their place, said, kept when asked
+  const n2 = [imp('j', B), n1[1], n1[2]];
+  const e2 = [wire('j', 'x', 'in'), wire('j', 'p', 'dataset')];
+  const r2 = evaluateGraph(n2, e2);
+  ok(colOf(r2.get('x'))?.values.join() === '10,20,30' && r2.get('x')!.warnings.some((w) => w.includes('found by place') && w.includes('“Intensity” → “Counts”')), 'ids: another Import of the same layout: the column found by its place, a warning says so');
+  ok(curveY(r2.get('p')).join() === '10,20,30' && r2.get('p')!.found?.place.length === 2, 'ids: another Import: the Plot draws its X and Y found by their place');
+  const kept = n2.map((n) => (n.id === 'x' ? ({ ...n, data: { ...n.data, nameIds: keepPlaces(n.data.nameIds, evaluateGraph(n2, e2).get('x')!.found!.place) } } as AppNode) : n));
+  const r3 = evaluateGraph(kept, e2);
+  ok(colOf(r3.get('x'))?.values.join() === '10,20,30' && r3.get('x')!.warnings.length === 0, 'ids: the column found by place kept: no warning any more');
+  // the same names in another order: found by their names (not their place)
+  const r4 = evaluateGraph([imp('k', 'Intensity;Wavelength (nm)\n7;400\n8;500\n'), n1[1]], [wire('k', 'x', 'in')]);
+  ok(colOf(r4.get('x'))?.values.join() === '7,8' && r4.get('x')!.warnings.length === 0, 'ids: another Import, the same names in another order: found by name');
+  // a source of another layout (one column): not found, an error (no column taken in its place)
+  ok(!colOf(evaluateGraph([imp('m', 'Only\n1\n2\n'), n1[1]], [wire('m', 'x', 'in')]).get('x')), 'ids: another layout: the column not found, none taken instead');
+
+  // passed on through a node that makes its columns again (Filter rows): the ids kept, the rename followed after it
+  const filt = { id: 'f', type: 'filterrows', position: { x: 0, y: 0 }, data: { ...FILTER_DEFAULTS } } as AppNode;
+  const g5 = [imp('i', A), filt, { ...ext('Intensity'), id: 'x2' } as AppNode];
+  const e5 = [wire('i', 'f', 'in'), wire('f', 'x2', 'in')];
+  const r5 = evaluateGraph(g5, e5);
+  const fo = r5.get('f')!.outputs.out;
+  ok(fo?.t === 'dataset' && fo.v.columns.every((c) => c.id?.startsWith('i~i:s0:c')), 'ids: Filter rows passes the columns’ ids on');
+  const n5 = learnNameIds(g5, r5) ?? g5;
+  const r6 = evaluateGraph(n5.map((n) => (n.id === 'i' ? ({ ...n, data: { ...n.data, edits: { cols: { 1: { name: 'Absorbance' } } } } } as AppNode) : n)), e5);
+  ok(colOf(r6.get('x2'))?.name === 'Absorbance', 'ids: a column renamed before Filter rows still found after it');
+
+  // Columns: its settings and formulas name the columns; renamed before it, or another Import, they stay theirs
+  const colsNode = { id: 'c', type: 'columns', position: { x: 0, y: 0 }, data: { items: [{ from: 'Intensity', name: 'I (a.u.)' }], computed: [{ id: 'c1', name: 'Twice', formula: '2*[Intensity]' }] } } as AppNode;
+  const outNames = (r: NodeResult | undefined) => (r?.outputs.out?.t === 'dataset' ? r.outputs.out.v.columns.map((c) => `${c.name}=${[...c.values].join('/')}`).join(', ') : '');
+  const nc = learnt([imp('i', A), colsNode], [wire('i', 'c', 'in')]);
+  const rc = evaluateGraph(nc.map((n) => (n.id === 'i' ? ({ ...n, data: { ...n.data, edits: { cols: { 1: { name: 'Absorbance' } } } } } as AppNode) : n)), [wire('i', 'c', 'in')]).get('c');
+  ok(outNames(rc) === 'I (a.u.)=1/2/3, Wavelength (nm)=400/500/600, Twice=2/4/6' && !rc!.warnings.length, 'ids: Columns: a column renamed before it keeps its settings and its formula');
+  const rc2 = evaluateGraph([imp('j', B), nc[1]], [wire('j', 'c', 'in')]).get('c');
+  ok(outNames(rc2) === 'I (a.u.)=10/20/30, λ (nm)=400/500/600, Twice=20/40/60' && rc2!.warnings.some((w) => w.includes('found by place')), 'ids: Columns on another Import: its settings on the column at the same place, said');
+  // a list of columns typed (Statistics): a name in it renamed since still found
+  const st = { id: 's', type: 'stats', position: { x: 0, y: 0 }, data: { on: 'columns', cols: 'Intensity' } } as AppNode;
+  const ns = learnt([imp('i', A), st], [wire('i', 's', 'in')]);
+  const rs = evaluateGraph(ns.map((n) => (n.id === 'i' ? ({ ...n, data: { ...n.data, edits: { cols: { 1: { name: 'Absorbance' } } } } } as AppNode) : n)), [wire('i', 's', 'in')]).get('s');
+  ok(rs?.view.statCols?.map((c) => c.name).join() === 'Absorbance' && rs.view.statCols[0].stats?.mean === 2, 'ids: a list of columns (Statistics): a name renamed since still found');
+  // another sheet of the same workbook is not another source: its columns found by name only
+  const two = { id: 'w5', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, textId: 'w5', fileName: 'b.xlsx', sheets: [{ name: 'a', text: 'Intensity\n1\n', excel: true }, { name: 'b', text: 'Other\n2\n', excel: true }] } } as AppNode;
+  const na = learnt([two, { ...ext('Intensity', { index: 0, sheet: 'a' }), id: 'xa' } as AppNode], [wire('w5', 'xa', 'in', 'book')]);
+  const onB = { ...na[1], data: { ...na[1].data, sheet: 'b' } } as AppNode;
+  ok(!colOf(evaluateGraph([two, onB], [wire('w5', 'xa', 'in', 'book')]).get('xa')), 'ids: another sheet of the same file: a column not taken by its place');
+
+  // two columns of the same name: the one at the place given (Extract column), ids not mixed up
+  const r7 = evaluateGraph([imp('d', 'Y;Y\n1;5\n2;6\n'), ext('Y')], [wire('d', 'x', 'in')]);
+  ok(colOf(r7.get('x'))?.values.join() === '5,6', 'ids: two columns of the same name: the one at its place');
+
+  // sheets: a workbook's sheet renamed, still found by its id; another workbook: by its place; none: an error, not the first
+  const book = (id: string, names: string[]) => ({ id, type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, textId: id, fileName: 'b.xlsx', sheets: names.map((name, k) => ({ name, text: `v\n${k + 1}\n`, excel: true })) } }) as AppNode;
+  const xs = (sheet: string) => ({ ...ext('v', { index: 0, sheet }), id: 'xs' }) as AppNode;
+  const e8 = (src: string) => [wire(src, 'xs', 'in', 'book')];
+  const n8 = learnt([book('w', ['first', 'second']), xs('second')], e8('w'));
+  ok(JSON.stringify(ids(n8[1])?.sheets?.second) === '["w~w:s1"]', 'ids: the sheet a node takes learned with its id');
+  const r9 = evaluateGraph([book('w2', ['one', 'two']), n8[1]], e8('w2'));
+  ok(colOf(r9.get('xs'))?.values.join() === '2' && r9.get('xs')!.warnings.some((w) => w.includes('Sheet found by place') && w.includes('“second” → “two”')), 'ids: another workbook: the sheet found by its place, said');
+  const r10 = evaluateGraph([book('w3', ['solo']), n8[1]], e8('w3'));
+  ok(!colOf(r10.get('xs')) && r10.get('xs')!.errors.some((e) => e.includes('No sheet “second”')), 'ids: a sheet not there: an error, not the first sheet instead');
+  // Batch over columns: a sheet not there is said (no longer the first sheet in its place)
+  const bo = { id: 'bo', type: 'subgraph', position: { x: 0, y: 0 }, data: { name: 'Batch', nodes: [], edges: [], inputs: [{ id: 'in-0', label: 'table', type: 'dataset' }], outputs: [], batch: { over: 'columns', sheet: 'gone' } } } as AppNode;
+  const rb = evaluateGraph([book('w4', ['a', 'b']), bo], [wire('w4', 'bo', 'in-0', 'book')]).get('bo')!;
+  ok(rb.errors.some((e) => e.includes('no sheet “gone”')), 'ids: Batch over columns: a sheet not there is an error');
 }
 
 // ---- examples: evaluated without errors, saved and read back ----

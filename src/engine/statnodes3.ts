@@ -468,8 +468,8 @@ export function stat3Levels(ds: Dataset, n: { type: string; data: unknown }): Re
   const res: Record<string, string[]> = { outcome: lv(d.y) };
   if (d.xs.trim()) {
     const names = ds.columns.map((c) => c.name);
-    const fset = new Set(d.factors.trim() ? pick(d.factors, names, true).found.map((j) => names[j]) : []);
-    for (const j of pick(d.xs, names, true).found) {
+    const fset = new Set(d.factors.trim() ? pick(d.factors, names, true, ds.columns).found.map((j) => names[j]) : []);
+    for (const j of pick(d.xs, names, true, ds.columns).found) {
       const c = ds.columns[j];
       if (c.name !== d.y && (isText(c) || fset.has(c.name))) res[c.name] = lv(c.name);
     }

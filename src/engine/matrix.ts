@@ -1285,7 +1285,7 @@ function baseMatrix(d: MatSource, ds: Dataset | undefined): { M: Matrix; warning
     const numeric = (c: Column) => c.values.some(Number.isFinite);
     let cols: Column[];
     if (d.zs.trim()) {
-      const p = pick(d.zs, all.map((c) => c.name), true);
+      const p = pick(d.zs, all.map((c) => c.name), true, all);
       if (p.missing.length) return `Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`;
       cols = p.found.map((j) => all[j]);
     } else cols = all.filter((c, j) => c !== rowCol && numeric(c) && roleOf(all, j) !== 'label' && roleOf(all, j) !== 'none');

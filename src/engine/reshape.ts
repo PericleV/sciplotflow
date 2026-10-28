@@ -4,6 +4,7 @@ import { pick } from './extract.ts';
 import { joined, restarts, splitRows, takeRows, type CycleOpts } from './split.ts';
 import { parseRows } from './rows.ts';
 import { column, findColumn, fmtNum, roleOf, valueText, type Column, type ColumnRole, type Dataset, type Workbook } from './table.ts';
+import { findSheet } from './refs.ts';
 import { maxOf } from './minmax.ts';
 
 // ---- Split into columns ----
@@ -195,7 +196,7 @@ export function unstack(ds: Dataset, s: UnstackSpec): UnstackResult | string {
   const names = cols.map((c) => c.name);
   let yIdx: number[];
   if (s.ys.trim()) {
-    const p = pick(s.ys, names, true);
+    const p = pick(s.ys, names, true, cols);
     if (p.missing.length) return `Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`;
     yIdx = p.found.filter((j) => j !== xi);
   } else yIdx = cols.map((_, j) => j).filter((j) => j !== xi && cols[j] !== groupCol && cols[j] !== F && roleOf(cols, j) !== 'none' && roleOf(cols, j) !== 'x');
@@ -706,7 +707,7 @@ function tableOf(i: CombineInput, s: CombinePort | undefined): Dataset | string 
   if (i.v.t === 'column') return { name: i.v.v.name, columns: [i.v.v] };
   if (i.v.t === 'dataset') return i.v.v;
   const book = i.v.v;
-  const sheet = s?.sheet ? book.sheets.find((q) => q.name === s.sheet) : book.sheets[0];
+  const sheet = s?.sheet ? findSheet(book.sheets, s.sheet) : book.sheets[0];
   return sheet ?? `${portLetter(i.port)}: no sheet “${s?.sheet ?? ''}” in the workbook.`;
 }
 // the column an input gives: itself, the one chosen, else its first Y (else its first column that is not X)

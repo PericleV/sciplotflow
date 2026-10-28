@@ -6,6 +6,7 @@ import { useEffect, useState, type ComponentType, type CSSProperties } from 'rea
 import { useReactFlow, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
 import { editCaption, useEditingCaption } from './captionStore.ts';
 import { useNodeResult } from '../engine/engine.ts';
+import { NameAliases } from './aliasStore.ts';
 import { nodeColor, nodeTitle, textOn } from '../nodeColors.ts';
 import type { AppNode } from '../types.ts';
 import { ErrorBoundary } from '../ErrorBoundary.tsx';
@@ -47,6 +48,8 @@ function Caption({ id, caption }: { id: string; caption?: string }) {
     </div>
   ) : null;
 }
+
+const NO_ALIASES = {};
 
 export function withShell<P extends NodeProps<AppNode>>(View: ComponentType<P>) {
   function Shell(props: P) {
@@ -110,7 +113,9 @@ export function withShell<P extends NodeProps<AppNode>>(View: ComponentType<P>) 
             )
           }
         >
-          <View {...props} />
+          <NameAliases.Provider value={result?.found?.aliases ?? NO_ALIASES}>
+            <View {...props} />
+          </NameAliases.Provider>
         </ErrorBoundary>
       </div>
     );

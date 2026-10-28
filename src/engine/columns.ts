@@ -13,6 +13,7 @@ import { pick } from './extract.ts';
 import { isCol, withColumnFunctions } from './colfns.ts';
 import { GEN_SPEC_DEFAULTS, generatedValues, type GenSpec } from './gencol.ts';
 import { roleOf, type Column, type ColumnRole, type Dataset, type Scalar } from './table.ts';
+import { resolve } from './refs.ts';
 
 // one column's own settings: by its name (after the names row; a column added: '=' and its id): its new name,
 // designation, kept or not
@@ -58,6 +59,23 @@ const cellOf = (c: Column, i: number) => {
   const v = c.values[i];
   return Number.isFinite(v) ? String(v) : '';
 };
+
+// The names the settings know the data's columns by: as they come in; a column renamed since (or, another source of the
+// same layout connected, at the place of one): the name the settings give it (refs.ts) — its settings and formulas stay
+// its own.
+function knownNames(cols: Column[], s: ColumnsSpec): string[] {
+  const known = cols.map((c) => c.name);
+  const named = new Set<string>();
+  for (const it of s.items ?? []) if (!it.from.startsWith('=') && !it.from.startsWith('{')) named.add(it.from);
+  for (const n of s.renamePick ?? []) named.add(n);
+  for (const text of [...(s.computed ?? []).flatMap((c) => [c.formula ?? '', c.copy ?? '']), s.namesFrom?.col ?? '']) for (const m of text.matchAll(REF)) if (m[1] !== undefined && !m[1].startsWith('=')) named.add(m[1].replace(/^@/, ''));
+  for (const name of named) {
+    const c = resolve('cols', cols, name);
+    const j = c ? cols.indexOf(c) : -1;
+    if (j >= 0 && known[j] === c!.name && c!.name !== name) known[j] = name;
+  }
+  return known;
+}
 
 // ---- the references of a formula: [key] a column of the data or added (=id), [@key] the same written by its letter,
 // {A} an input ----
@@ -188,9 +206,10 @@ export function columnsOf(ds: Dataset, s: ColumnsSpec, inputs: Inputs = {}): Col
   }
   const dataCount = cols.length;
   const rows = Math.max(0, ...cols.map((c) => c.values.length));
+  const known = knownNames(cols, s);
   // the columns by key: those of the data by name, those added by '=' and their id, the inputs by {letter}
   const byKey = new Map<string, Column | Scalar>();
-  cols.forEach((c) => !byKey.has(c.name) && byKey.set(c.name, c));
+  cols.forEach((c, j) => !byKey.has(known[j]) && byKey.set(known[j], c));
   const get = (ref: string): Column | Scalar | null => {
     const m = /^\[([^\]]+)\]$|^\{([A-Z]{1,2})\}$/.exec(ref.trim());
     if (!m) return null;
@@ -215,7 +234,7 @@ export function columnsOf(ds: Dataset, s: ColumnsSpec, inputs: Inputs = {}): Col
     return typeof r === 'string' ? [] : [[`{${letter}}`, r]];
   });
   const addedEnd = dataCount + added.length;
-  const keys = [...cols.map((c) => c.name), ...(s.computed ?? []).map((c) => `=${c.id}`), ...fromInputs.map(([k]) => k)];
+  const keys = [...known, ...(s.computed ?? []).map((c) => `=${c.id}`), ...fromInputs.map(([k]) => k)];
   const all = [...cols, ...added, ...fromInputs.map(([, c]) => c)];
   // the names from a column: its values given in order to the columns chosen
   const given = new Map<number, string>();
@@ -230,7 +249,7 @@ export function columnsOf(ds: Dataset, s: ColumnsSpec, inputs: Inputs = {}): Col
       const values = Array.from({ length: src.values.length }, (_, i) => cellOf(src, i)).filter(Boolean);
       let targets: number[];
       if (nf.to === 'list') {
-        const p = pick(nf.list ?? '', cols.map((c) => c.name), true);
+        const p = pick(nf.list ?? '', known, true);
         if (p.missing.length) warnings.push(`Names from a column: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the data.`);
         targets = p.found;
       } else targets = cols.map((_, j) => j).filter((j) => j !== self && (nf.to !== 'y' || roleOf(cols, j) === 'y'));
@@ -242,10 +261,10 @@ export function columnsOf(ds: Dataset, s: ColumnsSpec, inputs: Inputs = {}): Col
   const on = s.renameOn ?? 'all';
   let chosen: number[];
   if (on === 'list') {
-    const p = pick(s.renameList ?? '', cols.map((c) => c.name), true);
+    const p = pick(s.renameList ?? '', known, true);
     if (p.missing.length) warnings.push(`Rename: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the data.`);
     chosen = p.found;
-  } else if (on === 'ticked') chosen = cols.map((_, j) => j).filter((j) => (s.renamePick ?? []).includes(cols[j].name));
+  } else if (on === 'ticked') chosen = cols.map((_, j) => j).filter((j) => (s.renamePick ?? []).includes(known[j]));
   else chosen = cols.map((_, j) => j).filter((j) => on !== 'y' || roleOf(cols, j) === 'y');
   const target = new Set(chosen);
   const listNames = nameList(s.names ?? '');

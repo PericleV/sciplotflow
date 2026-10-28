@@ -29,6 +29,7 @@ import { NodeOptions } from './NodeOptions.tsx';
 import { parsePoints, pointsText } from './points.ts';
 import { Check, Field, InPort, Messages, NumInput, OutPort, Select, TextInput } from './ui.tsx';
 import { sheetOptions } from './sheetOptions.ts';
+import { useShownName } from './aliasStore.ts';
 import { maxOf } from '../engine/minmax.ts';
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, ClipboardPaste, Copy, CopyPlus, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
@@ -40,8 +41,10 @@ const PLOT_W = 600;
 
 // A column of a dataset chosen for a curve: the list built when the picker is opened (a Plot of many curves, beside a
 // dataset of many columns, has thousands of them), only the column chosen before that.
-function ColPick({ value, list, first, title, onChange }: { value: string; list: string[]; first: string; title: string; onChange: (v: string) => void }) {
+function ColPick({ value: asked, list, first, title, onChange }: { value: string; list: string[]; first: string; title: string; onChange: (v: string) => void }) {
   const [open, setOpen] = useState(false);
+  // (renamed since it was chosen: shown by its name now)
+  const value = useShownName(asked, (v) => list.includes(v));
   const shown = open ? list : value && list.includes(value) ? [value] : [];
   return (
     <select className="nodrag col-pick" value={value} title={title} onPointerDown={() => setOpen(true)} onFocus={() => setOpen(true)} onChange={(e) => onChange(e.target.value)}>
@@ -244,7 +247,8 @@ export function Plot1DNodeView({ id, data }: NodeProps<Plot1DNode>) {
     if (!(own || hasData) || connected(handle)) return fallback;
     const col = rows[k].cols?.[part];
     const auto = own ? (part === 'y' || part === 'x' ? 'from its data' : 'from its data, else none') : part === 'y' ? 'choose it in the panel' : part === 'x' && k > 0 ? 'as curve 1' : part === 'x' ? 'row number' : 'none';
-    return <span className={`ellipsis${col ? '' : ' muted'}`}>{col ?? auto}</span>;
+    // (renamed since it was chosen: its name now)
+    return <span className={`ellipsis${col ? '' : ' muted'}`}>{col ? (r?.found?.aliases.cols?.[col] ?? col) : auto}</span>;
   };
   const fig = r?.view.figure;
   const pos = fig?.axes[0]?.style.pos;

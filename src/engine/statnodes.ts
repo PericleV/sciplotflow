@@ -33,7 +33,7 @@ const finite = (c: Column) => Array.from(c.values).filter(Number.isFinite);
 export function chosen(ds: Dataset, spec: string): Column[] | string {
   const cols = ds.columns;
   if (spec.trim()) {
-    const p = pick(spec, cols.map((c) => c.name), true);
+    const p = pick(spec, cols.map((c) => c.name), true, cols);
     if (p.missing.length) return `Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`;
     return p.found.map((j) => cols[j]);
   }

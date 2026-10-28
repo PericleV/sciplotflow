@@ -43,7 +43,7 @@ export function convertTable(ds: Dataset, d: ConvertData): { dataset: Dataset; w
   const txt: ToTextRules = { ...TO_TEXT_DEFAULTS, ...d.txt };
   // (none written: nothing converted until asked — the node lists the columns whose text looks like numbers)
   if (!d.cols.trim()) return { dataset: ds, warnings: [], changed: [] };
-  const p = pick(d.cols, ds.columns.map((c) => c.name), true);
+  const p = pick(d.cols, ds.columns.map((c) => c.name), true, ds.columns);
   if (p.missing.length) return `Columns: not found: ${p.missing.join(', ')}.`;
   const chosen = p.found;
   const warnings: string[] = [];

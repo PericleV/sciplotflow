@@ -22,6 +22,7 @@ import { legendLayout } from '../figure/legendLayout.ts';
 import { columnLetter, readTable, type CsvResult } from './csv.ts';
 import { curveColumns, digest, figPort, outValue, toPy, type PyJob, type PyResult, type PyValue } from './python.ts';
 import { applySheet, hasEdits, readSheet, type SheetMap } from './sheet.ts';
+import { findings, findSheet, foundAs, hasFindings, importSource, inScope, missKey, newScope, sheetId, type DataRefs, type Resolved } from './refs.ts';
 import { applyFormulas } from './sheetFormula.ts';
 import { flattenGroups, GROUP_IN, GROUP_OUT } from './subgraph.ts';
 import { columnRuns, fillNames, gather, gatherOne, orderFiles, portNames, readText, resultOf, runNames, skipSteps, withOwn, type FileRun } from './batch.ts';
@@ -230,13 +231,15 @@ export type NodeView = {
   batch?: { files: number; failed: { name: string; errors: string[] }[]; list?: { name: string; read: string; errors: string[]; own?: string[] }[]; shown?: number; over?: 'columns'; sheets?: string[]; cols?: string[] };
 };
 // inner: a Batch's steps as they ran on its first file (shown when the batch is opened), by their ids inside it
-export type NodeResult = { rev: number; outputs: Record<string, Value>; errors: string[]; warnings: string[]; view: NodeView; inner?: Map<string, NodeResult> };
+// found: what its column and sheet names were found as (refs.ts): the ids to keep, the names shown so, found by their place
+export type NodeResult = { rev: number; outputs: Record<string, Value>; errors: string[]; warnings: string[]; view: NodeView; inner?: Map<string, NodeResult>; found?: Resolved };
 
 type Inputs = Map<string, { from: string; handle: string; value: Value | undefined }[]>;
 // py: the results of the Python scripts (run on the main thread's side, given here by node id; seq: they changed)
 // sub: the caches of the runs of a Batch (by the batch's id and the file), kept between evaluations
 // math: the sizes of the formulas (math/sizes.ts) the result was measured with (absent: it measured none)
-export type EvalCache = { entries: Map<string, { key: string; result: NodeResult; math?: number }>; rev: number; py: Map<string, { seq: number; result: PyResult }>; sub?: Map<string, EvalCache> };
+// (refs: what its names not found as written were found by, refs.ts — the result kept while they stay the same)
+export type EvalCache = { entries: Map<string, { key: string; result: NodeResult; math?: number; refs?: string }>; rev: number; py: Map<string, { seq: number; result: PyResult }>; sub?: Map<string, EvalCache> };
 export const newCache = (): EvalCache => ({ entries: new Map(), rev: 0, py: new Map() });
 // the Python results of the evaluation under way (pythonNode reads them by the node's id)
 let pyNow: EvalCache['py'] = new Map();
@@ -250,7 +253,8 @@ export function logicalData(n: AppNode): unknown {
   // a group: what is inside, not where the nodes inside are drawn
   if (n.type === 'subgraph') return [n.data.inputs, n.data.outputs, n.data.nodes.map((x) => [x.id, x.type, logicalData(x)]), n.data.edges.map((e) => [e.source, e.sourceHandle, e.target, e.targetHandle]), n.data.batch ?? null];
   // (how it is shown: its caption, folded, how many rows its preview shows)
-  const { caption: _c, collapsed: _k, previewRows: _p, ...rest } = n.data as Record<string, unknown>;
+  // (the ids of its names, nameIds: they decide only what is not found as written — the cache checks them, refs.ts)
+  const { caption: _c, collapsed: _k, previewRows: _p, nameIds: _r, ...rest } = n.data as Record<string, unknown>;
   if (n.type === 'import') {
     delete rest.text;
     delete rest.sheets;
@@ -569,7 +573,7 @@ function plot(n: { id: string; data: Plot1DData }, inputs: Inputs): Out {
     // Plot's
     const name = `curve ${k + 1}`;
     const sheetName = rows[k].sheet;
-    const sheet = sheetName && sheets.length ? sheets.find((q) => q.name === sheetName) : undefined;
+    const sheet = sheetName && sheets.length ? findSheet(sheets, sheetName) : undefined;
     if (sheetName && sheets.length && !sheet) {
       warnings.push(`${name}: no sheet “${sheetName}” in the workbook.`);
       continue;
@@ -837,7 +841,7 @@ function histogramNode(n: { id: string; data: HistogramData }, inputs: Inputs): 
   const available = ds.columns.map(colInfo);
   let cols: Column[];
   if (d.ys.trim()) {
-    const p = pick(d.ys, ds.columns.map((c) => c.name), true);
+    const p = pick(d.ys, ds.columns.map((c) => c.name), true, ds.columns);
     if (p.missing.length) return { errors: [`Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`], view: { available } };
     cols = p.found.map((j) => ds.columns[j]);
   } else {
@@ -891,7 +895,7 @@ function barChartNode(n: { id: string; data: BarChartData }, inputs: Inputs): Ou
   const available = all.map(colInfo);
   const by = (nm: string) => (nm ? findColumn(all, nm) : undefined);
   const list = (spec: string) => {
-    const p = pick(spec, all.map((c) => c.name), true);
+    const p = pick(spec, all.map((c) => c.name), true, all);
     return p.missing.length ? `Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.` : p.found.map((j) => all[j]);
   };
   const roles = curvesByRole(all).curves;
@@ -1030,7 +1034,7 @@ function boxViolinNode(n: { id: string; data: BoxViolinData }, inputs: Inputs): 
   } else {
     let cols: Column[];
     if (d.ys.trim()) {
-      const p = pick(d.ys, all.map((c) => c.name), true);
+      const p = pick(d.ys, all.map((c) => c.name), true, all);
       if (p.missing.length) return { errors: [`Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`], view: { available } };
       cols = p.found.map((j) => all[j]);
     } else {
@@ -1119,7 +1123,7 @@ function probPlotNode(n: { id: string; data: ProbPlotData }, inputs: Inputs): Ou
   } else {
     let cols: Column[];
     if (d.ys.trim()) {
-      const p = pick(d.ys, all.map((c) => c.name), true);
+      const p = pick(d.ys, all.map((c) => c.name), true, all);
       if (p.missing.length) return { errors: [`Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`], view: { available } };
       cols = p.found.map((j) => all[j]);
     } else {
@@ -1218,7 +1222,7 @@ function pieNode(n: { id: string; data: PieData }, inputs: Inputs): Out {
   } else {
     let ys: Column[];
     if (d.ys.trim()) {
-      const p = pick(d.ys, all.map((c) => c.name), true);
+      const p = pick(d.ys, all.map((c) => c.name), true, all);
       if (p.missing.length) return { errors: [`Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`], view: { available } };
       ys = p.found.map((j) => all[j]);
     } else {
@@ -1257,7 +1261,7 @@ function readGrid(d: GridInput, all: Column[]): { g: Grid; names: { x: string; y
     if (d.yCol && !by(d.yCol)) return { error: `No column “${d.yCol}”.` };
     let zs: Column[];
     if (d.zs.trim()) {
-      const p = pick(d.zs, all.map((c) => c.name), true);
+      const p = pick(d.zs, all.map((c) => c.name), true, all);
       if (p.missing.length) return { error: `Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.` };
       zs = p.found.map((j) => all[j]);
     } else zs = numeric.filter((c) => c !== yc);
@@ -1540,7 +1544,7 @@ function polarNode(n: { id: string; data: PolarData }, inputs: Inputs): Out {
   const by = (nm: string) => (nm ? findColumn(all, nm) : undefined);
   const list = (spec: string, fallback: Column[]): Column[] | string => {
     if (!spec.trim()) return fallback;
-    const p = pick(spec, all.map((c) => c.name), true);
+    const p = pick(spec, all.map((c) => c.name), true, all);
     return p.missing.length ? `Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.` : p.found.map((j) => all[j]);
   };
   const numeric = all.filter((c) => c.values.some(Number.isFinite));
@@ -1590,7 +1594,7 @@ function scatterMatrixNode(n: { id: string; data: ScatterMatrixData }, inputs: I
   if (d.group && !G) return { errors: [`No column “${d.group}”.`], view: { available } };
   let cols: Column[];
   if (d.cols.trim()) {
-    const p = pick(d.cols, all.map((c) => c.name), true);
+    const p = pick(d.cols, all.map((c) => c.name), true, all);
     if (p.missing.length) return { errors: [`Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`], view: { available } };
     cols = p.found.map((j) => all[j]);
   } else {
@@ -1681,7 +1685,7 @@ function waterfallNode(n: { id: string; data: WaterfallData }, inputs: Inputs): 
   const roles = curvesByRole(all).curves;
   let Ys: Column[];
   if (d.ys.trim()) {
-    const p = pick(d.ys, all.map((c) => c.name), true);
+    const p = pick(d.ys, all.map((c) => c.name), true, all);
     if (p.missing.length) return { errors: [`Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`], view: { available } };
     Ys = p.found.map((j) => all[j]);
   } else Ys = all.filter((c, j) => roleOf(all, j) === 'y' && c.values.some(Number.isFinite));
@@ -1745,7 +1749,7 @@ function plot3dNode(n: { id: string; data: Plot3DData }, inputs: Inputs): Out {
     const roles = curvesByRole(all).curves;
     let Ys: Column[];
     if (d.ys.trim()) {
-      const p = pick(d.ys, all.map((c) => c.name), true);
+      const p = pick(d.ys, all.map((c) => c.name), true, all);
       if (p.missing.length) return { errors: [`Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`], view: { available } };
       Ys = p.found.map((j) => all[j]);
     } else Ys = all.filter((c, j) => roleOf(all, j) === 'y' && c.values.some(Number.isFinite));
@@ -1810,7 +1814,7 @@ function peakWidthNode(d: PeakWidthData, v: Value | undefined): Out {
   const available = cols.map(colInfo);
   let Ys: Column[];
   if (d.ys.trim()) {
-    const p = pick(d.ys, cols.map((c) => c.name), true);
+    const p = pick(d.ys, cols.map((c) => c.name), true, cols);
     if (p.missing.length) return { errors: [`Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`], view: { available } };
     Ys = p.found.map((j) => cols[j]);
   } else Ys = cols.filter((c, j) => roleOf(cols, j) === 'y' && c.values.some(Number.isFinite));
@@ -2003,7 +2007,7 @@ function curveMathNode(d: CurveMathData, inputs: Inputs): Out {
     if (v?.t === 'dataset') return { ds: v.v };
     if (v?.t !== 'workbook') return {};
     const sheets = v.v.sheets.map((s) => s.name);
-    const s = sheet ? v.v.sheets.find((q) => q.name === sheet) : v.v.sheets[0];
+    const s = sheet ? findSheet(v.v.sheets, sheet) : v.v.sheets[0];
     return s ? { ds: s, sheets } : { sheets, error: `No sheet “${sheet}” in the workbook.` };
   };
   const A = dsOf(one('a'), d.sheetA);
@@ -3184,7 +3188,7 @@ function statColumns(ds: Dataset, spec: string | undefined, xName: string | unde
   if (xName && xName !== '-' && !X) warnings.push(`No column “${xName}” (X) in the dataset.`);
   let cols: Column[];
   if (spec?.trim()) {
-    const p = pick(spec, all.map((c) => c.name), true);
+    const p = pick(spec, all.map((c) => c.name), true, all);
     if (p.missing.length) warnings.push(`Columns not found: ${p.missing.join(', ')}.`);
     cols = p.found.map((k) => all[k]);
   } else {
@@ -3465,7 +3469,7 @@ function regressionFitNode(d: FitNodeData, v: Extract<Value, { t: 'dataset' }>, 
   if (!Y) return { view: { available, waiting: 'Choose the response Y.' } };
   let P: Column[];
   if (d.predictors?.trim()) {
-    const p = pick(d.predictors, cols.map((c) => c.name), true);
+    const p = pick(d.predictors, cols.map((c) => c.name), true, cols);
     if (p.missing.length) return { errors: [`Predictors: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`], view: { available } };
     P = p.found.map((j) => cols[j]).filter((c) => c !== Y);
   } else P = cols.filter((c, j) => c !== Y && roleOf(cols, j) !== 'none' && Array.from(c.values).some(Number.isFinite));
@@ -3785,7 +3789,7 @@ function calculusNode(d: CalculusData, v: Value | undefined, baseIn: Value | und
     available = cols.map(colInfo);
     const names = cols.map((c) => c.name);
     if (d.ys.trim()) {
-      const p = pick(d.ys, names, true);
+      const p = pick(d.ys, names, true, cols);
       if (p.missing.length) return { errors: [`Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`], view: { available } };
       Ys = p.found.map((j) => cols[j]);
     } else Ys = cols.filter((_, j) => roleOf(cols, j) === 'y');
@@ -3964,7 +3968,7 @@ function peakNode(d0: PeakData, v: Value | undefined): Out {
   const available = cols.map(colInfo);
   let Ys: Column[];
   if (d.ys.trim()) {
-    const p = pick(d.ys, cols.map((c) => c.name), true);
+    const p = pick(d.ys, cols.map((c) => c.name), true, cols);
     if (p.missing.length) return { errors: [`Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`], view: { available } };
     Ys = p.found.map((j) => cols[j]);
   } else Ys = cols.filter((_, j) => roleOf(cols, j) === 'y');
@@ -4173,7 +4177,7 @@ function pickNode(d: PickData, v: Value | undefined): Out {
     const cols = v.v.columns;
     available = cols.map(colInfo);
     if (d.ys.trim()) {
-      const p = pick(d.ys, cols.map((c) => c.name), true);
+      const p = pick(d.ys, cols.map((c) => c.name), true, cols);
       if (p.missing.length) return { errors: [`Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`], view: { available } };
       Ys = p.found.map((j) => cols[j]);
     } else Ys = cols.filter((_, j) => roleOf(cols, j) === 'y');
@@ -4201,7 +4205,7 @@ function pickNode(d: PickData, v: Value | undefined): Out {
   let asked = others;
   if (also === 'none') asked = [];
   else if (also !== 'all') {
-    const p = pick(also, others.map((c) => c.name), true);
+    const p = pick(also, others.map((c) => c.name), true, others);
     if (p.missing.length) warnings.push(`Also read: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`);
     asked = p.found.map((j) => others[j]);
   }
@@ -4422,7 +4426,7 @@ const columnsHeadOf = (ds: Dataset) => {
 function columnsEverySheet(book: Workbook, d: ColumnsData, vals: Record<string, Column | Scalar>, ins: MathInput[]): Out {
   const { sheet: _s, perSheet, sheets: own, editSheet, ...common } = d;
   const specOf = (name: string): ColumnsSpec => (perSheet === 'own' ? (own?.[name] ?? common) : common);
-  const edited = book.sheets.find((q) => q.name === editSheet) ?? book.sheets[0];
+  const edited = (editSheet ? findSheet(book.sheets, editSheet) : undefined) ?? book.sheets[0];
   if (!edited) return { errors: ['The workbook has no sheets.'], view: { inputs: ins } };
   const warnings: string[] = [];
   const out: Dataset[] = [];
@@ -4463,7 +4467,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
         const k = Math.min(d.sheets.length - 1, Math.max(0, Math.floor(d.sheet ?? 0)));
         const sheets = d.sheets.map((s, j) => {
           const r = readTable(s.text, s.excel ? { ...d.csv, delimiter: '\t', decimal: '.' } : d.csv, s.name, s.name);
-          const { dataset, map } = applySheet(r.dataset, d.sheetEdits?.[s.name], r.decimal);
+          const { dataset, map } = applySheet(r.dataset, d.sheetEdits?.[s.name], r.decimal, sheetId(importSource(n.id, d.textId), j));
           if (j === k) shown = { csv: r, map };
           warnings.push(...r.warnings.map((w) => `${s.name}: ${w}`));
           return { ...dataset, name: s.name };
@@ -4479,7 +4483,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       const name = d.name || d.fileName.replace(/\.[^.]+$/, '') || 'data';
       const r = d.text ? readTable(d.text, d.csv, name, d.fileName) : null;
       // the worksheet: the changes made by hand, over the table as read
-      const { dataset, map } = applySheet(r?.dataset ?? { name, columns: [] }, d.edits, r?.decimal ?? (d.csv.decimal === ',' ? ',' : '.'));
+      const { dataset, map } = applySheet(r?.dataset ?? { name, columns: [] }, d.edits, r?.decimal ?? (d.csv.decimal === ',' ? ',' : '.'), sheetId(importSource(n.id, d.textId), 0));
       return { outputs: { out: { t: 'dataset', v: dataset } }, warnings: r?.warnings ?? [], view: { ...(r ? { csv: r } : {}), sheet: map } };
     }
     case 'book': {
@@ -4575,7 +4579,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
         return f.columns;
       };
       const sheets = own.map((s, j) => {
-        const r = applySheet(readSheet(s.text, s.name), s.edits, '.');
+        const r = applySheet(readSheet(s.text, s.name), s.edits, '.', sheetId(n.id, j));
         const got = onSheet.get(s.name);
         if (!got) {
           kinds.push('own');
@@ -4593,7 +4597,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
           keys = out.keys;
           if (ownUsed) map = r.map;
         }
-        return { name: s.name, columns: ownUsed ? withFormulas(s, out.columns, out.keys) : laidRows(s.name, out.columns, j === k) };
+        return { name: s.name, id: sheetId(n.id, j), columns: ownUsed ? withFormulas(s, out.columns, out.keys) : laidRows(s.name, out.columns, j === k) };
       });
       for (const s of inSheets) {
         const nm = s.name;
@@ -4613,7 +4617,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       let sheets: string[] | undefined;
       if (v.t === 'workbook') {
         sheets = v.v.sheets.map((s) => s.name);
-        const s = n.data.sheet ? v.v.sheets.find((x) => x.name === n.data.sheet) : v.v.sheets[0];
+        const s = n.data.sheet ? findSheet(v.v.sheets, n.data.sheet) : v.v.sheets[0];
         if (!s) return { errors: [`No sheet “${n.data.sheet}” in the workbook.`], view: { sheets } };
         ds = s;
       } else ds = v.v;
@@ -4621,7 +4625,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       const available = cols.map(colInfo);
       if (!cols.length) return { errors: ['The dataset has no columns.'], view: { available, sheets } };
       const { column: name, index } = n.data;
-      const c = !name ? cols[0] : cols[index]?.name === name ? cols[index] : findColumn(cols, name);
+      const c = !name ? cols[0] : cols[index]?.name === name ? foundAs('cols', name, cols[index]) : findColumn(cols, name);
       if (!c) return { errors: [`No column “${name}” in the ${sheets ? 'sheet' : 'dataset'}.`], view: { available, sheets } };
       // the rows chosen (all, ranges, a list, where conditions are true), of the rows of the column; X: the designated one
       if (n.data.rows) {
@@ -4986,7 +4990,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       const combineInputs = ins.map((x) => {
         const sheets = x.v.t === 'workbook' ? x.v.v.sheets : undefined;
         const want = settings.ports[x.port]?.sheet;
-        const t = x.v.t === 'column' ? { name: x.v.v.name, columns: [x.v.v] } : x.v.t === 'dataset' ? x.v.v : ((want && sheets?.find((q) => q.name === want)) || sheets?.[0] || { name: '', columns: [] });
+        const t = x.v.t === 'column' ? { name: x.v.v.name, columns: [x.v.v] } : x.v.t === 'dataset' ? x.v.v : ((want && sheets && findSheet(sheets, want)) || sheets?.[0] || { name: '', columns: [] });
         allCols.push(...t.columns);
         return { port: x.port, letter: columnLetter(x.port), kind: x.v.t, name: x.v.t === 'column' ? titleOf(x.v.v) : x.v.v.name, rows: Math.max(0, maxOf(t.columns.map((c) => c.values.length))), cols: t.columns.length, columns: t.columns.map((c) => c.name), ...(sheets ? { sheets: sheets.map((q) => q.name) } : {}) };
       });
@@ -5265,8 +5269,8 @@ function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cac
   // over columns: the table (a workbook: the sheet chosen), every column chosen a run with its X
   let colView: { sheets?: string[]; cols: string[] } | undefined;
   if (overCols) {
-    const src = v.t === 'workbook' ? (v.v.sheets.find((q) => q.name === spec.sheet) ?? v.v.sheets[0]) : v.t === 'dataset' ? v.v : undefined;
-    if (!src) return { errors: ['Over columns: connect a table (a dataset, or a workbook: its sheet chosen).'] };
+    const src = v.t === 'workbook' ? (spec.sheet ? findSheet(v.v.sheets, spec.sheet) : v.v.sheets[0]) : v.t === 'dataset' ? v.v : undefined;
+    if (!src) return { errors: [v.t === 'workbook' && spec.sheet ? `Over columns: no sheet “${spec.sheet}” in the workbook.` : 'Over columns: connect a table (a dataset, or a workbook: its sheet chosen).'] };
     colView = { ...(v.t === 'workbook' ? { sheets: v.v.sheets.map((q) => q.name) } : {}), cols: src.columns.map((c) => c.name) };
     const key = JSON.stringify([spec.cols ?? '', spec.xFrom ?? '', spec.x ?? '']);
     let m = columnRunsMemo.get(src);
@@ -5369,6 +5373,77 @@ function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cac
 
 // Evaluates a graph without groups (a Batch is one node here); `cache` keeps the results between calls; `seed`: results
 // given beforehand (the input of a Batch's steps: the file).
+// The names found at their place in a source that changed (another file, another node): said, until kept (refs.ts).
+function placeWarnings(f: Resolved): string[] {
+  const list = (kind: 'cols' | 'sheets') => f.place.filter((p) => p.kind === kind).map((p) => `“${p.asked}” → “${p.got}”`);
+  const say = (what: string, l: string[]) => (l.length ? [`${what}${l.length > 1 ? 's' : ''} found by place (the data changed): ${l.join(', ')}. Keep ${l.length > 1 ? 'them' : 'it'}, or choose another.`] : []);
+  return [...say('Column', list('cols')), ...say('Sheet', list('sheets'))];
+}
+
+// The columns and sheets a node gives without an id take the id of the one of its inputs they come from (the same
+// name, the only one so named; a sheet's columns from the input sheet of the same id or name): a node that makes its
+// columns again (Filter rows, Smooth …) passes their ids on.
+function inheritIds(outputs: Record<string, Value>, inputs: Inputs): Record<string, Value> {
+  const sheets: Dataset[] = [];
+  const loose: Column[] = [];
+  for (const l of inputs.values())
+    for (const { value: v } of l) {
+      if (v?.t === 'dataset') sheets.push(v.v);
+      else if (v?.t === 'workbook') sheets.push(...v.v.sheets);
+      else if (v?.t === 'column') loose.push(v.v);
+    }
+  if (!sheets.length && !loose.length) return outputs;
+  // name → the id of the only column of that name that has one (null: more than one)
+  const index = (cols: Column[]) => {
+    const m = new Map<string, string | null>();
+    for (const c of cols) if (c.id !== undefined) m.set(c.name, m.has(c.name) ? null : c.id);
+    return m;
+  };
+  let all: Map<string, string | null> | undefined;
+  const allIndex = () => (all ??= index([...loose, ...sheets.flatMap((q) => q.columns)]));
+  const ofSheet = new Map<Dataset, Map<string, string | null>>();
+  const sheetIndex = (q: Dataset) => {
+    if (!ofSheet.has(q)) ofSheet.set(q, index([...q.columns, ...loose]));
+    return ofSheet.get(q)!;
+  };
+  const sheetByName = new Map<string, Dataset | null>();
+  for (const q of sheets) sheetByName.set(q.name, sheetByName.has(q.name) ? null : q);
+  const colsWith = (cols: Column[], m: () => Map<string, string | null>): Column[] => {
+    if (cols.every((c) => c.id !== undefined)) return cols;
+    const idx = m();
+    if (cols.every((c) => c.id !== undefined || !idx.get(c.name))) return cols;
+    const used = new Set(cols.flatMap((c) => (c.id === undefined ? [] : [c.id])));
+    return cols.map((c) => {
+      const id = c.id === undefined ? idx.get(c.name) : undefined;
+      if (!id || used.has(id)) return c;
+      used.add(id);
+      return { ...c, id };
+    });
+  };
+  const dsWith = (d: Dataset): Dataset => {
+    const from = (d.id !== undefined ? sheets.find((q) => q.id === d.id) : undefined) ?? sheetByName.get(d.name) ?? (sheets.length === 1 ? sheets[0] : undefined);
+    const columns = colsWith(d.columns, () => (from ? sheetIndex(from) : allIndex()));
+    const id = d.id ?? from?.id;
+    return columns === d.columns && id === d.id ? d : { ...d, columns, ...(id !== undefined ? { id } : {}) };
+  };
+  let out = outputs;
+  for (const [k, v] of Object.entries(outputs)) {
+    let w: Value = v;
+    if (v.t === 'column' && v.v.id === undefined) {
+      const id = allIndex().get(v.v.name);
+      if (id) w = { t: 'column', v: { ...v.v, id } };
+    } else if (v.t === 'dataset') {
+      const d = dsWith(v.v);
+      if (d !== v.v) w = { t: 'dataset', v: d };
+    } else if (v.t === 'workbook') {
+      const list = v.v.sheets.map(dsWith);
+      if (list.some((q, i) => q !== v.v.sheets[i])) w = { t: 'workbook', v: { ...v.v, sheets: list } };
+    }
+    if (w !== v) out = { ...out, [k]: w };
+  }
+  return out;
+}
+
 function evaluateFlat(nodes: AppNode[], edges: Edge[], cache: EvalCache = newCache(), seed?: Map<string, NodeResult>): Map<string, NodeResult> {
   pyNow = cache.py ?? new Map();
   const byId = new Map(nodes.map((n) => [n.id, n]));
@@ -5394,6 +5469,9 @@ function evaluateFlat(nodes: AppNode[], edges: Edge[], cache: EvalCache = newCac
     const inputs: Inputs = new Map();
     const tokens: string[] = [];
     let bookSheets: string[] | undefined;
+    let lostSheet = false;
+    const refs = (n.data as { nameIds?: DataRefs }).nameIds;
+    const scope = newScope(refs);
     for (const e of incoming.get(id) ?? []) {
       const src = visit(e.source);
       const handle = e.sourceHandle ?? 'out';
@@ -5404,8 +5482,10 @@ function evaluateFlat(nodes: AppNode[], edges: Edge[], cache: EvalCache = newCac
         const book = value.v;
         bookSheets = book.sheets.map((q) => q.name);
         const want = (n.data as { sheet?: string }).sheet;
-        const sheet = want ? book.sheets.find((q) => q.name === want) : book.sheets[0];
-        if (!(want === '*' && everySheet(n.type))) value = sheet ? { t: 'dataset', v: sheet } : undefined;
+        const every = want === '*' && everySheet(n.type);
+        const sheet = want && !every ? inScope(scope, () => findSheet(book.sheets, want)) : book.sheets[0];
+        if (want && !every && !sheet) lostSheet = true;
+        if (!every) value = sheet ? { t: 'dataset', v: sheet } : undefined;
       }
       const l = inputs.get(th) ?? [];
       l.push({ from: e.source, handle, value });
@@ -5416,22 +5496,24 @@ function evaluateFlat(nodes: AppNode[], edges: Edge[], cache: EvalCache = newCac
     const key = JSON.stringify([n.type, logicalData(n), tokens, n.type === 'python' ? (cache.py.get(id)?.seq ?? 0) : 0]);
     const cached = cache.entries.get(id);
     let r: NodeResult;
-    if (cached && cached.key === key && (cached.math === undefined || cached.math === mathSizesVersion())) r = cached.result;
+    if (cached && cached.key === key && (cached.math === undefined || cached.math === mathSizesVersion()) && (cached.refs ?? '') === missKey(refs, cached.result.found?.misses ?? [])) r = cached.result;
     else {
       let out: Out;
       const asked = resetMathAsked();
       try {
         // a node of a type this version does not know gives nothing
-        out = n.type === 'subgraph' && n.data.batch ? runBatch(n, inputs, cache) : (evalNode(n, inputs) ?? { warnings: [`Unknown node type “${n.type}”.`] });
+        out = inScope(scope, () => (n.type === 'subgraph' && n.data.batch ? runBatch(n, inputs, cache) : (evalNode(n, inputs) ?? { warnings: [`Unknown node type “${n.type}”.`] })));
       } catch (err) {
         out = { errors: [`Internal error: ${(err as Error).message}`] };
       }
       const want = (n.data as { sheet?: string }).sheet;
-      if (bookSheets && want && want !== '*' && !bookSheets.includes(want)) out = { ...out, errors: [...(out.errors ?? []), `No sheet “${want}” in the workbook.`] };
-      r = { rev: ++cache.rev, outputs: out.outputs ?? {}, errors: out.errors ?? [], warnings: out.warnings ?? [], view: { ...out.view, ...(bookSheets ? { sheets: bookSheets } : {}) }, ...(out.inner ? { inner: out.inner } : {}) };
+      if (lostSheet) out = { ...out, errors: [...(out.errors ?? []), `No sheet “${want}” in the workbook.`] };
+      const found = findings(scope);
+      const warnings = [...(out.warnings ?? []), ...placeWarnings(found)];
+      r = { rev: ++cache.rev, outputs: inheritIds(out.outputs ?? {}, inputs), errors: out.errors ?? [], warnings, view: { ...out.view, ...(bookSheets ? { sheets: bookSheets } : {}) }, ...(out.inner ? { inner: out.inner } : {}), ...(hasFindings(found) ? { found } : {}) };
       // (a node inside measured formulas: the one around it too; what was asked before this node kept for its caller)
       const measured = resetMathAsked();
-      cache.entries.set(id, { key, result: r, ...(measured ? { math: mathSizesVersion() } : {}) });
+      cache.entries.set(id, { key, result: r, ...(measured ? { math: mathSizesVersion() } : {}), ...(found.misses.length ? { refs: missKey(refs, found.misses) } : {}) });
       if (asked || measured) markMathAsked();
     }
     state.set(id, 'done');

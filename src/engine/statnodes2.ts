@@ -408,11 +408,11 @@ export type Design = { xs: Column[]; rowsUsed: number[]; names: string[]; cols: 
 export type DesignSpec = { xs: string; factors: string; refs?: Record<string, string>; interact: boolean; intercept: boolean };
 export function designOf(ds: Dataset, d: DesignSpec, yc: Column, rowOk: (i: number) => boolean): Design | string {
   if (!d.xs.trim()) return 'Choose the predictors (X).';
-  const px = pick(d.xs, ds.columns.map((c) => c.name), true);
+  const px = pick(d.xs, ds.columns.map((c) => c.name), true, ds.columns);
   if (px.missing.length) return `Predictors: no ${px.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`;
   const xs = px.found.map((j) => ds.columns[j]).filter((c) => c !== yc);
   if (!xs.length) return 'Choose the predictors (X), other than Y.';
-  const fset = new Set(d.factors.trim() ? pick(d.factors, ds.columns.map((c) => c.name), true).found.map((j) => ds.columns[j].name) : []);
+  const fset = new Set(d.factors.trim() ? pick(d.factors, ds.columns.map((c) => c.name), true, ds.columns).found.map((j) => ds.columns[j].name) : []);
   const isCat = (c: Column) => isText(c) || fset.has(c.name);
   // (the complete rows)
   const rowsUsed: number[] = [];
@@ -610,8 +610,8 @@ export function statLevels(ds: Dataset, n: { type: string; data: unknown }): Rec
     const d = n.data as RegressData;
     if (!d.xs.trim()) return undefined;
     const names = ds.columns.map((c) => c.name);
-    const fset = new Set(d.factors.trim() ? pick(d.factors, names, true).found.map((j) => names[j]) : []);
-    const xs = pick(d.xs, names, true).found.map((j) => ds.columns[j]);
+    const fset = new Set(d.factors.trim() ? pick(d.factors, names, true, ds.columns).found.map((j) => names[j]) : []);
+    const xs = pick(d.xs, names, true, ds.columns).found.map((j) => ds.columns[j]);
     const cats = xs.filter((c) => c.name !== d.y && (isText(c) || fset.has(c.name)));
     return cats.length ? Object.fromEntries(cats.map((c) => [c.name, lv(c.name).sort(natural)])) : undefined;
   }

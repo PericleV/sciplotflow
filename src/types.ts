@@ -1,3 +1,4 @@
+import type { DataRefs } from './engine/refs.ts';
 import type { RichDoc } from './nodes/richDoc.ts';
 import type { TrendSpec } from './engine/trend.ts';
 import type { AggSpec } from './engine/aggregate.ts';
@@ -71,8 +72,9 @@ import type { ModelSpec } from './engine/fitModels.ts';
 import type { FitBand, FitParamSpec, FitWeight } from './engine/fit.ts';
 import type { AxesStyle, ColorbarSpec, ColorMapName, CurveStyle, Dash, GradFill, InsetItem, LegendSpec, LengthUnit, PanelScheme, Placement, ShapeSpec, TextSpec, TextStyle } from './figure/spec.ts';
 
-// Common to every node: a free label shown above it and the collapsed state (only the title bar shown).
-export type NodeMeta = { caption?: string; collapsed?: boolean };
+// Common to every node: a free label shown above it and the collapsed state (only the title bar shown); nameIds: the
+// ids of the columns and sheets it names, as its evaluation found them (src/engine/refs.ts)
+export type NodeMeta = { caption?: string; collapsed?: boolean; nameIds?: DataRefs };
 type Node<D extends Record<string, unknown>, T extends string> = FlowNode<D & NodeMeta, T>;
 
 // ---- Data ----

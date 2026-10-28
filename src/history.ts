@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Edge } from '@xyflow/react';
 import type { AppNode } from './types.ts';
+import { withoutNameIds } from './nameIds.ts';
 
 type Snap = { nodes: AppNode[]; edges: Edge[] };
 const LIMIT = 100;
@@ -25,7 +26,8 @@ const dataKey = (n: AppNode) => {
   const hit = dataKeys.get(n.data);
   if (hit !== undefined) return hit;
   const d = omit(n.data, PROTECTED[n.type]);
-  const k = JSON.stringify(n.type === 'import' ? { ...d, text: undefined } : d);
+  // (the ids of the names a node uses are kept by themselves, src/nameIds.ts: not a step)
+  const k = JSON.stringify(n.type === 'import' ? { ...d, text: undefined } : d, withoutNameIds);
   dataKeys.set(n.data, k);
   return k;
 };

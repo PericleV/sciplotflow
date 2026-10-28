@@ -333,7 +333,7 @@ export function columnRuns(ds: Dataset, spec: Pick<BatchSpec, 'cols' | 'xFrom' |
   }
   let chosen: number[];
   if (spec.cols?.trim()) {
-    const p = pick(spec.cols, names, true);
+    const p = pick(spec.cols, names, true, cols);
     if (p.missing.length) return `Columns: not found: ${p.missing.join(', ')}.`;
     chosen = p.found;
   } else chosen = cols.flatMap((_, j) => (role(j) === 'y' && j !== xAll ? [j] : []));

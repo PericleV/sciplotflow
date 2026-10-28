@@ -1,12 +1,14 @@
 // Small building blocks of the node views: number fields, choices, ports, messages.
 import { useContext, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { InPanel } from './inspectorStore.ts';
-import { Handle, Position, useNodeConnections, useNodeId, useNodesData } from '@xyflow/react';
+import { Handle, Position, useNodeConnections, useNodeId, useNodesData, useReactFlow } from '@xyflow/react';
 import { nodeDisplayName } from '../nodeColors.ts';
 import type { AppNode } from '../types.ts';
 import { isMultiInput, PORT_COLORS, PORT_LABELS, targetAccepts, type PortType } from '../engine/ports.ts';
 import type { NodeResult } from '../engine/evaluate.ts';
 import { Choice } from '../ui/props.tsx';
+import { useShownName } from './aliasStore.ts';
+import { keepPlaces } from '../engine/refs.ts';
 import { parseSci, sciPretty, sciText } from '../engine/table.ts';
 
 const num = (v: string) => (v === '' ? NaN : Number(v));
@@ -60,7 +62,9 @@ export function TextInput({ value, onChange, placeholder, className, title }: { 
 }
 
 // seg: a few short choices that never change, shown side by side (as in the newer panels) in place of a list
-export function Select<T extends string | number>({ value, options, onChange, title, className, seg }: { value: T; options: [T, string][]; onChange: (v: T) => void; title?: string; className?: string; seg?: boolean }) {
+export function Select<T extends string | number>({ value: asked, options, onChange, title, className, seg }: { value: T; options: [T, string][]; onChange: (v: T) => void; title?: string; className?: string; seg?: boolean }) {
+  // (a column or sheet renamed since it was chosen: shown by its name now)
+  const value = useShownName(asked, (v) => options.some(([o]) => String(o) === v));
   if (seg) {
     const pick = (s: string) => {
       const o = options.find(([v]) => String(v) === s);
@@ -185,7 +189,12 @@ export function ColorField({ label, title, value, onChange }: { label: string; t
 }
 
 export function Messages({ result }: { result?: NodeResult }) {
+  const id = useNodeId();
+  const { updateNodeData } = useReactFlow<AppNode>();
   if (!result) return null;
+  // columns / sheets found by their place in a source that changed: kept, the node's names mean them from now on
+  const place = result.found?.place ?? [];
+  const keep = () => id && updateNodeData(id, (n) => ({ nameIds: keepPlaces(n.data.nameIds, place) }));
   return (
     <>
       {[...new Set(result.errors)].map((e) => (
@@ -198,6 +207,11 @@ export function Messages({ result }: { result?: NodeResult }) {
           {w}
         </div>
       ))}
+      {place.length > 0 && id && (
+        <button className="nodrag" title="From now on the names of this node mean the columns and sheets found at their place" onClick={keep}>
+          Keep {place.length > 1 ? 'them' : 'it'}
+        </button>
+      )}
       {!result.errors.length && result.view.waiting && <div className="hint">{result.view.waiting}</div>}
     </>
   );

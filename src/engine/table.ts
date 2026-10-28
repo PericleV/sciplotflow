@@ -1,8 +1,11 @@
+import { resolve } from './refs.ts';
+
 // The values that travel along the connections. A column: its values and one header, its name (with the unit in it,
 // “Wavelength (nm)”). Numbers are Float64Array (missing / text cells are NaN); a column read
 // from text keeps the text cells too (labels), shown in the tables.
 export type Column = {
   name: string; // its only header: the unit goes in the name, “Wavelength (nm)”
+  id?: string; // its id (refs.ts): its sheet's and its place as read; kept through the nodes that pass it on
   values: Float64Array;
   text?: string[]; // the cells as written, for a column that is (partly) text
   role?: ColumnRole; // its designation in the worksheet (X, Y, Z …); absent: see roleOf
@@ -17,7 +20,8 @@ export type ColumnRole = 'x' | 'y' | 'z' | 'xerr' | 'yerr' | 'label' | 'none';
 export const ROLE_LABELS: Record<ColumnRole, string> = { x: 'X', y: 'Y', z: 'Z', xerr: '±X', yerr: '±Y', label: 'Label', none: '–' };
 // The designation of the j-th column: its own, else X for the first and Y for the others.
 export const roleOf = (cols: { role?: ColumnRole }[], j: number): ColumnRole => cols[j]?.role ?? (j === 0 ? 'x' : 'y');
-export type Dataset = { name: string; columns: Column[] };
+// id: its source's and its place there (refs.ts)
+export type Dataset = { name: string; columns: Column[]; id?: string };
 // The sheets of a spreadsheet file, or several files read together (each a sheet).
 export type Workbook = { name: string; sheets: Dataset[] };
 
@@ -50,14 +54,15 @@ export const withUnit = (name: string, unit: string | undefined) => (unit?.trim(
 export const unitOf = (name: string) => /[([]\s*([^()[\]]+?)\s*[)\]]\s*$/.exec(name)?.[1] ?? '';
 // The name without the unit at its end: “Wavelength (nm)” → “Wavelength”.
 export const bareName = (name: string) => name.replace(/\s*[([]\s*[^()[\]]+?\s*[)\]]\s*$/, '').trim();
-// A column by its name; else the only one whose name differs just by a unit (“Wavelength” finds “Wavelength (nm)”:
-// projects made when the unit was apart from the name).
-export function findColumn<C extends { name: string }>(cols: C[], name: string): C | undefined {
-  const exact = cols.find((c) => c.name === name);
-  if (exact || !name) return exact;
-  const b = bareName(name).toLowerCase();
-  const near = cols.filter((c) => bareName(c.name).toLowerCase() === b);
-  return near.length === 1 ? near[0] : undefined;
+// A column by its name; else by its id, renamed since (refs.ts); else the only one whose name differs just by a unit
+// (“Wavelength” finds “Wavelength (nm)”: projects made when the unit was apart from the name); else at its place in
+// another source of the same layout.
+export function findColumn<C extends { name: string; id?: string }>(cols: C[], name: string): C | undefined {
+  return resolve('cols', cols, name, () => {
+    const b = bareName(name).toLowerCase();
+    const near = cols.filter((c) => bareName(c.name).toLowerCase() === b);
+    return near.length === 1 ? near[0] : undefined;
+  });
 }
 // A value of a named quantity: “d (nm)”, 150 → “d = 150 nm” (a text value without the unit).
 export const valueText = (name: string, v: string, isText = false) => {

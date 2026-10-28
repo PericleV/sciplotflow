@@ -98,7 +98,7 @@ function applySortRule(cols: Column[], r: SortRule): { cols: Column[]; text: str
     const one = findColumn(cols, r.cols);
     if (one) moved = [cols.indexOf(one)];
     else {
-      const p = pick(r.cols, cols.map((c) => c.name), true);
+      const p = pick(r.cols, cols.map((c) => c.name), true, cols);
       if (p.missing.length || !p.found.length) return `Sort: no column ${(p.missing.length ? p.missing : [r.cols]).map((m) => `“${m}”`).join(', ')}.`;
       moved = p.found;
     }
@@ -181,7 +181,7 @@ export function filterRows(ds: Dataset, d: FilterData): { dataset: Dataset; repo
       keys = [x];
     } else {
       const one = findColumn(cols, d.dupCol);
-      const p = one ? null : pick(d.dupCol, cols.map((c) => c.name), true);
+      const p = one ? null : pick(d.dupCol, cols.map((c) => c.name), true, cols);
       if (p && (p.missing.length || !p.found.length)) return `No column ${(p.missing.length ? p.missing : [d.dupCol]).map((m) => `“${m}”`).join(', ')}.`;
       keys = one ? [one] : p!.found.map((j) => cols[j]);
     }
@@ -337,7 +337,7 @@ export function cleanData(ds: Dataset, d: CleanData): { dataset: Dataset; change
   const all = ds.columns;
   let targets: Column[];
   if (d.cols.trim()) {
-    const p = pick(d.cols, all.map((c) => c.name), true);
+    const p = pick(d.cols, all.map((c) => c.name), true, all);
     if (p.missing.length) return `Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`;
     targets = p.found.map((j) => all[j]);
   } else targets = all.filter((_, j) => roleOf(all, j) === 'y');

@@ -6,6 +6,7 @@
 //   Absorbance  by name (no matter the case); A1-A3 from one name to another; run*, *abs*  names matching a pattern
 //   *           all;   !3, !Notes  leave out (after the others: "*, !1" = all but the first)
 import { bareName, ROLE_LABELS, roleOf, type Column, type ColumnRole, type Dataset } from './table.ts';
+import { foundAs, resolve } from './refs.ts';
 
 export type ExtractRule = { sheets: string; columns: string; role: ColumnRole };
 // how the columns of the result are named: "Sheet 1: Absorbance", "Absorbance", or by their sheet ("Sheet 1")
@@ -15,16 +16,19 @@ const letterIndex = (s: string) => [...s].reduce((a, ch) => a * 26 + ch.charCode
 const glob = (p: string) => new RegExp(`^${p.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`, 'i');
 
 // The places (from 0) of the names a list picks, in their order; `letters`: B, D-F name columns.
-export function pick(spec: string, names: string[], letters: boolean): { found: number[]; missing: string[] } {
+// cols: the columns named (their ids: a name renamed since, or at its place in another source, found too — refs.ts)
+export function pick(spec: string, names: string[], letters: boolean, cols?: { name: string; id?: string }[]): { found: number[]; missing: string[] } {
   const n = names.length;
   const lower = names.map((x) => x.trim().toLowerCase());
   const bare = names.map((x) => bareName(x).toLowerCase());
-  // by name, or the only name that differs just by a unit (“A1” finds “A1 (a.u.)”)
+  // by name, or the only name that differs just by a unit (“A1” finds “A1 (a.u.)”), or by its id
   const indexOfName = (t: string) => {
     const k = lower.indexOf(t.trim().toLowerCase());
-    if (k >= 0) return k;
+    if (k >= 0) return cols ? (foundAs('cols', t.trim(), cols[k]), k) : k;
     const b = bareName(t).toLowerCase();
-    return bare.filter((x) => x === b).length === 1 ? bare.indexOf(b) : -1;
+    if (bare.filter((x) => x === b).length === 1) return bare.indexOf(b);
+    const c = cols ? resolve('cols', cols, t.trim()) : undefined;
+    return c ? cols!.indexOf(c) : -1;
   };
   // the whole text one name (chosen from a list: “Reflectance, s (a.u.)” is not two columns)
   const whole = spec.includes(',') ? lower.indexOf(spec.trim().toLowerCase()) : -1;
