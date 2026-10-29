@@ -1490,6 +1490,10 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   const nc = learnt([imp('i', A), colsNode], [wire('i', 'c', 'in')]);
   const rc = evaluateGraph(nc.map((n) => (n.id === 'i' ? ({ ...n, data: { ...n.data, edits: { cols: { 1: { name: 'Absorbance' } } } } } as AppNode) : n)), [wire('i', 'c', 'in')]).get('c');
   ok(outNames(rc) === 'I (a.u.)=1/2/3, Wavelength (nm)=400/500/600, Twice=2/4/6' && !rc!.warnings.length, 'ids: Columns: a column renamed before it keeps its settings and its formula');
+  // Generate column: values typed (as many rows as typed; text a column of labels; on “like”: its rows)
+  const gen = (data: object) => evaluateGraph([{ id: 'g', type: 'gencol', position: { x: 0, y: 0 }, data: { ...GENCOL_DEFAULTS, ...data } } as AppNode], []).get('g')!;
+  const gv = (r: NodeResult) => (r.outputs.out?.t === 'column' ? `${[...r.outputs.out.v.values].join('/')}|${r.outputs.out.v.text?.join('/') ?? ''}|${r.outputs.out.v.role ?? ''}` : '');
+  ok(gv(gen({ mode: 'typed', typed: '1,5; 2; 10' })) === '1.5/2/10||' && gv(gen({ mode: 'typed', typed: 'S1, S2' })) === 'NaN/NaN|S1/S2|label' && !!gen({ mode: 'typed', typed: '' }).view.waiting, 'Generate column: values typed (a decimal comma; text: a column of labels; none: waiting)');
   // Columns: a column of values typed (numbers, a decimal comma, text), as many rows as the data
   const typedOf = (typed: string) => {
     const r = evaluateGraph([imp('i', A), { id: 'c', type: 'columns', position: { x: 0, y: 0 }, data: { computed: [{ id: 'c1', name: 'T', kind: 'typed', typed }] } } as AppNode], [wire('i', 'c', 'in')]).get('c');

@@ -1,9 +1,19 @@
 // Generated values: evenly spaced (from – to), from a start by a step, a formula of the row i, or random (uniform or
-// normal, seeded) — n of them. Used by Generate column and by the columns added in Columns. Pure.
+// normal, seeded) — n of them; or values typed (Generate column; Columns has its own column of them). Used by Generate
+// column and by the columns added in Columns. Pure.
 import { compile } from './expr.ts';
 
-export type GenMode = 'linspace' | 'step' | 'formula' | 'random';
-export type GenSpec = { mode: GenMode; start: number; stop: number; step: number; formula: string; dist: 'uniform' | 'normal'; a: number; b: number; seed: number };
+export type GenMode = 'linspace' | 'step' | 'formula' | 'random' | 'typed';
+export type GenSpec = { mode: GenMode; start: number; stop: number; step: number; formula: string; dist: 'uniform' | 'normal'; a: number; b: number; seed: number; typed?: string };
+
+// Values typed: one per line, else separated by ; (a decimal comma: 1,5; 2,3), else by , — an empty one in between an
+// empty cell, those at the end left out
+export function typedCells(t: string): string[] {
+  const sep = t.includes('\n') ? '\n' : t.includes(';') ? ';' : ',';
+  const cells = t.split(sep).map((x) => x.trim());
+  while (cells.length && !cells[cells.length - 1]) cells.pop();
+  return cells;
+}
 export const GEN_SPEC_DEFAULTS: GenSpec = { mode: 'linspace', start: 0, stop: 1, step: 1, formula: 'i', dist: 'normal', a: 0, b: 1, seed: 1 };
 
 // A small seeded generator (mulberry32): the same seed gives the same random column on every computer.

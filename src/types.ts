@@ -278,7 +278,7 @@ export type PeakData = {
 export type PythonData = { code: string; vars?: Record<string, string>; outs?: { name: string; kind: 'column' | 'scalar' | 'dataset' | 'matrix' }[]; hide?: string[]; auto?: boolean; run?: number; figs?: number[] };
 // seed: of the random values of the formula (rand() …): New random values changes it
 export type MathColData = { name: string; formula: string; rules?: RowRule[]; others?: 'formula' | 'nan' | 'value'; otherValue?: number; output?: 'column' | 'value'; errors?: string; complex?: boolean; part?: 're' | 'im' | 'abs' | 'arg' | 'deg' | 'db'; seed?: number };
-export type GenMode = 'linspace' | 'step' | 'formula' | 'random';
+export type GenMode = 'linspace' | 'step' | 'formula' | 'random' | 'typed';
 export type GenColData = {
   name: string;
   mode: GenMode;
@@ -287,6 +287,7 @@ export type GenColData = {
   stop: number; // linspace: last value (included)
   step: number; // step: increment
   formula: string; // formula: of i (1 … n) and n
+  typed?: string; // typed: the values (separated by commas, by ; with a decimal comma, or one per line; numbers or text)
   dist: 'uniform' | 'normal';
   a: number; // uniform: low / normal: mean
   b: number; // uniform: high / normal: standard deviation

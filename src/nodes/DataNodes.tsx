@@ -13,7 +13,7 @@ import { GEN_SPEC_DEFAULTS, type GenSpec } from '../engine/gencol.ts';
 import { hasEdits, type SheetEdits } from '../engine/sheet.ts';
 import { ACCEPT, ENCODINGS, pickDataFiles, readFiles } from '../readFiles.ts';
 import type { AppNode, ColumnsData, ColumnsNode, AutoExtractData, AutoExtractNode, ExtractNode, ExtractPick, GenColData, GenColNode, ImportData, ImportNode, MathColData, MathColNode } from '../types.ts';
-import { AutoText, Check, Field, InPort, Messages, NumInput, OutPort, Select, TextInput, ResultSummary } from './ui.tsx';
+import { AddMenu, AutoText, Check, Field, InPort, Messages, NumInput, OutPort, Select, TextInput, ResultSummary } from './ui.tsx';
 import { RowRules } from './RowRules.tsx';
 import { RowsControls } from './RowsPanel.tsx';
 import { FormulaTools } from './FormulaEditor.tsx';
@@ -617,22 +617,29 @@ export function MathColNodeView({ id, data }: NodeProps<MathColNode>) {
 
 // The values of a generated column (Generate column; a column added in Columns): how, and their settings — `children`
 // right after the choice (Generate column: its rows)
-function GenFields({ g, set, children }: { g: GenSpec; set: (p: Partial<GenSpec>) => void; children?: ReactNode }) {
+// typed: the values may also be typed (Generate column; Columns has a column of values typed of its own)
+function GenFields({ g, set, children, typed = false }: { g: GenSpec; set: (p: Partial<GenSpec>) => void; children?: ReactNode; typed?: boolean }) {
   return (
     <>
       <Field label="Values">
-        <Select
+        <Select<GenSpec['mode']>
           value={g.mode}
           options={[
             ['linspace', 'evenly spaced: from – to'],
             ['step', 'from a start, by a step'],
             ['formula', 'formula of the row i'],
             ['random', 'random'],
+            ...(typed ? [['typed', 'typed'] as [GenSpec['mode'], string]] : []),
           ]}
           onChange={(mode) => set({ mode })}
         />
       </Field>
-      {children}
+      {g.mode === 'typed' && (
+        <Field label="Typed" title="The values in order, separated by commas (10, 20, 35), by ; when they have a decimal comma (1,5; 2,3), or one per line; an empty one between two separators: an empty cell. Numbers, or text (a column of text, e.g. the names of the samples). As many rows as typed (a column on “like”: its rows)">
+          <TextInput value={g.typed ?? ''} placeholder="10, 20, 35, 50" onChange={(v) => set({ typed: v })} />
+        </Field>
+      )}
+      {g.mode !== 'typed' && children}
       {g.mode === 'linspace' && (
         <Field label="From – to" title="The first and the last value (both included)">
           <span className="row">
@@ -689,7 +696,7 @@ export function GenColNodeView({ id, data }: NodeProps<GenColNode>) {
       <Field label="Name" title="With its unit if it has one: “Time (s)”">
         <TextInput value={data.name} onChange={(name) => set({ name })} />
       </Field>
-      <GenFields g={data} set={set}>
+      <GenFields g={data} set={set} typed>
         {!like && (
           <Field label="Rows">
             <NumInput className="short" min={1} step={1} value={data.count} onChange={(count) => set({ count })} />
@@ -698,7 +705,7 @@ export function GenColNodeView({ id, data }: NodeProps<GenColNode>) {
       </GenFields>
       {out && (
         <div className="hint ellipsis">
-          {out.values.length} rows: {Array.from(out.values.slice(0, 4), (v) => fmtNum(v)).join(', ')}
+          {out.values.length} rows: {Array.from({ length: Math.min(4, out.values.length) }, (_, i) => out.text?.[i] || fmtNum(out.values[i])).join(', ')}
           {out.values.length > 4 ? ', …' : ''}
         </div>
       )}
@@ -1145,12 +1152,7 @@ export function ColumnsNodeView({ id, data: nodeData }: NodeProps<ColumnsNode>) 
         </div>
       ))}
       <div className="row">
-        <Select<ComputedKind | ''>
-          value=""
-          title="A column added: a formula of the columns; a column of an input (A, B …) or a copy of a column; generated values (evenly spaced, by a step, of the row i, random: as many rows as the data); one value in every row; values you type, separated by commas"
-          options={[['', '+ Column…'], ...ADD_KINDS]}
-          onChange={(k) => k && lines.length > 0 && addComputed(k)}
-        />
+        <AddMenu<ComputedKind> label="+ Column" disabled={!lines.length} title="A column added: a formula of the columns; a column of an input (A, B …) or a copy of a column; generated values (evenly spaced, by a step, of the row i, random: as many rows as the data); one value in every row; values you type, separated by commas" items={ADD_KINDS} onPick={addComputed} />
         <button className="nodrag" disabled={!items.length} title="Every column back as it comes: its name, designation, place, kept (the columns added stay)" onClick={() => set({ items: items.filter((it) => it.from.startsWith('=')) })}>
           <RotateCcw {...IC} /> Reset the columns
         </button>

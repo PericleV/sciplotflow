@@ -126,7 +126,7 @@ tbody th, th.rowhead { font-weight: 400; }
 /* The width of every node, by what its body shows on the canvas (its settings are in Options):
    S, its ports and a line or two of summary; M, a few lines of text (a formula, a list of values, a test written out,
    a small table); L, a graph, a large table or an editor; XL, a whole figure. A new node takes its place here. */
-.node-extract, .node-gencol, .node-unstack, .node-convert, .node-transpose, .node-stack, .node-columns, .node-combine, .node-clean, .node-pick, .node-groupio { width: var(--node-s); }
+.node-extract, .node-gencol, .node-unstack, .node-convert, .node-transpose, .node-stack, .node-columns, .node-renamesheets, .node-combine, .node-clean, .node-pick, .node-groupio { width: var(--node-s); }
 .node-mathcol, .node-autoextract, .node-tosheets, .node-stats, .node-matrix, .node-stattest, .node-group, .node-note { width: var(--node-m); }
 .node-import, .node-book, .node-signal, .node-siggen, .node-translate, .node-curvemath, .node-datamanip, .node-digitizer, .node-phasedigitizer, .node-eis, .node-peaks, .node-calculus, .node-fit, .node-matcomp, .node-python { width: var(--node-l); }
 .node-plot1d, .node-canvas, .node-drawing { width: var(--node-xl); }
@@ -1109,6 +1109,9 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 /* Recolour: the colours the curves get, in order, before they are applied */
 .recolour-strip { display: inline-flex; height: 16px; min-width: 60px; max-width: 220px; flex: 1 1 120px; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
 .recolour-strip > span { flex: 1 1 0; }
+.add-menu { display: flex; flex-direction: column; min-width: 190px; }
+.add-menu > button { text-align: left; border: none; background: transparent; padding: 4px 10px; border-radius: 4px; }
+.add-menu > button:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .scale-shaper { display: flex; flex-direction: column; gap: 5px; margin: 4px 0 2px; }
 .scale-shaper .ss-bar { position: relative; height: 16px; border: 1px solid var(--border); border-radius: 3px; }
 .scale-shaper .ss-part { position: relative; height: 7px; border: 1px solid var(--border); border-radius: 2px; }

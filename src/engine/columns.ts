@@ -11,7 +11,7 @@
 import { compile, seedOf } from './expr.ts';
 import { pick } from './extract.ts';
 import { isCol, withColumnFunctions } from './colfns.ts';
-import { GEN_SPEC_DEFAULTS, generatedValues, type GenSpec } from './gencol.ts';
+import { GEN_SPEC_DEFAULTS, generatedValues, typedCells, type GenSpec } from './gencol.ts';
 import { parseSci, roleOf, type Column, type ColumnRole, type Dataset, type Scalar } from './table.ts';
 import { knownAs } from './refs.ts';
 
@@ -178,15 +178,6 @@ function computeColumn(c: ComputedColumn, get: (ref: string) => Column | Scalar 
     out[i] = f.fn(v);
   }
   return { name, values: out };
-}
-
-// Values typed: one per line, else separated by ; (a decimal comma: 1,5; 2,3), else by , — an empty one in between an
-// empty cell, those at the end left out
-function typedCells(t: string): string[] {
-  const sep = t.includes('\n') ? '\n' : t.includes(';') ? ';' : ',';
-  const cells = t.split(sep).map((x) => x.trim());
-  while (cells.length && !cells[cells.length - 1]) cells.pop();
-  return cells;
 }
 
 // A list of names: one per line, else separated by ; or , (a name with a comma in it: one per line)

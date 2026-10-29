@@ -11,7 +11,7 @@ import { placeComponent } from './drawingItems.ts';
 import { renameSheets, type SheetRename, type SheetsInput } from './sheetNames.ts';
 import { isoMatrix, isoToPage } from './isoPlane.ts';
 import { suspendedOf } from './reliability.ts';
-import { generatedValues } from './gencol.ts';
+import { generatedValues, typedCells } from './gencol.ts';
 import { withColumnFunctions } from './colfns.ts';
 export { withColumnFunctions };
 import type { Edge } from '@xyflow/react';
@@ -77,7 +77,7 @@ import type { RegionView } from './regionruns.ts';
 import { findPeaksIn, fittedPeak, fixedBaseline, fwhmAt, isFitted, measurePeaks, peakRunKey, regionPeak, type Found, type PeakItem } from './peaks.ts';
 import { curveThrough } from './baselines.ts';
 import { areaBetween, derivative, integrate, interp, pointsCurve, regionName, regionRows, type IntegralOptions } from './calculus.ts';
-import { bareName, column, curvesByRole, findColumn, fmtNum, roleOf, rowIndex, titleOf, unitOf, valueText, type Column, type ColumnRole, type Dataset, type Scalar, type Series, type Workbook } from './table.ts';
+import { bareName, column, curvesByRole, findColumn, fmtNum, parseSci, roleOf, rowIndex, titleOf, unitOf, valueText, type Column, type ColumnRole, type Dataset, type Scalar, type Series, type Workbook } from './table.ts';
 import { autoExtract, pick, simpleRules } from './extract.ts';
 import { columnsOf, type ColumnLine, type ColumnsSpec } from './columns.ts';
 import { baseUnder, extremum, inRange, peakWidth, type Baseline as MBaseline, type Width } from './measure.ts';
@@ -281,6 +281,16 @@ export function plotRows(d: Plot1DData, count: number): CurveRow[] {
 type Out = { outputs?: Record<string, Value>; errors?: string[]; warnings?: string[]; view?: NodeView; inner?: Map<string, NodeResult> };
 
 function generate(d: GenColData, like: Column | undefined): Out {
+  // values typed: as many rows as typed (a column on “like”: its rows, those not typed empty); text when one is not a number
+  if (d.mode === 'typed') {
+    const cells = typedCells(d.typed ?? '');
+    if (!cells.length) return { view: { waiting: 'Type the values, separated by commas, e.g. 10, 20, 35 (by ; with a decimal comma: 1,5; 2,3).' } };
+    const n = like ? like.values.length : cells.length;
+    const warnings = like && cells.length !== n ? [`${cells.length} value${cells.length === 1 ? '' : 's'} typed for the ${n} rows of “${like.name}”${cells.length < n ? ' (the others empty)' : ' (the last ones left out)'}.`] : [];
+    const values = Float64Array.from({ length: n }, (_, i) => (i < cells.length ? parseSci(cells[i]) : NaN));
+    const text = cells.slice(0, n).some((t) => t && !Number.isFinite(parseSci(t)));
+    return { outputs: { out: { t: 'column', v: { ...column(d.name || 'Typed', values), ...(text ? { text: Array.from({ length: n }, (_, i) => cells[i] ?? ''), role: 'label' as const } : {}) } } }, warnings };
+  }
   const n = like ? like.values.length : Math.floor(d.count);
   if (!(n >= 1)) return { errors: ['The number of rows must be at least 1.'] };
   if (n > MAX_ROWS) return { errors: [`At most ${MAX_ROWS.toLocaleString('en')} rows.`] };

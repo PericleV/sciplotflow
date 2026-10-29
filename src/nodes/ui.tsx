@@ -10,6 +10,7 @@ import { Choice } from '../ui/props.tsx';
 import { useShownName } from './aliasStore.ts';
 import { keepPlaces } from '../engine/refs.ts';
 import { parseSci, sciPretty, sciText } from '../engine/table.ts';
+import { Popover } from '@mantine/core';
 
 const num = (v: string) => (v === '' ? NaN : Number(v));
 
@@ -240,5 +241,33 @@ export function AutoText({ value, onChange, className, placeholder, title, input
       onKeyDown={(e) => e.key === 'Enter' && e.preventDefault()}
       onChange={(e) => onChange(e.target.value.replace(/\s*\n\s*/g, ' '))}
     />
+  );
+}
+
+// A button (“+ Column”) opening the list of what it can add: a click on one adds it (and closes the list)
+export function AddMenu<T extends string>({ label, title, items, onPick, disabled }: { label: string; title?: string; items: [T, string, string?][]; onPick: (v: T) => void; disabled?: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover opened={open} onChange={setOpen} position="bottom-start" shadow="md" returnFocus={false}>
+      <Popover.Target>
+        <button className={`nodrag${open ? ' on' : ''}`} title={title} disabled={disabled} onClick={() => setOpen(!open)}>
+          {label}
+        </button>
+      </Popover.Target>
+      <Popover.Dropdown p={4} className="add-menu nodrag nowheel">
+        {items.map(([v, l, t]) => (
+          <button
+            key={v}
+            title={t}
+            onClick={() => {
+              setOpen(false);
+              onPick(v);
+            }}
+          >
+            {l}
+          </button>
+        ))}
+      </Popover.Dropdown>
+    </Popover>
   );
 }
