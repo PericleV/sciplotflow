@@ -129,7 +129,7 @@ export const NODE_TITLES: Record<NodeType, string> = {
   extract: 'Extract column',
   autoextract: 'Sheets to columns',
   tosheets: 'Columns to sheets',
-  renamesheets: 'Rename sheets',
+  renamesheets: 'Sheets',
   datamanip: 'Data manipulation',
   unstack: 'Split into columns',
   convert: 'Convert columns',

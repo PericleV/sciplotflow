@@ -589,9 +589,14 @@ export type ConvertNode = Node<ConvertData, 'convert'>;
 export type TransposeNode = Node<TransposeData, 'transpose'>;
 export type StackNode = Node<StackData, 'stack'>;
 export type ToSheetsNode = Node<ToSheetsData, 'tosheets'>;
-// Rename sheets (engine/sheetNames.ts): names typed (by the old name), a find and its replacement (regex: a regular
-// expression), a pattern read from the names and the template written from it, the order, the sheets left out
-export type RenameSheetsData = { names?: Record<string, string>; find?: string; replace?: string; regex?: boolean; pattern?: string; template?: string; order?: 'given' | 'name' | 'value'; drop?: string[] };
+// Sheets, once Rename sheets (engine/sheetNames.ts): names typed (by the sheet's key: its name as it comes, {A} a port's,
+// =id one added here), a find and its replacement (regex: a regular expression), a pattern read from the names and the
+// template written from it, the order, the sheets left out (their keys); moved: the keys in the order moved by hand (the
+// others after them); added: sheets made here, in their order.
+// A sheet added: a copy of a sheet (copy: its key), or empty with its columns (cols: their names, separated by commas)
+// and rows (absent: 10).
+export type SheetAdded = { id: string; name: string; kind: 'copy' | 'empty'; copy?: string; cols?: string; rows?: number };
+export type RenameSheetsData = { names?: Record<string, string>; find?: string; replace?: string; regex?: boolean; pattern?: string; template?: string; order?: 'given' | 'name' | 'value'; drop?: string[]; moved?: string[]; added?: SheetAdded[] };
 export type RenameSheetsNode = Node<RenameSheetsData, 'renamesheets'>;
 export type { ConvertData, StackData, ToSheetsData, TransposeData };
 export type CombineNode = Node<CombineData, 'combine'>;

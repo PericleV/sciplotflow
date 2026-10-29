@@ -6409,6 +6409,25 @@ for (const ex of EXAMPLES) {
       const r2 = renameSheets(bk, { pattern: 'C-V 20-400K: Append{n}', template: '{n} K', order: 'value', names: { other: 'Ref' }, drop: ['C-V 20-400K: Data'] });
       const r3 = renameSheets({ name: 'b', sheets: [{ name: 'a1', columns: [] }, { name: 'a2', columns: [] }] }, { find: 'a(\\d)', replace: 'S', regex: true });
       ok(r1.book.sheets.map((q) => q.name).join('|') === 'Append10|Append2|Data|other' && r2.book.sheets.map((q) => q.name).join('|') === '2 K|10 K|Ref' && r2.warnings.length === 1 && r3.book.sheets.map((q) => q.name).join('|') === 'S|S (2)', `Rename sheets: found and replaced, read by a pattern and written, typed, by value, left out, names met twice numbered (${r2.book.sheets.map((q) => q.name).join(', ')}; ${r3.book.sheets.map((q) => q.name).join(', ')})`);
+      // Sheets: moved by hand, a copy (of a sheet left out), an empty one, the tables on the ports; the ids of their own
+      const sb = { name: 'b', sheets: ['a', 'b', 'c'].map((name, k) => ({ name, id: `i:s${k}`, columns: [column('v', [k + 1])] })) };
+      const extra = { letter: 'A', value: { name: 'ref', id: 'r:s0', columns: [column('w', [9])] }, book: false };
+      const r4 = renameSheets(sb, { moved: ['c', '{A}', 'a'], drop: ['b'], names: { '{A}': 'Reference' }, added: [{ id: 's1', name: 'b again', kind: 'copy', copy: 'b' }, { id: 's2', name: 'blank', kind: 'empty', cols: 'Time (s), Signal', rows: 3 }] }, [extra], 'rs');
+      const said4 = r4.book.sheets.map((q) => `${q.name}@${q.id}:${q.columns.map((c) => `${c.name}=${[...c.values].join('/')}`).join('+')}`).join(' | ');
+      ok(said4 === 'c@i:s2:v=3 | Reference@r:s0:w=9 | a@i:s0:v=1 | b again@rs:=s1:v=2 | blank@rs:=s2:Time (s)=NaN/NaN/NaN+Signal=NaN/NaN/NaN' && r4.rows.map((x) => `${x.key}${x.dropped ? '-' : ''}`).join() === 'c,{A},a,b-,=s1,=s2', `Sheets: moved, left out, copied, an empty one, a port’s table, ids of their own (${said4})`);
+      // the settings kept by a sheet's name: renamed upstream since, still its own (refs.ts)
+      const r5 = inScope(newScope({ sheets: { b: ['i:s1'] } }), () => renameSheets({ name: 'b', sheets: sb.sheets.map((q) => (q.name === 'b' ? { ...q, name: 'B2' } : q)) }, { names: { b: 'Second' }, moved: ['b', 'a'] }));
+      ok(r5.book.sheets.map((q) => q.name).join() === 'Second,a,c', `Sheets: a sheet renamed upstream keeps its name and place here (${r5.book.sheets.map((q) => q.name).join(', ')})`);
+    }
+    // Merge: its whole page out, to a Figure Drawing (drawn under it) and to another Merge (a panel)
+    {
+      const ex2 = EXAMPLES.find((e) => e.name.startsWith('Two panels'))!.make();
+      const mg0 = ex2.nodes.find((q) => q.type === 'canvas')!;
+      const dr = { id: 'dr', type: 'drawing', position: { x: 0, y: 0 }, data: structuredClone(DRAWING_DEFAULTS) } as AppNode;
+      const m2 = { id: 'm2', type: 'canvas', position: { x: 0, y: 0 }, data: structuredClone(CANVAS_DEFAULTS) } as AppNode;
+      const rm = evaluateGraph([...ex2.nodes, dr, m2], [...ex2.edges, { id: 'u', source: mg0.id, sourceHandle: 'figure', target: 'dr', targetHandle: 'under' }, { id: 'v', source: mg0.id, sourceHandle: 'figure', target: 'm2', targetHandle: 'figures' }]);
+      const df = rm.get('dr')!.outputs.figure;
+      ok(rm.get(mg0.id)!.outputs.figure?.t === 'figure' && df?.t === 'figure' && df.v.axes.length >= 2 && !rm.get('dr')!.errors.length && !rm.get('m2')!.errors.length && (rm.get('m2')!.view.figure?.axes.length ?? 0) >= 2, 'Merge: its figure out, drawn under a Figure Drawing and as a panel of another Merge');
     }
     // a Plot kept from every column: the batch's figures, a panel each in a Merge (named after its column)
     {

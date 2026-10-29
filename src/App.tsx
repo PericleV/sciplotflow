@@ -251,7 +251,7 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
       { sub: 'Workbook and sheets', type: 'extract', label: 'Extract column', data: EXTRACT_DEFAULTS },
       { sub: 'Workbook and sheets', type: 'autoextract', label: 'Sheets to columns', data: AUTOEXTRACT_DEFAULTS },
       { sub: 'Workbook and sheets', type: 'tosheets', label: 'Columns to sheets', data: TOSHEETS_DEFAULTS },
-      { sub: 'Workbook and sheets', type: 'renamesheets', label: 'Rename sheets', data: RENAMESHEETS_DEFAULTS, search: 'sheet names, rename files, find replace' },
+      { sub: 'Workbook and sheets', type: 'renamesheets', label: 'Sheets', data: RENAMESHEETS_DEFAULTS, search: 'rename sheets, sheet names, rename files, find replace, move sheets, order, copy sheet, add sheet, delete sheet' },
       { sub: 'Columns', type: 'columns', label: 'Columns', data: COLUMNS_DEFAULTS },
       { sub: 'Columns', type: 'mathcol', label: 'Math column', data: MATHCOL_DEFAULTS },
       { sub: 'Columns', type: 'unstack', label: 'Split into columns', data: UNSTACK_DEFAULTS },

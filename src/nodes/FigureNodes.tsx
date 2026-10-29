@@ -997,6 +997,7 @@ export function CanvasNodeView({ id, data }: NodeProps<CanvasNode>) {
       <Messages result={r} />
       </NodeOptions>
       <Messages result={r} />
+      <OutPort label="figure" port="figure" id="figure" title="The whole page: to a Figure Drawing (drawn on, or a guide to draw by), to another Merge as a panel, to Select figures" />
     </div>
   );
 }

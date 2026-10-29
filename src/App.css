@@ -1110,9 +1110,12 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .recolour-strip { display: inline-flex; height: 16px; min-width: 60px; max-width: 220px; flex: 1 1 120px; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
 .recolour-strip > span { flex: 1 1 0; }
 .rename-sheets { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
-.rename-sheet { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); gap: 6px; align-items: center; }
+.rename-sheet { display: grid; grid-template-columns: 16px auto minmax(0, 1fr) minmax(0, 1fr) 22px; gap: 6px; align-items: center; }
 .rename-sheet.head { font-size: var(--fs-small); color: var(--muted); }
-.rename-sheet.off > span { text-decoration: line-through; }
+.rename-sheet.off > span.ellipsis { text-decoration: line-through; }
+.rename-sheet .grip { cursor: grab; color: var(--muted); text-align: center; user-select: none; font-size: var(--fs-small); }
+.rename-sheet.drop-before { box-shadow: inset 0 3px 0 var(--accent); }
+.rename-sheet.drop-after { box-shadow: inset 0 -3px 0 var(--accent); }
 .canvas-item { display: grid; grid-template-columns: auto 1fr 64px 64px auto; gap: 6px; align-items: center; }
 .canvas-item-order { gap: 2px; align-items: center; }
 .canvas-item-order select { width: 3.4em; }

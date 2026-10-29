@@ -8,7 +8,7 @@ import { markMathAsked, mathSizesVersion, resetMathAsked } from '../math/sizes.t
 import { bendPoints, outlinePoint, type Outline, type Pt, type StickSide } from '../figure/shapes.ts';
 import { parsePath, pathBox, pathText, reversePath, shapeToPath } from '../figure/paths.ts';
 import { placeComponent } from './drawingItems.ts';
-import { renameSheets, type SheetRename } from './sheetNames.ts';
+import { renameSheets, type SheetRename, type SheetsInput } from './sheetNames.ts';
 import { isoMatrix, isoToPage } from './isoPlane.ts';
 import { suspendedOf } from './reliability.ts';
 import { generatedValues } from './gencol.ts';
@@ -149,7 +149,8 @@ export type NodeView = {
   toSheets?: string[]; // Columns to sheets: the names of the sheets made
   figList?: { key: string; name?: string; on: boolean }[]; // Select figures: the figures in, taken or not
   panels?: { key: string; name?: string }[]; // Merge: its figures as connected (a Batch's: one each, named)
-  renamed?: SheetRename[]; // Rename sheets: every sheet's old name, new name, what its name said, left out or not
+  renamed?: SheetRename[]; // Sheets: every sheet (in the order shown): its key, old name, new name, what its name said, left out or not
+  sheetIns?: { letter: string; name: string; sheets: number }[]; // Sheets: the tables on its ports A, B …
   // Convert columns: the columns converted, and every column whose text looks like numbers (how many of its text cells)
   convert?: { changed: string[]; looks: { name: string; numeric: number; text: number; examples: string[] }[] };
   // Workbook: its own sheets (the first `own`; the others: from the inputs, read-only) and its inputs; kinds: every sheet
@@ -4997,10 +4998,20 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
     }
     case 'renamesheets': {
       const v = one('in');
-      if (v?.t !== 'workbook' && v?.t !== 'dataset') return { view: { waiting: 'Connect a workbook (Import with several files, Columns to sheets …).' } };
-      const book = v.t === 'workbook' ? v.v : { name: v.v.name, sheets: [v.v] };
-      const r = renameSheets(book, n.data);
-      return { outputs: { out: { t: 'workbook', v: r.book } }, warnings: r.warnings, view: { renamed: r.rows } };
+      // the tables on the ports A, B …: a sheet each (a workbook: all its sheets)
+      const ins: SheetsInput[] = [...inputs.keys()]
+        .flatMap((h) => {
+          const m = /^in-(\d+)$/.exec(h);
+          const w = m ? one(h) : undefined;
+          return m && (w?.t === 'dataset' || w?.t === 'workbook') ? [{ p: Number(m[1]), letter: columnLetter(Number(m[1])), value: w.v, book: w.t === 'workbook' }] : [];
+        })
+        .sort((a, b) => a.p - b.p)
+        .map(({ letter, value, book }) => ({ letter, value, book }));
+      if (v?.t !== 'workbook' && v?.t !== 'dataset' && !ins.length && !n.data.added?.length) return { view: { waiting: 'Connect a workbook (Import with several files, Columns to sheets …), or tables to A, B …' } };
+      const book = v?.t === 'workbook' ? v.v : v?.t === 'dataset' ? { name: v.v.name, sheets: [v.v] } : { name: 'sheets', sheets: [] };
+      const r = renameSheets(book, n.data, ins, n.id);
+      const sheetIns = ins.map((i) => ({ letter: i.letter, name: i.value.name, sheets: i.book ? (i.value as Workbook).sheets.length : 1 }));
+      return { outputs: { out: { t: 'workbook', v: r.book } }, warnings: r.warnings, view: { renamed: r.rows, sheetIns } };
     }
     case 'unstack': {
       const v = one('in');
@@ -5181,7 +5192,8 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       const warnings: string[] = [];
       const figure = canvasFigure(n.id, d, figs, warnings);
       if (toPt(figure.width, figure.unit) > 72 * 60 || toPt(figure.height, figure.unit) > 72 * 60) return { errors: ['At most 60 inches (1.5 m) on a side.'] };
-      return { view: { figure, panels: figs.map((f) => ({ key: f.key ?? '', ...(f.panelName ? { name: f.panelName } : {}) })), ...(figs.length ? {} : { waiting: 'Connect Plots (their “figure” output).' }) }, warnings: [...new Set(warnings)] };
+      // (the whole page out: to a Figure Drawing, to another Merge as a panel)
+      return { ...(figs.length ? { outputs: { figure: { t: 'figure' as const, v: figure } } } : {}), view: { figure, panels: figs.map((f) => ({ key: f.key ?? '', ...(f.panelName ? { name: f.panelName } : {}) })), ...(figs.length ? {} : { waiting: 'Connect Plots (their “figure” output).' }) }, warnings: [...new Set(warnings)] };
     }
     case 'image':
       return imageNodeOut(n.id, n.data);

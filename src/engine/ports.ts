@@ -207,6 +207,7 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
       return t && t !== 'any' ? (t as PortType) : 'any';
     }
     case 'drawing':
+    case 'canvas':
       return handle === 'figure' ? 'figure' : null;
     case 'selectfig':
       return 'figure';
@@ -218,7 +219,6 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
       return handle === 'circuit' ? 'figure' : handle === 'parameters' || handle === 'fitted' || handle === 'ranges' || handle === 'curve' ? 'dataset' : null;
     case 'phasediagram':
       return handle === 'figure' || handle === 'cooling' ? 'figure' : handle === 'points' || handle === 'fractions' || handle === 'boundaries' ? 'dataset' : null;
-    case 'canvas':
     case 'note':
     case 'frame':
     case 'groupout':
@@ -237,8 +237,9 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
     case 'convert':
     case 'transpose':
     case 'stack':
-    case 'renamesheets':
       return handle === 'in' ? ['dataset', 'workbook'] : [];
+    case 'renamesheets':
+      return handle === 'in' || /^in-\d+$/.test(handle) ? ['dataset', 'workbook'] : [];
     case 'tosheets':
     case 'datamanip':
     case 'unstack':
