@@ -3,7 +3,7 @@
 // workbook a dict of Tables), the code run (print kept; the last expression shown as Jupyter does), the variables it made
 // given out by their kind, the figures of matplotlib drawn as SVG, the files it saved (savefig …), an error with its line.
 export const RUNTIME = String.raw`
-import sys, io, os, ast, traceback, time, math, shutil
+import sys, io, os, ast, traceback, time, math, shutil, types
 # matplotlib's own drawing (Agg), as on a desktop: the files saved are those matplotlib makes everywhere
 os.environ['MPLBACKEND'] = 'agg'
 import warnings
@@ -60,6 +60,27 @@ def _var_in(v):
     if k == 'dataset':
         return table(v['name'], v['columns'])
     return {s['name']: table(s['name'], s['columns']) for s in v['sheets']}
+
+def _module_in(name, v):
+    """A module made from a Python node's code: its own inputs (data, modules) its variables, its code run in it."""
+    m = types.ModuleType(name)
+    m.__dict__.update({'np': np, 'Table': Table, 'roles': roles})
+    for item in v['vars']:
+        iv = item['value']
+        m.__dict__[item['name']] = _module_in(item['name'], iv) if iv['kind'] == 'module' else _var_in(iv)
+    exec(compile(v['code'], '<module %s>' % name, 'exec'), m.__dict__)
+    return m
+
+def _packages():
+    """The libraries installed now (loaded by a script): their names and versions."""
+    import importlib.metadata as md
+    out = {}
+    for d in md.distributions():
+        try:
+            out[d.metadata['Name'].lower()] = d.version
+        except Exception:
+            pass
+    return out
 
 def _col_out(name, a, role=None):
     a = np.asarray(a)
@@ -371,8 +392,14 @@ def _run(code, inputs):
     """Runs the code with the inputs: the outputs, the printed text, the last expression, the figures, the files, an error."""
     _RUN[0] += 1
     g = {'__name__': '__main__', 'np': np, 'Table': Table, 'roles': roles}
+    mods = [item for item in inputs if item['value']['kind'] == 'module']
     for item in inputs:
-        g[item['name']] = _var_in(item['value'])
+        if item['value']['kind'] != 'module':
+            g[item['name']] = _var_in(item['value'])
+    # (the modules: made in the run, their prints and errors its own; importable by their names while it runs)
+    for item in mods:
+        g[item['name']] = None
+    saved = {item['name']: sys.modules.get(item['name']) for item in mods}
     before = set(g)
     out, err = io.StringIO(), io.StringIO()
     old = sys.stdout, sys.stderr, os.getcwd()
@@ -386,6 +413,8 @@ def _run(code, inputs):
     try:
         sys.stdout, sys.stderr = out, err
         os.chdir(work)
+        for item in mods:
+            g[item['name']] = sys.modules[item['name']] = _module_in(item['name'], item['value'])
         tree = ast.parse(code, '<script>')
         last = None
         if tree.body and isinstance(tree.body[-1], ast.Expr):
@@ -395,18 +424,33 @@ def _run(code, inputs):
             shown = eval(compile(last, '<script>', 'eval'), g)
     except BaseException as e:
         line = None
+        where = None
         if isinstance(e, SyntaxError) and e.filename == '<script>':
             line = e.lineno
+        if isinstance(e, SyntaxError) and (e.filename or '').startswith('<module '):
+            where = (e.filename[8:-1], e.lineno)
         for fr in traceback.extract_tb(e.__traceback__):
             if fr.filename == '<script>':
                 line = fr.lineno
+            elif fr.filename.startswith('<module '):
+                where = (fr.filename[8:-1], fr.lineno)
         msg = ''.join(traceback.format_exception_only(type(e), e)).strip()
+        # (raised in a module: said where)
+        if where is not None:
+            if isinstance(e, SyntaxError):
+                msg = '%s: %s' % (type(e).__name__, e.msg)
+            msg = 'in the module %s, line %s: %s' % (where[0], where[1], msg)
         error = {'message': msg}
         if line:
             error['line'] = line
     finally:
         sys.stdout, sys.stderr = old[0], old[1]
         os.chdir(old[2])
+        for k, m in saved.items():
+            if m is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = m
     ms = int((time.time() - t0) * 1000)
     outputs, skipped = [], []
     if error is None:

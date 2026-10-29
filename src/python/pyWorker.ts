@@ -4,7 +4,7 @@
 // packages Pyodide does not carry (lmfit, seaborn, pingouin …) installed from PyPI by micropip when first imported. One
 // run at a time; Stop ends the worker (a new one is made for the next run).
 import { RUNTIME } from './runtime.ts';
-import type { MplCurve, MplFigure, PyJob, PyOut, PyResult, PyValue } from '../engine/python.ts';
+import { codesOf, PY_LIBRARIES, type MplCurve, type MplFigure, type PyJob, type PyOut, type PyResult, type PyValue } from '../engine/python.ts';
 
 import { PYODIDE_VERSION } from './version.ts';
 const CDN = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
@@ -26,16 +26,7 @@ type Pyodide = {
 const status = (text: string) => self.postMessage({ type: 'status', text } satisfies PyReply);
 
 // Pure-Python packages from PyPI (Pyodide's own set lacks them): the name imported, the name to install
-const PYPI_PACKAGES: Record<string, string> = {
-  lmfit: 'lmfit',
-  seaborn: 'seaborn',
-  pingouin: 'pingouin',
-  tifffile: 'tifffile',
-  pybaselines: 'pybaselines',
-  emcee: 'emcee',
-  pint: 'pint',
-  openpyxl: 'openpyxl',
-};
+const PYPI_PACKAGES: Record<string, string> = Object.fromEntries(PY_LIBRARIES.flatMap((l) => (l.pypi ? [[l.imp, l.pypi]] : [])));
 const installed = new Set<string>();
 
 let ready: Promise<Pyodide> | null = null;
@@ -61,6 +52,7 @@ function plainValue(v: PyValue): unknown {
   if (v.kind === 'value') return v;
   if (v.kind === 'matrix') return { ...v, v: bytes(v.v) };
   if (v.kind === 'dataset') return { kind: 'dataset', name: v.name, columns: v.columns.map(col) };
+  if (v.kind === 'module') return { kind: 'module', name: v.name, code: v.mod.code, vars: v.mod.vars.map((q) => ({ name: q.name, value: plainValue(q.value) })) };
   return { kind: 'workbook', name: v.name, sheets: v.sheets.map((s) => ({ name: s.name, columns: s.columns.map(col) })) };
 }
 // the bytes of float64 back as numbers
@@ -83,10 +75,12 @@ self.onmessage = async (e: MessageEvent<PyRequest>) => {
     const py = await python();
     // the packages the code imports (and pandas for a table's .df)
     const note = (m: string) => /^Loading|^Loaded/.test(m) && status(m.replace(/^Loading /, 'Loading ').slice(0, 120));
-    await py.loadPackagesFromImports(job.code, { messageCallback: note, errorCallback: () => undefined });
-    if (/\.df\b|pandas/.test(job.code)) await py.loadPackage(['pandas'], { messageCallback: note });
+    // (its own code's and its modules')
+    const code = codesOf(job.code, job.vars).join('\n');
+    await py.loadPackagesFromImports(code, { messageCallback: note, errorCallback: () => undefined });
+    if (/\.df\b|pandas/.test(code)) await py.loadPackage(['pandas'], { messageCallback: note });
     // (from PyPI: those imported and not yet installed in this worker)
-    const wanted = Object.keys(PYPI_PACKAGES).filter((m) => !installed.has(m) && new RegExp(`^\\s*(?:import|from)\\s+${m}\\b`, 'm').test(job.code));
+    const wanted = Object.keys(PYPI_PACKAGES).filter((m) => !installed.has(m) && new RegExp(`^\\s*(?:import|from)\\s+${m}\\b`, 'm').test(code));
     if (wanted.length) {
       await py.loadPackage(['micropip'], { messageCallback: note });
       status(`Installing ${wanted.join(', ')} from PyPI (the first time)…`);
@@ -120,7 +114,11 @@ self.onmessage = async (e: MessageEvent<PyRequest>) => {
       const axes = d.axes.map((a) => ({ ...a, curves: a.curves.map((c) => curveBack(c as unknown as Record<string, unknown>) as unknown as MplCurve) }));
       return { ...f, desc: { ...d, axes } };
     });
-    result = { key: job.key, run: job.run, outputs, skipped: raw.skipped, console: raw.console, ...(raw.display ? { display: raw.display } : {}), ...(raw.error ? { error: raw.error } : {}), figures, files, ms: raw.ms };
+    // the libraries loaded now (their versions), for the node's list
+    const pk = py.globals.get('_packages')();
+    const packages = pk.toJs({ dict_converter: Object.fromEntries, create_pyproxies: false }) as Record<string, string>;
+    pk.destroy();
+    result = { key: job.key, run: job.run, outputs, skipped: raw.skipped, console: raw.console, ...(raw.display ? { display: raw.display } : {}), ...(raw.error ? { error: raw.error } : {}), figures, files, ms: raw.ms, packages };
   } catch (err) {
     result = fail(`Python could not run: ${(err as Error).message ?? err}`);
     // Python not loaded (no network …): tried again at the next run

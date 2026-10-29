@@ -5,7 +5,7 @@ import type { AppNode } from '../types.ts';
 import { STATS } from './stats.ts';
 import { partHandle, stepParts } from './matrix.ts';
 
-export type PortType = 'workbook' | 'dataset' | 'column' | 'scalar' | 'matrix' | 'figure' | 'any';
+export type PortType = 'workbook' | 'dataset' | 'column' | 'scalar' | 'matrix' | 'figure' | 'module' | 'any';
 
 // (a workbook — several sheets — violet with a ring, apart from a dataset — one table —, blue)
 export const PORT_COLORS: Record<PortType, string> = {
@@ -15,6 +15,7 @@ export const PORT_COLORS: Record<PortType, string> = {
   scalar: '#d64545',
   matrix: '#c0398b',
   figure: '#e07b39',
+  module: '#3a8f96',
   any: '#8a93a6',
 };
 export const PORT_LABELS: Record<PortType, string> = {
@@ -24,9 +25,10 @@ export const PORT_LABELS: Record<PortType, string> = {
   scalar: 'single value',
   matrix: 'matrix (m × n numbers: Matrix, Matrix computation; drawn by Contour / heatmap)',
   figure: 'figure (a Plot: page, axes, curves, legend, annotations)',
+  module: 'module (a Python script’s code: its functions, for another Python script)',
   any: 'anything (nothing connected yet)',
 };
-const ALL: PortType[] = ['workbook', 'dataset', 'column', 'scalar', 'matrix', 'figure'];
+const ALL: PortType[] = ['workbook', 'dataset', 'column', 'scalar', 'matrix', 'figure', 'module'];
 
 const STAT_KEYS = new Set<string>(STATS.map((s) => s.key));
 // The ports of the curve rows of a Plot: row 0 'x', 'y' …, row k 'x-k', 'y-k' …
@@ -135,7 +137,8 @@ export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortCont
     case 'mathcol':
       return node.data.output === 'value' ? 'scalar' : 'column';
     case 'python': {
-      // its outputs as last run: py-<name>, by their kind
+      // its code as a module; its outputs as last run: py-<name>, by their kind
+      if (handle === 'module') return 'module';
       const o = node.data.outs?.find((q) => `py-${q.name}` === handle);
       return o ? o.kind : null;
     }
@@ -308,7 +311,7 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
     case 'mathcol':
       return /^in-\d+$/.test(handle) ? ['column', 'scalar'] : [];
     case 'python':
-      return /^in-\d+$/.test(handle) ? ['column', 'scalar', 'dataset', 'matrix', 'workbook'] : [];
+      return /^in-\d+$/.test(handle) ? ['column', 'scalar', 'dataset', 'matrix', 'workbook', 'module'] : [];
     case 'gencol':
       return handle === 'like' ? ['column'] : [];
     case 'stats':

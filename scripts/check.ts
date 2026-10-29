@@ -121,7 +121,7 @@ import { buildFigure } from '../src/plotBuild.ts';
 import { addAxis, removeAxis, layoutAxes, type XLayout, type YLayout } from '../src/figure/multiAxes.ts';
 import { drawnLimits } from '../src/figure/drawnLimits.ts';
 import { backupText, readBackup } from '../src/library.ts';
-import { curveColumns, digest, figPort, outValue, toPy, validName, type MplFigure } from '../src/engine/python.ts';
+import { codesOf, curveColumns, digest, figPort, outValue, toPy, validName, type MplFigure } from '../src/engine/python.ts';
 import { figureNodes } from '../src/mplPlot.ts';
 import { bothWithin, dunnett, dunnettProb, factorCols, interCols, mixedDesign, mixedModel } from '../src/engine/rmstats.ts';
 import { makeGroup, ungroupNode } from '../src/engine/subgraph.ts';
@@ -5172,6 +5172,16 @@ for (const ex of EXAMPLES) {
     // nothing runs until Run is pressed (run 1); a change of the code does not run it either
     const idle = evaluateGraph([{ id: 'g', type: 'gencol', position: { x: 0, y: 0 }, data: { ...GENCOL_DEFAULTS, count: 3, start: 1, stop: 3 } } as AppNode, { id: 'py', type: 'python', position: { x: 0, y: 0 }, data: { code: 'y = A * 2' } } as AppNode], [{ id: 'e', source: 'g', sourceHandle: 'out', target: 'py', targetHandle: 'in-0' }]).get('py')!;
     ok(!idle.view.py?.job && idle.view.waiting === 'Press Run to run the code.', 'Python script: nothing runs until Run is pressed');
+    // a script's code as a module on another's input: in its job by the input's name, with its own inputs; a change of
+    // the module's code asks for a new run
+    const libNode = (code: string) => ({ id: 'lib', type: 'python', position: { x: 0, y: 0 }, data: { code } }) as AppNode;
+    const user = { id: 'use', type: 'python', position: { x: 0, y: 0 }, data: { code: 'y = lib.triple(A)', run: 1, vars: { B: 'lib' } } } as AppNode;
+    const modEdges = [{ id: 'e1', source: 'g', sourceHandle: 'out', target: 'lib', targetHandle: 'in-0' }, { id: 'e2', source: 'lib', sourceHandle: 'module', target: 'use', targetHandle: 'in-1' }, { id: 'e3', source: 'g', sourceHandle: 'out', target: 'use', targetHandle: 'in-0' }];
+    const genM = { id: 'g', type: 'gencol', position: { x: 0, y: 0 }, data: { ...GENCOL_DEFAULTS, count: 3, start: 1, stop: 3 } } as AppNode;
+    const m1 = evaluateGraph([genM, libNode('def triple(x):\n    return 3 * x'), user], modEdges).get('use')!;
+    const mv = m1.view.py?.job?.vars.find((v) => v.name === 'lib')?.value;
+    const m2 = evaluateGraph([genM, libNode('def triple(x):\n    return 4 * x'), user], modEdges).get('use')!;
+    ok(mv?.kind === 'module' && mv.mod.code.includes('3 * x') && mv.mod.vars[0]?.name === 'A' && m1.view.py?.vars.find((v) => v.letter === 'B')?.kind === 'module' && m1.view.py?.job?.key !== m2.view.py?.job?.key && codesOf(m1.view.py!.job!.code, m1.view.py!.job!.vars).length === 2, 'Python script: another script’s code as a module (its own inputs with it; changed: run again)');
     const pyNode = { id: 'py', type: 'python', position: { x: 0, y: 0 }, data: { code: 'y = A * 2', run: 1 } } as AppNode;
     const gen = { id: 'g', type: 'gencol', position: { x: 0, y: 0 }, data: { ...GENCOL_DEFAULTS, count: 3, start: 1, stop: 3 } } as AppNode;
     const cache = newCache();

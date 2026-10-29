@@ -1109,6 +1109,13 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 /* Recolour: the colours the curves get, in order, before they are applied */
 .recolour-strip { display: inline-flex; height: 16px; min-width: 60px; max-width: 220px; flex: 1 1 120px; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
 .recolour-strip > span { flex: 1 1 0; }
+.py-ins { display: flex; flex-direction: column; gap: 6px; }
+.py-in { display: flex; flex-direction: column; gap: 2px; padding-left: 6px; border-left: 2px solid var(--border); }
+.py-use { font-family: var(--mono); font-size: var(--fs-small); color: var(--muted); }
+.py-libs > summary { cursor: pointer; color: var(--muted); }
+.py-lib { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 6px; align-items: center; margin-top: 3px; }
+.py-lib > button { text-align: left; padding: 1px 6px; }
+.py-lib-on { color: var(--accent); font-size: var(--fs-small); }
 .add-menu { display: flex; flex-direction: column; min-width: 190px; }
 .add-menu > button { text-align: left; border: none; background: transparent; padding: 4px 10px; border-radius: 4px; }
 .add-menu > button:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }

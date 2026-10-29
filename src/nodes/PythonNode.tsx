@@ -1,12 +1,13 @@
 // Python script: inputs A, B, C … (one free after the last used), the code (its editor), Run / Stop and what Python is
 // doing, the printed text and the last expression (a table for a DataFrame), an error with its line, the figures of
-// matplotlib and the files the code saved (to download), the outputs (one port per variable made, by its kind). In the
-// panel: run by itself or on Run, the inputs' names, the outputs given (ticked), examples.
+// matplotlib and the files the code saved (to download), the outputs (one port per variable made, by its kind), and its
+// code as a module (for other scripts). In the panel: run by itself or on Run, the inputs (their names, what each is in
+// Python and how it is used), the outputs given (ticked), the libraries (loaded or not; a click imports one), examples.
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { useNodeConnections, useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import { columnLetter } from '../engine/csv.ts';
-import { figPort, portKindOf, validName, type PyOut } from '../engine/python.ts';
+import { figPort, portKindOf, PY_LIBRARIES, validName, type PyOut, type PyValue } from '../engine/python.ts';
 import { figureNodes } from '../mplPlot.ts';
 import { maxOf } from '../engine/minmax.ts';
 import { allowProject, stopPython, usePython } from '../python/runner.ts';
@@ -20,7 +21,18 @@ import { ask } from '../ui/dialogStore.ts';
 
 const CodeEditor = lazy(() => import('./CodeEditor.tsx'));
 
-const KIND_TEXT: Record<string, string> = { column: 'array', value: 'float', dataset: 'Table', matrix: '2D array', workbook: 'dict of Tables' };
+const KIND_TEXT: Record<string, string> = { column: 'array', value: 'float', dataset: 'Table', matrix: '2D array', workbook: 'dict of Tables', module: 'module' };
+// what an input is in Python, and a line that uses it (its name in the code)
+const PY_TYPE: Record<PyValue['kind'], [string, (n: string) => string]> = {
+  column: ['a column: a numpy array (text: an array of str)', (n) => `np.mean(${n})`],
+  value: ['one value: a float', (n) => `${n} * 2`],
+  dataset: ['a table: a Table (its columns by name; .df a pandas DataFrame)', (n) => `${n}.df.head()`],
+  matrix: ['a matrix: a 2D numpy array', (n) => `${n}.shape`],
+  workbook: ['a workbook: a dict of Tables, by sheet name', (n) => `list(${n})`],
+  module: ['a module: the code of another script (its functions)', (n) => `${n}.my_function(…)  ·  from ${n} import my_function`],
+};
+// the line a library is imported with (else “import <name>”)
+const IMPORT_LINE: Record<string, string> = { numpy: 'import numpy as np', pandas: 'import pandas as pd', matplotlib: 'import matplotlib.pyplot as plt', seaborn: 'import seaborn as sns' };
 const outText = (o: PyOut) => (o.kind === 'value' ? (Number.isFinite(o.value) ? String(+o.value.toPrecision(6)) : 'NaN') : o.kind === 'column' ? `column, ${o.col.values.length} rows` : o.kind === 'dataset' ? `table, ${o.columns[0]?.values.length ?? 0} × ${o.columns.length}` : `matrix ${o.rows} × ${o.cols}`);
 
 // starts to choose from: they replace the code
@@ -235,6 +247,9 @@ export function PythonNodeView({ id, data }: NodeProps<PythonNode>) {
           </OutPort>
         );
       })}
+      <OutPort label="module" port="module" id="module" title="This script's code as a module: on an input of another Python script it is that module, by the input's name there (lib.my_function(x), from lib import my_function); its own inputs go with it, its code runs again at every run there (keep it to functions and constants)">
+        <span className="muted ellipsis">its code, for other scripts</span>
+      </OutPort>
       {big && (
         <div className="welcome-backdrop" onClick={(e) => e.target === e.currentTarget && setBig(false)}>
           <div className="py-big">
@@ -253,9 +268,20 @@ export function PythonNodeView({ id, data }: NodeProps<PythonNode>) {
       <NodeOptions>
         <Check label="Auto run" title="Off (the default): the code runs only when you press Run (Ctrl+Enter). On: again at every change of the code or the data" value={data.auto === true} onChange={(auto) => set({ auto: auto || undefined })} />
         {!!py?.vars.length && (
-          <div className="col-form">
+          <div className="py-ins">
+            <div className="muted">Inputs</div>
             {py.vars.map((v) => (
-              <VarName key={v.letter} letter={v.letter} value={data.vars?.[v.letter] ?? ''} onChange={(nm) => set({ vars: { ...data.vars, [v.letter]: nm || undefined } as Record<string, string> })} />
+              <div key={v.letter} className="py-in">
+                <div className="col-form">
+                  <VarName letter={v.letter} value={data.vars?.[v.letter] ?? ''} onChange={(nm) => set({ vars: { ...data.vars, [v.letter]: nm || undefined } as Record<string, string> })} />
+                </div>
+                <div className="muted">
+                  {PY_TYPE[v.kind][0]} · {v.size}
+                </div>
+                <code className="py-use" title="A line that uses it">
+                  {PY_TYPE[v.kind][1](v.name)}
+                </code>
+              </div>
             ))}
           </div>
         )}
@@ -286,6 +312,32 @@ export function PythonNodeView({ id, data }: NodeProps<PythonNode>) {
             ))}
           </select>
         </div>
+        <details className="py-libs">
+          <summary>Libraries</summary>
+          {PY_LIBRARIES.map((l) => {
+            const v = res?.packages?.[l.dist.toLowerCase()];
+            const line = IMPORT_LINE[l.imp] ?? `import ${l.imp}`;
+            return (
+              <div key={l.imp} className="py-lib">
+                <button
+                  className="nodrag"
+                  title={`“${line}” put at the top of the code`}
+                  onClick={() => {
+                    if (!data.code.split('\n').some((q) => q.trim() === line)) set({ code: `${line}\n${data.code}` });
+                  }}
+                >
+                  {l.label}
+                </button>
+                <span className="muted ellipsis" title={l.what}>
+                  {l.what}
+                </span>
+                <span className={v ? 'py-lib-on' : 'muted'} title={v ? 'Loaded in Python (at the last run of this script)' : l.pypi ? 'Installed from PyPI the first time a script imports it' : 'Downloaded the first time a script imports it, then kept by the browser'}>
+                  {v ? `loaded ${v}` : l.pypi ? 'PyPI, at import' : 'at import'}
+                </span>
+              </div>
+            );
+          })}
+        </details>
         <div className="hint">
           Python {PYODIDE_VERSION.startsWith('314') ? '3.14' : ''} in the browser (Pyodide {PYODIDE_VERSION}, MPL-2.0): nothing is installed and the data never leave this computer; the first run downloads Python (about 10 MB) and each library the code imports (numpy, scipy, pandas, matplotlib, statsmodels, scikit-learn, scikit-image, OpenCV as cv2, sympy …; lmfit, seaborn, pingouin, pybaselines, emcee, pint, tifffile and openpyxl come from PyPI the first time), then the browser keeps them.
         </div>

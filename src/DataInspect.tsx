@@ -127,6 +127,7 @@ function ValueView({ v, rows, height }: { v: Value; rows: number; height: number
   }
   if (v.t === 'scalar') return <div className="inspect-info mono">{v.v.name ? `${v.v.name} = ` : ''}{fmtNum(v.v.value, 10)}</div>;
   if (v.t === 'figures') return <div className="inspect-info muted">{v.v.length} figures of a Batch: connect them to a Merge (a panel each).</div>;
+  if (v.t === 'module') return <pre className="inspect-info mono">{v.v.code}</pre>;
   return <div className="inspect-info muted">A figure of {fmtNum(v.v.width, 4)} × {fmtNum(v.v.height, 4)} {v.v.unit}: connect it to a Merge, or open its node to see it.</div>;
 }
 

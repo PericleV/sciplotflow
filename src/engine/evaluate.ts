@@ -20,7 +20,7 @@ import { axisRange } from '../figure/ticks.ts';
 import { autoFrame, axesGeometry, placeAuto, placeInsets, placeLegends } from '../figure/axes.ts';
 import { legendLayout } from '../figure/legendLayout.ts';
 import { columnLetter, readTable, type CsvResult } from './csv.ts';
-import { curveColumns, digest, figPort, outValue, toPy, type PyJob, type PyResult, type PyValue } from './python.ts';
+import { curveColumns, digest, figPort, outValue, toPy, type PyJob, type PyModule, type PyResult, type PyValue } from './python.ts';
 import { applySheet, hasEdits, readSheet, type SheetMap } from './sheet.ts';
 import { findings, findSheet, foundAs, hasFindings, importSource, inOrder, inScope, knownAs, missKey, newScope, sheetId, type DataRefs, type Resolved } from './refs.ts';
 import { applyFormulas, keysUsed, type ColFormula } from './sheetFormula.ts';
@@ -109,7 +109,9 @@ export type Value =
   | { t: 'matrix'; v: Matrix }
   | { t: 'figure'; v: Figure }
   // the figures of a Batch (a Plot kept from every file or column): a panel each in a Merge
-  | { t: 'figures'; v: Figure[] };
+  | { t: 'figures'; v: Figure[] }
+  // a Python node's code as a module (its functions, for other Python nodes)
+  | { t: 'module'; v: PyModule };
 
 // A matrix as the node views show it: its size, names, and the cells of its top-left corner (at most max × max).
 export type MatrixInfo = { name: string; rows: number; cols: number; shownRows: number; shownCols: number; cells: number[]; xs?: number[]; ys?: number[]; colNames?: string[]; rowNames?: string[] };
@@ -314,7 +316,7 @@ function pythonNode(n: { id: string; data: PythonData }, inputs: Inputs): Out {
     const name = d.vars?.[letter]?.trim() || letter;
     const value = toPy(v);
     vars.push({ name, value });
-    const size = value.kind === 'column' ? `${value.col.values.length}` : value.kind === 'dataset' ? `${value.columns[0]?.values.length ?? 0} × ${value.columns.length}` : value.kind === 'matrix' ? `${value.rows} × ${value.cols}` : value.kind === 'workbook' ? `${value.sheets.length} sheets` : '1';
+    const size = value.kind === 'column' ? `${value.col.values.length}` : value.kind === 'dataset' ? `${value.columns[0]?.values.length ?? 0} × ${value.columns.length}` : value.kind === 'matrix' ? `${value.rows} × ${value.cols}` : value.kind === 'workbook' ? `${value.sheets.length} sheets` : value.kind === 'module' ? `${value.mod.code.split('\n').length} lines` : '1';
     shown.push({ letter, name, kind: value.kind, size });
   }
   shown.sort((a, b) => a.letter.length - b.letter.length || a.letter.localeCompare(b.letter));
@@ -333,7 +335,8 @@ function pythonNode(n: { id: string; data: PythonData }, inputs: Inputs): Out {
   const current = !!last && last.key === key;
   const wanted = auto ? !current : run > 0 && (!last || last.run !== run);
   const job: PyJob | undefined = wanted ? { key, run, code, vars } : undefined;
-  const outputs: Record<string, Value> = {};
+  // its code as a module, with its own inputs: for other Python nodes (whether it has run or not)
+  const outputs: Record<string, Value> = { module: { t: 'module', v: { node: n.id, code, vars } } };
   const errors: string[] = [];
   const warnings: string[] = [];
   if (last) {

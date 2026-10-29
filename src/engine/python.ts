@@ -2,13 +2,17 @@
 // of its own). Every input port (A, B, C …) is a variable — a column a numpy array, a value a float, a dataset a table
 // (its columns by name, its designations; .df a pandas DataFrame), a matrix a 2D array, a workbook a dict of tables; the
 // variables the code makes are the outputs, each by its kind (a number, a column, a matrix, a dataset). A run is asked
-// for when the code or the data change (their digest), its result kept by the engine and given back here.
+// for when the code or the data change (their digest), its result kept by the engine and given back here. A node's code
+// is also a module (its “module” output): on an input of another node it is that module, its functions used there.
 import type { Column, ColumnRole, Dataset, Scalar, Workbook } from './table.ts';
 import type { Matrix } from './matrix.ts';
 
 // a value as Python gets it (posted to the worker: plain arrays)
 export type PyCol = { name: string; values: Float64Array; text?: string[]; role?: ColumnRole };
-export type PyValue = { kind: 'column'; col: PyCol } | { kind: 'value'; name: string; value: number } | { kind: 'dataset'; name: string; columns: PyCol[] } | { kind: 'matrix'; name: string; rows: number; cols: number; v: Float64Array } | { kind: 'workbook'; name: string; sheets: { name: string; columns: PyCol[] }[] };
+export type PyValue = { kind: 'column'; col: PyCol } | { kind: 'value'; name: string; value: number } | { kind: 'dataset'; name: string; columns: PyCol[] } | { kind: 'matrix'; name: string; rows: number; cols: number; v: Float64Array } | { kind: 'workbook'; name: string; sheets: { name: string; columns: PyCol[] }[] } | { kind: 'module'; name: string; mod: PyModule };
+// A Python node's code as a module: its code, and its own inputs (data, other modules) by their names there — the module
+// made from them where it is used (`lib.fit(x)`, `from lib import fit`), its code run again at every run of that node
+export type PyModule = { node: string; code: string; vars: { name: string; value: PyValue }[] };
 // a variable of the code given out, by its kind
 export type PyOut = { name: string; kind: 'value'; value: number } | { name: string; kind: 'column'; col: PyCol } | { name: string; kind: 'dataset'; columns: PyCol[] } | { name: string; kind: 'matrix'; rows: number; cols: number; v: Float64Array };
 // A figure of matplotlib as read for “Make Plot”: its size (in), text size (pt), grid of axes; every axes its titles,
@@ -69,7 +73,37 @@ export type PyFile = { name: string; mime: string; bytes: Uint8Array };
 export type PyDisplay = { text: string } | { table: { columns: string[]; rows: string[][]; total: number } };
 // a run: what it was asked with (its digest, the Run count), its outputs, its printed text, an error (its line in the
 // code), its figures and files, how long it took
-export type PyResult = { key: string; run: number; outputs: PyOut[]; skipped: { name: string; type: string }[]; console: string; display?: PyDisplay; error?: { message: string; line?: number }; figures: PyFigure[]; files: PyFile[]; ms: number };
+// packages: the libraries loaded in Python after it (their names as installed, their versions)
+export type PyResult = { key: string; run: number; outputs: PyOut[]; skipped: { name: string; type: string }[]; console: string; display?: PyDisplay; error?: { message: string; line?: number }; figures: PyFigure[]; files: PyFile[]; ms: number; packages?: Record<string, string> };
+
+// The libraries a script can import: the name imported, installed (dist), shown; from Pyodide's own set, or from PyPI
+// (pure Python, installed by micropip the first time: pypi, the name to install)
+export type PyLibrary = { imp: string; dist: string; label: string; what: string; pypi?: string };
+export const PY_LIBRARIES: PyLibrary[] = [
+  { imp: 'numpy', dist: 'numpy', label: 'NumPy', what: 'arrays, linear algebra, FFT, random numbers' },
+  { imp: 'scipy', dist: 'scipy', label: 'SciPy', what: 'fitting, optimization, signal, integration, statistics' },
+  { imp: 'pandas', dist: 'pandas', label: 'pandas', what: 'tables (DataFrame): grouping, joining, reshaping' },
+  { imp: 'matplotlib', dist: 'matplotlib', label: 'Matplotlib', what: 'figures (drawn under the node, Make Plot)' },
+  { imp: 'statsmodels', dist: 'statsmodels', label: 'statsmodels', what: 'regression, ANOVA, time series' },
+  { imp: 'sklearn', dist: 'scikit-learn', label: 'scikit-learn', what: 'machine learning: clustering, classification, PCA' },
+  { imp: 'skimage', dist: 'scikit-image', label: 'scikit-image', what: 'image processing' },
+  { imp: 'cv2', dist: 'opencv-python', label: 'OpenCV', what: 'images and video, computer vision' },
+  { imp: 'sympy', dist: 'sympy', label: 'SymPy', what: 'symbolic mathematics' },
+  { imp: 'lmfit', dist: 'lmfit', label: 'lmfit', what: 'curve fitting with parameters and bounds', pypi: 'lmfit' },
+  { imp: 'seaborn', dist: 'seaborn', label: 'seaborn', what: 'statistical plots', pypi: 'seaborn' },
+  { imp: 'pingouin', dist: 'pingouin', label: 'Pingouin', what: 'statistical tests', pypi: 'pingouin' },
+  { imp: 'pybaselines', dist: 'pybaselines', label: 'pybaselines', what: 'baseline correction', pypi: 'pybaselines' },
+  { imp: 'emcee', dist: 'emcee', label: 'emcee', what: 'MCMC sampling', pypi: 'emcee' },
+  { imp: 'pint', dist: 'pint', label: 'Pint', what: 'physical units', pypi: 'pint' },
+  { imp: 'tifffile', dist: 'tifffile', label: 'tifffile', what: 'TIFF images', pypi: 'tifffile' },
+  { imp: 'openpyxl', dist: 'openpyxl', label: 'openpyxl', what: 'Excel files', pypi: 'openpyxl' },
+];
+// The codes run by a job: its own and those of the modules on its inputs (and theirs): what is imported in any of them
+export function codesOf(code: string, vars: PyJob['vars']): string[] {
+  const out = [code];
+  for (const v of vars) if (v.value.kind === 'module') out.push(...codesOf(v.value.mod.code, v.value.mod.vars));
+  return out;
+}
 // a run asked for: the node, the digest, the code, the variables
 export type PyJob = { key: string; run: number; code: string; vars: { name: string; value: PyValue }[] };
 
@@ -82,7 +116,8 @@ export const validName = (s: string) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s) && !K
 
 const pyCol = (c: Column): PyCol => ({ name: c.name, values: c.values, ...(c.text ? { text: c.text } : {}), ...(c.role ? { role: c.role } : {}) });
 const pySet = (d: Dataset) => d.columns.map(pyCol);
-export function toPy(v: { t: 'column'; v: Column } | { t: 'scalar'; v: Scalar } | { t: 'dataset'; v: Dataset } | { t: 'matrix'; v: Matrix } | { t: 'workbook'; v: Workbook }): PyValue {
+export function toPy(v: { t: 'column'; v: Column } | { t: 'scalar'; v: Scalar } | { t: 'dataset'; v: Dataset } | { t: 'matrix'; v: Matrix } | { t: 'workbook'; v: Workbook } | { t: 'module'; v: PyModule }): PyValue {
+  if (v.t === 'module') return { kind: 'module', name: v.v.node, mod: v.v };
   if (v.t === 'column') return { kind: 'column', col: pyCol(v.v) };
   if (v.t === 'scalar') return { kind: 'value', name: v.v.name, value: v.v.value };
   if (v.t === 'dataset') return { kind: 'dataset', name: v.v.name, columns: pySet(v.v) };
@@ -127,7 +162,8 @@ export function digest(code: string, vars: PyJob['vars'], run: number): string {
     else if (v.kind === 'matrix') {
       str(`${v.rows}x${v.cols}`);
       nums(v.v);
-    } else
+    } else if (v.kind === 'module') str(digest(v.mod.code, v.mod.vars, 0));
+    else
       for (const s of v.sheets) {
         str(s.name);
         s.columns.forEach(col);
