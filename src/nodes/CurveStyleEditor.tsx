@@ -44,7 +44,8 @@ const ownKeys = (e: React.KeyboardEvent) => {
 // placed with the mouse on the figure; noErrors: no Errors tab (a quick fit's curve: its band set with the fit)
 // axes: the Plot's axes a curve can be on (and new ones), chosen as in the curve's row (an axis made); without it, a
 // fixed list
-export function CurveStyleEditor({ st, set, hasYErr, hasXErr, curves = [], placing = false, onPlace, noErrors = false, axes }: { st: CurveStyle; set: (p: Partial<CurveStyle>) => void; hasYErr: boolean; hasXErr: boolean; curves?: [number, string][]; placing?: boolean; onPlace?: () => void; noErrors?: boolean; axes?: { x: [string, string][]; y: [string, string][]; pick: (kind: 'x' | 'y', v: string) => void } }) {
+// byGroup: the Plot's curves coloured by group (Colours): the curve's colour is its group's unless it keeps its own
+export function CurveStyleEditor({ st, set, hasYErr, hasXErr, curves = [], placing = false, onPlace, noErrors = false, axes, byGroup = false }: { st: CurveStyle; set: (p: Partial<CurveStyle>) => void; hasYErr: boolean; hasXErr: boolean; curves?: [number, string][]; placing?: boolean; onPlace?: () => void; noErrors?: boolean; axes?: { x: [string, string][]; y: [string, string][]; pick: (kind: 'x' | 'y', v: string) => void }; byGroup?: boolean }) {
   const [tab, setTab] = useState<'line' | 'symbol' | 'errors' | 'colour' | 'more'>('line');
   const line = st.mode !== 'scatter';
   const symbols = st.mode === 'scatter' || st.mode === 'linesymbol';
@@ -92,8 +93,9 @@ export function CurveStyleEditor({ st, set, hasYErr, hasXErr, curves = [], placi
               </Row>
             )
           )}
-          <Row label="Colour">
-            <ColorField value={st.color} onChange={(color) => set({ color: color || '#000000' })} />
+          <Row label="Colour" hint={byGroup && !st.ownColor ? 'its group’s (Colours); tick “own” to keep this one' : undefined}>
+            <ColorField value={st.color} onChange={(color) => set({ color: color || '#000000', ...(byGroup ? { ownColor: true } : {}) })} />
+            {byGroup && <Toggle value={!!st.ownColor} onChange={(on) => set({ ownColor: on || undefined })} label="own" />}
           </Row>
           {line && (
             <>
@@ -519,7 +521,7 @@ export function CurveStyleEditor({ st, set, hasYErr, hasXErr, curves = [], placi
   } else if (tab === 'colour')
     body = (
       <>
-        <Row label="Colour by" hint="Colour every point from a value">
+        <Row label="Points coloured by" hint="Colour every point of this curve from a value (the curves by group: Colours, above the curves)">
           <MSelect
             value={st.colorBy}
             onChange={(v) => v && set({ colorBy: v as CurveStyle['colorBy'] })}

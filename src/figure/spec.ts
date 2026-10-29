@@ -36,6 +36,7 @@ export type ColorBy = 'none' | 'index' | 'x' | 'y' | 'column';
 
 export type CurveStyle = {
   show: boolean; // false: not drawn, not in the legend, not in the limits of the axes (still a line to fill to)
+  ownColor?: boolean; // a Plot's curves coloured by group (Colours): this one keeps its own colour
   mode: PlotMode;
   color: string;
   lineWidth: number; // pt

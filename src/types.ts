@@ -70,6 +70,7 @@ export type { EisData };
 import type { Baseline as WidthBaseline, WidthKind } from './engine/measure.ts';
 import type { ModelSpec } from './engine/fitModels.ts';
 import type { FitBand, FitParamSpec, FitWeight } from './engine/fit.ts';
+import type { ScaleShape } from './figure/colors.ts';
 import type { AxesStyle, ColorbarSpec, ColorMapName, CurveStyle, Dash, GradFill, InsetItem, LegendSpec, LengthUnit, PanelScheme, Placement, ShapeSpec, TextSpec, TextStyle } from './figure/spec.ts';
 
 // Common to every node: a free label shown above it and the collapsed state (only the title bar shown); nameIds: the
@@ -383,8 +384,14 @@ export type PlotLegend = Partial<Omit<LegendSpec, 'key' | 'curves' | 'owner'>> &
 export type PlotPage = PageData & { frame: 'auto' | 'manual'; pad?: number };
 // 1D plot: a whole figure. Row 0 of the curves is (label, style) — the single curve of v0.1 —, rows 1, 2 … are in
 // `rows` (rows[k − 1]); axes: the frame and its sides (the Axes node of older projects); legend, annotations, page.
-// curveColors: the curves coloured by a colour map (by the value of the block each came from, else their order) instead
-// of each its own colour.
+// curveColors: the curves coloured by group (CurveColors) instead of each its own colour.
+// The groups of the curves coloured by a scale: grouped by (absent, 'auto': the value of the block each came from when
+// they all have one, else their order) their order, the block's value (Split into columns: “cavity d (nm)” = 150), the
+// number in their name, or a column (col: of the dataset; or the column on the “groups” port), every curve then split
+// into a curve per value of it. One colour per group: from a colour map (map; 'custom': my colours) or a palette
+// (palette: its colours in turn, in the order of the values); reverse; the scale shaped (ScaleShape: pos, bias, from,
+// to); fixed: a group's own colour (by its label as listed); a curve's own colour kept when its style says so (ownColor).
+export type CurveColors = { map: ColorMapName; colors?: string[]; reverse?: boolean; palette?: string; by?: 'auto' | 'order' | 'block' | 'name' | 'column'; col?: string; fixed?: Record<string, string> } & ScaleShape;
 export type Plot1DData = {
   foldCurves?: boolean; // the node's list of curves folded to one line (their connections kept)
   label: string;
@@ -395,7 +402,7 @@ export type Plot1DData = {
   trend?: TrendSpec;
   aggregate?: AggSpec;
   quickFits?: QuickFitSpec[];
-  curveColors?: { map: ColorMapName; colors?: string[]; reverse?: boolean };
+  curveColors?: CurveColors;
   rows?: CurveRow[];
   axes?: Partial<AxesStyle>;
   legend?: PlotLegend;

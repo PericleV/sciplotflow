@@ -1,18 +1,18 @@
 // Figure nodes: 1D plot — a whole figure: its curves (data and style), axes, legend, annotations and page — and
 // Merge, several Plots on one page.
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { useNodeConnections, useNodesData, useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import { packCells, panelOrder, plotRows } from '../engine/evaluate.ts';
 import { rowHandle } from '../engine/ports.ts';
 import { curvesByRole, titleOf } from '../engine/table.ts';
 import type { ColInfo } from '../engine/evaluate.ts';
-import { CMAP_OPTIONS, COLOR_MAPS, PALETTES, spreadColors } from '../figure/colors.ts';
+import { CMAP_OPTIONS, COLOR_MAPS, PALETTES, shapedStops, spreadColors, type ScaleShape } from '../figure/colors.ts';
 import type { ColorMapName } from '../figure/spec.ts';
 import { axesStyle, curveStyle, type Curve, type CurveStyle, type PanelScheme, type Side } from '../figure/spec.ts';
 import { addAxis, axisChoices } from '../figure/multiAxes.ts';
 import { CANVAS_LAYOUT_DEFAULTS, PLOT_PAGE_DEFAULTS } from '../defaults.ts';
-import type { AppNode, CanvasData, CanvasItem, CanvasLayout, CanvasNode, CurveCols, CurveRow, PageData, Plot1DData, Plot1DNode, PlotPage } from '../types.ts';
+import type { AppNode, CanvasData, CanvasItem, CanvasLayout, CanvasNode, CurveColors, CurveCols, CurveRow, PageData, Plot1DData, Plot1DNode, PlotPage } from '../types.ts';
 import { nodeDisplayName } from '../nodeColors.ts';
 import { copyCurveStyle, curveClip, useClipboard } from './clipboard.ts';
 import { OptColor, RichInput, Tabs, TextStyleControls } from './fields.tsx';
@@ -76,7 +76,7 @@ export function Plot1DNodeView({ id, data }: NodeProps<Plot1DNode>) {
   // the same in the options panel: a curve folded to its head (its columns, fits and style hidden)
   const [pfold, setPfold] = useState<Record<number, boolean>>({});
   // Recolour: the palette, colour map or my colours chosen (shown before it is applied), reversed or not
-  const [rec, setRec] = useState<{ key: string; reverse: boolean; mine: string[] } | null>(null);
+  const [rec, setRec] = useState<{ key: string; reverse: boolean; mine: string[]; shape?: ScaleShape } | null>(null);
   // a curve double-clicked on the figure (or its quick fit's range): its style opened, its row flashed
   const [flash, setFlash] = useState<{ k: number; seq: number } | null>(null);
   useFigureFocus(id, (part, seq) => {
@@ -288,6 +288,7 @@ export function Plot1DNodeView({ id, data }: NodeProps<Plot1DNode>) {
       <InPort label="dataset" port="dataset" id="dataset" title="Optional: datasets (one or several: e.g. the data and the fit curves) whose columns the curves take by name (chosen in the panel)">
         <span className="muted">{hasData ? `${names.length} columns` : 'optional'}</span>
       </InPort>
+      {(data.curveColors?.by === 'column' || connected('groups')) && <InPort label="groups" port="column" id="groups" title="Optional (Colours ▸ by group ▸ a column): the column whose equal values make the groups, as many rows as the curves' data; instead of a column chosen from the table" />}
       {rows.length > 1 && (
         <div className="row">
           <button className="nodrag ts-btn" title={data.foldCurves ? 'Show the list of curves' : 'Fold the whole list of curves to this line (their connections kept)'} onClick={() => updateNodeData(id, { foldCurves: data.foldCurves ? undefined : true } as Partial<Plot1DData>)}>
@@ -352,56 +353,92 @@ export function Plot1DNodeView({ id, data }: NodeProps<Plot1DNode>) {
       </div>
       <NodeOptions>
         {(() => {
-          // Colours: individual (each curve its own; recoloured at once from the menu, shown first) or grouped (the curves
-          // coloured by a colour scale: the map of the menu, by their value or order; one legend entry with the scale)
+          // Colours: each its own (every curve its colour, its style; recoloured at once from the menu, shown first) or by
+          // group (the curves grouped — by their order, the block each came from, the number in their name, a column —,
+          // one colour per group from a scale or a palette, live; a group's or a curve's own colour kept)
           const cc = data.curveColors;
           const grouped = !!cc;
           const n = plotRows(data, count).length;
           const MAPS = CMAP_OPTIONS.filter(([k]) => k !== 'custom').map(([k, l]): [string, string] => [`map:${k}`, l]);
           const MINE: [string, string] = ['mine', 'my colours (2–3), mixed between …'];
-          const setCc = (p: Partial<NonNullable<Plot1DData['curveColors']>>) => updateNodeData(id, { curveColors: { ...(cc ?? { map: 'viridis' }), ...p } } as Partial<Plot1DData>);
-          // what the menu shows: the scale of a grouped Plot; else the palette chosen to recolour
-          const key = grouped ? (cc.map === 'custom' ? 'mine' : `map:${cc.map}`) : (rec?.key ?? '');
+          const setCc = (p: Partial<CurveColors>) => updateNodeData(id, { curveColors: { ...(cc ?? { map: 'viridis' }), ...p } } as Partial<Plot1DData>);
+          // what the menu shows: the scale or palette of the groups; else the palette chosen to recolour
+          const key = grouped ? (cc.palette ? cc.palette : cc.map === 'custom' ? 'mine' : `map:${cc.map}`) : (rec?.key ?? '');
           const mine = grouped ? (cc.colors?.length ? cc.colors : ['#2166ac', '#b2182b']) : (rec?.mine ?? ['#2166ac', '#b2182b']);
           const reverse = grouped ? !!cc.reverse : !!rec?.reverse;
+          const shape: ScaleShape = grouped ? cc : (rec?.shape ?? {});
           const m = /^map:(.+)$/.exec(key);
-          const pal = key === 'mine' ? spreadColors(mine, n) : m ? spreadColors(COLOR_MAPS[m[1] as Exclude<ColorMapName, 'custom'>].stops, n) : (PALETTES.find((q) => q[0] === key)?.[2] ?? []);
+          const stops = key === 'mine' ? mine : m ? COLOR_MAPS[m[1] as Exclude<ColorMapName, 'custom'>].stops : null;
+          const shaped = stops ? shapedStops(stops, shape) : null;
+          const pal = shaped ? spreadColors(shaped, n) : (PALETTES.find((q) => q[0] === key)?.[2] ?? []);
           const list = Array.from({ length: n }, (_, j) => pal[j % (pal.length || 1)]).filter(Boolean);
           const colors = reverse ? [...list].reverse() : list;
+          const setShape = (p: ScaleShape) => (grouped ? setCc(p) : setRec({ ...rec!, shape: { ...rec!.shape, ...p } }));
           const pick = (k: string) => {
-            if (!grouped) return setRec(k ? { key: k, reverse, mine } : null);
-            if (k === 'mine') setCc({ map: 'custom', colors: mine });
-            else if (k.startsWith('map:')) setCc({ map: k.slice(4) as ColorMapName });
+            if (!grouped) return setRec(k ? { key: k, reverse, mine, shape: {} } : null);
+            if (k === 'mine') setCc({ map: 'custom', colors: mine, palette: undefined, pos: undefined });
+            else if (k.startsWith('map:')) setCc({ map: k.slice(4) as ColorMapName, palette: undefined, pos: undefined });
+            else setCc({ palette: k, pos: undefined });
           };
+          const groups = r?.view.colorGroups ?? [];
+          const setFixed = (label: string, c: string | undefined) => {
+            const fixed = { ...cc?.fixed };
+            if (c) fixed[label] = c;
+            else delete fixed[label];
+            setCc({ fixed: Object.keys(fixed).length ? fixed : undefined });
+          };
+          const colOptions = (r?.view.available ?? []).map((c): [string, string] => [c.name, c.name]);
           return (
             <>
               <div className="row">
-                <Field label="Colours" title="Individual: each curve its own colour (its style), recoloured at once from a palette or a colour map (shown first, then Recolour). Grouped: all the curves coloured by a colour scale, by the value of the block each came from (Split into columns: the cavity thickness, the cycle …), else by their order; the legend can then show them as one entry with the scale">
+                <Field label="Colours" title="Each its own: every curve its own colour (its style), recoloured at once from a palette or a colour map (shown first, then Recolour). By group: the curves grouped (by their order, the block each came from, the number in their name, or a column of the table), one colour per group from a colour scale or a palette, kept up to date; a group can be given its own colour below, a curve its own in its style">
                   <Select<'individual' | 'grouped'>
                     value={grouped ? 'grouped' : 'individual'}
                     options={[
-                      ['individual', 'individual'],
-                      ['grouped', 'grouped (a colour scale)'],
+                      ['individual', 'each its own'],
+                      ['grouped', 'by group'],
                     ]}
-                    onChange={(v) => updateNodeData(id, { curveColors: v === 'grouped' ? { map: rec?.key === 'mine' ? 'custom' : /^map:/.test(rec?.key ?? '') ? (rec!.key.slice(4) as ColorMapName) : 'viridis', ...(rec?.key === 'mine' ? { colors: rec.mine } : {}), ...(rec?.reverse ? { reverse: true } : {}) } : undefined } as Partial<Plot1DData>)}
+                    onChange={(v) => updateNodeData(id, { curveColors: v === 'grouped' ? { map: rec?.key === 'mine' ? 'custom' : /^map:/.test(rec?.key ?? '') ? (rec!.key.slice(4) as ColorMapName) : 'viridis', ...(rec?.key === 'mine' ? { colors: rec.mine } : {}), ...(rec && !rec.key.startsWith('map:') && rec.key !== 'mine' && rec.key ? { palette: rec.key } : {}), ...(rec?.reverse ? { reverse: true } : {}), ...rec?.shape } : undefined } as Partial<Plot1DData>)}
                   />
                 </Field>
                 <Select<string>
                   value={key}
-                  title={grouped ? 'The colour scale of the curves: a colour map, or your own 2 or 3 colours (those between them mixed)' : 'Every curve recoloured, in order (each can be changed afterwards), shown first: from a palette (its colours one after the other), from a colour map (spread evenly from its first colour to its last), or from your own 2 or 3 colours (those between them mixed)'}
-                  options={grouped ? [...MAPS, MINE] : [['', 'recolour from a palette'], ...PALETTES.map(([k, l]): [string, string] => [k, l]), ...MAPS.map(([k, l]): [string, string] => [k, `${l} (spread)`]), MINE]}
+                  title={grouped ? 'The colours of the groups: a colour map or your own 2 or 3 colours (spread over the range of their values), or a palette (its colours in turn, in the order of their values)' : 'Every curve recoloured, in order (each can be changed afterwards), shown first: from a palette (its colours one after the other), from a colour map (spread evenly from its first colour to its last), or from your own 2 or 3 colours (those between them mixed)'}
+                  options={grouped ? [...MAPS, MINE, ...PALETTES.map(([k, l]): [string, string] => [k, `${l} (in steps)`])] : [['', 'recolour from a palette'], ...PALETTES.map(([k, l]): [string, string] => [k, l]), ...MAPS.map(([k, l]): [string, string] => [k, `${l} (spread)`]), MINE]}
                   onChange={pick}
                 />
               </div>
+              {grouped && (
+                <div className="row wrap">
+                  <Field label="Grouped as" title="What makes the groups: auto (the blocks of a Split into columns when every curve comes from one, else their order); their order (each curve a group); the value of the block each came from; the number in the name of its Y column; or a column of the table (every curve split into a curve per value of it, e.g. d = 50, 100 …), or the column on the “groups” port">
+                    <Select<NonNullable<CurveColors['by']>>
+                      value={cc.by ?? 'auto'}
+                      options={[
+                        ['auto', 'auto'],
+                        ['order', 'their order'],
+                        ['block', 'the block’s value'],
+                        ['name', 'the number in the name'],
+                        ['column', 'a column'],
+                      ]}
+                      onChange={(by) => setCc({ by: by === 'auto' ? undefined : by })}
+                    />
+                  </Field>
+                  {cc.by === 'column' && (
+                    <Select<string> value={cc.col ?? ''} title="The column whose equal values make a group (of the Plot's dataset, or of the curve's own data); a column connected to the “groups” port is used instead" options={[['', connected('groups') ? 'the “groups” port' : '–'], ...colOptions]} onChange={(col) => setCc({ col: col || undefined })} />
+                  )}
+                </div>
+              )}
               {(grouped || rec) && (
                 <div className="row wrap">
-                  {key === 'mine' && <MyColours colors={mine} set={(c) => (grouped ? setCc({ colors: c }) : setRec({ ...rec!, mine: c }))} />}
-                  <span className="recolour-strip" title={grouped ? 'The scale, from the lowest value (or the first curve) to the highest' : `The colours of the ${n} curves, in order`}>
-                    {colors.map((c, j) => (
-                      <span key={j} style={{ background: c }} />
-                    ))}
-                  </span>
-                  <Check label="Reversed" value={reverse} onChange={(r) => (grouped ? setCc({ reverse: r || undefined }) : setRec({ ...rec!, reverse: r }))} />
+                  {key === 'mine' && <MyColours colors={mine} set={(c) => (grouped ? setCc({ colors: c, pos: undefined }) : setRec({ ...rec!, mine: c, shape: { ...rec!.shape, pos: undefined } }))} />}
+                  {!shaped && (
+                    <span className="recolour-strip" title={grouped ? 'The colours of the palette, given to the groups in turn' : `The colours of the ${n} curves, in order`}>
+                      {colors.map((c, j) => (
+                        <span key={j} style={{ background: c }} />
+                      ))}
+                    </span>
+                  )}
+                  <Check label="Reversed" value={reverse} onChange={(rv) => (grouped ? setCc({ reverse: rv || undefined }) : setRec({ ...rec!, reverse: rv }))} />
                   {!grouped && (
                     <>
                       <button className="nodrag btn-run" disabled={!colors.length} title="Every curve recoloured as shown (each can be changed afterwards); the menu stays, to try another" onClick={() => recolour(colors)}>
@@ -412,6 +449,23 @@ export function Plot1DNodeView({ id, data }: NodeProps<Plot1DNode>) {
                       </button>
                     </>
                   )}
+                </div>
+              )}
+              {(grouped || rec) && stops && <ScaleShaper stops={stops} shape={shape} reverse={reverse} set={setShape} />}
+              {grouped && groups.length > 0 && (
+                <div className="color-groups">
+                  {groups.slice(0, 60).map((g) => (
+                    <span key={g.label} className="color-group" title={g.fixed ? `${g.label}: its own colour (× back to the scale)` : `${g.label}: the colour of the scale (click to give it its own)`}>
+                      <input className="nodrag color" type="color" value={g.color} onChange={(e) => setFixed(g.label, e.target.value)} />
+                      <span className="ellipsis">{g.label}</span>
+                      {g.fixed && (
+                        <button className="nodrag ts-btn" title="Back to the colour of the scale" onClick={() => setFixed(g.label, undefined)}>
+                          ×
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                  {groups.length > 60 && <span className="muted">+ {groups.length - 60} more</span>}
                 </div>
               )}
             </>
@@ -551,7 +605,7 @@ export function Plot1DNodeView({ id, data }: NodeProps<Plot1DNode>) {
                   }}
                 />
               )}
-              {open === k && <CurveStyleEditor st={st} set={setStyle} axes={{ x: xChoices, y: yChoices, pick: (kind, v) => pickAxis(k, kind, v) }} hasYErr={!!c?.series.yErr} hasXErr={!!c?.series.xErr} curves={rows.flatMap((q, j): [number, string][] => (j !== k && (q.cols?.y || byRow.get(j)) ? [[j + 1, `${j + 1}. ${q.label || q.cols?.y || byRow.get(j)?.series.y.name || ''}`]] : []))} placing={placing === k} onPlace={() => {
+              {open === k && <CurveStyleEditor st={st} set={setStyle} byGroup={!!data.curveColors} axes={{ x: xChoices, y: yChoices, pick: (kind, v) => pickAxis(k, kind, v) }} hasYErr={!!c?.series.yErr} hasXErr={!!c?.series.xErr} curves={rows.flatMap((q, j): [number, string][] => (j !== k && (q.cols?.y || byRow.get(j)) ? [[j + 1, `${j + 1}. ${q.label || q.cols?.y || byRow.get(j)?.series.y.name || ''}`]] : []))} placing={placing === k} onPlace={() => {
                     setPlacing(placing === k ? null : k);
                     setQfPlace(null);
                   }} />}
@@ -798,6 +852,89 @@ function MyColours({ colors, set }: { colors: string[]; set: (c: string[]) => vo
       <input className="nodrag color" type="color" value={at(2)} title="The last colour" onChange={(e) => put(2, e.target.value)} />
       <Check label="middle" title="A third colour in the middle" value={three} onChange={(on) => set(on ? [c[0], '#f7f7f7', c[c.length - 1]] : [c[0], c[c.length - 1]])} />
     </span>
+  );
+}
+
+// The scale shaped by hand: drawn as it comes out (the curves' colours); my colours' handles dragged along it (the place
+// of each); the part of the map used (From – To: the handles of the thin bar of the whole map under it); the balance
+// (more room for the colours of its start, or of its end); Even: as the map is. A handle dragged is drawn at once, the
+// node changed when it is let go.
+function ScaleShaper({ stops, shape, reverse, set }: { stops: string[]; shape: ScaleShape; reverse: boolean; set: (p: ScaleShape) => void }) {
+  const [draft, setDraft] = useState<ScaleShape | null>(null);
+  const bar = useRef<HTMLDivElement>(null);
+  const part = useRef<HTMLDivElement>(null);
+  const s: ScaleShape = { ...shape, ...draft };
+  const from = s.from ?? 0;
+  const to = s.to ?? 1;
+  const g = 4 ** -(s.bias ?? 0);
+  const handles = stops.length <= 3;
+  const pos = handles && s.pos?.length === stops.length ? s.pos : stops.map((_, i) => i / (stops.length - 1));
+  const out = shapedStops(stops, { ...s, pos: handles ? pos : undefined, bias: s.bias || 1e-9 }, 48);
+  const shown = reverse ? [...out].reverse() : out;
+  const grad = (cs: string[]) => `linear-gradient(to right, ${cs.join(', ')})`;
+  // a colour's place on the bar as drawn (the part used and the balance applied), and back
+  const shownAt = (p: number) => {
+    const u = (p - from) / (to - from || 1);
+    const d = u <= 0 ? 0 : u >= 1 ? 1 : u ** (1 / g);
+    return reverse ? 1 - d : d;
+  };
+  const placeOf = (d: number) => from + (to - from) * (reverse ? 1 - d : d) ** g;
+  const drag = (ev: ReactPointerEvent, el: HTMLElement | null, move: (f: number) => ScaleShape) => {
+    if (!el) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const box = el.getBoundingClientRect();
+    let last: ScaleShape | null = null;
+    const onMove = (e: PointerEvent) => {
+      last = move(Math.min(1, Math.max(0, (e.clientX - box.left) / (box.width || 1))));
+      setDraft(last);
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      if (last) set(last);
+      setDraft(null);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+  const commit = () => draft && (set(draft), setDraft(null));
+  return (
+    <div className="scale-shaper">
+      <div ref={bar} className="ss-bar nodrag" style={{ background: grad(shown) }} title={handles ? 'The scale as the groups get it; drag a colour’s handle to give it more or less room' : 'The scale as the groups get it'}>
+        {handles &&
+          pos.map((p, i) => (
+            <span
+              key={i}
+              className="ss-handle"
+              style={{ left: `${shownAt(p) * 100}%`, background: stops[i] }}
+              title="Drag: where this colour is on the scale"
+              onPointerDown={(ev) =>
+                drag(ev, bar.current, (d) => {
+                  const np = [...pos];
+                  np[i] = Math.min(i < np.length - 1 ? np[i + 1] : 1, Math.max(i > 0 ? np[i - 1] : 0, placeOf(d)));
+                  return { ...s, pos: np };
+                })
+              }
+            />
+          ))}
+      </div>
+      <div ref={part} className="ss-part nodrag" style={{ background: grad(stops) }} title="The part of the colour map used (drag its ends)">
+        <span className="ss-out" style={{ left: 0, width: `${from * 100}%` }} />
+        <span className="ss-out" style={{ left: `${to * 100}%`, right: 0 }} />
+        <span className="ss-end" style={{ left: `${from * 100}%` }} title="From: where the scale starts" onPointerDown={(ev) => drag(ev, part.current, (f) => ({ ...s, from: Math.min(f, to - 0.05) || undefined }))} />
+        <span className="ss-end" style={{ left: `${to * 100}%` }} title="To: where the scale ends" onPointerDown={(ev) => drag(ev, part.current, (f) => ({ ...s, to: Math.max(f, from + 0.05) < 1 ? Math.max(f, from + 0.05) : undefined }))} />
+      </div>
+      <div className="row">
+        <span className="muted" title="More room for the colours of the start of the scale (left), or of its end (right)">
+          Balance
+        </span>
+        <input className="nodrag grow" type="range" min={-1} max={1} step={0.05} value={s.bias ?? 0} title="More room for the colours of the start (left) or of the end (right); double-click: even" onChange={(e) => setDraft({ ...s, bias: Number(e.target.value) || undefined })} onPointerUp={commit} onKeyUp={commit} onDoubleClick={() => set({ ...s, bias: undefined })} />
+        <button className="nodrag" disabled={!(s.pos || s.bias || s.from || (s.to !== undefined && s.to < 1))} title="The scale as the map is: the colours evenly spread, all of it used" onClick={() => set({ pos: undefined, bias: undefined, from: undefined, to: undefined })}>
+          Even
+        </button>
+      </div>
+    </div>
   );
 }
 

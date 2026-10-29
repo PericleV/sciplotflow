@@ -1109,6 +1109,14 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 /* Recolour: the colours the curves get, in order, before they are applied */
 .recolour-strip { display: inline-flex; height: 16px; min-width: 60px; max-width: 220px; flex: 1 1 120px; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
 .recolour-strip > span { flex: 1 1 0; }
+.scale-shaper { display: flex; flex-direction: column; gap: 5px; margin: 4px 0 2px; }
+.scale-shaper .ss-bar { position: relative; height: 16px; border: 1px solid var(--border); border-radius: 3px; }
+.scale-shaper .ss-part { position: relative; height: 7px; border: 1px solid var(--border); border-radius: 2px; }
+.scale-shaper .ss-handle { position: absolute; top: -4px; width: 9px; height: 22px; margin-left: -5px; box-sizing: border-box; border: 2px solid var(--text); border-radius: 3px; box-shadow: 0 0 0 1px var(--panel); cursor: ew-resize; touch-action: none; }
+.scale-shaper .ss-end { position: absolute; top: -4px; width: 6px; height: 15px; margin-left: -3px; background: var(--accent); border-radius: 2px; cursor: ew-resize; touch-action: none; }
+.scale-shaper .ss-out { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--panel) 75%, transparent); pointer-events: none; }
+.color-groups { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 4px; }
+.color-group { display: inline-flex; align-items: center; gap: 3px; max-width: 150px; font-size: var(--fs-small); }
 .rename-sheets { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
 .rename-sheet { display: grid; grid-template-columns: 16px auto minmax(0, 1fr) minmax(0, 1fr) 22px; gap: 6px; align-items: center; }
 .rename-sheet.head { font-size: var(--fs-small); color: var(--muted); }

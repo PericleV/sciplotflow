@@ -316,6 +316,7 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
     case 'plot1d': {
       if (handle === 'dataset') return ['dataset', 'workbook'];
       if (handle === 'insets') return ['figure'];
+      if (handle === 'groups') return ['column'];
       const r = parseRowHandle(handle);
       return !r ? [] : r.port === 'series' ? ['dataset'] : ['column'];
     }

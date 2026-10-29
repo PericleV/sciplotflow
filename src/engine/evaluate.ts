@@ -15,7 +15,7 @@ import { generatedValues } from './gencol.ts';
 import { withColumnFunctions } from './colfns.ts';
 export { withColumnFunctions };
 import type { Edge } from '@xyflow/react';
-import type { AnnotationItem, AppNode, BookSheet, CalculusData, ColumnsData, PeakData, PeakWidthData, PickData, CanvasData, DrawingData, DrawingComponent, CanvasItem, CanvasLayout, CurveRow, MathColData, PythonData, RowRule, FitNodeData, GenColData, PageData, Plot1DData, StatsData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, SmithData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from '../types.ts';
+import type { AnnotationItem, AppNode, BookSheet, CurveColors, CalculusData, ColumnsData, PeakData, PeakWidthData, PickData, CanvasData, DrawingData, DrawingComponent, CanvasItem, CanvasLayout, CurveRow, MathColData, PythonData, RowRule, FitNodeData, GenColData, PageData, Plot1DData, StatsData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, SmithData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from '../types.ts';
 import { axisRange } from '../figure/ticks.ts';
 import { autoFrame, axesGeometry, placeAuto, placeInsets, placeLegends } from '../figure/axes.ts';
 import { legendLayout } from '../figure/legendLayout.ts';
@@ -26,10 +26,10 @@ import { findings, findSheet, foundAs, hasFindings, importSource, inOrder, inSco
 import { applyFormulas, keysUsed, type ColFormula } from './sheetFormula.ts';
 import { flattenGroups, GROUP_IN, GROUP_OUT } from './subgraph.ts';
 import { columnRuns, fillNames, gather, gatherOne, orderFiles, portNames, readText, resultOf, runNames, skipSteps, withOwn, type FileRun } from './batch.ts';
-import { takeRows } from './split.ts';
+import { splitRows, takeRows } from './split.ts';
 import { parseRows } from './rows.ts';
 export { parseRows };
-import { mapColor, mapT, stopsOf } from '../figure/colors.ts';
+import { mapColor, mapT, PALETTES, shapedStops, stopsOf } from '../figure/colors.ts';
 import { compile, compileComplex, seedOf } from './expr.ts';
 import { errorAt, parseErrors } from './errprop.ts';
 import { applyFit, type UseRow } from './fituse.ts';
@@ -77,7 +77,7 @@ import type { RegionView } from './regionruns.ts';
 import { findPeaksIn, fittedPeak, fixedBaseline, fwhmAt, isFitted, measurePeaks, peakRunKey, regionPeak, type Found, type PeakItem } from './peaks.ts';
 import { curveThrough } from './baselines.ts';
 import { areaBetween, derivative, integrate, interp, pointsCurve, regionName, regionRows, type IntegralOptions } from './calculus.ts';
-import { bareName, column, curvesByRole, findColumn, fmtNum, roleOf, rowIndex, titleOf, unitOf, type Column, type ColumnRole, type Dataset, type Scalar, type Series, type Workbook } from './table.ts';
+import { bareName, column, curvesByRole, findColumn, fmtNum, roleOf, rowIndex, titleOf, unitOf, valueText, type Column, type ColumnRole, type Dataset, type Scalar, type Series, type Workbook } from './table.ts';
 import { autoExtract, pick, simpleRules } from './extract.ts';
 import { columnsOf, type ColumnLine, type ColumnsSpec } from './columns.ts';
 import { baseUnder, extremum, inRange, peakWidth, type Baseline as MBaseline, type Width } from './measure.ts';
@@ -196,6 +196,7 @@ export type NodeView = {
   rowAvail?: Record<number, ColInfo[]>; // Plot: the columns of a curve's own dataset (its data port)
   sheetCols?: Record<string, ColInfo[]>; // Plot: a workbook on its dataset port — the columns of every sheet
   legendCurves?: Curve[]; // Plot: the curves its legend can list (split curves shown as one when asked)
+  colorGroups?: { label: string; color: string; fixed: boolean }[]; // Plot ▸ Colours by group: every group, its colour
   pieKind?: 'pie' | 'doughnut' | 'rings'; // Pie chart: the kind drawn (chosen, or as an older project drew it)
   hist?: { fits: Omit<FitResult, 'curve' | 'parts'>[]; bins: number; from: number; to: number };
   quickFits?: QuickFitView[]; // Plot: the results of its curves' quick fits
@@ -560,13 +561,15 @@ function plot(n: { id: string; data: Plot1DData }, inputs: Inputs): Out {
   // the columns of the curves that have their own dataset (on their data port), to choose from
   const rowAvail: Record<number, ColInfo[]> = {};
   const curves: Curve[] = [];
-  const keys: (Column['key'] | undefined)[] = [];
   const outputs: Record<string, Value> = {};
+  // Colours by group, grouped by a column: every curve split into a curve per value of it (as Split into columns does)
+  const cc = n.data.curveColors;
+  const byCol = !!cc && cc.by === 'column';
   const warnings: string[] = [];
   const errors: string[] = [];
   let firstX: Column | undefined;
   // the curves found, made once their axes know what their values are (categories, times: over all the curves)
-  const found: { k: number; s: Series; style: CurveStyle; colorCol?: Column; sizeCol?: Column; labelCol?: Column; name: string; label: string }[] = [];
+  const found: PlotFound[] = [];
   for (let k = 0; k < count; k++) {
     const sv = inputs.get(rowHandle('series', k))?.[0]?.value;
     const own = sv?.t === 'dataset' ? sv.v : undefined;
@@ -617,6 +620,9 @@ function plot(n: { id: string; data: Plot1DData }, inputs: Inputs): Out {
     let colorCol = style.colorBy === 'column' ? col(rowHandle('color', k)) : undefined;
     let sizeCol = style.sizeBy === 'column' || style.widthBy === 'column' ? col(rowHandle('size', k)) : undefined;
     let labelCol = style.labels === 'column' ? col(rowHandle('label', k)) : undefined;
+    // (the groups' column: on the “groups” port, else of the curve's table)
+    let grpCol = byCol ? (col('groups') ?? pickCol(cc.col)) : undefined;
+    if (byCol && !grpCol && k === 0) warnings.push(cc.col ? `Colours: no column “${cc.col}” for the groups.` : 'Colours: choose the column whose values make the groups.');
     // the rows drawn
     const nRows = Math.min(x.values.length, y.values.length);
     const sel = rows[k].rowSel?.trim();
@@ -626,7 +632,7 @@ function plot(n: { id: string; data: Plot1DData }, inputs: Inputs): Out {
       if (typeof p === 'string') errors.push(`${name}, rows: ${p}`);
       else {
         const t = (c: Column | undefined) => c && takeRows(c, p);
-        [x, yErr, xErr, yErrLo, colorCol, sizeCol, labelCol] = [takeRows(x, p), t(yErr), t(xErr), t(yErrLo), t(colorCol), t(sizeCol), t(labelCol)];
+        [x, yErr, xErr, yErrLo, colorCol, sizeCol, labelCol, grpCol] = [takeRows(x, p), t(yErr), t(xErr), t(yErrLo), t(colorCol), t(sizeCol), t(labelCol), t(grpCol)];
         yUse = takeRows(y, p);
       }
     }
@@ -634,6 +640,8 @@ function plot(n: { id: string; data: Plot1DData }, inputs: Inputs): Out {
     const agg = rows[k].aggregate;
     if (agg?.stat) {
       if (yErr || xErr || colorCol || sizeCol || labelCol) warnings.push(`${name}: one point at every X; its ±X, ±Y, colour, size and label columns are not used (the spread is its ±Y).`);
+      if (grpCol) warnings.push(`${name}: one point at every X: not split by “${grpCol.name}” (Colours).`);
+      grpCol = undefined;
       const a = aggregateByX(x, yUse, agg);
       [x, yUse, yErr, yErrLo, xErr, colorCol, sizeCol, labelCol] = [a.x, a.y, a.plus, a.minus, undefined, undefined, undefined, undefined];
       if (a.plus) {
@@ -643,9 +651,23 @@ function plot(n: { id: string; data: Plot1DData }, inputs: Inputs): Out {
       }
     }
     const s: Series = { name: yUse.name, x, y: yUse, ...(yErr ? { yErr } : {}), ...(xErr ? { xErr } : {}), ...(yErrLo ? { yErrLo } : {}) };
-    found.push({ k, s, style, colorCol, sizeCol, labelCol, name, label: rows[k].label || (manySheets && sheet ? `${sheet.name}: ${y.name}` : y.name) || name });
-    keys.push(y.key);
+    const label = rows[k].label || (manySheets && sheet ? `${sheet.name}: ${y.name}` : y.name) || name;
     outputs[rowHandle('series', k)] = { t: 'dataset', v: seriesSet(s) };
+    // split by the groups' column (its equal values, the code of Split into columns): a curve per value, named by it
+    const g = grpCol ? splitRows({ mode: 'column' }, s.x, Array.from({ length: Math.min(s.y.values.length, grpCol.values.length) }, (_, i) => i), grpCol, []) : null;
+    if (grpCol && grpCol.values.length < s.y.values.length) warnings.push(`${name}: “${grpCol.name}” has ${grpCol.values.length} rows, the curve ${s.y.values.length}: the rows past it left out.`);
+    if (typeof g === 'string') warnings.push(`${name}: ${g}`);
+    if (g && typeof g !== 'string') {
+      g.rows.forEach((r, j) => {
+        const t = (c: Column | undefined) => c && takeRows(c, r);
+        const gl = g.texts?.[j] ?? fmtNum(g.values[j]);
+        const sub: Series = { name: s.name, x: takeRows(s.x, r), y: takeRows(s.y, r), ...(s.yErr ? { yErr: takeRows(s.yErr, r) } : {}), ...(s.xErr ? { xErr: takeRows(s.xErr, r) } : {}), ...(s.yErrLo ? { yErrLo: takeRows(s.yErrLo, r) } : {}) };
+        const said = g.texts ? gl : valueText(g.name, gl);
+        found.push({ k, sub: j, s: sub, style: { ...style }, colorCol: t(colorCol), sizeCol: t(sizeCol), labelCol: t(labelCol), name, label: count > 1 ? `${label} · ${said}` : said, yName: y.name, grp: { value: g.values[j], label: gl, name: g.name } });
+      });
+      continue;
+    }
+    found.push({ k, s, style, colorCol, sizeCol, labelCol, name, label, yName: y.name, ...(y.key ? { key: y.key } : {}) });
   }
   // the bottom and left axes: numbers, categories or times, over the curves on them
   const ax = axesStyle(n.data.axes);
@@ -660,29 +682,13 @@ function plot(n: { id: string; data: Plot1DData }, inputs: Inputs): Out {
     if (onLeft(f.style) && yv.kind !== 'number') f.s = { ...f.s, y: placeColumn(f.s.y, yv, ax.y, spread) };
   }
   if (n.data.stack && n.data.stack !== 'none' && found.length > 1) stackCurves(found, n.data.stack);
-  for (const f of found) curves.push(makeCurve(`${n.id}:${f.k}`, f.label, f.s, f.style, f.colorCol, f.sizeCol, f.labelCol, f.name, warnings));
+  for (const f of found) curves.push(makeCurve(`${n.id}:${f.k}${f.sub !== undefined ? `#${f.sub}` : ''}`, f.label, f.s, f.style, f.colorCol, f.sizeCol, f.labelCol, f.name, warnings));
+  // the curves coloured by group (instead of each its own colour)
+  const colorGroups = cc && curves.length ? colourByGroup(n.id, cc, found, curves, warnings) : undefined;
   // a dumbbell: at every X, a line from the lowest curve to the highest, under them
   if (n.data.join?.show && curves.length > 1) curves.unshift(joinCurve(n.id, curves, n.data.join));
   const kindOf = (a: AxisSpec, v: AxisValues): AxisSpec => (v.kind === 'category' ? { ...a, cats: v.cats } : v.kind === 'time' ? { ...a, time: v.time } : a);
   const axesFor = xv.kind === 'number' && yv.kind === 'number' ? n.data.axes : { ...n.data.axes, x: kindOf(ax.x, xv), y: kindOf(ax.y, yv) };
-  // the curves coloured by a colour map (instead of each its own colour): by the value of the block each came from
-  // (Split into columns: “cavity d (nm)” = 150) when they all have one, else by their order; the legend can show them as
-  // one entry with the colour scale, a colour bar their range
-  const cc = n.data.curveColors;
-  if (cc && curves.length) {
-    const kname = new Set(keys.map((k) => k?.name ?? ''));
-    const byKey = kname.size === 1 && !kname.has('');
-    const vals = curves.map((_, j) => (byKey ? keys[j]!.value : j + 1));
-    const fin = vals.filter(Number.isFinite);
-    let range: [number, number] = [minOf(fin), maxOf(fin)];
-    if (!(range[1] > range[0])) range = [range[0] - 0.5, range[0] + 0.5];
-    const stops = stopsOf(cc.map, cc.colors ?? []);
-    curves.forEach((c, j) => {
-      c.style = { ...c.style, color: mapColor(stops, mapT(vals[j], range[0], range[1], false, !!cc.reverse)) };
-      c.group = { base: `${n.id}:all`, index: j, count: curves.length, value: vals[j], name: byKey ? [...kname][0] : '', range, color: 'map' };
-      if (c.style.colorBy === 'none') c.colorRange = range;
-    });
-  }
   // the quick fits of every curve (in its colour unless set; a trend dashed), each peak and the baseline, their bands;
   // the ranges drawn as bands (dragged on the figure); the results in a box, in the panel and on the “fits” port
   const qf = quickFitCurves(n.id, found.map((f) => ({ k: f.k, name: f.name, label: f.label, s: f.s, style: f.style, fits: quickFitsOf(rows[f.k]), color: curves.find((c) => c.key === `${n.id}:${f.k}`)?.style.color })), warnings);
@@ -695,7 +701,60 @@ function plot(n: { id: string; data: Plot1DData }, inputs: Inputs): Out {
   const ax0 = figure.axes.find((q) => !q.inset) ?? figure.axes[0];
   if (ax0) ax0.annotations.push(...qf.regions);
   outputs.figure = { t: 'figure', v: figure };
-  return { outputs, warnings: [...new Set(warnings)], errors, view: { curves, legendCurves, available, rowAvail, figure, ...(qf.view.length ? { quickFits: qf.view } : {}), ...sheetView } };
+  return { outputs, warnings: [...new Set(warnings)], errors, view: { curves, legendCurves, available, rowAvail, figure, ...(qf.view.length ? { quickFits: qf.view } : {}), ...(colorGroups ? { colorGroups } : {}), ...sheetView } };
+}
+
+// A Plot's curve as found: its row (k), the part of it (sub: split by the groups' column, with its group), its block key
+type PlotFound = { k: number; sub?: number; s: Series; style: CurveStyle; colorCol?: Column; sizeCol?: Column; labelCol?: Column; name: string; label: string; yName: string; key?: Column['key']; grp?: { value: number; label: string; name: string } };
+
+// The curves coloured by group (Colours ▸ by group): the group of every curve — the value of its block (Split into
+// columns: “cavity d (nm)” = 150), the number in its name, its value of the groups' column, its order; auto: the block
+// when they all have one, else the order —; one colour per group from the scale (a map or my colours, shaped, spread over
+// the range of the values) or a palette (its colours in the order of the values); a group's own colour, a curve's own
+// colour kept. The legend can show them as one entry with the scale, a colour bar their range. Out: the groups listed.
+function colourByGroup(id: string, cc: CurveColors, found: PlotFound[], curves: Curve[], warnings: string[]): { label: string; color: string; fixed: boolean }[] {
+  const keyNames = new Set(found.map((f) => f.key?.name ?? ''));
+  const blocks = keyNames.size === 1 && !keyNames.has('');
+  let by = cc.by ?? 'auto';
+  if (by === 'auto') by = blocks ? 'block' : 'order';
+  if (by === 'block' && !blocks) {
+    warnings.push('Colours: the curves do not all come from the blocks of one Split into columns: grouped by their order.');
+    by = 'order';
+  }
+  const num = (t: string) => {
+    const m = t.match(/[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g);
+    return m ? Number(m[m.length - 1]) : NaN;
+  };
+  const groups = found.map((f, j) => {
+    if (by === 'column' && f.grp) return f.grp;
+    if (by === 'block' && f.key) return { value: f.key.value, label: fmtNum(f.key.value), name: f.key.name };
+    if (by === 'name' && Number.isFinite(num(f.yName))) return { value: num(f.yName), label: fmtNum(num(f.yName)), name: '' };
+    return { value: j + 1, label: f.label, name: '' };
+  });
+  if (by === 'name' && found.some((f) => !Number.isFinite(num(f.yName)))) warnings.push('Colours: a curve without a number in its name is a group of its own.');
+  const fin = groups.map((g) => g.value).filter(Number.isFinite);
+  let range: [number, number] = [minOf(fin), maxOf(fin)];
+  if (!(range[1] > range[0])) range = [range[0] - 0.5, range[0] + 0.5];
+  // the groups in the order of their values (texts: as they come)
+  const list: { label: string; value: number }[] = [];
+  for (const g of groups) if (!list.some((q) => q.label === g.label)) list.push({ label: g.label, value: g.value });
+  list.sort((a, b) => a.value - b.value);
+  const pal = cc.palette ? PALETTES.find((q) => q[0] === cc.palette)?.[2] : undefined;
+  const ordered = pal && cc.reverse ? [...pal].reverse() : pal;
+  const base = shapedStops(stopsOf(cc.map, cc.colors ?? []), cc);
+  const stops = cc.reverse ? [...base].reverse() : base;
+  const colourOf = (label: string, value: number) => cc.fixed?.[label] || (ordered ? ordered[list.findIndex((q) => q.label === label) % ordered.length] : mapColor(stops, mapT(value, range[0], range[1], false, false)));
+  curves.forEach((c, j) => {
+    const g = groups[j];
+    if (!found[j].style.ownColor) c.style = { ...c.style, color: colourOf(g.label, g.value) };
+    c.group = { base: `${id}:all`, index: j, count: curves.length, value: g.value, name: g.name, range, color: ordered ? 'palette' : 'map' };
+    // (the scale of the colour bar and of the legend's entry: the one the curves were coloured by)
+    if (!ordered && c.style.colorBy === 'none') {
+      c.colorRange = range;
+      c.style = { ...c.style, cmap: 'custom', cmapColors: stops, cmapReverse: false, cmapLog: false };
+    }
+  });
+  return list.map((q) => ({ label: q.label, color: colourOf(q.label, q.value), fixed: !!cc.fixed?.[q.label] }));
 }
 
 // The quick fits of a Plot's curves: the fitted curves (a trend dashed, a fit solid; in the curve's colour unless set),

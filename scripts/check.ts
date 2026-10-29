@@ -12,7 +12,7 @@ import { cvMake, gradedVbi, hfExactTable, measured, trapsOf, type CvSpec } from 
 import { legendLayout } from '../src/figure/legendLayout.ts';
 import { fitLook, quickFit, quickFitsOf } from '../src/engine/quickfit.ts';
 import { aggregateByX } from '../src/engine/aggregate.ts';
-import { mapColor, stopsOf } from '../src/figure/colors.ts';
+import { COLOR_MAPS, mapColor, PALETTES, shapedStops, stopsOf } from '../src/figure/colors.ts';
 import { trendFit, type TrendSpec } from '../src/engine/trend.ts';
 import { commaNumbers } from '../src/figure/comma.ts';
 import { adjustedPositions, bLife, fisherCov, fitMLE, fitRR, fitThreshold, kaplanMeier, logLik, paramCI, suspendedOf } from '../src/engine/reliability.ts';
@@ -726,6 +726,27 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   // the legend: one entry for many coloured curves (auto above 8), one each when asked
   const many = run({ cols: { x: 'θ (°)', y: 'R · 1' }, rows: Array.from({ length: 10 }, (_, k) => ({ label: '', style: {}, cols: { x: 'θ (°)', y: `R · ${k + 2}` } })), curveColors: { map: 'viridis' } }, { by: 'every', every: 10 }).cs;
   ok(many.length === 11 && collapseGroups(many).length === 1 && collapseGroups(many)[0].groupSpan?.count === 11 && collapseGroups(many, 'each').length === 11 && collapseGroups(a.cs).length === 5, `legend: coloured curves as one entry above 8 (${many.length})`);
+  // Colours by group: the block values as before (the map spread over them), the scale the colour bar's
+  const vir = COLOR_MAPS.viridis.stops;
+  ok(a.cs.every((c, j) => c.style.color === mapColor(vir, j / 4)) && a.cs[0].style.cmap === 'custom' && a.cs[0].style.cmapColors?.join() === vir.join(), 'Plot ▸ Colours by group: the block values spread over the map; the colour bar and the legend take the same scale');
+  // grouped as a column: the long table split into a curve per value (as Split into columns), one colour per group
+  const byCol = run({ cols: { x: 'θ (°)', y: 'R' }, curveColors: { map: 'viridis', by: 'column', col: 'pore fraction' } });
+  ok(byCol.cs.length === 5 && byCol.cs.every((c) => c.series.x.values.length === 21) && byCol.cs[1].label === 'pore fraction = 0.1' && byCol.cs[4].style.color === mapColor(vir, 1) && byCol.r.view.colorGroups?.length === 5, `Plot ▸ grouped as a column: a curve per value, named and coloured by it (${byCol.cs.map((c) => c.label).join(', ')})`);
+  // two rows of the same table: the curves of a group share its colour; a group's own colour; a curve's own colour
+  const two2 = run({ cols: { x: 'θ (°)', y: 'R' }, rows: [{ label: 'again', style: { dash: 'dash' }, cols: { x: 'θ (°)', y: 'R' } }], curveColors: { map: 'viridis', by: 'column', col: 'pore fraction', fixed: { '0.2': '#ff0000' } } });
+  const colOf = (label: string) => two2.cs.filter((c) => c.label.endsWith(label)).map((c) => c.style.color);
+  ok(two2.cs.length === 10 && new Set(colOf('= 0.1')).size === 1 && colOf('= 0.2').every((c) => c === '#ff0000') && two2.r.view.colorGroups?.find((g) => g.label === '0.2')?.fixed === true, 'Plot ▸ by group: one colour per group (its curves of every row), a group given its own colour');
+  const own = run({ cols: { x: 'θ (°)', y: 'R' }, rows: [{ label: 'fit', style: { color: '#123456', ownColor: true }, cols: { x: 'θ (°)', y: 'R' } }], curveColors: { map: 'viridis', by: 'column', col: 'pore fraction' } });
+  ok(own.cs.filter((c) => c.label.startsWith('fit')).every((c) => c.style.color === '#123456') && own.cs.filter((c) => !c.label.startsWith('fit')).every((c) => c.style.color !== '#123456'), 'Plot ▸ by group: a curve keeping its own colour');
+  // a palette in steps: its colours in the order of the values; the number in the names
+  const tab = PALETTES.find((q) => q[0] === 'tab10')![2];
+  const pal = run({ cols: { x: 'θ (°)', y: 'R' }, curveColors: { map: 'viridis', palette: 'tab10', by: 'column', col: 'pore fraction' } });
+  ok(pal.cs.every((c, j) => c.style.color === tab[j]) && pal.cs[0].group?.color === 'palette' && !pal.cs[0].colorRange, 'Plot ▸ by group: a palette, its colours in the order of the values');
+  const named = run({ ...rowsOf(3), curveColors: { map: 'viridis', by: 'name' } }, {});
+  ok(named.cs.map((c) => c.group?.value).join() === '0,0.1,0.2', `Plot ▸ grouped as the number in the name (${named.cs.map((c) => c.group?.value).join(', ')})`);
+  // the scale shaped: as it is when not; the part used; the balance; my colours placed
+  const two3 = ['#000000', '#ffffff'];
+  ok(shapedStops(vir, {}) === vir && shapedStops(two3, { from: 0.5 })[0] === mapColor(two3, 0.5) && shapedStops(two3, { bias: 1 }, 3)[1] > mapColor(two3, 0.5) && shapedStops(two3, { bias: -1 }, 3)[1] < mapColor(two3, 0.5) && shapedStops(['#000000', '#ff0000', '#ffffff'], { pos: [0, 0.25, 1] }, 5)[1] === '#ff0000', 'colour scale shaped: the part used, the balance (more room for the end or the start), a colour placed');
   // several datasets on the port: equal names made distinct
   const two = evaluateGraph([imp, { ...imp, id: 'j' }, { id: 'p', type: 'plot1d', position: { x: 0, y: 0 }, data: { label: '', style: {}, cols: { x: 'θ (°)', y: 'R' }, rows: [{ label: '', style: {}, cols: { x: 'θ (°) (2)', y: 'R (2)' } }] } } as AppNode], [
     { id: '1', source: 'i', sourceHandle: 'out', target: 'p', targetHandle: 'dataset' },

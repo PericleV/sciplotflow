@@ -49,6 +49,32 @@ export function mapColor(stops: string[], t: number): string {
   return toHex([0, 1, 2].map((k) => rgb[i][k] + f * (rgb[i + 1][k] - rgb[i][k])));
 }
 
+// A colour scale shaped by hand: the places of its colours along it (pos: one per stop, 0 … 1 in order; absent: evenly
+// spread), its balance (−1 … 1: more room for the colours of its start, or of its end), and the part of it used (from …
+// to, 0 … 1). Sampled to n stops evenly spread, as every map is drawn: the curves, the colour bar and the legend agree.
+export type ScaleShape = { pos?: number[]; bias?: number; from?: number; to?: number };
+export const isShaped = (s: ScaleShape) => !!(s.pos?.length || s.bias || (s.from !== undefined && s.from > 0) || (s.to !== undefined && s.to < 1));
+export function shapedStops(stops: string[], s: ScaleShape, n = 33): string[] {
+  if (!isShaped(s) || stops.length < 2) return stops;
+  const from = Math.min(1, Math.max(0, s.from ?? 0));
+  const to = Math.min(1, Math.max(0, s.to ?? 1));
+  const g = 4 ** -Math.min(1, Math.max(-1, s.bias ?? 0));
+  // the places of the stops (in order; the colour before the first and after the last kept)
+  const pos = s.pos?.length === stops.length ? s.pos.map((p) => Math.min(1, Math.max(0, p))) : stops.map((_, i) => i / (stops.length - 1));
+  for (let i = 1; i < pos.length; i++) pos[i] = Math.max(pos[i], pos[i - 1]);
+  const rgb = stops.map(hexRgb);
+  const at = (u: number) => {
+    if (u <= pos[0]) return toHex(rgb[0]);
+    for (let i = 1; i < pos.length; i++)
+      if (u <= pos[i]) {
+        const f = pos[i] > pos[i - 1] ? (u - pos[i - 1]) / (pos[i] - pos[i - 1]) : 1;
+        return toHex([0, 1, 2].map((k) => rgb[i - 1][k] + f * (rgb[i][k] - rgb[i - 1][k])));
+      }
+    return toHex(rgb[rgb.length - 1]);
+  };
+  return Array.from({ length: n }, (_, j) => at(from + (to - from) * (j / (n - 1)) ** g));
+}
+
 // Position of a value in the range of the map (linear or log), 0 … 1, reversed if asked.
 export function mapT(v: number, lo: number, hi: number, log: boolean, reverse: boolean): number {
   let t = log ? (Math.log10(v) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo)) : (v - lo) / (hi - lo || 1);
