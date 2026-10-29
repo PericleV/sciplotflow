@@ -12,18 +12,20 @@ import { compile, seedOf } from './expr.ts';
 import { pick } from './extract.ts';
 import { isCol, withColumnFunctions } from './colfns.ts';
 import { GEN_SPEC_DEFAULTS, generatedValues, type GenSpec } from './gencol.ts';
-import { roleOf, type Column, type ColumnRole, type Dataset, type Scalar } from './table.ts';
+import { parseSci, roleOf, type Column, type ColumnRole, type Dataset, type Scalar } from './table.ts';
 import { knownAs } from './refs.ts';
 
 // one column's own settings: by its name (after the names row; a column added: '=' and its id): its new name,
 // designation, kept or not
 export type ColumnItem = { from: string; name?: string; role?: ColumnRole; keep?: boolean };
 // a column added: a formula, one value in every row, a column of an input or a copy of one ([name], [=id], {A}; its
-// name, when it has none of its own), or generated (as Generate column, as many rows as the data); its place: its item's
-export type ComputedKind = 'formula' | 'value' | 'copy' | 'generate';
+// name, when it has none of its own), generated (as Generate column, as many rows as the data), or values typed (one
+// per line, else separated by ; or ,: numbers, a decimal comma too; a column of text when one is not a number); its
+// place: its item's
+export type ComputedKind = 'formula' | 'value' | 'copy' | 'generate' | 'typed';
 // folded: shown as one line in the node's options (its name and formula), the rest hidden
 // seed: of its random values (rand() …: new values when it changes; absent: 0)
-export type ComputedColumn = { id: string; name: string; kind?: ComputedKind; formula?: string; value?: number; copy?: string; gen?: Partial<GenSpec>; folded?: boolean; seed?: number };
+export type ComputedColumn = { id: string; name: string; kind?: ComputedKind; formula?: string; value?: number; copy?: string; gen?: Partial<GenSpec>; typed?: string; folded?: boolean; seed?: number };
 // the names of columns from the values of a column ([name] of the data or {A}), in order: of all the others, the Y
 // columns, or a list (2-4, B-D, names); the column itself left out of the data when drop
 export type NamesFrom = { col: string; to?: 'others' | 'y' | 'list'; list?: string; drop?: boolean };
@@ -110,6 +112,16 @@ function computeColumn(c: ComputedColumn, get: (ref: string) => Column | Scalar 
   const kind = c.kind ?? 'formula';
   const name = c.name.trim() || 'Column';
   if (kind === 'value') return { name, values: new Float64Array(rows).fill(Number.isFinite(c.value) ? c.value! : NaN) };
+  if (kind === 'typed') {
+    const cells = typedCells(c.typed ?? '');
+    if (!cells.length) return 'type its values, separated by commas, e.g. 10, 20, 35';
+    // as many rows as the data (the rows not typed empty), or as typed when more; said when they differ
+    const n = Math.max(cells.length, rows);
+    if (rows > 0 && cells.length !== rows) notes?.push(`“${name}”: ${cells.length} value${cells.length === 1 ? '' : 's'} typed for ${rows} rows${cells.length < rows ? ' (the others empty)' : ' (the column longer than the data)'}.`);
+    const values = Float64Array.from({ length: n }, (_, i) => (i < cells.length ? parseSci(cells[i]) : NaN));
+    const text = cells.some((t) => t && !Number.isFinite(parseSci(t)));
+    return { name, values, ...(text ? { text: Array.from({ length: n }, (_, i) => cells[i] ?? '') } : {}) };
+  }
   if (kind === 'generate') {
     if (rows < 1) return 'the data have no rows';
     const v = generatedValues({ ...GEN_SPEC_DEFAULTS, ...c.gen }, rows);
@@ -166,6 +178,15 @@ function computeColumn(c: ComputedColumn, get: (ref: string) => Column | Scalar 
     out[i] = f.fn(v);
   }
   return { name, values: out };
+}
+
+// Values typed: one per line, else separated by ; (a decimal comma: 1,5; 2,3), else by , — an empty one in between an
+// empty cell, those at the end left out
+function typedCells(t: string): string[] {
+  const sep = t.includes('\n') ? '\n' : t.includes(';') ? ';' : ',';
+  const cells = t.split(sep).map((x) => x.trim());
+  while (cells.length && !cells[cells.length - 1]) cells.pop();
+  return cells;
 }
 
 // A list of names: one per line, else separated by ; or , (a name with a comma in it: one per line)
@@ -296,7 +317,8 @@ export function columnsOf(ds: Dataset, s: ColumnsSpec, inputs: Inputs = {}): Col
     const computed = j >= dataCount && j < addedEnd;
     const input = j >= addedEnd;
     const a = computed || input ? c.name : auto(given.get(j) ?? c.name, j);
-    const role = it?.role ?? (computed || input ? 'y' : roleOf(cols, j));
+    // (a column added: Y; of text: a label)
+    const role = it?.role ?? (computed || input ? (c.text && !c.values.some(Number.isFinite) ? 'label' : 'y') : roleOf(cols, j));
     return { from: key, name: it?.name?.trim() || a, auto: a, role, keep: it?.keep !== undefined ? it.keep !== false : j !== dropped, rows: c.values.length, ...(computed ? { computed: true } : {}), ...(input ? { input: true } : {}) };
   });
   // the names kept different (a Plot takes its columns by name)

@@ -718,6 +718,7 @@ const ADD_KINDS: [ComputedKind, string][] = [
   ['copy', 'an input / a copy'],
   ['generate', 'generated'],
   ['value', 'one value'],
+  ['typed', 'values typed'],
 ];
 
 // The formula of a column added in Columns: written with the letters of the list (A, B …) or [names], a letter put in
@@ -1146,7 +1147,7 @@ export function ColumnsNodeView({ id, data: nodeData }: NodeProps<ColumnsNode>) 
       <div className="row">
         <Select<ComputedKind | ''>
           value=""
-          title="A column added: a formula of the columns; a column of an input (A, B …) or a copy of a column; generated values (evenly spaced, by a step, of the row i, random: as many rows as the data); one value in every row"
+          title="A column added: a formula of the columns; a column of an input (A, B …) or a copy of a column; generated values (evenly spaced, by a step, of the row i, random: as many rows as the data); one value in every row; values you type, separated by commas"
           options={[['', '+ Column…'], ...ADD_KINDS]}
           onChange={(k) => k && lines.length > 0 && addComputed(k)}
         />
@@ -1168,7 +1169,7 @@ export function ColumnsNodeView({ id, data: nodeData }: NodeProps<ColumnsNode>) 
         const kind = c.kind ?? 'formula';
         const line = lines.find((L) => L.from === `=${c.id}`);
         // (folded: one line, what it is)
-        const what = kind === 'formula' ? `= ${c.formula ?? ''}` : kind === 'copy' ? `a copy of ${c.copy ?? '…'}` : kind === 'value' ? `= ${Number.isFinite(c.value) ? c.value : '…'}` : 'generated';
+        const what = kind === 'formula' ? `= ${c.formula ?? ''}` : kind === 'copy' ? `a copy of ${c.copy ?? '…'}` : kind === 'value' ? `= ${Number.isFinite(c.value) ? c.value : '…'}` : kind === 'typed' ? (c.typed ?? '').replace(/\s*\n\s*/g, '; ') || '…' : 'generated';
         return (
           <div key={c.id} className="col-added">
             <div className="row">
@@ -1193,6 +1194,7 @@ export function ColumnsNodeView({ id, data: nodeData }: NodeProps<ColumnsNode>) 
                       ['copy', 'a column (input / copy)'],
                       ['generate', 'generated'],
                       ['value', 'one value'],
+                      ['typed', 'values typed'],
                     ]}
                     onChange={(k) => setComputed(c.id, { kind: k, ...(k === 'generate' && !c.gen ? { gen: { ...GEN_SPEC_DEFAULTS } } : {}) })}
                   />
@@ -1209,6 +1211,12 @@ export function ColumnsNodeView({ id, data: nodeData }: NodeProps<ColumnsNode>) 
                     <NumInput className="short" value={c.value ?? NaN} onChange={(value) => setComputed(c.id, { value })} />
                   </Field>
                 )}
+                {kind === 'typed' && (
+                  <Field label="Values" title="Its values in order, separated by commas (10, 20, 35), by ; when they have a decimal comma (1,5; 2,3), or one per line; an empty one between two separators: an empty cell. Numbers, or text (a column of text, e.g. the names of the samples). As many rows as the data: those not typed stay empty">
+                    <TextInput value={c.typed ?? ''} placeholder="10, 20, 35, 50" onChange={(typed) => setComputed(c.id, { typed })} />
+                  </Field>
+                )}
+                {kind === 'typed' && line && <div className="hint">{line.rows} rows.</div>}
                 {kind === 'generate' && <GenFields g={{ ...GEN_SPEC_DEFAULTS, ...c.gen }} set={(p) => setComputed(c.id, { gen: { ...c.gen, ...p } })} />}
                 {kind === 'generate' && line && <div className="hint">{line.rows} rows, as the data.</div>}
                 {kind === 'copy' && (

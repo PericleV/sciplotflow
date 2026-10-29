@@ -1469,6 +1469,16 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   const nc = learnt([imp('i', A), colsNode], [wire('i', 'c', 'in')]);
   const rc = evaluateGraph(nc.map((n) => (n.id === 'i' ? ({ ...n, data: { ...n.data, edits: { cols: { 1: { name: 'Absorbance' } } } } } as AppNode) : n)), [wire('i', 'c', 'in')]).get('c');
   ok(outNames(rc) === 'I (a.u.)=1/2/3, Wavelength (nm)=400/500/600, Twice=2/4/6' && !rc!.warnings.length, 'ids: Columns: a column renamed before it keeps its settings and its formula');
+  // Columns: a column of values typed (numbers, a decimal comma, text), as many rows as the data
+  const typedOf = (typed: string) => {
+    const r = evaluateGraph([imp('i', A), { id: 'c', type: 'columns', position: { x: 0, y: 0 }, data: { computed: [{ id: 'c1', name: 'T', kind: 'typed', typed }] } } as AppNode], [wire('i', 'c', 'in')]).get('c');
+    const t = r?.outputs.out?.t === 'dataset' ? r.outputs.out.v.columns.find((c) => c.name === 'T') : undefined;
+    return { v: [...(t?.values ?? [])].join('/'), text: t?.text?.join('/'), role: t?.role, warned: !!r?.warnings.some((w) => w.includes('typed for 3 rows')) };
+  };
+  const ty1 = typedOf('10, 20, 35');
+  const ty2 = typedOf('1,5; 2,25');
+  const ty3 = typedOf('S1, S2, S3');
+  ok(ty1.v === '10/20/35' && !ty1.warned && ty2.v === '1.5/2.25/NaN' && ty2.warned && ty3.text === 'S1/S2/S3' && ty3.role === 'label', `Columns: values typed (numbers ${ty1.v}; a decimal comma ${ty2.v}, a row left empty and said; text ${ty3.text} as a label)`);
   const rc2 = evaluateGraph([imp('j', B), nc[1]], [wire('j', 'c', 'in')]).get('c');
   ok(outNames(rc2) === 'I (a.u.)=10/20/30, λ (nm)=400/500/600, Twice=20/40/60' && rc2!.warnings.some((w) => w.includes('found by place')), 'ids: Columns on another Import: its settings on the column at the same place, said');
   // a list of columns typed (Statistics): a name in it renamed since still found
