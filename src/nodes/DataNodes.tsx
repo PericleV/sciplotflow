@@ -25,6 +25,8 @@ import { maxOf } from '../engine/minmax.ts';
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, RotateCcw, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
 import { ask, notify } from '../ui/dialogStore.ts';
+import { inOrder } from '../engine/refs.ts';
+import { shownAfterMove, useTabDrag } from './tabDrag.ts';
 
 const PREVIEW_ROWS = 6;
 
@@ -108,7 +110,7 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
   // another file: the changes made by hand to the old one are dropped (after asking)
   const changed = hasEdits(data.edits) || Object.values(data.sheetEdits ?? {}).some(hasEdits);
   const fresh = async () => !changed || (await ask('Open another table? The changes made by hand in the worksheet belong to the current one and are dropped.', { ok: 'Open', danger: true }));
-  const cleared = () => ({ textId: crypto.randomUUID().slice(0, 8), edits: undefined, sheetEdits: undefined, sheet: 0 });
+  const cleared = () => ({ textId: crypto.randomUUID().slice(0, 8), edits: undefined, sheetEdits: undefined, sheet: 0, sheetOrder: undefined });
   // one text file as before; a spreadsheet workbook (.xlsx, .xls, .ods) or several files: sheets
   // the files opened in this session: read again when another encoding is chosen
   const lastFiles = useRef<File[]>([]);
@@ -134,7 +136,15 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
   const csv = r?.view.csv;
   const sheets = data.sheets ?? [];
   const k = Math.min(sheets.length - 1, Math.max(0, data.sheet ?? 0));
-  const shownSheet = sheets.length ? sheets[k] : null;
+  // the sheets in the order shown (a tab dragged onto another moves it: their places as read kept)
+  const perm = inOrder(sheets.map((_, j) => j), data.sheetOrder);
+  const tabs = useTabDrag((from, to) => {
+    const p = [...perm];
+    const [x] = p.splice(from, 1);
+    p.splice(to, 0, x);
+    set({ sheetOrder: p, sheet: shownAfterMove(k, from, to) });
+  });
+  const shownSheet = sheets.length ? sheets[perm[k]] : null;
   const shownText = shownSheet ? shownSheet.text : data.text;
   const anyExcel = sheets.some((x) => x.excel);
   const size = sheets.length ? sheets.reduce((a, x) => a + x.text.length, 0) : data.text.length;
@@ -240,10 +250,10 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
         <>
           <Worksheet key={shownSheet?.name ?? ''} dataset={r.outputs.out.v} map={r.view.sheet} edits={edits} onEdits={setEdits} look={data.look} onLook={(look) => set({ look })} />
           {sheets.length > 1 && (
-            <div className="sheet-tabs nowheel" title="The sheet shown here and given on the “dataset” output (the “workbook” output gives all of them)">
-              {sheets.map((x, j) => (
-                <button key={j} className={`nodrag${j === k ? ' on' : ''}`} onClick={() => set({ sheet: j })}>
-                  {x.name}
+            <div className="sheet-tabs nowheel" title="The sheet shown here and given on the “dataset” output (the “workbook” output gives all of them, in this order); drag a tab to move the sheet">
+              {perm.map((i, j) => (
+                <button key={i} className={`nodrag${j === k ? ' on' : ''}${tabs.mark(j)}`} onClick={() => set({ sheet: j })} {...tabs.props(j)}>
+                  {sheets[i].name}
                 </button>
               ))}
             </div>
@@ -962,9 +972,14 @@ export function ColumnsNodeView({ id, data: nodeData }: NodeProps<ColumnsNode>) 
   const every = nodeData.sheet === '*';
   const ownMode = every && perSheet === 'own';
   const sheetNames = r?.view.sheets ?? [];
-  const editing = editSheet && sheetNames.includes(editSheet) ? editSheet : sheetNames[0];
-  const data: ColumnsSpec = ownMode && editing ? (ownSheets?.[editing] ?? common) : nodeData;
-  const set = (patch: Partial<ColumnsSpec>) => (ownMode && editing ? updateNodeData(id, { sheets: { ...ownSheets, [editing]: { ...data, ...patch } } }) : updateNodeData(id, patch));
+  // (a sheet's own settings kept by its name: one renamed upstream since, by its old name)
+  const sheetsAs = r?.view.sheetsAs;
+  const asOf = (j: number) => sheetsAs?.[j] ?? sheetNames[j];
+  const at = editSheet ? Math.max(0, sheetNames.includes(editSheet) ? sheetNames.indexOf(editSheet) : (sheetsAs?.indexOf(editSheet) ?? -1)) : 0;
+  const editing = sheetNames[at];
+  const editKey = asOf(at);
+  const data: ColumnsSpec = ownMode && editKey ? (ownSheets?.[editKey] ?? common) : nodeData;
+  const set = (patch: Partial<ColumnsSpec>) => (ownMode && editKey ? updateNodeData(id, { sheets: { ...ownSheets, [editKey]: { ...data, ...patch } } }) : updateNodeData(id, patch));
   // the settings of the sheet edited for all of them (the common ones; no sheet with its own)
   const copyToAll = () => updateNodeData(id, { ...Object.fromEntries(COLUMNS_SPEC_KEYS.map((k) => [k, data[k]])), sheets: undefined });
   const sheetBar = every && sheetNames.length > 0 && (
@@ -980,7 +995,7 @@ export function ColumnsNodeView({ id, data: nodeData }: NodeProps<ColumnsNode>) 
         />
       </Field>
       <Field label={ownMode ? 'Editing' : 'Shown'} title={ownMode ? 'The sheet whose columns are set here (own: its own settings; common: the common ones, until changed)' : 'The sheet whose columns are listed here (the settings: of every sheet)'}>
-        <Select<string> value={editing ?? ''} options={sheetNames.map((nm): [string, string] => [nm, ownMode ? `${nm} (${ownSheets?.[nm] ? 'own' : 'common'})` : nm])} onChange={(v) => updateNodeData(id, { editSheet: v })} />
+        <Select<string> value={editing ?? ''} options={sheetNames.map((nm, j): [string, string] => [nm, ownMode ? `${nm} (${ownSheets?.[asOf(j)] ? 'own' : 'common'})` : nm])} onChange={(v) => updateNodeData(id, { editSheet: v })} />
       </Field>
       {ownMode && (
         <button className="nodrag" title="The settings of this sheet for every sheet (the others' own settings dropped)" onClick={copyToAll}>

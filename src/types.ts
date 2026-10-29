@@ -83,16 +83,19 @@ type Node<D extends Record<string, unknown>, T extends string> = FlowNode<D & No
 // edits: the worksheet — changes made by hand to the table read (or an empty table typed in), kept apart from the file.
 // sheets: a spreadsheet workbook or several files (each a sheet; excel: cells written tab-separated with a decimal
 // point) — `text` is then unused; sheet: the one shown in the worksheet and given on the dataset output; sheetEdits:
-// the worksheet changes of each sheet, by its name.
+// the worksheet changes of each sheet, by its name; sheetOrder: the sheets (by their place as read) in the order shown —
+// moved with the mouse; the others after them (`sheet` counts in that order).
 // textRef: in a project kept in the browser, a big text is in IndexedDB (src/textStore.ts) under this key
 export type ImportSheet = { name: string; text: string; excel?: boolean; textRef?: string };
 // export: the settings of its Export (src/engine/exportTable.ts)
 // look: how its worksheet is drawn (the node's size, the rows' height, the columns' widths)
-export type ImportData = { name: string; fileName: string; text: string; textId: string; csv: CsvOptions; edits?: SheetEdits; sheets?: ImportSheet[]; sheet?: number; sheetEdits?: Record<string, SheetEdits>; textRef?: string; export?: Partial<TableExport>; look?: SheetLook };
+export type ImportData = { name: string; fileName: string; text: string; textId: string; csv: CsvOptions; edits?: SheetEdits; sheets?: ImportSheet[]; sheet?: number; sheetOrder?: number[]; sheetEdits?: Record<string, SheetEdits>; textRef?: string; export?: Partial<TableExport>; look?: SheetLook };
 // Workbook: tables typed or pasted in, on several sheets — or, with something connected, a view of
 // that dataset / workbook. A sheet: its table as tab-separated text (a line of names, then the rows; '' = none yet) and
-// the worksheet changes over it; sheet: the one shown and given on the dataset output.
-export type BookSheet = { name: string; text: string; edits?: SheetEdits; textRef?: string };
+// the worksheet changes over it; sheet: the one shown and given on the dataset output (counted in the order shown).
+// id: the sheet's own (s0, s1 …: its id `<node>:s3`), kept when another is added or removed; absent (older projects, no
+// sheet removed yet): its place.
+export type BookSheet = { id?: string; name: string; text: string; edits?: SheetEdits; textRef?: string };
 // into: for every input A, B, C … the sheet it goes to ('' = the first sheet): inputs on the same sheet side by side (at the right of its own table), read-only
 // but for their designations — roles: sheet name → column name → the designation given here. layout: sheet name → its
 // columns as arranged when it has inputs (keys: o<n> a column of its own table, n its place as read; i:<name> an
@@ -100,9 +103,10 @@ export type BookSheet = { name: string; text: string; edits?: SheetEdits; textRe
 // rowHide, rowOrder: a sheet of the inputs' rows left out and moved (by their place in it, from 0; the others after)
 export type BookLayout = { order?: string[]; hide?: string[]; rowHide?: number[]; rowOrder?: number[] };
 // hideSheets: sheets of the inputs taken out of the workbook (by their names; shown again from the node)
+// order: every sheet (its own and the inputs') in the order shown, by their ids — moved with the mouse; the others after
 // matrix: a matrix on an input (by its port): its rows' names (or Y) as the first column, its columns' names (or X) as the
 // names (absent: not asked yet — both, and the node asks)
-export type WorkbookData = { name: string; sheets: BookSheet[]; sheet: number; into?: string[]; matrix?: Record<string, { rows: boolean; cols: boolean }>; roles?: Record<string, Record<string, ColumnRole>>; layout?: Record<string, BookLayout>; hideSheets?: string[]; export?: Partial<TableExport>; look?: SheetLook };
+export type WorkbookData = { name: string; sheets: BookSheet[]; sheet: number; into?: string[]; matrix?: Record<string, { rows: boolean; cols: boolean }>; roles?: Record<string, Record<string, ColumnRole>>; layout?: Record<string, BookLayout>; hideSheets?: string[]; order?: string[]; export?: Partial<TableExport>; look?: SheetLook };
 // The column is chosen by its name (a file with the columns in another order still works), the index when names repeat.
 // sheet: from a workbook, by name; value: one value (the row `row`, 1 … n) instead of the column
 // Extract column: a column (by its name; index: its place, when names repeat) of a dataset or of a sheet of a workbook;

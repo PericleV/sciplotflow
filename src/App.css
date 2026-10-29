@@ -1034,6 +1034,8 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .sheet-tabs { display: flex; gap: 2px; overflow-x: auto; padding-top: 3px; }
 .sheet-tabs button { flex: none; padding: 1px 8px; font-size: var(--fs-small); border-radius: 0 0 4px 4px; border-top: none; white-space: nowrap; }
 .sheet-tabs button.on { background: color-mix(in srgb, var(--accent) 28%, var(--panel)); font-weight: 600; }
+.sheet-tabs button.drop-before { box-shadow: inset 3px 0 0 var(--accent); }
+.sheet-tabs button.drop-after { box-shadow: inset -3px 0 0 var(--accent); }
 .rules { display: flex; flex-direction: column; gap: 2px; }
 .rule { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 76px 22px; gap: 4px; align-items: center; }
 .rule input, .rule select { min-width: 0; width: 100%; }

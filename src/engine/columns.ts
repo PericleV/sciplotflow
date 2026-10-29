@@ -13,7 +13,7 @@ import { pick } from './extract.ts';
 import { isCol, withColumnFunctions } from './colfns.ts';
 import { GEN_SPEC_DEFAULTS, generatedValues, type GenSpec } from './gencol.ts';
 import { roleOf, type Column, type ColumnRole, type Dataset, type Scalar } from './table.ts';
-import { resolve } from './refs.ts';
+import { knownAs } from './refs.ts';
 
 // one column's own settings: by its name (after the names row; a column added: '=' and its id): its new name,
 // designation, kept or not
@@ -64,17 +64,11 @@ const cellOf = (c: Column, i: number) => {
 // same layout connected, at the place of one): the name the settings give it (refs.ts) — its settings and formulas stay
 // its own.
 function knownNames(cols: Column[], s: ColumnsSpec): string[] {
-  const known = cols.map((c) => c.name);
   const named = new Set<string>();
   for (const it of s.items ?? []) if (!it.from.startsWith('=') && !it.from.startsWith('{')) named.add(it.from);
   for (const n of s.renamePick ?? []) named.add(n);
   for (const text of [...(s.computed ?? []).flatMap((c) => [c.formula ?? '', c.copy ?? '']), s.namesFrom?.col ?? '']) for (const m of text.matchAll(REF)) if (m[1] !== undefined && !m[1].startsWith('=')) named.add(m[1].replace(/^@/, ''));
-  for (const name of named) {
-    const c = resolve('cols', cols, name);
-    const j = c ? cols.indexOf(c) : -1;
-    if (j >= 0 && known[j] === c!.name && c!.name !== name) known[j] = name;
-  }
-  return known;
+  return knownAs('cols', cols, named);
 }
 
 // ---- the references of a formula: [key] a column of the data or added (=id), [@key] the same written by its letter,

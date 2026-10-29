@@ -4,7 +4,7 @@
 // an empty sheet shows them, a sheet with a table of its own gets them at its right; a sheet name not used makes a new
 // sheet. A workbook's sheets come as they are; “Copy into its own sheets” makes them all tables of its own. The columns of
 // the inputs can be hidden and moved, and columns of its own added among them.
-import { Fragment, useState } from 'react';
+import { Fragment, useContext, useState } from 'react';
 import { NodeOptions } from './NodeOptions.tsx';
 import { ExportTable } from './ExportTable.tsx';
 import { useNodeConnections, useReactFlow, type NodeProps } from '@xyflow/react';
@@ -21,6 +21,8 @@ import { maxOf } from '../engine/minmax.ts';
 import { X } from 'lucide-react';
 import { IC } from './iconProps.ts';
 import { ask, notify } from '../ui/dialogStore.ts';
+import { NameAliases } from './aliasStore.ts';
+import { shownAfterMove, useTabDrag } from './tabDrag.ts';
 
 // A sheet name not used yet: Sheet2, Sheet3 …
 const freeName = (sheets: { name: string }[], base = 'Sheet') => {
@@ -70,7 +72,33 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
   const kinds = r?.view.book?.kinds ?? names.map((_, j) => (j < own.length ? 'own' : 'input'));
   const viewOnly = kinds[k] === 'input';
   const keys = r?.view.book?.keys;
+  // the sheets in the order shown (moved with the mouse): its own sheet at a tab (else -1), every tab's id
+  const place = r?.view.book?.place;
+  const ownIx = (j: number) => {
+    const p = place?.[j] ?? j;
+    return p < own.length ? p : -1;
+  };
+  const tabs = useTabDrag((from, to) => {
+    const ids = [...(r?.view.book?.ids ?? [])];
+    if (ids.length !== names.length) return;
+    const [x] = ids.splice(from, 1);
+    ids.splice(to, 0, x);
+    set({ order: ids, sheet: shownAfterMove(k, from, to) });
+  });
+  // its own sheets with their ids written (a sheet without one: its place until then), before one is added or removed:
+  // the others keep theirs
+  const stamped = () => own.map((s, j) => (s.id ? s : { ...s, id: `s${j}` }));
+  const freeId = (list: BookSheet[]) => {
+    let q = list.length;
+    while (list.some((s) => s.id === `s${q}`)) q++;
+    return `s${q}`;
+  };
+  // the name a sheet's settings are kept by (an input's sheet renamed upstream since: its old name), and a column's (its key)
+  const setName = (j: number) => r?.view.sheetsAs?.[j] ?? names[j];
+  const colName = (j: number) => (keys?.[j]?.startsWith('i:') ? keys[j].slice(2) : ds?.columns[j]?.name);
+  const aliases = useContext(NameAliases);
   const firstSheet = own[0]?.name || 'inputs';
+  const ds = r?.outputs.out?.t === 'dataset' ? r.outputs.out.v : undefined;
   const conns = useNodeConnections({ handleType: 'target' });
   // one free input after the last one used
   const usedPorts = conns.map((c) => Number(/^in-(\d+)$/.exec(c.targetHandle ?? '')?.[1] ?? -1));
@@ -78,7 +106,6 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
   const ins = new Map((r?.view.book?.ins ?? []).map((i) => [i.letter, i]));
   const into = (j: number) => data.into?.[j] ?? '';
   const setInto = (j: number, v: string) => set({ into: Array.from({ length: Math.max(count, j + 1) }, (_, i) => (i === j ? v : into(i))) });
-  const ds = r?.outputs.out?.t === 'dataset' ? r.outputs.out.v : undefined;
   // a designation on a sheet of the inputs: kept by the sheet's and the column's names (the cells stay read-only)
   const setRole = (sheet: string | undefined, col: string | undefined, role: ColumnRole) => {
     if (!sheet || col === undefined) return;
@@ -87,14 +114,14 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
   const setSheet = (j: number, p: Partial<BookSheet>) => set({ sheets: own.map((s, i) => (i === j ? { ...s, ...p } : s)) });
   // the columns of the sheet shown arranged (with inputs): kept by the sheet's name
   const setLayout = (p: Partial<BookLayout>) => {
-    const nm = names[k];
+    const nm = setName(k);
     if (nm !== undefined) set({ layout: { ...data.layout, [nm]: { ...data.layout?.[nm], ...p } } });
   };
-  const hiddenKeys = data.layout?.[names[k] ?? '']?.hide ?? [];
+  const hiddenKeys = data.layout?.[setName(k) ?? '']?.hide ?? [];
   // a column of its own at the place `at` among the inputs' (as many rows as the sheet): an empty sheet showing the
   // inputs starts a table of its own
   const addOwnCol = (at: number) => {
-    const sh = own[k];
+    const sh = own[ownIx(k)];
     const nm = names[k];
     if (!sh || nm === undefined) return;
     const rows = ds ? Math.max(0, maxOf(ds.columns.map((c) => c.values.length))) : 0;
@@ -112,7 +139,7 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
     }
     const order = [...(keys ?? [])];
     order.splice(at, 0, `o${read}`);
-    set({ sheets: own.map((q, i) => (i === k ? { ...q, edits } : q)), layout: { ...data.layout, [nm]: { ...data.layout?.[nm], order } } });
+    set({ sheets: own.map((q, i) => (i === ownIx(k) ? { ...q, edits } : q)), layout: { ...data.layout, [nm]: { ...data.layout?.[nm], order } } });
   };
   const layout: SheetLayout | undefined =
     kinds[k] !== 'own' && keys
@@ -120,13 +147,16 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
           keys,
           onOrder: (order) => setLayout({ order }),
           onHide: (ks) => setLayout({ hide: [...new Set([...hiddenKeys, ...ks])] }),
-          ...(k < own.length ? { onAdd: addOwnCol } : {}),
-          hidden: hiddenKeys.map((q) => q.replace(/^i:/, '')),
+          ...(ownIx(k) >= 0 ? { onAdd: addOwnCol } : {}),
+          hidden: hiddenKeys.map((q) => {
+            const nm = q.replace(/^i:/, '');
+            return aliases.cols?.[nm] ?? nm;
+          }),
           onShowAll: () => setLayout({ hide: [] }),
         }
       : undefined;
   // the rows of a sheet of the inputs (read-only): left out, moved, by their places in it (rowsOf: of every row shown)
-  const lay = data.layout?.[names[k] ?? ''];
+  const lay = data.layout?.[setName(k) ?? ''];
   const shownRows = r?.view.book?.rowsOf ?? (ds ? Array.from({ length: Math.max(0, maxOf(ds.columns.map((c) => c.values.length))) }, (_, i) => i) : []);
   const rowLayout: RowLayout | undefined =
     kinds[k] === 'input'
@@ -142,26 +172,33 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
           onShowAll: () => setLayout({ rowHide: undefined }),
         }
       : undefined;
-  const addSheet = (s: BookSheet) => set({ sheets: [...own, s], sheet: own.length });
+  // (a sheet added: after the others; at the end of the tabs moved)
+  const addSheet = (s: BookSheet) => {
+    const list = stamped();
+    set({ sheets: [...list, { ...s, id: freeId(list) }], sheet: data.order?.length ? names.length : own.length });
+  };
   // a sheet of its own removed (asked first when it holds a table); one of the inputs taken out of the workbook (the input
   // stays as it is; Show hidden sheets brings it back)
   const removeSheet = async (j: number) => {
-    const s = own[j];
+    const o = ownIx(j);
+    const s = own[o];
     const next = Math.max(0, Math.min(k, names.length - 2));
-    if (!s) return set({ hideSheets: [...new Set([...(data.hideSheets ?? []), names[j]])], sheet: next });
+    if (!s) return set({ hideSheets: [...new Set([...(data.hideSheets ?? []), setName(j)])], sheet: next });
     if ((s.text || s.edits?.cells) && !(await ask(`Remove the sheet “${s.name}” and its table?`, { ok: 'Remove', danger: true }))) return;
-    set({ sheets: own.filter((_, i) => i !== j), sheet: next });
+    set({ sheets: stamped().filter((_, i) => i !== o), sheet: next });
   };
   const hiddenSheets = r?.view.book?.hiddenSheets ?? [];
-  const rename = (j: number, name: string) => {
+  const rename = (t: number, name: string) => {
     const nm = name.trim();
+    const j = ownIx(t);
     setRenaming(null);
-    if (!nm || nm === own[j].name) return;
+    if (j < 0 || !nm || nm === own[j].name) return;
     if (own.some((s, i) => i !== j && s.name === nm)) return notify(`There is already a sheet “${nm}”.`);
-    // the designations and the arrangement of the inputs' columns go with the sheet
+    // the designations and the arrangement of the inputs' columns go with the sheet, and the inputs sent to it
     const old = own[j].name;
     const moved = <T,>(rec: Record<string, T> | undefined) => (rec && old in rec ? Object.fromEntries(Object.entries(rec).map(([q, v]) => [q === old ? nm : q, v])) : rec);
-    set({ sheets: own.map((s, i) => (i === j ? { ...s, name: nm } : s)), roles: moved(data.roles), layout: moved(data.layout) });
+    const into = data.into?.some((q) => q.trim() === old) ? data.into.map((q) => (q.trim() === old ? nm : q)) : data.into;
+    set({ sheets: own.map((s, i) => (i === j ? { ...s, name: nm } : s)), roles: moved(data.roles), layout: moved(data.layout), into });
   };
   // the table copied to the clipboard (a spreadsheet's cells, or a text file's lines) as a new sheet, its first line the
   // names when it holds text
@@ -179,7 +216,11 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
   const detach = () => {
     const book = r?.outputs.book?.t === 'workbook' ? r.outputs.book.v : undefined;
     if (!book) return;
-    set({ sheets: book.sheets.map((s, j) => (kinds[j] === 'own' ? own[j] : asSheet(s, s.name || `Sheet${j + 1}`))), sheet: k, into: [], roles: undefined, layout: undefined });
+    // (in the order shown; its own sheets keep their ids, the others get new ones)
+    const list = stamped();
+    const made: BookSheet[] = [];
+    for (const [j, s] of book.sheets.entries()) made.push(kinds[j] === 'own' ? list[ownIx(j)] : { ...asSheet(s, s.name || `Sheet${j + 1}`), id: freeId([...list, ...made]) });
+    set({ sheets: made, sheet: k, into: [], roles: undefined, layout: undefined, order: undefined });
     setEdges((es) => es.filter((e) => !(e.target === id && /^in-\d+$/.test(e.targetHandle ?? ''))));
   };
   return (
@@ -252,21 +293,21 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
           key={`${kinds[k] ?? ''}:${names[k] ?? ''}`}
           dataset={ds}
           map={viewOnly ? undefined : r?.view.sheet}
-          edits={viewOnly ? undefined : own[k]?.edits}
-          onEdits={(e: SheetEdits) => !viewOnly && setSheet(k, { edits: e })}
+          edits={viewOnly ? undefined : own[ownIx(k)]?.edits}
+          onEdits={(e: SheetEdits) => !viewOnly && setSheet(ownIx(k), { edits: e })}
           readOnly={viewOnly}
           layout={layout}
           rowLayout={rowLayout}
           look={data.look}
           onLook={(look) => set({ look })}
-          onRole={kinds[k] !== 'own' ? (j, role) => setRole(names[k], ds.columns[j]?.name, role) : undefined}
-          formulas={!viewOnly && k < own.length ? { sheet: names[k] ?? '' } : undefined}
+          onRole={kinds[k] !== 'own' ? (j, role) => setRole(setName(k), colName(j), role) : undefined}
+          formulas={!viewOnly && ownIx(k) >= 0 ? { sheet: names[k] ?? '' } : undefined}
           plain
         />
       )}
-      <div className="sheet-tabs nowheel" title="The sheet shown and given on the “dataset” output; double-click a tab of its own to rename it (⇢: the sheet shows the inputs; the sheets made by them are named on their input)">
+      <div className="sheet-tabs nowheel" title="The sheet shown and given on the “dataset” output; double-click a tab of its own to rename it; drag a tab to move the sheet (⇢: the sheet shows the inputs; the sheets made by them are named on their input)">
         {names.map((nm, j) =>
-          renaming === j && j < own.length ? (
+          renaming === j && ownIx(j) >= 0 ? (
             <input
               key={j}
               className="nodrag sheet-rename"
@@ -281,12 +322,12 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
               }}
             />
           ) : (
-            <button key={j} className={`nodrag${j === k ? ' on' : ''}`} onClick={() => set({ sheet: j })} onDoubleClick={() => j < own.length && setRenaming(j)}>
+            <button key={j} className={`nodrag${j === k ? ' on' : ''}${tabs.mark(j)}`} onClick={() => set({ sheet: j })} onDoubleClick={() => ownIx(j) >= 0 && setRenaming(j)} {...tabs.props(j)}>
               {kinds[j] === 'own' ? nm : `⇢ ${nm}`}
-              {(names.length > 1 || j >= own.length) && (
+              {(names.length > 1 || ownIx(j) < 0) && (
                 <span
                   className="sheet-tab-x"
-                  title={j < own.length ? 'Remove this sheet' : 'Take this sheet of the inputs out of the workbook (the input stays as it is; Show hidden sheets brings it back)'}
+                  title={ownIx(j) >= 0 ? 'Remove this sheet' : 'Take this sheet of the inputs out of the workbook (the input stays as it is; Show hidden sheets brings it back)'}
                   onClick={(e) => {
                     e.stopPropagation();
                     removeSheet(j);

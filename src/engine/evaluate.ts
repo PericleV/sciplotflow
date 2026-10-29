@@ -15,15 +15,15 @@ import { generatedValues } from './gencol.ts';
 import { withColumnFunctions } from './colfns.ts';
 export { withColumnFunctions };
 import type { Edge } from '@xyflow/react';
-import type { AnnotationItem, AppNode, CalculusData, ColumnsData, PeakData, PeakWidthData, PickData, CanvasData, DrawingData, DrawingComponent, CanvasItem, CanvasLayout, CurveRow, MathColData, PythonData, RowRule, FitNodeData, GenColData, PageData, Plot1DData, StatsData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, SmithData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from '../types.ts';
+import type { AnnotationItem, AppNode, BookSheet, CalculusData, ColumnsData, PeakData, PeakWidthData, PickData, CanvasData, DrawingData, DrawingComponent, CanvasItem, CanvasLayout, CurveRow, MathColData, PythonData, RowRule, FitNodeData, GenColData, PageData, Plot1DData, StatsData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, SmithData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from '../types.ts';
 import { axisRange } from '../figure/ticks.ts';
 import { autoFrame, axesGeometry, placeAuto, placeInsets, placeLegends } from '../figure/axes.ts';
 import { legendLayout } from '../figure/legendLayout.ts';
 import { columnLetter, readTable, type CsvResult } from './csv.ts';
 import { curveColumns, digest, figPort, outValue, toPy, type PyJob, type PyResult, type PyValue } from './python.ts';
 import { applySheet, hasEdits, readSheet, type SheetMap } from './sheet.ts';
-import { findings, findSheet, foundAs, hasFindings, importSource, inScope, missKey, newScope, sheetId, type DataRefs, type Resolved } from './refs.ts';
-import { applyFormulas } from './sheetFormula.ts';
+import { findings, findSheet, foundAs, hasFindings, importSource, inOrder, inScope, knownAs, missKey, newScope, sheetId, type DataRefs, type Resolved } from './refs.ts';
+import { applyFormulas, keysUsed, type ColFormula } from './sheetFormula.ts';
 import { flattenGroups, GROUP_IN, GROUP_OUT } from './subgraph.ts';
 import { columnRuns, fillNames, gather, gatherOne, orderFiles, portNames, readText, resultOf, runNames, skipSteps, withOwn, type FileRun } from './batch.ts';
 import { takeRows } from './split.ts';
@@ -145,6 +145,7 @@ export type NodeView = {
   csv?: CsvResult;
   sheet?: SheetMap; // Import: which row / column of the table as read each row / column shown is
   sheets?: string[]; // Import, Extract column, Workbook: the names of the sheets of the workbook
+  sheetsAs?: string[]; // Workbook, Columns: the names the node's settings know those sheets by (one renamed since: its old name)
   toSheets?: string[]; // Columns to sheets: the names of the sheets made
   figList?: { key: string; name?: string; on: boolean }[]; // Select figures: the figures in, taken or not
   panels?: { key: string; name?: string }[]; // Merge: its figures as connected (a Batch's: one each, named)
@@ -157,7 +158,7 @@ export type NodeView = {
   // hiddenSheets: the inputs' sheets taken out of the workbook (by their names)
   // (a matrix: ask, the node asks how it goes on the sheet; rowsAre, colsAre: what its rows and columns have — names, Y / X, or nothing)
   // (rowsOf: of the sheet shown, when it is the inputs' with rows left out or moved: the place of every row shown)
-  book?: { own: number; rowsOf?: number[]; ins: { letter: string; kind: 'column' | 'dataset' | 'workbook' | 'matrix'; name: string; sheet: string; ask?: boolean; rowsAre?: string; colsAre?: string }[]; kinds?: ('own' | 'input' | 'mixed')[]; keys?: string[]; hiddenSheets?: string[] };
+  book?: { own: number; rowsOf?: number[]; ins: { letter: string; kind: 'column' | 'dataset' | 'workbook' | 'matrix'; name: string; sheet: string; ask?: boolean; rowsAre?: string; colsAre?: string }[]; kinds?: ('own' | 'input' | 'mixed')[]; keys?: string[]; hiddenSheets?: string[]; ids?: string[]; place?: number[] };
   // Data manipulation: the points of its graph (moved), the state of every input row (ROW_MASKED …), the columns shown
   manip?: { x: Float64Array; y: Float64Array; state: Uint8Array; nIn: number; xName: string; yName: string };
   // Fit: the data (every point, which run it is in, whether it was fitted), the results of every run, the model
@@ -4425,15 +4426,17 @@ const columnsHeadOf = (ds: Dataset) => {
 };
 function columnsEverySheet(book: Workbook, d: ColumnsData, vals: Record<string, Column | Scalar>, ins: MathInput[]): Out {
   const { sheet: _s, perSheet, sheets: own, editSheet, ...common } = d;
-  const specOf = (name: string): ColumnsSpec => (perSheet === 'own' ? (own?.[name] ?? common) : common);
+  // (a sheet's own settings kept by its name: renamed upstream since, still its own — refs.ts)
+  const as = perSheet === 'own' ? knownAs('sheets', book.sheets, Object.keys(own ?? {})) : book.sheets.map((q) => q.name);
+  const specOf = (j: number): ColumnsSpec => (perSheet === 'own' ? (own?.[as[j]] ?? common) : common);
   const edited = (editSheet ? findSheet(book.sheets, editSheet) : undefined) ?? book.sheets[0];
   if (!edited) return { errors: ['The workbook has no sheets.'], view: { inputs: ins } };
   const warnings: string[] = [];
   const out: Dataset[] = [];
   let shown: ReturnType<typeof columnsOf> | null = null;
   let names: Column | undefined;
-  for (const q of book.sheets) {
-    const r = columnsOf(q, specOf(q.name), vals);
+  for (const [j, q] of book.sheets.entries()) {
+    const r = columnsOf(q, specOf(j), vals);
     if (q === edited) shown = r;
     if (typeof r === 'string') {
       warnings.push(`Sheet “${q.name}”: ${r}`);
@@ -4445,7 +4448,8 @@ function columnsEverySheet(book: Workbook, d: ColumnsData, vals: Record<string, 
     out.push({ ...r.dataset, name: q.name });
   }
   const columnsHead = columnsHeadOf(edited);
-  const view = { inputs: ins, columnsHead, ...(shown && typeof shown !== 'string' ? { available: shown.dataset.columns.map(colInfo), columnLines: shown.lines } : { available: edited.columns.map(colInfo) }) };
+  const sheetsAs = as.some((q, j) => q !== book.sheets[j].name) ? as : undefined;
+  const view = { inputs: ins, columnsHead, ...(sheetsAs ? { sheetsAs } : {}), ...(shown && typeof shown !== 'string' ? { available: shown.dataset.columns.map(colInfo), columnLines: shown.lines } : { available: edited.columns.map(colInfo) }) };
   return { outputs: { out: { t: 'workbook', v: { ...book, sheets: out } }, ...(names ? { names: { t: 'column', v: names } } : {}) }, warnings, view };
 }
 
@@ -4464,19 +4468,22 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
         const name = d.name || d.fileName.replace(/\.[^.]+$/, '') || 'workbook';
         const warnings: string[] = [];
         let shown: { csv: CsvResult; map: SheetMap } | null = null;
-        const k = Math.min(d.sheets.length - 1, Math.max(0, Math.floor(d.sheet ?? 0)));
-        const sheets = d.sheets.map((s, j) => {
+        // (in the order shown: moved with the mouse; their ids stay those of their places as read)
+        const perm = inOrder(d.sheets.map((_, j) => j), d.sheetOrder);
+        const at = perm[Math.min(d.sheets.length - 1, Math.max(0, Math.floor(d.sheet ?? 0)))];
+        const read = d.sheets.map((s, j) => {
           const r = readTable(s.text, s.excel ? { ...d.csv, delimiter: '\t', decimal: '.' } : d.csv, s.name, s.name);
           const { dataset, map } = applySheet(r.dataset, d.sheetEdits?.[s.name], r.decimal, sheetId(importSource(n.id, d.textId), j));
-          if (j === k) shown = { csv: r, map };
+          if (j === at) shown = { csv: r, map };
           warnings.push(...r.warnings.map((w) => `${s.name}: ${w}`));
           return { ...dataset, name: s.name };
         });
+        const sheets = perm.map((j) => read[j]);
         const sh = shown as { csv: CsvResult; map: SheetMap } | null;
         return {
-          outputs: { out: { t: 'dataset', v: sheets[k] }, book: { t: 'workbook', v: { name, sheets } } },
+          outputs: { out: { t: 'dataset', v: read[at] }, book: { t: 'workbook', v: { name, sheets } } },
           warnings,
-          view: { ...(sh ? { csv: sh.csv, sheet: sh.map } : {}), sheets: d.sheets.map((s) => s.name) },
+          view: { ...(sh ? { csv: sh.csv, sheet: sh.map } : {}), sheets: sheets.map((s) => s.name) },
         };
       }
       if (!d.text && !hasEdits(d.edits)) return { view: { waiting: 'Open a file (CSV, text, .xlsx, .xls, .ods: several at once make a workbook), drop it on the node, paste a table, or start an empty table.' } };
@@ -4531,16 +4538,19 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
         used.add(nm);
         return { ...s, name: nm };
       });
-      const hiddenSheets = named.filter((s) => gone.has(s.name)).map((s) => s.name);
-      const inSheets = named.filter((s) => !gone.has(s.name));
+      // the names the settings (designations, arrangement, sheets taken out) know the inputs' sheets by: one renamed
+      // upstream since, or at its place in another source of the same layout, keeps its settings (refs.ts)
+      const namedAs = knownAs('sheets', named, [...Object.keys(n.data.roles ?? {}), ...Object.keys(n.data.layout ?? {}), ...gone].filter((q) => !ownNames.has(q)));
+      const hiddenSheets = named.filter((_, i) => gone.has(namedAs[i])).map((s) => s.name);
+      const inSheets = named.flatMap((s, i) => (gone.has(namedAs[i]) ? [] : [{ s, as: namedAs[i] }]));
       if (!own.length && !inSheets.length) return { view: { waiting: hiddenSheets.length ? 'Every sheet of the inputs is taken out: show them again (Show hidden sheets)' : 'Add a sheet (+), or connect columns / datasets to A, B …', book: { own: 0, ins, ...(hiddenSheets.length ? { hiddenSheets } : {}) } } };
       const total = own.length + inSheets.length;
-      const k = Math.min(total - 1, Math.max(0, Math.floor(n.data.sheet ?? 0)));
-      // the designations given in the node to the columns of the inputs, by the sheet's and the column's names
-      const withRoles = (sheet: string, cols: Column[]) => {
-        const roles = n.data.roles?.[sheet];
-        return roles ? cols.map((c) => (roles[c.name] && roles[c.name] !== c.role ? { ...c, role: roles[c.name] } : c)) : cols;
-      };
+      // the sheets in the order shown (moved with the mouse: their ids in `order`, the others after them); k: the one
+      // shown, among the sheets as they come (its own, then the inputs')
+      const ownId = (s: BookSheet, j: number) => `${n.id}:${s.id ?? `s${j}`}`;
+      const sheetKeys = [...own.map(ownId), ...inSheets.map(({ s }) => s.id ?? `${n.id}:in:${s.name}`)];
+      const perm = inOrder(sheetKeys, n.data.order);
+      const k = perm[Math.min(total - 1, Math.max(0, Math.floor(n.data.sheet ?? 0)))];
       // the columns of a sheet with inputs, each with its key (o3: the column of its own table read 4th; i:name: an
       // input's), arranged as set in the node: the inputs' left out, the order moved by hand (the others after, as they come)
       type Keyed = { key: string; col: Column };
@@ -4566,7 +4576,19 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
         if (shown) rowsOf = rows;
         return columns.map((c) => ({ ...c, values: Float64Array.from(rows, (i) => (i < c.values.length ? c.values[i] : NaN)), ...(c.text ? { text: rows.map((i) => c.text![i] ?? '') } : {}), ...(c.mask ? { mask: Uint8Array.from(rows, (i) => c.mask![i] ?? 0) } : {}) }));
       };
-      const inputKeyed = (sheet: string, cols: Column[]): Keyed[] => withRoles(sheet, sideBySide(cols)).map((col) => ({ key: `i:${col.name}`, col }));
+      // the inputs' columns of a sheet, each with its key (i:name) and the designation given in the node (by the sheet's
+      // and the column's names): a column renamed upstream since keeps them, and the formulas using it (refs.ts)
+      const inputKeyed = (sheet: string, cols: Column[], formulas?: Record<string, ColFormula>): Keyed[] => {
+        const list = sideBySide(cols);
+        const roles = n.data.roles?.[sheet];
+        const l = n.data.layout?.[sheet];
+        const keyed = [...(l?.order ?? []), ...(l?.hide ?? []), ...Object.values(formulas ?? {}).flatMap((f) => keysUsed(f.formula))];
+        const known = knownAs('cols', list, [...Object.keys(roles ?? {}), ...keyed.flatMap((q) => (q.startsWith('i:') ? [q.slice(2)] : []))]);
+        return list.map((c, j) => {
+          const role = roles?.[known[j]];
+          return { key: `i:${known[j]}`, col: role && role !== c.role ? { ...c, role } : c };
+        });
+      };
       let map: SheetMap | undefined;
       let keys: string[] | undefined;
       const kinds: ('own' | 'input' | 'mixed')[] = [];
@@ -4579,14 +4601,14 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
         return f.columns;
       };
       const sheets = own.map((s, j) => {
-        const r = applySheet(readSheet(s.text, s.name), s.edits, '.', sheetId(n.id, j));
+        const r = applySheet(readSheet(s.text, s.name), s.edits, '.', ownId(s, j));
         const got = onSheet.get(s.name);
         if (!got) {
           kinds.push('own');
           if (j === k) map = r.map;
           return { ...r.dataset, name: s.name, columns: withFormulas(s, r.dataset.columns, r.map.cols.map((q) => `o${q}`)) };
         }
-        const inCols = inputKeyed(s.name, got);
+        const inCols = inputKeyed(s.name, got, s.edits?.formulas);
         // an empty sheet (nothing typed, pasted or added among the inputs) shows the inputs; a table of its own gets them
         // at its right (or where they were moved)
         const ownUsed = !!s.text || Object.keys(s.edits?.cells ?? {}).length > 0 || Object.keys(s.edits?.formulas ?? {}).length > 0 || (n.data.layout?.[s.name]?.order ?? []).some((q) => /^o\d+$/.test(q));
@@ -4597,17 +4619,29 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
           keys = out.keys;
           if (ownUsed) map = r.map;
         }
-        return { name: s.name, id: sheetId(n.id, j), columns: ownUsed ? withFormulas(s, out.columns, out.keys) : laidRows(s.name, out.columns, j === k) };
+        return { name: s.name, id: ownId(s, j), columns: ownUsed ? withFormulas(s, out.columns, out.keys) : laidRows(s.name, out.columns, j === k) };
       });
-      for (const s of inSheets) {
-        const nm = s.name;
-        const out = arrange(nm, inputKeyed(nm, s.columns));
+      for (const { s, as } of inSheets) {
+        const out = arrange(as, inputKeyed(as, s.columns));
         const shown = sheets.length === k;
         if (shown) keys = out.keys;
         kinds.push('input');
-        sheets.push({ ...s, name: nm, columns: laidRows(nm, out.columns, shown) });
+        sheets.push({ ...s, columns: laidRows(as, out.columns, shown) });
       }
-      return { outputs: { out: { t: 'dataset', v: sheets[k] }, book: { t: 'workbook', v: { name: n.data.name || 'Book', sheets } } }, warnings: bookWarnings, view: { sheets: sheets.map((s) => s.name), book: { own: own.length, ins, kinds, ...(rowsOf ? { rowsOf } : {}), ...(keys ? { keys } : {}), ...(hiddenSheets.length ? { hiddenSheets } : {}) }, ...(map ? { sheet: map } : {}) } };
+      // (the name every sheet's settings are kept by, when one differs from its name)
+      const setAs = inSheets.some(({ s, as }) => as !== s.name) ? [...own.map((s) => s.name), ...inSheets.map(({ as }) => as)] : undefined;
+      const shownSheets = perm.map((j) => sheets[j]);
+      const moved = perm.some((j, i) => j !== i);
+      return {
+        outputs: { out: { t: 'dataset', v: sheets[k] }, book: { t: 'workbook', v: { name: n.data.name || 'Book', sheets: shownSheets } } },
+        warnings: bookWarnings,
+        view: {
+          sheets: shownSheets.map((s) => s.name),
+          book: { own: own.length, ins, kinds: perm.map((j) => kinds[j]), ids: perm.map((j) => sheetKeys[j]), ...(moved ? { place: perm } : {}), ...(rowsOf ? { rowsOf } : {}), ...(keys ? { keys } : {}), ...(hiddenSheets.length ? { hiddenSheets } : {}) },
+          ...(setAs ? { sheetsAs: perm.map((j) => setAs[j]) } : {}),
+          ...(map ? { sheet: map } : {}),
+        },
+      };
     }
     case 'extract': {
       const v = one('in');

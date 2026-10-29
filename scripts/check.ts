@@ -57,7 +57,8 @@ import { flipAcross, flipDown, scaleAbout, skewAbout, transformItem } from '../s
 import { bendItems, blendItems, isoBox, isoStack } from '../src/nodes/drawingMake.ts';
 import { panelOrder, type NodeResult } from '../src/engine/evaluate.ts';
 import { learnNameIds } from '../src/nameIds.ts';
-import { keepPlaces } from '../src/engine/refs.ts';
+import { inOrder, inScope, keepPlaces, newScope, resolve } from '../src/engine/refs.ts';
+import { shownList } from '../src/nodes/aliasStore.ts';
 import type { Edge } from '@xyflow/react';
 import type { AnnotationItem } from '../src/types.ts';
 import { breakAt, cornersOf, cornersText, joinPaths, longestSegment, nodeCount, roundedRectD, simplifyPath, splitSegment } from '../src/figure/paths.ts';
@@ -1499,6 +1500,68 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   const bo = { id: 'bo', type: 'subgraph', position: { x: 0, y: 0 }, data: { name: 'Batch', nodes: [], edges: [], inputs: [{ id: 'in-0', label: 'table', type: 'dataset' }], outputs: [], batch: { over: 'columns', sheet: 'gone' } } } as AppNode;
   const rb = evaluateGraph([book('w4', ['a', 'b']), bo], [wire('w4', 'bo', 'in-0', 'book')]).get('bo')!;
   ok(rb.errors.some((e) => e.includes('no sheet “gone”')), 'ids: Batch over columns: a sheet not there is an error');
+
+  // Workbook: the designations, the arrangement and the formulas of an input's columns, kept by their names, stay theirs
+  // when a column is renamed upstream
+  const absorb = (nodes: AppNode[]) => nodes.map((n) => (n.id === 'i' ? ({ ...n, data: { ...n.data, edits: { cols: { 1: { name: 'Absorbance' } } } } } as AppNode) : n));
+  const dsOut = (r: NodeResult | undefined) => (r?.outputs.out?.t === 'dataset' ? r.outputs.out.v : undefined);
+  const said = (ds: Dataset | undefined) => ds?.columns.map((c) => `${c.name}:${c.role ?? ''}=${[...c.values].join('/')}`).join(', ');
+  const wb = { id: 'b', type: 'book', position: { x: 0, y: 0 }, data: { name: 'Book', sheets: [], sheet: 0, roles: { inputs: { Intensity: 'label' } }, layout: { inputs: { order: ['i:Intensity', 'i:Wavelength (nm)'] } } } } as AppNode;
+  const eb = [wire('i', 'b', 'in-0')];
+  const nb = learnt([imp('i', A), wb], eb);
+  ok(said(dsOut(evaluateGraph(nb, eb).get('b'))) === 'Intensity:label=1/2/3, Wavelength (nm):=400/500/600', 'ids: Workbook: an input’s columns arranged and designated');
+  const rbk = evaluateGraph(absorb(nb), eb).get('b');
+  ok(said(dsOut(rbk)) === 'Absorbance:label=1/2/3, Wavelength (nm):=400/500/600' && rbk?.view.book?.keys?.join() === 'i:Intensity,i:Wavelength (nm)', 'ids: Workbook: a column renamed upstream keeps its place and designation (its key: the name it is kept by)');
+  // (a formula of its own column using an input's column)
+  const wf = { id: 'b', type: 'book', position: { x: 0, y: 0 }, data: { name: 'Book', sheets: [{ name: 'S', text: 'f\n0\n0\n0\n', edits: { formulas: { 0: { formula: '[@i:Intensity] * 2' } } } }], sheet: 0, into: ['S'] } } as AppNode;
+  const nf = learnt([imp('i', A), wf], eb);
+  const fOf = (r: NodeResult | undefined) => [...(dsOut(r)?.columns.find((c) => c.name === 'f')?.values ?? [])].join('/');
+  ok(fOf(evaluateGraph(nf, eb).get('b')) === '2/4/6', 'ids: Workbook: a formula of an input’s column');
+  const rf = evaluateGraph(absorb(nf), eb).get('b');
+  ok(fOf(rf) === '2/4/6' && !rf!.warnings.length, 'ids: Workbook: a formula still right after its column is renamed upstream');
+  // (an input's sheet taken out, then renamed upstream: still out; the settings' name of every sheet said)
+  const wh = { id: 'b', type: 'book', position: { x: 0, y: 0 }, data: { name: 'Book', sheets: [], sheet: 0, hideSheets: ['second'], roles: { first: { v: 'label' } } } } as AppNode;
+  const eh = [wire('w', 'b', 'in-0', 'book')];
+  const nh = learnt([book('w', ['first', 'second']), wh], eh);
+  ok(evaluateGraph(nh, eh).get('b')?.view.sheets?.join() === 'first', 'ids: Workbook: an input’s sheet taken out');
+  const rh = evaluateGraph([book('w', ['one', 'two']), nh[1]], eh).get('b');
+  ok(rh?.view.sheets?.join() === 'one' && rh.view.sheetsAs?.join() === 'first' && dsOut(rh)?.columns[0].role === 'label', 'ids: Workbook: the input’s sheets renamed upstream: the one taken out still out, the other keeps its designations');
+
+  // Columns, own settings for each sheet: a sheet renamed upstream keeps its own
+  const cs = { id: 'c', type: 'columns', position: { x: 0, y: 0 }, data: { sheet: '*', perSheet: 'own', sheets: { second: { items: [{ from: 'v', name: 'own name' }] } } } } as AppNode;
+  const ec = [wire('w', 'c', 'in', 'book')];
+  const bookNames = (r: NodeResult | undefined) => (r?.outputs.out?.t === 'workbook' ? r.outputs.out.v.sheets.map((q) => `${q.name}:${q.columns.map((c) => c.name).join('+')}`).join(', ') : '');
+  const ncs = learnt([book('w', ['first', 'second']), cs], ec);
+  ok(bookNames(evaluateGraph(ncs, ec).get('c')) === 'first:v, second:own name', 'ids: Columns: a sheet’s own settings');
+  const rcs = evaluateGraph([book('w', ['first', 'renamed']), ncs[1]], ec).get('c');
+  ok(bookNames(rcs) === 'first:v, renamed:own name' && rcs?.view.sheetsAs?.join() === 'first,second', 'ids: Columns: a sheet renamed upstream keeps its own settings');
+
+  // a column taken out of its source (the source still there): not replaced by another source's at its place
+  const sc = newScope({ cols: { Gone: ['a~1:s0:c2'] } });
+  ok(inScope(sc, () => resolve('cols', [{ name: 'p', id: 'a~1:s0:c0' }, { name: 'q', id: 'b~2:s0:c2' }], 'Gone')) === undefined, 'ids: a column taken out of a source still there: none taken at its place');
+  ok(inScope(newScope({ cols: { Gone: ['a~1:s0:c2'] } }), () => resolve('cols', [{ name: 'q', id: 'b~2:s0:c2' }], 'Gone'))?.name === 'q', 'ids: its source replaced: the column at its place');
+
+  // a list of names typed, shown with the names now
+  const al = { cols: { Intensity: 'Absorbance', Old: 'New' } };
+  ok(shownList('Intensity, !Old, B-D, Old-Intensity, Other', al) === 'Absorbance, !New, B-D, New-Absorbance, Other' && shownList('Old', al) === 'New' && shownList('X', {}) === 'X', 'ids: a list of columns shown with the names they have now');
+
+  // sheets moved: the order kept as their ids (places as read), those not listed after them
+  ok(inOrder(['a', 'b', 'c', 'd'], ['c', 'a']).join() === '2,0,1,3' && inOrder([0, 1, 2], undefined).join() === '0,1,2', 'ids: an order of ids (the others after, as they come)');
+  const sheetsOf = (r: NodeResult | undefined) => (r?.outputs.book?.t === 'workbook' ? r.outputs.book.v.sheets.map((q) => `${q.name}@${q.id}`).join(', ') : '');
+  const moved = { ...book('w', ['one', 'two', 'three']), data: { ...book('w', ['one', 'two', 'three']).data, sheetOrder: [2, 0], sheet: 0 } } as AppNode;
+  const rmv = evaluateGraph([moved], []).get('w');
+  ok(sheetsOf(rmv) === 'three@w~w:s2, one@w~w:s0, two@w~w:s1' && rmv?.view.sheets?.join() === 'three,one,two' && dsOut(rmv)?.columns[0].values[0] === 3, 'ids: an Import’s sheets moved: in their new order, their ids kept, the one shown the first');
+  // a Workbook's own sheets: their ids kept when one is removed (written then), and moved with every sheet by its id
+  const own3 = (sheets: object[], extra: object = {}) => ({ id: 'b', type: 'book', position: { x: 0, y: 0 }, data: { name: 'Book', sheets, sheet: 0, ...extra } }) as AppNode;
+  const sh = (name: string, id?: string) => ({ name, text: `v\n${name.length}\n`, ...(id ? { id } : {}) });
+  const xb = { ...ext('v', { index: 0, sheet: 'third' }), id: 'xb' } as AppNode;
+  const eb3 = [wire('b', 'xb', 'in', 'book')];
+  const n3 = learnt([own3([sh('a'), sh('bb'), sh('third')]), xb], eb3);
+  ok(JSON.stringify(ids(n3[1])?.sheets?.third) === '["b:s2"]', 'ids: a Workbook’s own sheet: its place until it has an id');
+  const after = evaluateGraph([own3([sh('bb', 's1'), sh('renamed', 's2')]), n3[1]], eb3);
+  ok(colOf(after.get('xb'))?.values[0] === 7 && !after.get('xb')!.warnings.length, 'ids: a sheet removed before it, the other renamed: still found by its id (no place guessed)');
+  const ro = evaluateGraph([own3([sh('a'), sh('bb'), sh('third')], { order: ['b:s2', 'b:s0'], sheet: 1 })], []).get('b');
+  ok(ro?.view.sheets?.join() === 'third,a,bb' && ro.view.book?.place?.join() === '2,0,1' && ro.view.book?.ids?.join() === 'b:s2,b:s0,b:s1' && dsOut(ro)?.name === 'a', 'ids: a Workbook’s sheets moved: in the order of their ids, the one shown counted in it');
 }
 
 // ---- examples: evaluated without errors, saved and read back ----

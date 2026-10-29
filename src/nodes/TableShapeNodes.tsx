@@ -10,6 +10,7 @@ import { sheetOptions } from './sheetOptions.ts';
 import { DataPreview } from './DataNodes.tsx';
 import { Check, Field, InPort, Messages, NumInput, OutPort, ResultSummary, Select, TextInput } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
+import { NamesInput } from './ColumnsPicker.tsx';
 import type { NodeResult } from '../engine/evaluate.ts';
 
 const FORMATS: [ToTextRules['format'], string][] = [
@@ -91,7 +92,7 @@ export function ConvertNodeView({ id, data }: NodeProps<ConvertNode>) {
             />
           </Field>
           <Field label="Columns" title="The columns converted: 2-6, B-F, names (empty: none; to numbers, the node proposes those whose text looks like numbers)">
-            <TextInput value={data.cols} placeholder={data.to === 'numbers' ? 'none yet (see the proposal)' : 'e.g. B, D-F'} onChange={(cols) => set({ cols })} />
+            <NamesInput value={data.cols} placeholder={data.to === 'numbers' ? 'none yet (see the proposal)' : 'e.g. B, D-F'} onChange={(cols) => set({ cols })} />
           </Field>
           {data.to === 'numbers' && (
             <>
@@ -201,7 +202,7 @@ export function StackNodeView({ id, data }: NodeProps<StackNode>) {
       <NodeOptions>
         <div className="grid2">
           <Field label="Columns" title="The columns put one under the other: 2-6, B-F, names (empty: every Y)">
-            <TextInput value={data.cols} placeholder="every Y" onChange={(cols) => set({ cols })} />
+            <NamesInput value={data.cols} placeholder="every Y" onChange={(cols) => set({ cols })} />
           </Field>
           <Field label="Their X" title="One column for all, the X on the left of each column, or the row number">
             <Select<NonNullable<StackData['xFrom']>>
@@ -281,7 +282,7 @@ export function ToSheetsNodeView({ id, data }: NodeProps<ToSheetsNode>) {
           ) : (
             <>
               <Field label="Columns" title="The columns, a sheet each: 2-6, B-F, names, R* (empty: every Y)">
-                <TextInput value={data.cols} placeholder="every Y" onChange={(cols) => set({ cols })} />
+                <NamesInput value={data.cols} placeholder="every Y" onChange={(cols) => set({ cols })} />
               </Field>
               <Field label="Their X" title="One column for all, the X on the left of each column, or the row number">
                 <Select<NonNullable<ToSheetsData['xFrom']>>

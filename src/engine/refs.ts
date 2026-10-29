@@ -29,6 +29,14 @@ export const sheetId = (source: string, k: number) => `${source}:s${k}`;
 // an Import's source: the node and the file read into it (another file: other ids, its columns found by name or place)
 export const importSource = (node: string, textId: string) => (textId ? `${node}~${textId}` : node);
 export const columnId = (sheet: string, k: number) => `${sheet}:c${k}`;
+// The places of these keys (ids, places as read) in the order shown: those of `order` first, in its order (sheets moved
+// with the mouse); the others after them, as they come.
+export function inOrder<K>(keys: K[], order: K[] | undefined): number[] {
+  const at = keys.map((_, i) => i);
+  if (!order?.length) return at;
+  const pos = new Map(order.map((q, i) => [q, i]));
+  return at.sort((a, b) => (pos.get(keys[a]) ?? 1e9 + a) - (pos.get(keys[b]) ?? 1e9 + b));
+}
 
 // A node's evaluation (with the sheet taken from a workbook on its port) under its references: what it finds is noted.
 export type RefScope = Ctx;
@@ -69,14 +77,15 @@ function byIds<C extends { id?: string }>(list: C[], ids: string[]): C | undefin
   return hit;
 }
 // The one item at the place of this id in another source (another node, another file: not another sheet of the same
-// one) — none, or more than one: undefined.
+// one) — none, or more than one: undefined. Its own source still among them: the item was taken out, not replaced.
 function byPlace<C extends { id?: string }>(list: C[], id: string): C | undefined {
   const want = splitId(id);
   let hit: C | undefined;
   for (const c of list) {
     if (c.id === undefined) continue;
     const q = splitId(c.id);
-    if (q.place !== want.place || q.source === want.source) continue;
+    if (q.source === want.source) return undefined;
+    if (q.place !== want.place) continue;
     if (hit) return undefined;
     hit = c;
   }
@@ -124,6 +133,18 @@ export function foundAs<C extends { id?: string }>(kind: RefKind, name: string, 
 }
 // A sheet of a workbook by its name (as resolve: renamed, or at its place in another source).
 export const findSheet = <S extends { name: string; id?: string }>(sheets: S[], name: string): S | undefined => resolve('sheets', sheets, name);
+// The names a node's settings (kept by name) know these sheets / columns by: as they are now; one renamed since (or, another
+// source of the same layout, at the place of one) the name the settings give it, unless they name it as it is now too.
+export function knownAs<C extends { name: string; id?: string }>(kind: RefKind, list: C[], named: Iterable<string>): string[] {
+  const known = list.map((c) => c.name);
+  const asked = new Set(named);
+  for (const name of asked) {
+    const c = name ? resolve(kind, list, name) : undefined;
+    const j = c ? list.indexOf(c) : -1;
+    if (j >= 0 && known[j] === c!.name && c!.name !== name && !asked.has(c!.name)) known[j] = name;
+  }
+  return known;
+}
 
 // The node's references with what an evaluation found: the names found as written or by id get the ids they have now
 // (the others kept as they were: not looked up this time, or found by their place and not kept yet).

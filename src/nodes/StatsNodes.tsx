@@ -12,6 +12,7 @@ import { NodeOptions } from './NodeOptions.tsx';
 import { X } from 'lucide-react';
 import { IC } from './iconProps.ts';
 import { WhereConds } from './RowsPanel.tsx';
+import { NamesInput } from './ColumnsPicker.tsx';
 
 const NO_RANGE: RowRange = { from: NaN, to: NaN };
 
@@ -96,7 +97,7 @@ function ColumnChoice({ cols, x, onCols, onX, result }: { cols: string; x: strin
   return (
     <>
       <Field label="Columns" title="The columns used: 2-4, B-D (letters), names, A* (a pattern), * all, !1 (not); empty: the Y columns (their designation), else all but X">
-        <TextInput value={cols} placeholder="Y columns · e.g. B-D or A*" onChange={onCols} />
+        <NamesInput value={cols} placeholder="Y columns · e.g. B-D or A*" onChange={onCols} />
       </Field>
       {used.length > 0 && (
         <div className="hint ellipsis" title={used.map((c) => c.name).join(', ')}>
