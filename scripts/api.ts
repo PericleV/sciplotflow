@@ -323,7 +323,7 @@ export function projectSchema(nodes: ApiNode[]) {
 
 // The examples of the app: what each does, its chain of nodes; the whole project file when it is small
 export function recipes() {
-  return EXAMPLES.map((ex) => {
+  return EXAMPLES.filter((ex) => !ex.hidden).map((ex) => {
     const p = ex.make();
     const text = stringifyProject(p);
     const title = new Map(p.nodes.map((n) => [n.id, n.type]));

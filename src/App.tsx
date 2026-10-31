@@ -358,9 +358,9 @@ const GROUPS: { name: keyof typeof GROUP_COLORS; items: Template[] }[] = [
 ];
 
 // The example projects are a separate chunk, loaded after the first render.
-type ExampleList = { group: string; name: string; desc: string; make: () => Project }[];
+type ExampleList = { group: string; name: string; desc: string; make: () => Project; hidden?: boolean }[];
 const SHOW_SHARE_LINK = false;
-const loadExamples = () => import('./examples.ts').then((m) => m.EXAMPLES as ExampleList);
+const loadExamples = () => import('./examples.ts').then((m) => (m.EXAMPLES as ExampleList).filter((e) => !e.hidden));
 // The page opens on the project left at the last visit (kept automatically; Projects: “Last session”).
 const lastSession = keepLastSession();
 const EMPTY: Project = { app: 'graph-flow', version: PROJECT_VERSION, nodes: [], edges: [] };

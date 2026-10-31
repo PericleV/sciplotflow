@@ -67,6 +67,8 @@ export const TASKS: Record<Exclude<Task, 'all'>, { label: string; title: string;
   },
 };
 export const TASK_ORDER: Task[] = ['particles', 'spots', 'network', 'lattice', 'surface', 'all'];
+// the tasks set aside (not working well enough yet): not offered, shown only on a node that is already doing one
+export const HIDDEN_TASKS: Task[] = ['lattice', 'surface'];
 export const taskLabel = (t: Task) => (t === 'all' ? 'All tools' : TASKS[t].label);
 
 // the task of a node: its own, else from the panel it showed last (a project of before the tasks); selections with a

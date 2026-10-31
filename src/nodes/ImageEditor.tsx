@@ -8,7 +8,7 @@
 // on the image analysed (rectangle, ellipse, polygon, freehand, line, segmented line, points, angle, wand, rays, stamp), picked
 // and edited with their handles; the particles of the mask found as selections, grouped by their shape; a trainable
 // classifier taught by selections given a class. The image and the measurements are computed in a worker of its own.
-import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent as RMouseEvent, type PointerEvent as RPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useReactFlow } from '@xyflow/react';
 import type { AppNode, ImageAnalysisData } from '../types.ts';
@@ -34,11 +34,12 @@ import { classColor } from '../image/classify.ts';
 import { isArea, moveRoi, nearRoi, roiCentre, roiOutline, TOOL_HINTS, type Pt, type Roi, type RoiKind, type RoiTool } from '../image/roi.ts';
 import { measureSpec, roiPerimeter, type MeasureSpec } from '../image/measure.ts';
 import type { Workbook } from '../engine/table.ts';
+import { ContextMenu, type MenuAction } from '../ContextMenu.tsx';
 import { Fold, MeasurePanel, ParticlesPanel, RoiOverlay, RoiPanel, ToolOptions } from './RoiManager.tsx';
 import { BusyCard, MethodCards, TaskSteps, type Job } from './ImageTasks.tsx';
 import { SAM_CACHE, SAM_DEFAULTS, SAM_ENGINE, SAM_MODELS, thinOutline, type SamModel } from '../image/sam.ts';
 import type { SamReply, SamRequest } from '../image/samWorker.ts';
-import { FIND_METHODS, TASK_ORDER, TASKS, taskLabel, taskOf, type FindMethod, type Task } from '../image/tasks.ts';
+import { FIND_METHODS, HIDDEN_TASKS, TASK_ORDER, TASKS, taskLabel, taskOf, type FindMethod, type Task } from '../image/tasks.ts';
 import { NetworkOverlay, NetworkPanel, type NetTool } from './NetworkPanel.tsx';
 import { ArrangeOverlay, ArrangePanel } from './ArrangePanel.tsx';
 import { LatticePanel, RingsOverlay, SpotsOverlay } from './LatticePanel.tsx';
@@ -1291,6 +1292,68 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
     setRois(rois.filter((r) => r.id !== rid));
     if (sel === rid) setSel(null);
   };
+  // ---- A right-click on a particle or a selection: what can be done with it (on one left out by Find like this's
+  // Review: put it back) ----
+  const [roiMenu, setRoiMenu] = useState<{ x: number; y: number; roi?: string; rejected?: number } | null>(null);
+  const onMenu = (e: RMouseEvent) => {
+    if (specOn || onOriginal) return;
+    const t = e.target as Element;
+    const back = t.closest('[data-rejected]') as SVGElement | null;
+    // (the selection under the mouse, anywhere inside it or near its line, whatever the tool: the last drawn, on top)
+    const q = toOrig(imgAt(e));
+    const under = back ? undefined : (t.closest('[data-roi]') as SVGElement | null)?.dataset.roi ?? rois.findLast((r) => !r.train && nearRoi(r, q, 4 / k))?.id;
+    if (!back && !under) return;
+    e.preventDefault();
+    setRoiMenu({ x: e.clientX, y: e.clientY, ...(back ? { rejected: Number(back.dataset.rejected) } : { roi: under }) });
+  };
+  // a particle of Find like this left out (as a click in Review does; learning: said not good)
+  const leaveOutMatch = (i: number) => {
+    const lm = lastMatch.current;
+    const q = lm?.list[i];
+    if (!lm || !q) return;
+    if (matchOpts.learn) {
+      const had = labelAt(q, examples);
+      const rest = examples.filter((e) => e !== had);
+      setMatch({ examples: [...rest, had ? { ...had, good: false } : { roi: lm.specs[q.model]?.roi ?? '', x: +((q.x0 ?? q.x) + ox).toFixed(2), y: +((q.y0 ?? q.y) + oy).toFixed(2), good: false, f: q.f ?? [] }] });
+      return;
+    }
+    if (rejected.includes(i)) return;
+    const out = [...rejected, i];
+    setRejected(out);
+    placeMatches(matchOpts.min, out);
+  };
+  // a particle (or a selection) added to the models of Find like this; one found becomes a selection of its own
+  const modelFrom = (r: Roi) => {
+    const t: Roi = r.auto ? { ...r, id: `r${Date.now().toString(36)}${(roiSeq++).toString(36)}`, name: nextName(), group: group || undefined, auto: undefined, out: undefined, said: undefined, score: undefined } : r;
+    if (r.auto) setRois(rois.map((q) => (q.id === r.id ? t : q)));
+    setModels([...modelList, { roi: t.id, context: matchOpts.context ?? 'disc', ring: matchOpts.ring, symmetry: matchOpts.symmetry, sizes: matchOpts.sizes }]);
+    setSel(t.id);
+    setPartMsg(`${t.name}: added to the models. Then Find like this`);
+  };
+  const menuActions = (): MenuAction[] => {
+    if (!roiMenu) return [];
+    if (roiMenu.rejected !== undefined) {
+      const i = roiMenu.rejected;
+      return [{ label: 'Put back', onClick: () => toggleMatch(i) }];
+    }
+    const r = rois.find((q) => q.id === roiMenu.roi);
+    if (!r) return [];
+    const lm = lastMatch.current;
+    const m = lm && r.id.startsWith(`m${lm.seq}-`) ? Number(r.id.split('-')[1]) : -1;
+    const acts: MenuAction[] = [];
+    if (m >= 0) acts.push({ label: 'Remove', danger: true, onClick: () => leaveOutMatch(m) });
+    else {
+      if (r.auto)
+        acts.push(
+          r.out
+            ? { label: 'Put back', onClick: () => putRoi(r.out === 'hand' ? { ...r, out: undefined } : { ...r, said: true }) }
+            : { label: 'Leave out (kept, not measured)', onClick: () => putRoi(genReview && rv.learn ? { ...r, said: false } : { ...r, out: 'hand', said: undefined }) },
+        );
+      acts.push({ label: 'Remove', danger: true, onClick: () => removeRoi(r.id) });
+    }
+    if (findM === 'like' && isArea(r) && !r.train && r.role !== 'background' && !modelList.some((q) => q.roi === r.id)) acts.push({ label: 'Use as model', onClick: () => modelFrom(r) });
+    return acts;
+  };
   const duplicate = () => {
     const r = rois.find((q) => q.id === sel);
     if (!r) return;
@@ -2181,7 +2244,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
   const keysBlock = (
     <>
           <div className="ie-section">Keys</div>
-          <div className="hint">Wheel: zoom · drag: move · \ original / edited · Y side by side · B: the original while held · + − 0: zoom, fit · Esc: the drawing, then the tool off, then close · a selection picked: Delete removes it, Ctrl+D copies it, the arrows move it (Shift: by 10)</div>
+          <div className="hint">Wheel: zoom · drag: move · \ original / edited · Y side by side · B: the original while held · + − 0: zoom, fit · Esc: the drawing, then the tool off, then close · a selection picked: Delete removes it, Ctrl+D copies it, the arrows move it (Shift: by 10) · right-click a particle: remove it, leave it out, put it back, use it as a model</div>
     </>
   );
   const roiPanel = (bare: boolean) => (
@@ -2445,22 +2508,20 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
       <div className="hint">
         {samCached[samSpec.model] ? `Kept in this browser${samEngine ? `; runs ${samEngine}` : ''}.` : `Not downloaded yet: about ${Math.round((samModel.bytes + SAM_ENGINE.bytes) / 1048576)} MB, once, asked first. The image never leaves this computer.`}
       </div>
-      {samSpec.prompt === 'click' && (
-        <div className="row wrap">
-          <button className={`nodrag${tool === 'sam' ? ' on' : ''}`} title="The Point (SAM) tool: click a particle" onClick={() => setTool(tool === 'sam' ? 'pan' : 'sam')}>
-            <MousePointerClick {...IC} /> Point (SAM)
-          </button>
-          <span className="hint">Click a particle: its outline. Shift-click adds a part to it, Alt-click takes one off.</span>
-        </div>
-      )}
-      {samSpec.prompt === 'box' && (
-        <div className="row wrap">
-          <button className={`nodrag${tool === 'sambox' ? ' on' : ''}`} title="The Box (SAM) tool: drag a box around a particle" onClick={() => setTool(tool === 'sambox' ? 'pan' : 'sambox')}>
-            <SquareDashedMousePointer {...IC} /> Box (SAM)
-          </button>
-          <span className="hint">Drag a box around a particle: its outline.</span>
-        </div>
-      )}
+      {samSpec.prompt !== 'all' &&
+        (() => {
+          // (one button: selecting on the image as the prompt asks, a click or a box)
+          const t = samSpec.prompt === 'box' ? 'sambox' : 'sam';
+          const Icon = t === 'sam' ? MousePointerClick : SquareDashedMousePointer;
+          return (
+            <div className="row wrap">
+              <button className={`nodrag${tool === t ? ' on' : ''}`} title={t === 'sam' ? 'Select on the image: click a particle' : 'Select on the image: drag a box around a particle'} onClick={() => setTool(tool === t ? 'pan' : t)}>
+                <Icon {...IC} /> Select
+              </button>
+              <span className="hint">{t === 'sam' ? 'Click a particle: its outline. Shift-click adds a part to it, Alt-click takes one off.' : 'Drag a box around a particle: its outline.'}</span>
+            </div>
+          );
+        })()}
       {samSpec.prompt === 'all' && (
         <>
           <div className="ie-params">
@@ -2759,7 +2820,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
           {busy ? (reply && reply.scale < 1 ? ' · preview, computing the full size…' : ' · computing…') : ''}
         </span>
         <span className="ie-group ie-tasks" title="What you are doing: its steps on the left, in the order they are done; All tools: every panel, as before">
-          {TASK_ORDER.map((t) => (
+          {TASK_ORDER.filter((t) => !HIDDEN_TASKS.includes(t) || t === task).map((t) => (
             <button key={t} className={`nodrag${task === t ? ' on' : ''}`} title={t === 'all' ? 'Every tool and panel at once (the image steps on the left, the panels as tabs on the right)' : TASKS[t].title} onClick={() => setTask(t)}>
               {taskLabel(t)}
             </button>
@@ -2811,7 +2872,8 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
               <Icon {...IC} />
             </button>
           ))}
-          {(task === 'particles' || task === 'all') &&
+          {/* (the tools of Segment anything: here when its card, which has them, is not shown) */}
+          {(task === 'all' || (task === 'particles' && !(taskStep === 1 && findM === 'sam'))) &&
             ([
               ['sam', MousePointerClick, 'Point (SAM): click a particle, its outline found by Segment anything (Shift-click: a part added, Alt-click: a part taken off)'],
               ['sambox', SquareDashedMousePointer, 'Box (SAM): drag a box around a particle, its outline found by Segment anything'],
@@ -2860,6 +2922,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
           ref={view}
           onWheel={(e) => (e.altKey && (tool === 'brush' || tool === 'eraser') ? setBrush((b) => Math.min(100, Math.max(1, e.deltaY < 0 ? Math.max(b + 1, Math.round(b * 1.15)) : Math.min(b - 1, Math.round(b / 1.15))))) : zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX, e.clientY))}
           onPointerDown={onDown}
+          onContextMenu={onMenu}
           onPointerMove={onMove}
           onPointerUp={onUp}
           onDoubleClick={onDouble}
@@ -2921,7 +2984,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
           {task === 'all' ? (
             <>
               <div className="ie-tabs">
-                {SIDE_TABS.map(([t, label, title]) => (
+                {SIDE_TABS.filter(([t]) => !(HIDDEN_TASKS as string[]).includes(t) || t === tab).map(([t, label, title]) => (
                   <button key={t} className={`nodrag${tab === t ? ' on' : ''}`} title={title} onClick={() => setTab(t)}>
                     {label}
                   </button>
@@ -3003,12 +3066,13 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
                 </Fold>
               )}
               <Fold id="side-keys" title="Keys">
-          <div className="hint">Wheel: zoom · drag: move · \ original / edited · Y side by side · B: the original while held · + − 0: zoom, fit · Esc: the drawing, then the tool off, then close · a selection picked: Delete removes it, Ctrl+D copies it, the arrows move it (Shift: by 10)</div>
+          <div className="hint">Wheel: zoom · drag: move · \ original / edited · Y side by side · B: the original while held · + − 0: zoom, fit · Esc: the drawing, then the tool off, then close · a selection picked: Delete removes it, Ctrl+D copies it, the arrows move it (Shift: by 10) · right-click a particle: remove it, leave it out, put it back, use it as a model</div>
               </Fold>
             </>
           )}
         </div>
       </div>
+      {roiMenu && <ContextMenu menu={{ kind: 'node', x: roiMenu.x, y: roiMenu.y, nodeId: id, label: '' }} items={[]} onAdd={() => {}} title={roiMenu.rejected !== undefined ? 'Left out' : (rois.find((r) => r.id === roiMenu.roi)?.name || 'Particle')} actions={menuActions()} onClose={() => setRoiMenu(null)} />}
     </div>,
     document.body,
   );
