@@ -6,7 +6,7 @@ import { X } from 'lucide-react';
 import { useNodeResult } from '../engine/engine.ts';
 import { COMPONENTS, newComponent, type CompKind, type CvSpec, type GenComponent, type NoiseSpec, type SigGenSpec } from '../engine/siggen.ts';
 import { CV_MORE, type CvStruct } from '../engine/cv.ts';
-import { paramUnit, parseCircuit, startParams } from '../engine/eis.ts';
+import { EIS_CIRCUITS, paramUnit, parseCircuit, startParams } from '../engine/eis.ts';
 import type { AppNode, SigGenData, SigGenNode } from '../types.ts';
 import { CircuitEditor } from './EisNode.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
@@ -549,6 +549,14 @@ export function SigGenNodeView({ id, data: d }: NodeProps<SigGenNode>) {
           )}
           {eis && (
             <>
+              {/* (as in Equivalent circuit: a circuit chosen, its code typed, or drawn) */}
+              <div className="row wrap">
+                <Select<string> value={EIS_CIRCUITS.some(([c]) => c === d.eis.circuit.replace(/\s+/g, '')) ? d.eis.circuit.replace(/\s+/g, '') : ''} options={[['', 'custom (the code / the drawing)'], ...EIS_CIRCUITS]} onChange={(circuit) => circuit && set({ eis: { ...d.eis, circuit } })} />
+                <Field label="Code" title="Boukamp’s code: elements in series one after another, ( ) a parallel group, [ ] a series group inside it: R(RQ), R(Q[RW]), R(RQ)(RQ); R, C, L, Q (CPE), W, Wo, Ws; numbers keep a name (R1(R3Q1)). A new element starts at a typical value">
+                  <TextInput className="mono" value={d.eis.circuit} placeholder="R(RQ)" onChange={(circuit) => set({ eis: { ...d.eis, circuit } })} />
+                </Field>
+              </div>
+              {typeof parsed === 'string' && d.eis.circuit.trim() && <div className="msg warn">{parsed}</div>}
               <CircuitEditor code={d.eis.circuit} onCode={(circuit) => set({ eis: { ...d.eis, circuit } })} />
               <div className="col-form">
                 <span>Values</span>

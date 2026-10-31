@@ -89,6 +89,7 @@ export const PY_LIBRARIES: PyLibrary[] = [
   { imp: 'skimage', dist: 'scikit-image', label: 'scikit-image', what: 'image processing' },
   { imp: 'cv2', dist: 'opencv-python', label: 'OpenCV', what: 'images and video, computer vision' },
   { imp: 'sympy', dist: 'sympy', label: 'SymPy', what: 'symbolic mathematics' },
+  { imp: 'uncertainties', dist: 'uncertainties', label: 'uncertainties', what: 'values with errors, carried through formulas' },
   { imp: 'lmfit', dist: 'lmfit', label: 'lmfit', what: 'curve fitting with parameters and bounds', pypi: 'lmfit' },
   { imp: 'seaborn', dist: 'seaborn', label: 'seaborn', what: 'statistical plots', pypi: 'seaborn' },
   { imp: 'pingouin', dist: 'pingouin', label: 'Pingouin', what: 'statistical tests', pypi: 'pingouin' },

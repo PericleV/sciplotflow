@@ -43,7 +43,11 @@ const EXAMPLES: [string, string][] = [
 def model(x, a, tau, y0):
     return a * np.exp(-x / tau) + y0
 
-p, cov = curve_fit(model, A, B, p0=[1, 1, 0])
+# (the points with both values; names starting with _ are not outputs)
+_ok = np.isfinite(A) & np.isfinite(B)
+_x, _y = A[_ok], B[_ok]
+# (starts from the data: the drop, a third of the range, the end)
+p, cov = curve_fit(model, _x, _y, p0=[_y[0] - _y[-1], (_x.max() - _x.min()) / 3, _y[-1]])
 err = np.sqrt(np.diag(cov))
 tau = p[1]
 fit = model(A, *p)
@@ -56,9 +60,10 @@ df["Normalized"] = df["Signal (a.u.)"] / df["Signal (a.u.)"].max()
 roles(df, x=df.columns[0], y=["Signal (a.u.)", "Normalized"])
 df.describe()
 `],
-  ['Groups compared (scipy stats, statsmodels)', `from scipy import stats
+  ['Groups compared (scipy.stats: one-way ANOVA, Dunnett against a control)', `from scipy import stats
 
-# A, B, C: three groups (columns)
+# A, B, C: three groups (columns); A the control
+A, B, C = (g[np.isfinite(g)] for g in (A, B, C))
 F, p = stats.f_oneway(A, B, C)
 print(f"one-way ANOVA: F = {F:.4g}, p = {p:.3g}")
 res = stats.dunnett(B, C, control=A)
@@ -81,7 +86,9 @@ fig.savefig("figure.png", dpi=300, transparent=True)
 
 # A: x, B: y (connect two columns)
 model = GaussianModel(prefix="g_") + LinearModel(prefix="b_")
-params = model.make_params(g_amplitude=B.max(), g_center=A[B.argmax()], g_sigma=(A.max() - A.min()) / 20, b_slope=0, b_intercept=B.min())
+sigma = (A.max() - A.min()) / 20
+# (lmfit's amplitude is the peak's area: its height × sigma × √(2π))
+params = model.make_params(g_amplitude=(B.max() - B.min()) * sigma * np.sqrt(2 * np.pi), g_center=A[B.argmax()], g_sigma=sigma, b_slope=0, b_intercept=B.min())
 result = model.fit(B, params, x=A)
 print(result.fit_report())
 fit = result.best_fit
@@ -102,12 +109,12 @@ importance = model.feature_importances_
   ['An image with OpenCV (blobs found, their areas)', `import cv2
 
 # A: a matrix (an image from Image analysis, or any 2D array)
-img = np.asarray(A, dtype=float)
+img = np.nan_to_num(np.asarray(A, dtype=float))
 img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
 _, mask = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 n, labels, stats, centroids = cv2.connectedComponentsWithStats(mask)
-areas = stats[1:, cv2.CC_STAT_AREA]
-print(f"{n - 1} blobs, mean area {areas.mean():.1f} px")
+areas = stats[1:, cv2.CC_STAT_AREA].astype(float)
+print(f"{n - 1} blobs, mean area {areas.mean() if len(areas) else 0:.1f} px")
 `],
   ['Statistics with pingouin (ANOVA, post-hoc, effect sizes)', `import pingouin as pg
 
@@ -118,6 +125,129 @@ aov = pg.anova(data=df, dv=value, between=group, detailed=True)
 posthoc = pg.pairwise_tukey(data=df, dv=value, between=group)
 print(aov)
 posthoc
+`],
+  ['Spectrum and a low-pass filter (FFT, scipy.signal)', `from scipy import signal
+
+# A: time (s), B: the signal (connect two columns; the time evenly spaced)
+dt = float(np.median(np.diff(A)))
+fs = 1 / dt
+# the spectrum: one-sided amplitude
+freq = np.fft.rfftfreq(len(B), dt)
+amplitude = np.abs(np.fft.rfft(B - B.mean())) * 2 / len(B)
+# a low-pass filter (Butterworth, 4th order), run forward and back: no shift
+cutoff = 0.1 * fs / 2  # Hz: change it
+_b, _a = signal.butter(4, cutoff, fs=fs)
+filtered = signal.filtfilt(_b, _a, B)
+print(f"fs = {fs:.4g} Hz; strongest at {freq[amplitude.argmax()]:.4g} Hz")
+`],
+  ['Peaks found and measured (scipy.signal: position, height, FWHM)', `import pandas as pd
+from scipy.signal import find_peaks, peak_widths
+
+# A: x, B: y (connect two columns)
+prominence = 0.1 * (B.max() - B.min())  # how much a peak stands out: change it
+_i, _ = find_peaks(B, prominence=prominence)
+_w, _h, _left, _right = peak_widths(B, _i, rel_height=0.5)
+# (the half-height crossings read on X: X need not be evenly spaced)
+_rows = np.arange(len(A))
+peaks = pd.DataFrame({"x": A[_i], "height": B[_i], "FWHM": np.interp(_right, _rows, A) - np.interp(_left, _rows, A)})
+print(peaks)
+`],
+  ['A smoothing spline and its derivative (scipy.interpolate)', `from scipy.interpolate import make_smoothing_spline
+
+# A: x, B: y (connect two columns); the smoothness found by itself (GCV)
+_ok = np.isfinite(A) & np.isfinite(B)
+_o = np.argsort(A[_ok])
+x, y = A[_ok][_o], B[_ok][_o]
+_spline = make_smoothing_spline(x, y)
+smooth = _spline(x)
+slope = _spline.derivative()(x)
+`],
+  ['A straight line with statsmodels (coefficients, confidence band)', `import statsmodels.api as sm
+
+# A: x, B: y (connect two columns)
+_X = sm.add_constant(A)
+_model = sm.OLS(B, _X, missing="drop").fit()
+print(_model.summary())
+intercept, slope = _model.params
+r2 = _model.rsquared
+# the line and its 95 % confidence band, at every x
+_band = _model.get_prediction(_X).summary_frame(alpha=0.05)
+fit = _band["mean"].values
+lower = _band["mean_ci_lower"].values
+upper = _band["mean_ci_upper"].values
+`],
+  ['PCA of a table (scikit-learn: scores, loadings, variance explained)', `import pandas as pd
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+
+# A: a table, every numeric column a variable, every row a sample
+_df = A.df.select_dtypes("number").dropna()
+_z = StandardScaler().fit_transform(_df.values)
+_pca = PCA(n_components=min(3, _df.shape[1])).fit(_z)
+_names = [f"PC{k + 1}" for k in range(_pca.n_components_)]
+scores = pd.DataFrame(_pca.transform(_z), columns=_names)
+loadings = pd.DataFrame(_pca.components_.T, columns=_names).assign(variable=list(_df.columns))
+explained = _pca.explained_variance_ratio_ * 100
+print("variance explained (%):", np.round(explained, 1))
+`],
+  ['Points grouped by k-means (scikit-learn: a group column for the Plot)', `import pandas as pd
+from sklearn.cluster import KMeans
+
+# A: x, B: y (connect two columns: the points)
+k = 3  # the number of groups: change it
+_ok = np.isfinite(A) & np.isfinite(B)
+_km = KMeans(n_clusters=k, n_init=10, random_state=0).fit(np.column_stack([A[_ok], B[_ok]]))
+# the group of every point (1 … k; empty where a value is missing): Plot ▸ Colours ▸ by group ▸ a column
+group = np.full(len(A), np.nan)
+group[_ok] = _km.labels_ + 1
+centers = pd.DataFrame(_km.cluster_centers_, columns=["x", "y"])
+`],
+  ['Symbolic mathematics (SymPy: a derivative, an integral, then numbers)', `import sympy as sp
+
+# nothing to connect: a formula worked out, then its values as columns
+_x = sp.symbols("x")
+_f = sp.exp(-_x) * sp.sin(3 * _x)
+_df = sp.diff(_f, _x)
+_F = sp.integrate(_f, (_x, 0, sp.oo))
+print("f'(x) =", sp.simplify(_df))
+print("integral from 0 to infinity =", _F, "=", float(_F))
+x = np.linspace(0, 5, 200)
+y = sp.lambdify(_x, _f, "numpy")(x)
+dy = sp.lambdify(_x, _df, "numpy")(x)
+area = float(_F)
+`],
+  ['A module of functions (its “module” port to another script)', `# Functions and constants only: connect this script's “module” port to an input of another script, name that input
+# lib (Options ▸ Inputs), then there: lib.lorentz(x, 1, 0, 0.5), or from lib import lorentz
+K_B = 8.617333e-5  # eV/K
+
+
+def lorentz(x, a, x0, w):
+    """A Lorentzian peak: height a, centre x0, FWHM w."""
+    return a / (1 + ((np.asarray(x) - x0) / (w / 2)) ** 2)
+
+
+def normalized(y):
+    """y brought to 0 … 1."""
+    y = np.asarray(y, dtype=float)
+    return (y - np.nanmin(y)) / (np.nanmax(y) - np.nanmin(y))
+`],
+  ['Using a module (another script’s functions, its input named lib)', `# A: x (a column); B: the “module” port of a script of functions, named lib (Options ▸ Inputs ▸ B is called lib)
+from lib import lorentz, normalized
+
+y = lorentz(A, 1.0, float(np.nanmean(A)), (np.nanmax(A) - np.nanmin(A)) / 10)
+y_norm = normalized(y)
+`],
+  ['Uncertainties carried through a formula (the uncertainties package)', `from uncertainties import ufloat
+
+# nothing to connect: values with their errors; a formula of them keeps track of the error (and the correlations)
+_d = ufloat(150.0, 2.0)  # thickness, nm
+_n = ufloat(1.45, 0.01)  # refractive index
+_lam = 2 * _n * _d  # nm: the first order of a Fabry–Pérot
+_E = 1239.84 / _lam  # eV
+print(f"λ = {_lam:.2uP} nm;  E = {_E:.2uP} eV")
+# (as plain numbers: the outputs)
+wavelength, wavelength_err = float(_lam.n), float(_lam.s)
+energy, energy_err = float(_E.n), float(_E.s)
 `],
 ];
 

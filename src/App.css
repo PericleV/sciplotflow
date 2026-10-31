@@ -1119,12 +1119,16 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .add-menu { display: flex; flex-direction: column; min-width: 190px; }
 .add-menu > button { text-align: left; border: none; background: transparent; padding: 4px 10px; border-radius: 4px; }
 .add-menu > button:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
-.scale-shaper { display: flex; flex-direction: column; gap: 5px; margin: 4px 0 2px; }
-.scale-shaper .ss-bar { position: relative; height: 16px; border: 1px solid var(--border); border-radius: 3px; }
-.scale-shaper .ss-part { position: relative; height: 7px; border: 1px solid var(--border); border-radius: 2px; }
-.scale-shaper .ss-handle { position: absolute; top: -4px; width: 9px; height: 22px; margin-left: -5px; box-sizing: border-box; border: 2px solid var(--text); border-radius: 3px; box-shadow: 0 0 0 1px var(--panel); cursor: ew-resize; touch-action: none; }
-.scale-shaper .ss-end { position: absolute; top: -4px; width: 6px; height: 15px; margin-left: -3px; background: var(--accent); border-radius: 2px; cursor: ew-resize; touch-action: none; }
+/* the colour scale shaped (Plot ▸ Colours): three tracks alike, their knobs as the sliders of the app */
+.scale-shaper { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 9px 10px; align-items: center; margin: 6px 0 2px; font-size: var(--fs-small); }
+.scale-shaper .ss-track { position: relative; height: 8px; border-radius: 4px; border: 1px solid var(--border); margin: 0 7px; }
+.scale-shaper .ss-scale { height: 12px; border-radius: 6px; }
+.scale-shaper .ss-plain { background: color-mix(in srgb, var(--muted) 28%, var(--input)); border-color: transparent; }
+.scale-shaper .ss-mid { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--muted); }
+.scale-shaper .ss-fill { position: absolute; top: 0; bottom: 0; background: var(--accent); border-radius: 4px; }
 .scale-shaper .ss-out { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--panel) 75%, transparent); pointer-events: none; }
+.scale-shaper .ss-knob { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; box-sizing: border-box; border-radius: 50%; background: var(--panel); border: 3px solid var(--accent); box-shadow: 0 1px 3px rgb(0 0 0 / 0.25); cursor: ew-resize; touch-action: none; }
+.scale-shaper .ss-knob:focus-visible { outline: 2px solid var(--select); outline-offset: 2px; }
 .color-groups { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 4px; }
 .color-group { display: inline-flex; align-items: center; gap: 3px; max-width: 150px; font-size: var(--fs-small); }
 .rename-sheets { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }

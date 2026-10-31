@@ -164,7 +164,7 @@ import { averageNode } from '../src/engine/signalnodes.ts';
 import { AVERAGE_DEFAULTS, BARCHART_DEFAULTS, DIGITIZER_DEFAULTS, HISTOGRAM_DEFAULTS } from '../src/defaults.ts';
 import { barChart, rawTable, wideTable, sortTable, type BarTable } from '../src/engine/barchart.ts';
 import { boxGroups, boxStats, boxViolin, violinStats } from '../src/engine/boxviolin.ts';
-import { BLANDALTMAN_DEFAULTS, BOXVIOLIN_DEFAULTS, CONTOUR_DEFAULTS, PIE_DEFAULTS, POLAR_DEFAULTS, SMITH_DEFAULTS, SIGGEN_DEFAULTS, PROBPLOT_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS } from '../src/defaults.ts';
+import { BLANDALTMAN_DEFAULTS, BOXVIOLIN_DEFAULTS, CONTOUR_DEFAULTS, EIS_DEFAULTS, PIE_DEFAULTS, POLAR_DEFAULTS, SMITH_DEFAULTS, SIGGEN_DEFAULTS, PROBPLOT_DEFAULTS, SCATTERMATRIX_DEFAULTS, TERNARY_DEFAULTS } from '../src/defaults.ts';
 import { blandAltman } from '../src/engine/blandaltman.ts';
 import { pieAngles, pieChart } from '../src/engine/piechart.ts';
 import { bracketCurves, SIG_DEFAULTS, significance, type SigElement, type SigSpec } from '../src/engine/signif.ts';
@@ -7176,6 +7176,25 @@ checkPhase(ok);
   const wmax = Math.sqrt((4 * es * phiT * Math.log(1e22 / ni)) / (1.602176634e-19 * 1e22));
   const cmin = 1 / (1 / hf.cox + wmax / (es * 1e-6));
   ok(rel(300) < 2e-3 && rel(14) < 2e-3 && lf.c[0] > 0.95 * lf.cox && Math.abs(hf.c[0] / cmin - 1) < 0.02 && deep.c[0] < hf.c[0] && lf.c[1] > 0.9 * lf.cox, `C–V: as razvan_CV_ideal_test.m (deep depletion, 300 K and 14 K: ${rel(300).toExponential(1)}, ${rel(14).toExponential(1)}); low frequency back to C_ox, high frequency at C_min (${(hf.c[0] / cmin).toFixed(4)} of Sze's, which leaves out kT/q in W_max), deep depletion below`);
+  // a circuit typed without values: typical ones, what it does between the frequencies (the arcs apart); the Randles
+  // circuit made, then fitted by Equivalent circuit: its values back
+  for (const circuit of ['R(RQ)', 'R(Q[RW])', 'R(RQ)(RQ)', 'R(RQ)Wo']) {
+    const g0 = generate({ ...SIGGEN_DEFAULTS, kind: 'eis', eis: { circuit, params: [], fMin: 0.1, fMax: 1e5, per: 10 } });
+    const cs = typeof g0 === 'string' ? [] : g0.dataset.columns;
+    const im = [...(cs[2]?.values ?? [])];
+    // (the top of the arc: a maximum of −Z″ inside the frequencies, not at their ends)
+    const tops = im.flatMap((v, k) => (k > 0 && k < im.length - 1 && v > im[k - 1] && v > im[k + 1] && v > 10 ? [cs[0].values[k]] : []));
+    ok(tops.length > 0, `Signal generator ▸ a circuit typed (${circuit}): typical values, its arc between the frequencies (its top at ${tops.map((f) => f.toPrecision(3)).join(', ') || 'none'} Hz)`);
+  }
+  {
+    const truth = [{ name: 'R1', value: 15 }, { name: 'Q1 Y0', value: 3e-5 }, { name: 'Q1 n', value: 0.85 }, { name: 'R2', value: 250 }, { name: 'W1 Y0', value: 2e-3 }];
+    const genR = { id: 'g', type: 'siggen', position: { x: 0, y: 0 }, data: { ...structuredClone(SIGGEN_DEFAULTS), kind: 'eis', eis: { circuit: 'R(Q[RW])', params: truth, fMin: 0.01, fMax: 1e6, per: 10 } } } as AppNode;
+    const fitR = { id: 'f', type: 'eis', position: { x: 0, y: 0 }, data: { ...structuredClone(EIS_DEFAULTS), circuit: 'R(Q[RW])' } } as AppNode;
+    const pr = evaluateGraph([genR, fitR], [{ id: 'e', source: 'g', sourceHandle: 'out', target: 'f', targetHandle: 'in' }]).get('f')!.outputs.parameters;
+    const back = pr?.t === 'dataset' ? Object.fromEntries((pr.v.columns[0].text ?? []).map((nm, i) => [nm, pr.v.columns[1].values[i]])) : {};
+    const worst = Math.max(...truth.map((q) => Math.abs(back[q.name] / q.value - 1)));
+    ok(worst < 1e-4, `EIS: the Randles circuit R(Q[RW]) made by Signal generator, fitted by Equivalent circuit: its values back (worst ${(worst * 100).toExponential(1)} %)`);
+  }
   // a circuit's impedance; the noise by a signal-to-noise ratio; missing values; the seed
   const ez = generate({ ...SIGGEN_DEFAULTS, kind: 'eis', eis: { circuit: 'R(RC)', params: [{ name: 'R1', value: 10 }, { name: 'R2', value: 100 }, { name: 'C1', value: 1e-6 }], fMin: 1, fMax: 1e5, per: 5 } });
   const zc = typeof ez === 'string' ? [] : ez.dataset.columns;

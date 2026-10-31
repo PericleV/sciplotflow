@@ -1,6 +1,6 @@
 // Figure nodes: 1D plot — a whole figure: its curves (data and style), axes, legend, annotations and page — and
 // Merge, several Plots on one page.
-import { Fragment, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { Fragment, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from 'react';
 import { useNodeConnections, useNodesData, useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import { packCells, panelOrder, plotRows } from '../engine/evaluate.ts';
@@ -863,6 +863,7 @@ function ScaleShaper({ stops, shape, reverse, set }: { stops: string[]; shape: S
   const [draft, setDraft] = useState<ScaleShape | null>(null);
   const bar = useRef<HTMLDivElement>(null);
   const part = useRef<HTMLDivElement>(null);
+  const bal = useRef<HTMLDivElement>(null);
   const s: ScaleShape = { ...shape, ...draft };
   const from = s.from ?? 0;
   const to = s.to ?? 1;
@@ -898,43 +899,85 @@ function ScaleShaper({ stops, shape, reverse, set }: { stops: string[]; shape: S
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
   };
-  const commit = () => draft && (set(draft), setDraft(null));
+  // a knob moved by the arrow keys (a small step), the node changed at once
+  const keys = (ev: ReactKeyboardEvent, at: number, move: (f: number) => ScaleShape) => {
+    const d = ev.key === 'ArrowLeft' || ev.key === 'ArrowDown' ? -0.02 : ev.key === 'ArrowRight' || ev.key === 'ArrowUp' ? 0.02 : 0;
+    if (!d) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    set(move(Math.min(1, Math.max(0, at + d))));
+  };
+  const bias = s.bias ?? 0;
+  const moveBias = (f: number): ScaleShape => ({ ...s, bias: Math.round((f * 2 - 1) * 20) / 20 || undefined });
+  const moveFrom = (f: number): ScaleShape => ({ ...s, from: Math.min(f, to - 0.05) || undefined });
+  const moveTo = (f: number): ScaleShape => ({ ...s, to: Math.max(f, from + 0.05) < 1 ? Math.max(f, from + 0.05) : undefined });
+  // (every knob alike: round, the accent's ring, as the sliders of the app; a colour's filled with it)
+  const knob = (at: number, title: string, el: RefObject<HTMLDivElement | null>, move: (f: number) => ScaleShape, fill?: string, reset?: () => void) => <Knob key={title + (fill ?? '')} at={at} title={title} el={el} move={move} fill={fill} reset={reset} drag={drag} keys={keys} />;
   return (
-    <div className="scale-shaper">
-      <div ref={bar} className="ss-bar nodrag" style={{ background: grad(shown) }} title={handles ? 'The scale as the groups get it; drag a colour’s handle to give it more or less room' : 'The scale as the groups get it'}>
+    <div className="scale-shaper nodrag">
+      <span className="muted">Scale</span>
+      <div ref={bar} className="ss-track ss-scale" style={{ background: grad(shown) }} title={handles ? 'The scale as the curves get it; drag a colour’s knob to give it more or less room' : 'The scale as the curves get it'}>
         {handles &&
           pos.map((p, i) => (
-            <span
+            <Knob
               key={i}
-              className="ss-handle"
-              style={{ left: `${shownAt(p) * 100}%`, background: stops[i] }}
-              title="Drag: where this colour is on the scale"
-              onPointerDown={(ev) =>
-                drag(ev, bar.current, (d) => {
-                  const np = [...pos];
-                  np[i] = Math.min(i < np.length - 1 ? np[i + 1] : 1, Math.max(i > 0 ? np[i - 1] : 0, placeOf(d)));
-                  return { ...s, pos: np };
-                })
-              }
+              at={shownAt(p)}
+              title="Where this colour is on the scale (drag; the arrow keys)"
+              el={bar}
+              fill={stops[i]}
+              drag={drag}
+              keys={keys}
+              move={(d) => {
+                const np = [...pos];
+                np[i] = Math.min(i < np.length - 1 ? np[i + 1] : 1, Math.max(i > 0 ? np[i - 1] : 0, placeOf(d)));
+                return { ...s, pos: np };
+              }}
             />
           ))}
       </div>
-      <div ref={part} className="ss-part nodrag" style={{ background: grad(stops) }} title="The part of the colour map used (drag its ends)">
+      <span />
+      <span className="muted" title="The part of the colour map used: drag its ends">
+        Part used
+      </span>
+      <div ref={part} className="ss-track" style={{ background: grad(stops) }} title="The part of the colour map used (drag its ends)">
         <span className="ss-out" style={{ left: 0, width: `${from * 100}%` }} />
         <span className="ss-out" style={{ left: `${to * 100}%`, right: 0 }} />
-        <span className="ss-end" style={{ left: `${from * 100}%` }} title="From: where the scale starts" onPointerDown={(ev) => drag(ev, part.current, (f) => ({ ...s, from: Math.min(f, to - 0.05) || undefined }))} />
-        <span className="ss-end" style={{ left: `${to * 100}%` }} title="To: where the scale ends" onPointerDown={(ev) => drag(ev, part.current, (f) => ({ ...s, to: Math.max(f, from + 0.05) < 1 ? Math.max(f, from + 0.05) : undefined }))} />
+        {knob(from, 'From: where the scale starts (drag; the arrow keys; double-click: the start)', part, moveFrom, undefined, () => set({ ...s, from: undefined }))}
+        {knob(to, 'To: where the scale ends (drag; the arrow keys; double-click: the end)', part, moveTo, undefined, () => set({ ...s, to: undefined }))}
       </div>
-      <div className="row">
-        <span className="muted" title="More room for the colours of the start of the scale (left), or of its end (right)">
-          Balance
-        </span>
-        <input className="nodrag grow" type="range" min={-1} max={1} step={0.05} value={s.bias ?? 0} title="More room for the colours of the start (left) or of the end (right); double-click: even" onChange={(e) => setDraft({ ...s, bias: Number(e.target.value) || undefined })} onPointerUp={commit} onKeyUp={commit} onDoubleClick={() => set({ ...s, bias: undefined })} />
-        <button className="nodrag" disabled={!(s.pos || s.bias || s.from || (s.to !== undefined && s.to < 1))} title="The scale as the map is: the colours evenly spread, all of it used" onClick={() => set({ pos: undefined, bias: undefined, from: undefined, to: undefined })}>
-          Even
-        </button>
+      <span />
+      <span className="muted" title="More room for the colours of the start of the scale (left), or of its end (right)">
+        Balance
+      </span>
+      <div ref={bal} className="ss-track ss-plain" title="More room for the colours of the start (left) or of the end (right); double-click: even">
+        <span className="ss-mid" />
+        <span className="ss-fill" style={bias < 0 ? { left: `${(bias + 1) * 50}%`, width: `${-bias * 50}%` } : { left: '50%', width: `${bias * 50}%` }} />
+        {knob((bias + 1) / 2, 'Balance: more room for the colours of the start or of the end (drag; the arrow keys; double-click: even)', bal, moveBias, undefined, () => set({ ...s, bias: undefined }))}
       </div>
+      <button className="nodrag" disabled={!(s.pos || s.bias || s.from || (s.to !== undefined && s.to < 1))} title="The scale as the map is: the colours evenly spread, all of it used" onClick={() => set({ pos: undefined, bias: undefined, from: undefined, to: undefined })}>
+        Even
+      </button>
     </div>
+  );
+}
+
+// A knob of the scale shaper: dragged along its track (el), moved by the arrow keys, double-clicked to its default
+function Knob({ at, title, el, move, fill, reset, drag, keys }: { at: number; title: string; el: RefObject<HTMLDivElement | null>; move: (f: number) => ScaleShape; fill?: string; reset?: () => void; drag: (ev: ReactPointerEvent, el: HTMLElement | null, move: (f: number) => ScaleShape) => void; keys: (ev: ReactKeyboardEvent, at: number, move: (f: number) => ScaleShape) => void }) {
+  return (
+    <span
+      className="ss-knob"
+      role="slider"
+      tabIndex={0}
+      aria-valuenow={Math.round(at * 100)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-label={title}
+      style={{ left: `${at * 100}%`, ...(fill ? { background: fill } : {}) }}
+      title={title}
+      onPointerDown={(ev) => drag(ev, el.current, move)}
+      onKeyDown={(ev) => keys(ev, at, move)}
+      onDoubleClick={reset}
+    />
   );
 }
 

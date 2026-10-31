@@ -633,13 +633,29 @@ export type EisResult = {
   n: number; // the points fitted
   fitted: boolean; // (false: every parameter fixed, the circuit only simulated)
 };
-// the parameters of the circuit: the stored ones by name, the others guessed (or the guess for all)
+// A value a parameter of a new element takes when there are no data to guess it from (Signal generator, a circuit typed):
+// one that puts what the element does between 0.1 Hz and 100 kHz — a resistance 100 Ω (the first in series 10 Ω), a
+// capacitance 1 µF, a CPE 10 µS·sⁿ with n 0.9 (the second, third … 100 times more: their arcs apart), a Warburg 10 mS·s^½, a
+// bounded Warburg 100 Ω over 1 s, an inductance 1 µH
+export function typicalValue(name: string, first: boolean): number {
+  const [id, part] = name.split(' ');
+  const kind = id.replace(/\d+$/, '');
+  const apart = 100 ** Math.max(0, (Number(id.slice(kind.length)) || 1) - 1);
+  if (part === 'n') return 0.9;
+  if (part === 'Y0') return kind === 'W' ? 1e-2 : 1e-5 * apart;
+  if (part === 'T') return 1;
+  if (part === 'R') return 100;
+  return kind === 'R' ? (first ? 10 : 100) : kind === 'C' ? 1e-6 * apart : kind === 'L' ? 1e-6 : 1;
+}
+// the parameters of the circuit: the stored ones by name, the others guessed (or the guess for all); without data, a
+// value typical of the element
 export function startParams(elems: EisElem[], tree: EisTree, stored: EisParam[], pts: EisPoints | null): EisParam[] {
   const g = pts ? guessParams(tree, elems, pts) : {};
+  const firstR = (tree.t === 'series' ? tree.items[0] : tree)?.t === 'elem' ? elems.find((e) => e.kind === 'R')?.id : undefined;
   return elems.flatMap((e) =>
     e.params.map((name) => {
       const s = stored.find((q) => q.name === name);
-      return s && Number.isFinite(s.value) ? s : { name, value: g[name] ?? (name.endsWith(' n') ? 0.9 : 1), ...(s?.fixed ? { fixed: true } : {}) };
+      return s && Number.isFinite(s.value) ? s : { name, value: g[name] ?? typicalValue(name, e.id === firstR), ...(s?.fixed ? { fixed: true } : {}) };
     }),
   );
 }
