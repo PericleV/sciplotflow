@@ -9,6 +9,7 @@ import { makeDist, fitDist, plotPositions, type Dist, type PlotPositions, type P
 import { normInv } from './dist.ts';
 import { probT } from '../figure/ticks.ts';
 import type { ProbAxis } from '../figure/spec.ts';
+import { maxOf, minOf } from './minmax.ts';
 
 // a status: failed (1, F, failed, failure, event, true, yes) or suspended (0, S, suspended, censored, C, R, false, no)
 export function suspendedOf(text: string | undefined, value: number): boolean | null {
@@ -107,7 +108,7 @@ export function fitMLE(kind: ProbDist, fail: number[], susp: number[]): number[]
   if (kind === 'exponential') return [all.reduce((s, v) => s + v, 0) / r];
   if (kind === 'weibull') {
     // 1/k + Σ_f ln t / r = Σ t^k ln t / Σ t^k; λ = (Σ t^k / r)^(1/k)   (t = x / max, so the powers stay finite)
-    const c = Math.max(...all);
+    const c = maxOf(all);
     const la = all.map((v) => Math.log(v / c));
     const lf = fail.map((v) => Math.log(v / c));
     const mf = lf.reduce((s, v) => s + v, 0) / r;
@@ -184,8 +185,8 @@ function ppcc(kind: ProbDist, x: number[], pos: number[]): number {
 // the threshold γ (below the smallest value): the largest profile likelihood (MLE) or the straightest plot (rank
 // regression, and MLE when its likelihood grows without end at the smallest value); a coarse search then golden sections
 export function fitThreshold(kind: ProbDist, x: number[], susp: boolean[], pos: number[], method: 'mle' | 'rrx' | 'rry'): number {
-  const lo0 = Math.min(...x);
-  const span = Math.max(...x) - lo0 || Math.abs(lo0) || 1;
+  const lo0 = minOf(x);
+  const span = maxOf(x) - lo0 || Math.abs(lo0) || 1;
   const hiG = lo0 - 1e-6 * span;
   const loG = lo0 - 3 * span;
   const fail = (g: number) => x.filter((_, i) => !susp[i]).map((v) => v - g);

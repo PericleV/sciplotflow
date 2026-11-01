@@ -441,7 +441,7 @@ export function histogram(series: HistSeries[], d: HistSpec, xName: string): His
   });
   // the mean and the median of every column (weighted when the values have weights): vertical lines up to the highest bar
   if (d.marks?.mean || d.marks?.median) {
-    const top = Math.max(0, ...curves.map((c) => Math.max(...Array.from(c.series.y.values).filter(Number.isFinite))));
+    const top = Math.max(0, ...curves.map((c) => maxOf(Array.from(c.series.y.values).filter(Number.isFinite))));
     series.forEach((s, j) => {
       const pairs = s.values.map((x, i) => [x, s.weights ? s.weights[i] : 1] as const).filter(([x, w]) => Number.isFinite(x) && Number.isFinite(w) && w > 0);
       if (!pairs.length) return;

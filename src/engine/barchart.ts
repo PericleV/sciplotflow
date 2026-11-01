@@ -72,7 +72,11 @@ export function sortTable(t: BarTable, how: 'desc' | 'asc', total: boolean): Bar
 }
 
 const mean = (v: number[]) => v.reduce((a, b) => a + b, 0) / v.length;
-const sd = (v: number[]) => (v.length > 1 ? Math.sqrt(v.reduce((a, b) => a + (b - mean(v)) ** 2, 0) / (v.length - 1)) : NaN);
+const sd = (v: number[]) => {
+  if (v.length < 2) return NaN;
+  const m = mean(v);
+  return Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / (v.length - 1));
+};
 const keyOf = (c: Column, i: number) => (c.text?.[i]?.trim() ? c.text[i].trim() : Number.isFinite(c.values[i]) ? fmtNum(c.values[i], 10) : '');
 
 // a statistic of the values and its error below / above it

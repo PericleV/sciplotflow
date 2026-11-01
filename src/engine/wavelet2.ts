@@ -9,6 +9,7 @@ import { lgamma } from './dist.ts';
 import { chi2Quantile } from './stat3.ts';
 import { dwt, highPass, idwt } from './wavelet.ts';
 import { WAVELET_FILTERS } from './waveletFilters.ts';
+import { maxOf } from './minmax.ts';
 
 // ---- the mother wavelets ----
 export type MotherKind = 'morlet' | 'paul' | 'dog';
@@ -280,7 +281,7 @@ export function denoise(y: number[], name: string, level: number, rule: Threshol
     else {
       const sy2 = d.reduce((a, v) => a + v * v, 0) / d.length;
       const sx = Math.sqrt(Math.max(sy2 - s * s, 0));
-      t = sx > 0 ? (s * s) / sx : Math.max(...d.map(Math.abs));
+      t = sx > 0 ? (s * s) / sx : maxOf(d.map(Math.abs));
     }
     thresholds.push(t);
     sigma.push(s);

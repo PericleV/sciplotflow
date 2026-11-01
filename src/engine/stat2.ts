@@ -7,6 +7,7 @@
 // squares by Householder QR: coefficients, Type II ANOVA, the diagnostics). Pure. Checked against statsmodels, SciPy,
 // lifelines and scikit-learn (scripts/fixtures/tests2-ref.py).
 import { chi2Sf, lgamma, normCdf, normInv, normSf, tInv, tP2, fSf, binomTest2 } from './dist.ts';
+import { minOf } from './minmax.ts';
 
 // ---- p-values adjusted ----
 export type PAdjust = 'bonferroni' | 'holm' | 'hochberg' | 'hommel' | 'bh' | 'by';
@@ -38,7 +39,7 @@ export function padjust(p: number[], how: PAdjust): number[] {
   } else {
     // Hommel (as R)
     const s = asc.map((k) => q[k]);
-    let qq = new Array<number>(n).fill(Math.min(...s.map((v, i) => (n * v) / (i + 1))));
+    let qq = new Array<number>(n).fill(minOf(s.map((v, i) => (n * v) / (i + 1))));
     let pa = [...qq];
     for (let m = n - 1; m >= 2; m--) {
       const n1 = n - m + 1;

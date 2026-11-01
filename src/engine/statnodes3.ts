@@ -11,6 +11,7 @@ import { makeDist, PARAM_NAMES, type ProbDist } from './probplot.ts';
 import { nelderMead } from './reliability.ts';
 import { byName, chosen, fp, f3, isText, levelOf, sig, table, type Row, type StatOut } from './statnodes.ts';
 import { designOf } from './statnodes2.ts';
+import { maxOf, minOf } from './minmax.ts';
 
 // solve: what is found from the others; effect: d, f, r, w, the hazard ratio, or (prop) p2 with p1; n: per group for
 // t2, anova, prop, else in all; ratio: n2 / n1; k: anova's groups, χ²'s df; events: log-rank's share with the event
@@ -225,7 +226,7 @@ export function distFitNode(ds: Dataset, d: DistFitData): StatOut {
     .sort((x, y) => x.AIC - y.AIC);
   const params: Row[] = fits.flatMap((f) => f.p.map((v, j) => ({ Distribution: DIST_LABEL[f.kind], Parameter: f.names[j], Value: v, 'CI low': f.ci[j][0], 'CI high': f.ci[j][1] })));
   // (the curves over the range of the values and a little past it)
-  const [lo, hi] = [Math.min(...all), Math.max(...all)];
+  const [lo, hi] = [minOf(all), maxOf(all)];
   const pad = 0.1 * (hi - lo || 1);
   const x0 = kinds.some((k) => POSITIVE.has(k) || k === 'beta') ? Math.max(kinds.includes('beta') ? 1e-6 : 0, lo - pad) : lo - pad;
   const x1 = kinds.includes('beta') ? Math.min(1 - 1e-6, hi + pad) : hi + pad;
@@ -332,7 +333,7 @@ export function methCompNode(ds: Dataset, d: MethCompData): StatOut {
   const lvl = d.level;
   const rows: Row[] = [];
   const lines: Column[] = [];
-  const [lo, hi] = [Math.min(...x), Math.max(...x)];
+  const [lo, hi] = [minOf(x), maxOf(x)];
   const ends = [lo, hi];
   const res: Column[] = [{ ...column(xc.name, Float64Array.from(x)), role: 'x' }];
   const verdict = (bLo: number, bHi: number, aLo: number, aHi: number) => [aLo > 0 || aHi < 0 ? 'a constant difference (the intercept is not 0)' : '', bLo > 1 || bHi < 1 ? 'a proportional difference (the slope is not 1)' : ''].filter(Boolean);

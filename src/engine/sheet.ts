@@ -197,7 +197,7 @@ export function fillSeries(src: string[], count: number, more = false): string[]
       b = sxy / sxx;
       a = my - b * mx;
     }
-    const d = Math.max(...src.map(decimals));
+    const d = maxOf(src.map(decimals));
     const comma = src.some((t) => t.includes(','));
     return Array.from({ length: count }, (_, k) => {
       const v = a + b * (n + k);

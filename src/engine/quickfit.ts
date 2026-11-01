@@ -9,6 +9,7 @@ import { baseParams, buildModel, findPeaks, peakAt, peaksModel, percentResults, 
 import { voigtProfile, voigtSG } from './faddeeva.ts';
 import { trendFit, type TrendKind, type TrendSpec } from './trend.ts';
 import { curveStyle, type CurveStyle, type Dash, type Hatch, type HatchLook } from '../figure/spec.ts';
+import { maxOf, minOf } from './minmax.ts';
 
 export type QuickFitKind = TrendKind | 'peaks' | 'formula';
 export type QuickPeakShape = 'gauss' | 'lorentz' | 'voigt' | 'voigtx';
@@ -140,7 +141,7 @@ function withError(f: (p: number[]) => number, p: number[], cov: number[][] | un
 function placedStarts(xs: number[], ys: number[], pts: { x: number; y: number }[], shape: PeakShape, nb: number): number[] {
   const base = findPeaks(xs, ys, 0).base;
   const sorted = [...pts].sort((a, b) => a.x - b.x);
-  const span = Math.max(...xs) - Math.min(...xs) || 1;
+  const span = maxOf(xs) - minOf(xs) || 1;
   const out: number[] = [];
   if (nb > 0) out.push(base);
   if (nb > 1) out.push(0);
@@ -175,7 +176,7 @@ export function quickFit(xIn: ArrayLike<number>, yIn: ArrayLike<number>, q: Quic
   };
   // the curve where it is drawn: over all the data, its range, or (ranges together) only inside them
   const cut = (x: number[], y: number[], r: XRange[]) => (q.drawAll || r.length < 2 ? y : y.map((v, i) => (inRanges(r, x[i]) ? v : NaN)));
-  const spanOf = (r: XRange[], xs: number[]): [number, number] => (q.drawAll ? span : r.length ? [Math.max(span[0], Math.min(...r.map((g) => Math.min(g.lo, g.hi)))), Math.min(span[1], Math.max(...r.map((g) => Math.max(g.lo, g.hi))))] : [Math.min(...xs), Math.max(...xs)]);
+  const spanOf = (r: XRange[], xs: number[]): [number, number] => (q.drawAll ? span : r.length ? [Math.max(span[0], Math.min(...r.map((g) => Math.min(g.lo, g.hi)))), Math.min(span[1], Math.max(...r.map((g) => Math.max(g.lo, g.hi))))] : [minOf(xs), maxOf(xs)]);
   const results: QuickFitResult[] = [];
   if (isTrend(q.kind)) {
     for (const job of jobs) {
@@ -215,7 +216,7 @@ export function quickFit(xIn: ArrayLike<number>, yIn: ArrayLike<number>, q: Quic
       warnings.push(`${job.text ? `Range ${job.text}` : 'The curve'}: no point to fit.`);
       continue;
     }
-    const xref = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const xref = (minOf(xs) + maxOf(xs)) / 2;
     // the starts: as set, else the peaks placed, else guessed (by the Fit node's rules)
     const placed = q.kind === 'peaks' && q.place && q.points?.length ? placedStarts(xs, ys, q.points, shapes[0], nb) : null;
     const specs: FitParamSpec[] = model.params.map((pm, j) => {

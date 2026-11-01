@@ -11,6 +11,7 @@ import type { AnnotationItem } from '../types.ts';
 import { levenbergMarquardt } from './lm.ts';
 import { columnLetter } from './csv.ts';
 import { column, findColumn, fmtNum, type Column, type Dataset } from './table.ts';
+import { maxOf, minOf } from './minmax.ts';
 
 export type EisElemKind = 'R' | 'C' | 'L' | 'Q' | 'W' | 'Wo' | 'Ws';
 export type EisParam = { name: string; value: number; fixed?: boolean };
@@ -566,7 +567,7 @@ export function guessParams(tree: EisTree, elems: EisElem[], pts: EisPoints): Re
   const byF = pts.f.map((_, i) => i).sort((a, b) => pts.f[b] - pts.f[a]);
   const hi = byF[0];
   const lo = byF[n - 1];
-  const rHi = Math.max(1e-6, Math.min(...byF.slice(0, Math.max(1, Math.round(n / 10))).map((i) => pts.re[i])));
+  const rHi = Math.max(1e-6, minOf(byF.slice(0, Math.max(1, Math.round(n / 10))).map((i) => pts.re[i])));
   // the arc: from the high frequencies down, the first maximum of −Z″ (a diffusion tail rises after it, so not the
   // highest), and the minimum after it where the arc ends (else the lowest frequency)
   const y = byF.map((i) => -pts.im[i]);
@@ -872,8 +873,8 @@ export function runEis(ds: Dataset, d0: EisData): EisOut | string {
     return out;
   };
   const fit = fitAt(pts);
-  const fMin = Math.min(...pts.f);
-  const fMax = Math.max(...pts.f);
+  const fMin = minOf(pts.f);
+  const fMax = maxOf(pts.f);
   const curve = simulate(tree, p, fMin, fMax, 25);
   const num = (name: string, v: number[]) => column(name, Float64Array.from(v));
   const txt = (name: string, v: string[]) => column(name, new Float64Array(v.length).fill(NaN), v);

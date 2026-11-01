@@ -3,7 +3,7 @@
 // are — the names taken from the last one before the data when it holds them —, then the header lines (the names; a
 // units line, written into the names; a comments line, left out), then the data. Touchstone files (.sNp) have their own
 // reader (touchstone.ts): readTable chooses. Pure: also used by the scripts.
-import { column, withUnit, type Dataset } from './table.ts';
+import { column, distinctNames, withUnit, type Dataset } from './table.ts';
 import { maxOf } from './minmax.ts';
 import { isTouchstone, parseTouchstone, type TouchstoneInfo } from './touchstone.ts';
 
@@ -75,9 +75,14 @@ const NUM_DOT = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
 const NUM_COMMA = /^[+-]?(\d+,?\d*|,\d+)([eE][+-]?\d+)?$/;
 const SPECIAL: Record<string, number> = { nan: NaN, inf: Infinity, '+inf': Infinity, '-inf': -Infinity, infinity: Infinity, '-infinity': -Infinity };
 
+// The minus signs of typeset text (“−2.5” copied from a PDF, a Word file, a web page: U+2212, the dashes, the small and
+// the full-width hyphen-minus) as the plain one
+const MINUSES = /[−‒–﹣－]/g;
+const plainMinus = (s: string) => (s.charCodeAt(0) > 127 || s.includes('−') ? s.replace(MINUSES, '-') : s);
+
 // A cell as a number (NaN when it is empty or text).
 export function parseNumber(cell: string, decimal: '.' | ','): number {
-  const s = cell.trim();
+  const s = plainMinus(cell.trim());
   if (!s) return NaN;
   if (decimal === '.') {
     // most cells: a plain number (Number() alone would also read hex, binary and '' — hence the first-character check)
@@ -143,7 +148,7 @@ export function plainNumber(s: string, a: number, b: number, dec: number): numbe
 }
 const P10 = Array.from({ length: 23 }, (_, k) => Number(`1e${k}`));
 const isNumberCell = (s: string, decimal: '.' | ',') => {
-  const t = s.trim();
+  const t = plainMinus(s.trim());
   return t !== '' && (decimal === ',' ? NUM_COMMA.test(t) : NUM_DOT.test(t) || t.toLowerCase() in SPECIAL);
 };
 
@@ -199,12 +204,15 @@ function detectDelimiter(lines: string[], decimal: Decimal): { d: Exclude<Delimi
   return { d: best, score: bestScore };
 }
 
+// A line of numbers: digits, and no letter but the e of an exponent (1.5e-3) — data rather than a header.
+const looksLikeData = (l: string) => /\d/.test(l) && !/\p{L}/u.test(l.replace(/(\d)[eE](?=[+-]?\d)/g, '$1'));
+
 // Decimal comma when the numbers of the data are written with commas (1,25) and none with points.
 function detectDecimal(cells: string[]): '.' | ',' {
   let comma = 0;
   let dot = 0;
   for (const c of cells) {
-    const t = c.trim();
+    const t = plainMinus(c.trim());
     if (/^[+-]?\d+,\d+([eE][+-]?\d+)?$/.test(t)) comma++;
     else if (/^[+-]?\d*\.\d+([eE][+-]?\d+)?$/.test(t)) dot++;
   }
@@ -286,13 +294,17 @@ export function parseCsv(text: string, o: CsvOptions, name = 'data'): CsvResult 
   while (all.length && all[all.length - 1].trim() === '') all.pop();
   const body = all.slice(skip);
   const sample = body.filter((l) => l.trim() !== '').slice(0, 40);
+  // (the delimiter and the decimal separator guessed from the lines of numbers when there are any: a header with
+  // spaces, “Wavelength (nm),Absorbance” over “400,1”, would else make the spaces the delimiter and 400,1 a number)
+  const numeric = sample.filter(looksLikeData);
+  const guessFrom = numeric.length ? numeric : sample;
   // the decimal separator first from a guess with every delimiter but the comma (a comma may be either)
   let decimal: '.' | ',' = o.decimal === 'auto' ? '.' : o.decimal;
   let delimiter: string;
   if (o.delimiter === 'auto') {
-    const noComma = detectDelimiter(sample, ',').d;
-    const guess = o.decimal === 'auto' ? detectDecimal(sample.flatMap((l) => splitLine(l, noComma))) : decimal;
-    const found = detectDelimiter(sample, guess);
+    const noComma = detectDelimiter(guessFrom, ',').d;
+    const guess = o.decimal === 'auto' ? detectDecimal(guessFrom.flatMap((l) => splitLine(l, noComma))) : decimal;
+    const found = detectDelimiter(guessFrom, guess);
     delimiter = found.d;
     // "1,2" with nothing else to cut the lines: comma-separated numbers rather than one column of decimal commas
     if (o.decimal === 'auto' && guess === ',' && found.score === 0) delimiter = ',';
@@ -300,7 +312,7 @@ export function parseCsv(text: string, o: CsvOptions, name = 'data'): CsvResult 
   } else {
     delimiter = o.delimiter === 'custom' ? (o.custom ?? '').replace(/\\t/g, '\t') : o.delimiter;
     if (!delimiter) warnings.push('Write the delimiter (one or more characters).');
-    if (o.decimal === 'auto') decimal = delimiter === ',' ? '.' : detectDecimal(sample.flatMap((l) => splitLine(l, delimiter)));
+    if (o.decimal === 'auto') decimal = delimiter === ',' ? '.' : detectDecimal(guessFrom.flatMap((l) => splitLine(l, delimiter)));
   }
   if (delimiter === decimal) warnings.push('The delimiter and the decimal separator are both “,”: numbers like 1,5 are split into two cells.');
   const thousands = o.thousands ?? '';
@@ -421,6 +433,8 @@ export function parseCsv(text: string, o: CsvOptions, name = 'data'): CsvResult 
     }
   }
   const columns = [];
+  // the units line goes into the name: “Wavelength” + “nm” → “Wavelength (nm)”; a name used twice: “Intensity 2”
+  const named = distinctNames(Array.from({ length: nCols }, (_, j) => withUnit((names[j] ?? '').trim() || letters(j), units[j])));
   for (let j = 0; j < nCols; j++) {
     const values = i < n ? cols[j].values.slice(0, i) : cols[j].values;
     let text = cols[j].text;
@@ -430,8 +444,7 @@ export function parseCsv(text: string, o: CsvOptions, name = 'data'): CsvResult 
       for (let k = 0; k < i; k++) if (text[k] === '' && Number.isFinite(values[k])) text[k] = String(values[k]);
       if (text.every((t) => t === '')) text = undefined;
     }
-    // the units line goes into the name: “Wavelength” + “nm” → “Wavelength (nm)”
-    columns.push(column(withUnit((names[j] ?? '').trim() || letters(j), units[j]), values, text));
+    columns.push(column(named[j], values, text));
   }
   if (!i) warnings.push('No data lines: check the lines skipped and the header lines.');
   return { dataset: { name, columns }, delimiter, decimal, headerLines, dataLines: i, warnings, ...(shownHeader.length ? { header: shownHeader } : {}), ...(fromComment ? { commentNames: true } : {}) };

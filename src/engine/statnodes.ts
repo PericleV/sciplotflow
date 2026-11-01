@@ -342,7 +342,10 @@ export function anovaNode(ds: Dataset, d: AnovaData): StatOut {
   ];
   report.push(`One-way ANOVA: F(${r.df1}, ${r.df2}) = ${f3(r.F)}, ${fp(r.p)}, η² = ${f3(r.eta2)}, ω² = ${f3(r.omega2)}: the means ${r.p < a ? 'differ' : 'do not differ'} at α = ${a}.`);
   const lv = H.levene(g.groups, 'median');
-  const res = g.groups.flatMap((x) => x.map((v) => v - H.mean(x)));
+  const res = g.groups.flatMap((x) => {
+    const m = H.mean(x);
+    return x.map((v) => v - m);
+  });
   checks.push(testRow(lv, a), testRow({ ...H.shapiroWilk(res), test: 'Shapiro–Wilk (residuals)' }, a));
   if (d.welch) {
     const w = H.welchAnova(g.groups);

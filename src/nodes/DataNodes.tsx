@@ -6,7 +6,7 @@ import { useNodeConnections, useNodeId, useNodesData, useReactFlow, type NodePro
 import { useNodeResult } from '../engine/engine.ts';
 import type { MathInput, NodeResult } from '../engine/evaluate.ts';
 import { isCommentLine, columnLetter, textLines, type CsvOptions, type Delimiter, type Decimal } from '../engine/csv.ts';
-import { cellText, fmtNum, ROLE_LABELS, titleOf, type Column, type ColumnRole } from '../engine/table.ts';
+import { cellText, fmtNum, isRepeatOf, ROLE_LABELS, titleOf, type Column, type ColumnRole } from '../engine/table.ts';
 import { ROLE_OPTIONS, type ExtractNames, type ExtractRule } from '../engine/extract.ts';
 import { COLUMNS_SPEC_KEYS, formulaShown, formulaStored, lineLetter, type ColumnsSpec, type ColumnItem, type ColumnLine, type ComputedColumn, type ComputedKind } from '../engine/columns.ts';
 import { GEN_SPEC_DEFAULTS, type GenSpec } from '../engine/gencol.ts';
@@ -394,7 +394,8 @@ export function ExtractNodeView({ id, data }: NodeProps<ExtractNode>) {
   const { updateNodeData } = useReactFlow<AppNode>();
   const r = useNodeResult(id);
   const avail = r?.view.available ?? [];
-  const idx = data.column ? (avail[data.index]?.name === data.column ? data.index : avail.findIndex((c) => c.name === data.column)) : 0;
+  const atIndex = avail[data.index]?.name;
+  const idx = data.column ? (atIndex !== undefined && (atIndex === data.column || isRepeatOf(atIndex, data.column)) ? data.index : avail.findIndex((c) => c.name === data.column)) : 0;
   const out = r?.outputs.out?.t === 'column' ? r.outputs.out.v : undefined;
   const val = r?.outputs.out?.t === 'scalar' ? r.outputs.out.v : undefined;
   // the rows taken (an older project's one value: its row, as a list)

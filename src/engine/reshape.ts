@@ -5,7 +5,7 @@ import { joined, restarts, splitRows, takeRows, type CycleOpts } from './split.t
 import { parseRows } from './rows.ts';
 import { column, findColumn, fmtNum, roleOf, valueText, type Column, type ColumnRole, type Dataset, type Workbook } from './table.ts';
 import { findSheet } from './refs.ts';
-import { maxOf } from './minmax.ts';
+import { maxOf, pushAll } from './minmax.ts';
 
 // ---- Split into columns ----
 
@@ -731,11 +731,11 @@ function joinColumns(a: Column, b: Column, how: 'under' | 'above' | 'insert' | '
   const lb = b.values.length;
   const refs: [0 | 1, number][] = [];
   const seq = (k: 0 | 1, n: number) => Array.from({ length: n }, (_, i): [0 | 1, number] => [k, i]);
-  if (how === 'under') refs.push(...seq(0, la), ...seq(1, lb));
-  else if (how === 'above') refs.push(...seq(1, lb), ...seq(0, la));
+  if (how === 'under') pushAll(pushAll(refs, seq(0, la)), seq(1, lb));
+  else if (how === 'above') pushAll(pushAll(refs, seq(1, lb)), seq(0, la));
   else if (how === 'insert') {
     const k = Math.min(la, Math.max(0, Math.floor(at || 0)));
-    refs.push(...seq(0, la).slice(0, k), ...seq(1, lb), ...seq(0, la).slice(k));
+    pushAll(pushAll(pushAll(refs, seq(0, la).slice(0, k)), seq(1, lb)), seq(0, la).slice(k));
   } else for (let i = 0; i < Math.max(la, lb); i++) refs.push(...(i < la ? [[0, i] as [0, number]] : []), ...(i < lb ? [[1, i] as [1, number]] : []));
   const src = [a, b];
   const text = a.text || b.text ? refs.map(([k, i]) => src[k].text?.[i] ?? '') : undefined;

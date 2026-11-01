@@ -8,6 +8,7 @@ import { column, fmtNum, unitOf, type Column, type Dataset } from './table.ts';
 import { regionRuns, runPoints, type RegionSpec, type RegionView } from './regionruns.ts';
 import { concentration, fracDerivative, fracFast, frft as frftDiscrete, type FracMethod } from './frac.ts';
 import type { SignalPlot } from './signalnodes.ts';
+import { maxOf, pushAll } from './minmax.ts';
 
 type Out = { tables: Record<string, Dataset>; view: RegionView; plots: SignalPlot[]; labels: string[]; warnings: string[]; report: string[] } | { error: string } | { waiting: string };
 const fmt = (v: number, d = 4) => (Number.isFinite(v) ? fmtNum(v, d) : 'n/a');
@@ -60,8 +61,8 @@ export function fracNode(ds: Dataset, d: FracData): Out {
       orders.forEach((a, q) => {
         const r = fracDerivative(t, ys, a, d.method);
         rows.forEach((i, j) => (res[q][i] = r[j]));
-        lowers[q].x.push(...xs, NaN);
-        lowers[q].y.push(...r, NaN);
+        pushAll(lowers[q].x, xs).push(NaN);
+        pushAll(lowers[q].y, r).push(NaN);
       });
       rows.forEach((i, j) => (tcol[i] = t[j]));
       // (convolution voltammetry: the plateau of the semi-integral, and D from it)
@@ -70,7 +71,7 @@ export function fracNode(ds: Dataset, d: FracData): Out {
         if (q < 0) warnings.push('D from the plateau needs the order −0.5 (the semi-integral).');
         else {
           const m = rows.map((i) => res[q][i]).filter(Number.isFinite);
-          const mL = Math.max(...m.map(Math.abs)) * UNIT[d.unit];
+          const mL = maxOf(m.map(Math.abs)) * UNIT[d.unit];
           const c = d.conc * 1e-6;
           const D = (mL / (d.electrons * FARADAY * d.area * c)) ** 2;
           notes.push(`plateau m_L ${fmt(mL)} C s^−½, D ${fmt(D)} cm²/s`);
@@ -175,14 +176,14 @@ export function frftNode(ds: Dataset, d: FrftData): Out {
       plots.push({ result: { x: u, y: mag }, xName: 'u (samples from the middle)', yName: `|F^${fmt(a, 3)}| (${run.label})` });
       const sfx = runs.length > 1 ? ` (${run.label})` : '';
       outCols.push({ ...column(`u${sfx}`, Float64Array.from(u)), role: 'x' }, { ...column(`|F^a|${sfx}`, Float64Array.from(mag)), role: 'y' }, { ...column(`Re${sfx}`, Float64Array.from(Fr)), role: 'none' }, { ...column(`Im${sfx}`, Float64Array.from(Fi)), role: 'none' });
-      const top = mag.indexOf(Math.max(...mag));
+      const top = mag.indexOf(maxOf(mag));
       report.push(`${run.label}: the transform of order ${fmt(a, 4)}, its strongest point at u = ${u[top]} (of ${N} samples).`);
       view.base.push(null);
       view.lower.push(null);
       return;
     }
     // (the filter: the band, the transform masked, back by the order −a; the real part)
-    const top = mag.indexOf(Math.max(...mag));
+    const top = mag.indexOf(maxOf(mag));
     const [b1, b2] = Number.isFinite(d.u1) && Number.isFinite(d.u2) ? [Math.min(d.u1, d.u2), Math.max(d.u1, d.u2)] : [u[top] - d.width, u[top] + d.width];
     const inBand = u.map((v) => v >= b1 && v <= b2);
     const keep = (j: number) => (d.keep === 'keep' ? inBand[j] : !inBand[j]);
@@ -196,7 +197,7 @@ export function frftNode(ds: Dataset, d: FrftData): Out {
       const a2 = 2 - a;
       const [Gr, Gi] = frft(Br, Bi, a2);
       const m2 = Gr.map((v, j) => Math.hypot(v, Gi[j]));
-      const t2 = m2.indexOf(Math.max(...m2));
+      const t2 = m2.indexOf(maxOf(m2));
       const band2 = (j: number) => Math.abs(u[j] - u[t2]) <= d.width;
       [Br, Bi] = frft(
         Gr.map((v, j) => (band2(j) ? 0 : v)),

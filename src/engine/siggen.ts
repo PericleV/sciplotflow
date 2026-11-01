@@ -12,6 +12,7 @@ import { fft } from './signal.ts';
 import { parseCircuit, simulate, startParams, type EisParam } from './eis.ts';
 import type { SignalPlot } from './signalnodes.ts';
 import { CV_MORE, cvMake, measured, type CvSpec } from './cv.ts';
+import { maxOf, minOf } from './minmax.ts';
 export { mosCurve, type CvSpec } from './cv.ts';
 
 export type CompKind = 'sine' | 'square' | 'triangle' | 'sawtooth' | 'pulse' | 'step' | 'impulse' | 'damped' | 'gausspulse' | 'exp' | 'chirp' | 'gauss' | 'lorentz' | 'voigt' | 'fano' | 'coupled' | 'poly';
@@ -211,7 +212,7 @@ export function componentAt(c: GenComponent, x: number[]): number[] | string {
         const r = coupledAt(v, P('e1'), P('e2'), P('g1'), P('g2'), P('g'));
         return out === 'amp1' ? r.x1 : out === 'amp2' ? r.x2 : r.power;
       });
-      const top = Math.max(...raw.filter(Number.isFinite));
+      const top = maxOf(raw.filter(Number.isFinite));
       return raw.map((v) => (top > 0 ? (A * v) / top : 0));
     }
     case 'poly': {
@@ -299,7 +300,7 @@ export function generate(d: SigGenSpec): { dataset: Dataset; warnings: string[];
     }
     if (d.drift) for (let i = 0; i < out.length; i++) out[i] += d.drift * (x[i] - x[0]);
     if (d.spikes && d.spikes > 0 && fin.length) {
-      const span = Math.max(...fin) - Math.min(...fin) || 1;
+      const span = maxOf(fin) - minOf(fin) || 1;
       for (let k = 0; k < Math.min(out.length, Math.floor(d.spikes)); k++) out[Math.floor(r.u() * out.length)] += (r.u() < 0.5 ? -1 : 1) * (d.spikeSize ?? 0.5) * span;
     }
     return out;

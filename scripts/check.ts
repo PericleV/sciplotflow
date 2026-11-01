@@ -46,7 +46,7 @@ import { mathFace, mathKey, setMathSizes } from '../src/math/sizes.ts';
 import { plotMapping, stuckLines } from '../src/engine/evaluate.ts';
 import { canvasFigure, collapseGroups, evaluateGraph, legendCurves, newCache, packCells, parseRows, plotRows, shapeSpec } from '../src/engine/evaluate.ts';
 import { autoFrame, axesGeometry, turnedExtent, wrapLabel, autoTitle, axisNeeds, legendPlace, endLabels, placeLegends } from '../src/figure/axes.ts';
-import { column, curvesByRole, findColumn, fmtNum, parseSci, sciPretty, sciText, unitOf } from '../src/engine/table.ts';
+import { column, curvesByRole, findColumn, fmtNum, isRepeatOf, parseSci, sciPretty, sciText, unitOf } from '../src/engine/table.ts';
 import { autoExtract, pick } from '../src/engine/extract.ts';
 import { applyManip, renumber, ROW_CHANGED, ROW_DELETED, ROW_MASKED } from '../src/engine/manip.ts';
 import { tQuantile } from '../src/engine/lm.ts';
@@ -288,6 +288,20 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   const r = parseCsv('name,value\n"a, b",1\nc,NaN\nd,\n', CSV_DEFAULTS);
   ok(r.dataset.columns[0].text?.[0] === 'a, b', 'quoted field with a comma');
   ok(Number.isNaN(r.dataset.columns[1].values[1]) && Number.isNaN(r.dataset.columns[1].values[2]) && !r.dataset.columns[1].text, 'NaN and empty cells are missing values, not text');
+}
+{
+  // the delimiter and the decimal separator guessed from the lines of numbers: a header with spaces over a few rows of
+  // integers (“Wavelength (nm),Absorbance” / “400,1”) is not one column of decimal commas
+  const two = (t: string) => parseCsv(t, CSV_DEFAULTS).dataset.columns.map((c) => `${c.name}: ${Array.from(c.values).join(' ')}`).join(' | ');
+  ok(two('Wavelength (nm),Absorbance\n400,1\n410,2\n') === 'Wavelength (nm): 400 410 | Absorbance: 1 2' && two('Time (s),Current (mA)\n0,5\n1,7\n2,9\n') === 'Time (s): 0 1 2 | Current (mA): 5 7 9', `a header with spaces over a few rows of integers: two columns (${two('Time (s),Current (mA)\n0,5\n1,7\n2,9\n')})`);
+  ok(two('Zeit (s);Strom (mA)\n0,5;1,25\n1,5;2,75\n') === 'Zeit (s): 0.5 1.5 | Strom (mA): 1.25 2.75', 'a header with spaces over semicolons and decimal commas: still read so');
+  // the minus of typeset text (U+2212), in the data and in the first line
+  const m = parseCsv('x,y\n1,−2.5\n2,−3e−2\n', CSV_DEFAULTS).dataset.columns[1];
+  ok(Array.from(m.values).join() === '-2.5,-0.03' && !m.text && parseSci('−4.5') === -4.5, 'the minus sign of typeset text read as a minus (not text)');
+  ok(parseCsv('−1,2\n3,4\n', CSV_DEFAULTS).dataset.columns.map((c) => c.name).join() === 'A,B', 'a first line of numbers with the typeset minus: data, not names');
+  // names used twice made unique, the unit kept at the end (a name already in the file not taken)
+  const dup = parseCsv('Wavelength (nm),Intensity,Intensity,Wavelength (nm),Intensity 2\n400,1,10,5,7\n', CSV_DEFAULTS).dataset.columns.map((c) => c.name);
+  ok(dup.join('|') === 'Wavelength (nm)|Intensity|Intensity 3|Wavelength 2 (nm)|Intensity 2' && unitOf(dup[3]) === 'nm', `names used twice in a file made unique (${dup.join(', ')})`);
 }
 
 // ---- formulas ----
@@ -949,6 +963,41 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   ok(res.get('s')!.view.stats?.mean === 30 && res.get('s')!.warnings.length === 1, 'mask: Statistics leaves the masked rows out');
   const pc = res.get('p')!.view.curves;
   ok(!!pc && Array.from(pc[0].mask ?? []).join(',') === '0,0,1', 'mask: the masked points of a Plot curve');
+}
+
+// ---- columns of the same name in a file: each its own (a Plot of them; an older Extract column by its place) ----
+{
+  const imp = { id: 'i', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, text: 'Wavelength (nm),Intensity,Intensity,Intensity\n400,1,10,100\n410,2,20,200\n', textId: 'dup' } } as AppNode;
+  const names = ['Intensity', 'Intensity 2', 'Intensity 3'];
+  const pl = { id: 'p', type: 'plot1d', position: { x: 0, y: 0 }, data: { ...structuredClone(PLOT1D_DEFAULTS), cols: { x: 'Wavelength (nm)', y: names[0] }, rows: names.slice(1).map((y) => ({ label: '', style: {}, cols: { x: 'Wavelength (nm)', y } })) } } as AppNode;
+  // (made before the names were made unique: the third column, “Intensity” at its place 2)
+  const ex = { id: 'e', type: 'extract', position: { x: 0, y: 0 }, data: { ...EXTRACT_DEFAULTS, column: 'Intensity', index: 2 } } as AppNode;
+  const res = evaluateGraph([imp, pl, ex], [
+    { id: '1', source: 'i', sourceHandle: 'out', target: 'p', targetHandle: 'dataset' },
+    { id: '2', source: 'i', sourceHandle: 'out', target: 'e', targetHandle: 'in' },
+  ]);
+  const firsts = (res.get('p')!.view.curves ?? []).map((c) => c.series.y.values[0]).join();
+  const eo = res.get('e')!.outputs.out;
+  ok(firsts === '1,10,100', `columns of the same name in a file: each curve its own column (${firsts})`);
+  ok(eo?.t === 'column' && eo.v.values[0] === 10 && isRepeatOf('Wavelength 2 (nm)', 'Wavelength (nm)') && !isRepeatOf('Intensity 2b', 'Intensity') && !isRepeatOf('Intensity', 'Intensity'), 'an older Extract column of a repeated name (by its place): the same column once the names are unique');
+}
+
+// ---- more points than a spread into arguments holds (about 10⁵): Peak width ----
+{
+  const n = 150_000;
+  const text = 'x;y\n' + Array.from({ length: n }, (_, i) => `${i};${Math.exp(-(((i - n / 2) / 5000) ** 2)).toFixed(8)}`).join('\n');
+  const imp = { id: 'i', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, text, textId: 'big' } } as AppNode;
+  const pw = { id: 'w', type: 'peakwidth', position: { x: 0, y: 0 }, data: { ...PEAKWIDTH_DEFAULTS } } as AppNode;
+  const pl = { id: 'p', type: 'plot1d', position: { x: 0, y: 0 }, data: { ...structuredClone(PLOT1D_DEFAULTS), cols: { x: 'x', y: 'y' }, quickFits: [{ kind: 'linear' }] } } as AppNode;
+  const res = evaluateGraph([imp, pw, pl], [
+    { id: '1', source: 'i', sourceHandle: 'out', target: 'w', targetHandle: 'in' },
+    { id: '2', source: 'i', sourceHandle: 'out', target: 'p', targetHandle: 'dataset' },
+  ]);
+  const w = res.get('w')!;
+  const o = w.outputs.out;
+  const fwhm = o?.t === 'dataset' ? o.v.columns.find((c) => c.name === 'FWHM')?.values[0] ?? NaN : NaN;
+  ok(!w.errors.length && near(fwhm, 2 * 5000 * Math.sqrt(Math.LN2), 1e-5), `Peak width of ${n} points: no overflow of the call stack (FWHM ${fwhm}${w.errors.length ? `; ${w.errors.join(' ')}` : ''})`);
+  ok(!res.get('p')!.errors.length && (res.get('p')!.view.figure?.axes[0].curves.length ?? 0) > 1, `a Plot's quick fit of ${n} points (${res.get('p')!.errors.join(' ')})`);
 }
 
 // ---- Extract column: the rows taken (all, ranges, a list, where), one value of them; an older one value kept ----

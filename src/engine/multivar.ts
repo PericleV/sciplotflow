@@ -5,6 +5,7 @@
 // moving ranges, or the means and ranges of subgroups (Shewhart, 3σ limits), the points out of control by the
 // Western Electric rules. Pure.
 import { eig, newMatrix } from './matrix.ts';
+import { maxOf, minOf } from './minmax.ts';
 
 export type Pca = { values: number[]; explained: number[]; loadings: number[][]; scores: number[][]; rows: number[] };
 // cols: the columns (each a list of values, the same length); rows with a missing value left out
@@ -111,7 +112,7 @@ export function controlChart(values: number[], subgroup: number): ControlChart |
     for (let k = 0; k < g; k++) {
       const s = y.slice(k * n, k * n + n);
       means.push(s.reduce((a, b) => a + b, 0) / n);
-      ranges.push(Math.max(...s) - Math.min(...s));
+      ranges.push(maxOf(s) - minOf(s));
     }
     const xbb = means.reduce((a, b) => a + b, 0) / g;
     const rbar = ranges.reduce((a, b) => a + b, 0) / g;

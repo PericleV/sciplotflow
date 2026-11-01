@@ -2,6 +2,7 @@
 // and y (every other name a parameter). The fit itself is the usual one, on the points numbered 0 … n − 1. Pure.
 import { compile } from './expr.ts';
 import type { ParamKind } from './fitModels.ts';
+import { maxOf, minOf } from './minmax.ts';
 
 export type Surface = { params: { name: string; kind: ParamKind }[]; f: (x: number, y: number, p: number[]) => number; guess: (x: number[], y: number[], z: number[]) => number[]; note: string };
 
@@ -70,8 +71,8 @@ export const SURFACES: Record<string, { label: string } & Surface> = {
       const A = z[k] - z0;
       // the widths from the spread of the points above half the height
       const hi = z.map((_, i) => i).filter((i) => (z[i] - z0) / (A || 1) > 0.5);
-      const sx = Math.sqrt(mean(hi.map((i) => (x[i] - x[k]) ** 2))) * 2.5 || (Math.max(...x) - Math.min(...x)) / 5 || 1;
-      const sy = Math.sqrt(mean(hi.map((i) => (y[i] - y[k]) ** 2))) * 2.5 || (Math.max(...y) - Math.min(...y)) / 5 || 1;
+      const sx = Math.sqrt(mean(hi.map((i) => (x[i] - x[k]) ** 2))) * 2.5 || (maxOf(x) - minOf(x)) / 5 || 1;
+      const sy = Math.sqrt(mean(hi.map((i) => (y[i] - y[k]) ** 2))) * 2.5 || (maxOf(y) - minOf(y)) / 5 || 1;
       return [z0, A, x[k], y[k], sx, sy, 0];
     },
   },

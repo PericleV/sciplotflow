@@ -4,7 +4,7 @@ import { voigtFwhm, voigtProfile, voigtSG } from './faddeeva.ts';
 import { baselineOf, curveThrough, type BaseMethod, type BaseOptions } from './baselines.ts';
 import { pointsCurve, type Pt } from './calculus.ts';
 import { peakAt, pvArea, type Baseline, type PeakShape } from './fitModels.ts';
-import { maxOf, minOf } from './minmax.ts';
+import { maxOf, minOf, pushAll } from './minmax.ts';
 
 // fitted with the peaks: constant, linear, quadratic; fixed (not fitted, under the peaks): none, the line between the
 // ends, another column, and the other common ones (src/engine/baselines.ts)
@@ -112,7 +112,7 @@ export function findPeaksIn(X: number[], z: number[], o: FindOptions): Found[] {
       if (prom < (Math.max(o.minHeight, 1) / 100) * top) continue;
       maxima.push({ x: X[i], height: sg * s[i], w: fwhmAt(X, s, i), i, prom });
     }
-    out.push(...maxima);
+    pushAll(out, maxima);
     if (o.shoulders) {
       // the minima of the (more smoothed) second derivative, deep enough, away from the maxima and from each other
       const ss = smooth(s, Math.max(2, Math.round(n / 80)));
@@ -126,7 +126,7 @@ export function findPeaksIn(X: number[], z: number[], o: FindOptions): Found[] {
         if (maxima.some(near) || sh.some(near)) continue;
         sh.push({ x: X[i], height: sg * s[i], w, i, prom: (s[i] * -d2[i]) / (deep || 1) });
       }
-      out.push(...sh);
+      pushAll(out, sh);
     }
   }
   return out

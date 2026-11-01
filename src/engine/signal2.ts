@@ -6,6 +6,7 @@
 // periodogram with its false-alarm probability, the harmonics of a periodic signal (THD, SNR, SINAD, ENOB). Pure.
 import { lgamma } from './dist.ts';
 import { fft } from './signal.ts';
+import { maxOf, minOf } from './minmax.ts';
 
 const sortedOf = (a: number[]) => [...a].sort((p, q) => p - q);
 const medianOf = (a: number[]) => {
@@ -297,7 +298,7 @@ export function lombScargle(t: number[], y: number[], freqs: number[]): { power:
 // The frequencies (as astropy’s autofrequency): a step of 1/(points per peak · T) from half of it up to the mean
 // Nyquist frequency N/(2T) (or from … to)
 export function lsFrequencies(t: number[], over: number, from: number, to: number): number[] {
-  const T = Math.max(...t) - Math.min(...t);
+  const T = maxOf(t) - minOf(t);
   const df = 1 / (over * T);
   const f0 = Number.isFinite(from) && from > 0 ? from : df / 2;
   const f1 = Number.isFinite(to) && to > f0 ? to : t.length / (2 * T);

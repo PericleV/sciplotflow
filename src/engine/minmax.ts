@@ -16,3 +16,8 @@ export function maxOf(values: Iterable<number>): number {
   }
   return m;
 }
+// Values added at the end of an array without spreading them into arguments either (push(...a) overflows as well).
+export function pushAll<T>(to: T[], values: ArrayLike<T>): T[] {
+  for (let i = 0; i < values.length; i++) to.push(values[i]);
+  return to;
+}

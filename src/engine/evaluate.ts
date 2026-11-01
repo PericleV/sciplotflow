@@ -77,7 +77,7 @@ import type { RegionView } from './regionruns.ts';
 import { findPeaksIn, fittedPeak, fixedBaseline, fwhmAt, isFitted, measurePeaks, peakRunKey, regionPeak, type Found, type PeakItem } from './peaks.ts';
 import { curveThrough } from './baselines.ts';
 import { areaBetween, derivative, integrate, interp, pointsCurve, regionName, regionRows, type IntegralOptions } from './calculus.ts';
-import { bareName, column, curvesByRole, findColumn, fmtNum, parseSci, roleOf, rowIndex, titleOf, unitOf, valueText, type Column, type ColumnRole, type Dataset, type Scalar, type Series, type Workbook } from './table.ts';
+import { bareName, column, curvesByRole, findColumn, fmtNum, isRepeatOf, parseSci, roleOf, rowIndex, titleOf, unitOf, valueText, type Column, type ColumnRole, type Dataset, type Scalar, type Series, type Workbook } from './table.ts';
 import { autoExtract, pick, simpleRules } from './extract.ts';
 import { columnsOf, type ColumnLine, type ColumnsSpec } from './columns.ts';
 import { baseUnder, extremum, inRange, peakWidth, type Baseline as MBaseline, type Width } from './measure.ts';
@@ -96,7 +96,7 @@ import { isArea, roiCentre, roiOutline, ROI_COLOR } from '../image/roi.ts';
 import { cropBox } from '../image/raster.ts';
 import { STEP_DEFS } from '../image/steps.ts';
 import { phaseFigures, type PhaseDiagramData } from './phasenode.ts';
-import { maxOf, minOf } from './minmax.ts';
+import { maxOf, minOf, pushAll } from './minmax.ts';
 import { nodeDisplayName } from '../nodeColors.ts';
 import { columnsToSheets, convertTable, stackColumns, transposeTable } from './tableShape.ts';
 import { looksNumeric, TO_NUMBER_DEFAULTS } from './convert.ts';
@@ -1953,8 +1953,8 @@ function peakWidthNode(d: PeakWidthData, v: Value | undefined): Out {
       rows.push({ run: k, region: r.j, lo: r.lo, hi: r.hi, w, mn: extremum(c, 'min', r.lo, r.hi), mx: extremum(c, 'max', r.lo, r.hi), count: p.x.length, of: xs.length });
       // the baseline drawn over the region
       if (p.x.length > 1) {
-        bl.x.push(...p.x, NaN);
-        bl.y.push(...baseUnder(p, base), NaN);
+        pushAll(bl.x, p.x).push(NaN);
+        pushAll(bl.y, baseUnder(p, base)).push(NaN);
       }
     }
     bases.push(bl);
@@ -3600,7 +3600,7 @@ function regressionFitNode(d: FitNodeData, v: Extract<Value, { t: 'dataset' }>, 
   const N = y.length;
   const dof = N - cs.length;
   const sse = r.resid.reduce((s2, q) => s2 + q * q, 0);
-  const [lo, hi] = [Math.min(...r.fitted, ...y), Math.max(...r.fitted, ...y)];
+  const [lo, hi] = [Math.min(minOf(r.fitted), minOf(y)), Math.max(maxOf(r.fitted), maxOf(y))];
   const run: RunResult = {
     label: Y.name,
     value: 1,
@@ -3961,8 +3961,8 @@ function calculusNode(d: CalculusData, v: Value | undefined, baseIn: Value | und
         for (const i of part.rows) out[i] = interp(r.x, r.cum, xv[i]);
         carried += r.area;
         areaRows.push({ run: run.label, value: k + 1, region: regionName(part.index), index: part.index, lo: part.region.lo, hi: part.region.hi, area: r.area });
-        bx.push(...r.x, NaN);
-        by.push(...r.b, NaN);
+        pushAll(bx, r.x).push(NaN);
+        pushAll(by, r.b).push(NaN);
         runFills.push({ index: part.index, x: r.x, y: r.y, b: r.b });
       } else {
         const r = integrate(xv, yv, part.rows, opt, d.join === 'combined' ? carried : 0);
@@ -4732,7 +4732,8 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       const available = cols.map(colInfo);
       if (!cols.length) return { errors: ['The dataset has no columns.'], view: { available, sheets } };
       const { column: name, index } = n.data;
-      const c = !name ? cols[0] : cols[index]?.name === name ? foundAs('cols', name, cols[index]) : findColumn(cols, name);
+      // (by its place when names repeat; one of them renamed since, “Intensity 2”: still the one at its place)
+      const c = !name ? cols[0] : cols[index] && (cols[index].name === name || isRepeatOf(cols[index].name, name)) ? foundAs('cols', name, cols[index]) : findColumn(cols, name);
       if (!c) return { errors: [`No column “${name}” in the ${sheets ? 'sheet' : 'dataset'}.`], view: { available, sheets } };
       // the rows chosen (all, ranges, a list, where conditions are true), of the rows of the column; X: the designated one
       if (n.data.rows) {

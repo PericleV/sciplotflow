@@ -54,6 +54,32 @@ export const withUnit = (name: string, unit: string | undefined) => (unit?.trim(
 export const unitOf = (name: string) => /[([]\s*([^()[\]]+?)\s*[)\]]\s*$/.exec(name)?.[1] ?? '';
 // The name without the unit at its end: “Wavelength (nm)” → “Wavelength”.
 export const bareName = (name: string) => name.replace(/\s*[([]\s*[^()[\]]+?\s*[)\]]\s*$/, '').trim();
+// Names made unique, the unit kept at the end: a second “Intensity” becomes “Intensity 2”, a second “Wavelength (nm)”
+// “Wavelength 2 (nm)” (columns are found by their names: several of the same name would all mean the first one).
+export function distinctNames(names: string[]): string[] {
+  const given = new Set(names);
+  const used = new Set<string>();
+  return names.map((nm) => {
+    let out = nm;
+    if (used.has(nm)) {
+      const [head, tail] = nameParts(nm);
+      for (let k = 2; used.has(out) || given.has(out); k++) out = `${head} ${k}${tail}`;
+    }
+    used.add(out);
+    return out;
+  });
+}
+// a name cut before its unit: “Wavelength (nm)” → “Wavelength”, “ (nm)”
+const nameParts = (nm: string): [string, string] => {
+  const bare = bareName(nm);
+  return bare && nm.startsWith(bare) ? [bare, nm.slice(bare.length)] : [nm, ''];
+};
+// Whether a name is one that distinctNames made of a repeated name: “Intensity 2” of “Intensity”, “Wavelength 2 (nm)” of
+// “Wavelength (nm)” (a node kept the column it took by its place among columns of the same name, before they were renamed).
+export function isRepeatOf(name: string, of: string): boolean {
+  const [head, tail] = nameParts(of);
+  return name.length > head.length + tail.length + 1 && name.startsWith(`${head} `) && name.endsWith(tail) && /^\d+$/.test(name.slice(head.length + 1, name.length - tail.length));
+}
 // A column by its name; else by its id, renamed since (refs.ts); else the only one whose name differs just by a unit
 // (“Wavelength” finds “Wavelength (nm)”: projects made when the unit was apart from the name); else at its place in
 // another source of the same layout.
@@ -100,6 +126,8 @@ export function parseSci(s: string): number {
     .trim()
     .replace(/\s+/g, '')
     .replace(/,/g, '.')
+    // (the minus of typeset text, “−2.5”)
+    .replace(/[−‒–﹣－]/g, '-')
     .replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]+$/, (e) => `^${[...e].map((c) => (c === '⁻' ? '-' : c === '⁺' ? '+' : String(SUP.indexOf(c)))).join('')}`);
   if (!t) return NaN;
   const m = /^(?:([+-]?(?:\d+\.?\d*|\.\d+))[*x×·X])?10\^([+-]?\d+)$/.exec(t);

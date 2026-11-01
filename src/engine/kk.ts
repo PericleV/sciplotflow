@@ -15,6 +15,7 @@ import { leastSquares } from './trend.ts';
 import { column, findColumn, roleOf, unitOf, type Column, type Dataset } from './table.ts';
 import { guessColumns } from './eis.ts';
 import type { SignalPlot } from './signalnodes.ts';
+import { maxOf, minOf } from './minmax.ts';
 
 // a: the column of Z′ (eis), R (optical), the part transformed (general); b: Z″ (eis); imNeg: the Z″ column is −Z″;
 // cap, ind: a capacitance, an inductance in the Lin-KK model; mu: its μ limit; maxM: the most RC elements; limit: the
@@ -144,7 +145,7 @@ export function linKK(f: number[], re: number[], im: number[], o: { cap: boolean
   const n = f.length;
   const w = f.map((v) => 2 * Math.PI * v);
   const mod = re.map((v, i) => Math.hypot(v, im[i]) || 1);
-  const [fmin, fmax] = [Math.min(...f), Math.max(...f)];
+  const [fmin, fmax] = [minOf(f), maxOf(f)];
   const [tmin, tmax] = [1 / (2 * Math.PI * fmax), 1 / (2 * Math.PI * fmin)];
   let best: LinKK | null = null;
   let bestErr = Infinity;
@@ -214,8 +215,8 @@ export function kkNode(ds: Dataset, d: KKData): KKOut {
     const im = pts.map((p) => (neg ? -p.b : p.b));
     const r = linKK(f, re, im, d);
     if (!r) return 'The Lin-KK fit could not be made (too few points for the elements).';
-    const maxRe = Math.max(...r.resRe.map(Math.abs));
-    const maxIm = Math.max(...r.resIm.map(Math.abs));
+    const maxRe = maxOf(r.resRe.map(Math.abs));
+    const maxIm = maxOf(r.resIm.map(Math.abs));
     const ok = Math.max(maxRe, maxIm) <= d.limit;
     const report = [
       `Lin-KK: ${r.M} RC element${r.M === 1 ? '' : 's'}, μ = ${r.mu.toFixed(3)}${r.mu >= d.mu ? ` (at least ${d.mu}: not over-fitted)` : ` (below ${d.mu}: none of 1 to ${d.maxM} elements kept μ up; the one with the largest μ)`}.`,
@@ -273,7 +274,7 @@ export function kkNode(ds: Dataset, d: KKData): KKOut {
   if (wave) warnings.push(`X read as a wavelength (${unit} in its name): the integrals on 1/λ.`);
   else if (!unit) warnings.push('X has no unit in its name: read as proportional to the frequency (an energy, a wavenumber); a wavelength: say it in the options.');
   if (d.mode === 'optical') {
-    const pct = Math.max(...ys) > 1.5;
+    const pct = maxOf(ys) > 1.5;
     const R = ys.map((v) => (pct ? v / 100 : v));
     if (R.some((v) => v <= 0 || v >= 1)) warnings.push('R must be between 0 and 1 (or 0 and 100 %): the points outside are clipped.');
     const Rc = R.map((v) => Math.min(0.9999, Math.max(1e-6, v)));

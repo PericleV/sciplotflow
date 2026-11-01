@@ -7,6 +7,7 @@ import * as H from './hypo.ts';
 import { chiSquare, gTest, fisherExact, mcnemar, association, twoByTwo, expected, padjust, aucDeLong, delongTest, rocPoints, kaplanMeier, survivalAt, logRank, leastSquares, type PAdjust, type KM } from './stat2.ts';
 import { chi2Sf, normInv, tInv, tP2, fSf } from './dist.ts';
 import { byName, chosen, fp, f3, isText, levelOf, sig, table, type Row, type StatOut } from './statnodes.ts';
+import { maxOf } from './minmax.ts';
 
 export type PAdjustData = { col: string; method: PAdjust; alpha: number };
 // layout: raw (a row per observation: the category of its row and of its column), table (the counts as a table: a
@@ -344,7 +345,7 @@ export function survivalNode(ds: Dataset, d: SurvivalData): StatOut {
     .split(/[\s,;]+/)
     .map(Number)
     .filter((v) => Number.isFinite(v) && v >= 0);
-  const at = given.length ? given : roundTimes(Math.max(...time));
+  const at = given.length ? given : roundTimes(maxOf(time));
   const summary = table(
     'summary',
     kms.map((km, k) => ({

@@ -8,6 +8,7 @@
 import { chi2Sf, fSf, lgamma, normCdf } from './dist.ts';
 import type { AnovaRow, Pair } from './hypo.ts';
 import type { TestResult } from './hypo.ts';
+import { maxOf } from './minmax.ts';
 
 const sum = (a: number[]) => a.reduce((s, v) => s + v, 0);
 const mean = (a: number[]) => sum(a) / a.length;
@@ -319,7 +320,7 @@ export function mixedModel(y: number[], subj: number[], terms: { name: string; c
   const N = y.length;
   const X = y.map((_, i) => [1, ...terms.flatMap((t) => t.cols[i])]);
   const p = X[0].length;
-  const S = Math.max(...subj) + 1;
+  const S = maxOf(subj) + 1;
   const rows: number[][] = Array.from({ length: S }, () => []);
   subj.forEach((s, i) => rows[s].push(i));
   const groups = rows.filter((r) => r.length);
