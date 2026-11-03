@@ -17,7 +17,7 @@ import type { MatrixPlotSpec } from './engine/matrixplot.ts';
 export const IMPORT_DEFAULTS: ImportData = { name: '', fileName: '', text: '', textId: '', csv: CSV_DEFAULTS };
 // a new sheet: an empty table of 2 columns × 10 rows to type in
 export const newSheet = (name: string): BookSheet => ({ name, text: '', edits: { addRows: 10, addCols: 2 } });
-export const WORKBOOK_DEFAULTS: WorkbookData = { name: '', sheets: [newSheet('Sheet1')], sheet: 0 };
+export const WORKBOOK_DEFAULTS: WorkbookData = { name: '', sheets: [newSheet('Sheet1')], sheet: 0, apart: true };
 export const EXTRACT_DEFAULTS: ExtractData = { column: '', index: 0 };
 export const FIT_DEFAULTS: FitNodeData = {
   x: '',

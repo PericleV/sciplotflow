@@ -29,16 +29,37 @@ export type StatOut = { tables: Record<string, Dataset>; report: string[]; warni
 
 export const isText = (c: Column) => !!c.text && Array.from(c.values).every((v) => !Number.isFinite(v));
 const finite = (c: Column) => Array.from(c.values).filter(Number.isFinite);
-// the columns asked for (empty: every numeric column but the ones designated “–”)
-export function chosen(ds: Dataset, spec: string): Column[] | string {
+// the columns asked for (empty: every numeric column but the ones designated “–”; axisOut: and but an X axis, when
+// others are left — the groups compared)
+export function chosen(ds: Dataset, spec: string, axisOut = false): Column[] | string {
   const cols = ds.columns;
   if (spec.trim()) {
     const p = pick(spec, cols.map((c) => c.name), true, cols);
     if (p.missing.length) return `Columns: no ${p.missing.map((m) => `“${m}”`).join(', ')} in the dataset.`;
     return p.found.map((j) => cols[j]);
   }
-  // every numeric column (an X designated by default is a group too), except the ones designated “–”
-  return cols.filter((c, j) => !isText(c) && roleOf(cols, j) !== 'none');
+  // every numeric column (an X designated by default is a group too, a column of a table of groups), except the ones
+  // designated “–”
+  const all = cols.filter((c, j) => !isText(c) && roleOf(cols, j) !== 'none');
+  const axes = axisOut ? all.filter((c) => isAxis(cols, cols.indexOf(c))) : [];
+  return axes.length && all.length > axes.length ? all.filter((c) => !axes.includes(c)) : all;
+}
+// An X axis rather than a group of values: designated X, 3 values or more, all in order (strictly up or down) — the x of
+// x, y1, y2 … compared as a group would make the test say nothing
+export function isAxis(cols: Column[], j: number): boolean {
+  if (j < 0 || roleOf(cols, j) !== 'x') return false;
+  const v = Array.from(cols[j].values).filter(Number.isFinite);
+  if (v.length < 3) return false;
+  const up = v[1] > v[0];
+  for (let i = 1; i < v.length; i++) if (up ? !(v[i] > v[i - 1]) : !(v[i] < v[i - 1])) return false;
+  return true;
+}
+// The column left out of the groups compared as an X axis (none chosen by hand), '' when none: said in the node
+export function axisLeftOut(ds: Dataset, spec: string): string {
+  if (spec.trim()) return '';
+  const all = ds.columns.filter((c, j) => !isText(c) && roleOf(ds.columns, j) !== 'none');
+  const axes = all.filter((c) => isAxis(ds.columns, ds.columns.indexOf(c)));
+  return axes.length && all.length > axes.length ? axes.map((c) => `“${c.name}”`).join(', ') : '';
 }
 export const byName = (ds: Dataset, name: string) => ds.columns.find((c) => c.name === name);
 // the level of row i of a factor column: its text, else its value
@@ -66,13 +87,13 @@ export function groupsOf(ds: Dataset, d: StatInput): { names: string[]; groups: 
     }
     return { names, groups };
   }
-  const cols = chosen(ds, d.cols);
+  const cols = chosen(ds, d.cols, true);
   if (typeof cols === 'string') return cols;
   return { names: cols.map((c) => c.name), groups: cols.map(finite) };
 }
 // subjects: a row per subject, a column per condition — the complete rows
 export function subjectsOf(ds: Dataset, d: StatInput): { names: string[]; m: number[][]; dropped: number } | string {
-  const cols = chosen(ds, d.cols);
+  const cols = chosen(ds, d.cols, true);
   if (typeof cols === 'string') return cols;
   const n = Math.max(0, maxOf(cols.map((c) => c.values.length)));
   const m: number[][] = [];

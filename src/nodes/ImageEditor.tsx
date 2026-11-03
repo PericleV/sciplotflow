@@ -2819,7 +2819,7 @@ export function ImageEditor({ id, data, onClose }: { id: string; data: ImageAnal
           {crop && full ? ` (of ${full.w} × ${full.h})` : ''}
           {busy ? (reply && reply.scale < 1 ? ' · preview, computing the full size…' : ' · computing…') : ''}
         </span>
-        <span className="ie-group ie-tasks" title="What you are doing: its steps on the left, in the order they are done; All tools: every panel, as before">
+        <span className="ie-group ie-tasks" title="What you are doing: its steps on the left, in the order they are done">
           {TASK_ORDER.filter((t) => !HIDDEN_TASKS.includes(t) || t === task).map((t) => (
             <button key={t} className={`nodrag${task === t ? ' on' : ''}`} title={t === 'all' ? 'Every tool and panel at once (the image steps on the left, the panels as tabs on the right)' : TASKS[t].title} onClick={() => setTask(t)}>
               {taskLabel(t)}

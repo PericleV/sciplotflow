@@ -66,7 +66,7 @@ import { fromColumn, makeMatrix, matrixDataset, matrixSheet, partHandle, runStep
 import { cellCurves, matrixAxes, matrixGrid, type MatrixPlotSpec } from './matrixplot.ts';
 import { bracketCurves, bracketTable, SIG_DEFAULTS, significance, type SigElement, type SigSpec } from './signif.ts';
 import { averageNode, convNode, fftNode, interpNode, normalizeNode, smoothNode, valuesOf, type SignalOut, type SignalPlot } from './signalnodes.ts';
-import { anovaNode, corrNode, nonparNode, normalityNode, tTestNode, type StatOut } from './statnodes.ts';
+import { anovaNode, axisLeftOut, corrNode, nonparNode, normalityNode, tTestNode, type StatOut } from './statnodes.ts';
 import { contingencyNode, pAdjustNode, regressNode, rocNode, STAT_WAIT, statLevels, survivalNode } from './statnodes2.ts';
 import { agreeNode, distFitNode, logisticNode, methCompNode, powerNode, resampleNode, STAT3_WAIT, stat3Levels } from './statnodes3.ts';
 import { baselineNode } from './baselinenode.ts';
@@ -147,6 +147,7 @@ export type NodeView = {
   csv?: CsvResult;
   sheet?: SheetMap; // Import: which row / column of the table as read each row / column shown is
   sheets?: string[]; // Import, Extract column, Workbook: the names of the sheets of the workbook
+  shownSheet?: Dataset; // Import, Workbook: the sheet shown in the worksheet when it is not the one given on “dataset”
   sheetsAs?: string[]; // Workbook, Columns: the names the node's settings know those sheets by (one renamed since: its old name)
   toSheets?: string[]; // Columns to sheets: the names of the sheets made
   figList?: { key: string; name?: string; on: boolean }[]; // Select figures: the figures in, taken or not
@@ -3763,6 +3764,21 @@ function fitNode(d: FitNodeData, v: Value | undefined, id: string, irfIn?: Value
   const cmp = york || model.joint ? null : compareFits(d, model, specs, runs, res.runs, ctx, warnings);
   const rr = res.runs.map((r) => ({ ...r, ...parts[runs.findIndex((q) => q.label === r.label)] }));
   if (!rr.length) return { errors: ['Nothing was fitted.', ...res.warnings], view: { available } };
+  // a fit that looks good by R² and says nothing: a peak's centre outside the data, an amplitude or a width less sure
+  // than its own value (a Gaussian on a straight line: R² 0.998, xc = −57 ± 75)
+  const periodic = d.model.kind === 'library' && d.model.model === 'sinedamp';
+  for (const r of rr) {
+    if (!r.resid.x.length) continue;
+    const [x0, x1] = [minOf(r.resid.x), maxOf(r.resid.x)];
+    const odd: string[] = [];
+    model.params.forEach((q, j) => {
+      const p = r.params[j];
+      if (!p || specs[j]?.fixed || specs[j]?.link || !Number.isFinite(p.value)) return;
+      if (q.kind === 'x' && /^xc\d*$/.test(q.name) && !periodic && (p.value < x0 || p.value > x1)) odd.push(`${q.name} = ${fmtNum(p.value, 4)} is outside the data (${fmtNum(x0, 4)} … ${fmtNum(x1, 4)})`);
+      else if ((q.kind === 'amp' || q.kind === 'width') && p.error > Math.abs(p.value)) odd.push(`${q.name} = ${fmtNum(p.value, 3)} ± ${fmtNum(p.error, 3)}, its error larger than itself`);
+    });
+    if (odd.length) warnings.push(`${rr.length > 1 ? `${r.label}: ` : ''}the model may not suit the data, whatever R² says: ${odd.join('; ')}. Try another model or other starting values.`);
+  }
   // outputs: the fit curves — a dataset, an X and a fit column (and its band, ±Y) for every run —, the residuals, the
   // parameters (a row per run)
   const band = d.band !== 'none' && rr.every((r) => r.curve.band);
@@ -4543,7 +4559,10 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
         let shown: { csv: CsvResult; map: SheetMap } | null = null;
         // (in the order shown: moved with the mouse; their ids stay those of their places as read)
         const perm = inOrder(d.sheets.map((_, j) => j), d.sheetOrder);
-        const at = perm[Math.min(d.sheets.length - 1, Math.max(0, Math.floor(d.sheet ?? 0)))];
+        const place = (k: number | undefined) => perm[Math.min(perm.length - 1, Math.max(0, Math.floor(k ?? 0)))];
+        // (the sheet shown in the worksheet; the one given on “dataset”: its own, else the one shown)
+        const at = place(d.sheet);
+        const given = place(d.give ?? d.sheet);
         const read = d.sheets.map((s, j) => {
           const r = readTable(s.text, s.excel ? { ...d.csv, delimiter: '\t', decimal: '.' } : d.csv, s.name, s.name);
           const { dataset, map } = applySheet(r.dataset, d.sheetEdits?.[s.name], r.decimal, sheetId(importSource(n.id, d.textId), j));
@@ -4554,9 +4573,9 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
         const sheets = perm.map((j) => read[j]);
         const sh = shown as { csv: CsvResult; map: SheetMap } | null;
         return {
-          outputs: { out: { t: 'dataset', v: read[at] }, book: { t: 'workbook', v: { name, sheets } } },
+          outputs: { out: { t: 'dataset', v: read[given] }, book: { t: 'workbook', v: { name, sheets } } },
           warnings,
-          view: { ...(sh ? { csv: sh.csv, sheet: sh.map } : {}), sheets: sheets.map((s) => s.name) },
+          view: { ...(sh ? { csv: sh.csv, sheet: sh.map } : {}), sheets: sheets.map((s) => s.name), ...(given !== at ? { shownSheet: read[at] } : {}) },
         };
       }
       if (!d.text && !hasEdits(d.edits)) return { view: { waiting: 'Open a file (CSV, text, .xlsx, .xls, .ods: several at once make a workbook), drop it on the node, paste a table, or start an empty table.' } };
@@ -4569,7 +4588,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
     case 'book': {
       // its own sheets (typed or pasted), then the sheets of its inputs A, B, C …: columns and datasets on the sheet
       // chosen for each (side by side), the sheets of a workbook as they are
-      const own = n.data.sheets ?? [];
+      let own = n.data.sheets ?? [];
       const ins: NonNullable<NodeView['book']>['ins'] = [];
       const fromIns: Dataset[] = [];
       const onSheet = new Map<string, Column[]>();
@@ -4577,12 +4596,22 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
         const m = /^in-(\d+)$/.exec(h);
         return m ? [Number(m[1])] : [];
       });
-      // an input with no sheet named goes to the first sheet (Sheet1)
-      const firstSheet = own[0]?.name || 'inputs';
+      // an input with no sheet named goes to the first sheet (Sheet1); apart (new nodes): a dataset or a matrix to a sheet
+      // of its own, named after it
+      const apart = !!n.data.apart;
+      const firstSheet = own[0]?.name || (apart ? 'Sheet1' : 'inputs');
+      const taken = new Set<string>(own.map((s) => s.name));
+      const ownSheet = (v: Value | undefined, letter: string) => {
+        const base = (v?.t === 'dataset' || v?.t === 'matrix' ? v.v.name : '') || `input ${letter}`;
+        let nm = base;
+        for (let c = 2; taken.has(nm); c++) nm = `${base} (${c})`;
+        taken.add(nm);
+        return nm;
+      };
       for (const p of ports.sort((a, b) => a - b)) {
         const v = one(`in-${p}`);
         const letter = columnLetter(p);
-        const sheet = n.data.into?.[p]?.trim() || firstSheet;
+        const sheet = n.data.into?.[p]?.trim() || (apart && (v?.t === 'dataset' || v?.t === 'matrix') ? ownSheet(v, letter) : firstSheet);
         if (v?.t === 'workbook') {
           fromIns.push(...v.v.sheets);
           ins.push({ letter, kind: 'workbook', name: v.v.name, sheet: '' });
@@ -4599,6 +4628,8 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
           ins.push({ letter, kind: 'matrix', name: M.name || 'matrix', sheet, ask: !how, rowsAre: M.rowNames ? 'names' : M.ys ? 'Y' : '', colsAre: M.colNames ? 'names' : M.xs ? 'X' : '' });
         }
       }
+      // (apart: its empty Sheet1 left out while nothing comes to it and other inputs do)
+      if (apart && own.length === 1 && blankSheet(own[0]) && ins.length && !onSheet.has(own[0].name)) own = [];
       // the inputs given a sheet of its own go on it; the others make sheets after them
       const ownNames = new Set(own.map((s) => s.name));
       for (const [name, cols] of onSheet) if (!ownNames.has(name)) fromIns.push({ name, columns: sideBySide(cols) });
@@ -4624,6 +4655,8 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       const sheetKeys = [...own.map(ownId), ...inSheets.map(({ s }) => s.id ?? `${n.id}:in:${s.name}`)];
       const perm = inOrder(sheetKeys, n.data.order);
       const k = perm[Math.min(total - 1, Math.max(0, Math.floor(n.data.sheet ?? 0)))];
+      // (the sheet given on “dataset”: its own, else the one shown)
+      const g = perm[Math.min(total - 1, Math.max(0, Math.floor(n.data.give ?? n.data.sheet ?? 0)))];
       // the columns of a sheet with inputs, each with its key (o3: the column of its own table read 4th; i:name: an
       // input's), arranged as set in the node: the inputs' left out, the order moved by hand (the others after, as they come)
       type Keyed = { key: string; col: Column };
@@ -4706,10 +4739,11 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       const shownSheets = perm.map((j) => sheets[j]);
       const moved = perm.some((j, i) => j !== i);
       return {
-        outputs: { out: { t: 'dataset', v: sheets[k] }, book: { t: 'workbook', v: { name: n.data.name || 'Book', sheets: shownSheets } } },
+        outputs: { out: { t: 'dataset', v: sheets[g] }, book: { t: 'workbook', v: { name: n.data.name || 'Book', sheets: shownSheets } } },
         warnings: bookWarnings,
         view: {
           sheets: shownSheets.map((s) => s.name),
+          ...(g !== k ? { shownSheet: sheets[k] } : {}),
           book: { own: own.length, ins, kinds: perm.map((j) => kinds[j]), ids: perm.map((j) => sheetKeys[j]), ...(moved ? { place: perm } : {}), ...(rowsOf ? { rowsOf } : {}), ...(keys ? { keys } : {}), ...(hiddenSheets.length ? { hiddenSheets } : {}) },
           ...(setAs ? { sheetsAs: perm.map((j) => setAs[j]) } : {}),
           ...(map ? { sheet: map } : {}),
@@ -4983,9 +5017,17 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
                                     ? logisticNode(v.v, n.data)
                                     : corrNode(v.v, n.data);
       const levels = statLevels(v.v, n) ?? stat3Levels(v.v, n);
-      if (r.errors.length) return { errors: r.errors, view: { available, ...(levels ? { levels } : {}) } };
+      // (the groups compared taken from the columns, none chosen by hand: an X axis among them was left out — said)
+      const sd = n.data as { layout?: string; cols?: string; col?: string; design?: string };
+      const fromCols =
+        n.type === 'distfit' ? !sd.col
+        : n.type === 'agree' ? true
+        : (n.type === 'normality' || n.type === 'ttest' || n.type === 'nonparam' || n.type === 'resample' || (n.type === 'anova' && (!sd.design || sd.design === 'one' || sd.design === 'repeated'))) && sd.layout !== 'indexed';
+      const left = fromCols ? axisLeftOut(v.v, n.type === 'distfit' ? '' : (sd.cols ?? '')) : '';
+      const warnings = left ? [`${left} left out: an X axis (designated X, its values in order), not a column of values to ${n.type === 'distfit' ? 'fit' : 'compare'}. Choose the columns to take it.`, ...r.warnings] : r.warnings;
+      if (r.errors.length) return { errors: r.errors, ...(left ? { warnings: warnings.slice(0, 1) } : {}), view: { available, ...(levels ? { levels } : {}) } };
       const outputs: Record<string, Value> = Object.fromEntries(Object.entries(r.tables).map(([k, t]) => [k, { t: 'dataset', v: t } as Value]));
-      return { outputs, warnings: r.warnings, view: { available, report: r.report, ...(levels ? { levels } : {}) } };
+      return { outputs, warnings, view: { available, report: r.report, ...(levels ? { levels } : {}) } };
     }
     case 'power': {
       // (a calculator: no data)
@@ -5341,6 +5383,8 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
 // The nodes that take one sheet of a workbook on a port (its name: the node's `sheet`): the graphs on their dataset
 // port, Columns, Extract column, Pick points, Filter & sort rows, Split into columns on their input
 const SHEET_PORTS: Record<string, string> = { columns: 'in', extract: 'in', pick: 'in', eis: 'in', filterrows: 'in', unstack: 'in', tosheets: 'in', ...Object.fromEntries(['histogram', 'barchart', 'boxviolin', 'probplot', 'blandaltman', 'pie', 'polar', 'waterfall', 'contour', 'ternary', 'plot3d'].map((t) => [t, 'dataset'])) };
+// A Workbook's first sheet as made with the node, nothing typed, pasted or computed in it yet
+export const blankSheet = (s: BookSheet) => s.name === 'Sheet1' && !s.text && !Object.keys(s.edits?.cells ?? {}).length && !Object.keys(s.edits?.formulas ?? {}).length;
 export const sheetPort = (type: string | undefined): string | undefined => (type ? SHEET_PORTS[type] : undefined);
 // the nodes that can also take every sheet (`sheet` '*': the workbook itself, a workbook out)
 export const everySheet = (type: string | undefined) => type === 'filterrows' || type === 'columns';

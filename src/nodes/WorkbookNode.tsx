@@ -16,7 +16,7 @@ import { newSheet } from '../defaults.ts';
 import type { AppNode, BookLayout, BookSheet, WorkbookData, WorkbookNode } from '../types.ts';
 import { Worksheet, type RowLayout, type SheetLayout } from './Worksheet.tsx';
 import { Check, Field, InPort, Messages, OutPort, TextInput } from './ui.tsx';
-import type { NodeView } from '../engine/evaluate.ts';
+import { blankSheet, type NodeView } from '../engine/evaluate.ts';
 import { maxOf } from '../engine/minmax.ts';
 import { X } from 'lucide-react';
 import { IC } from './iconProps.ts';
@@ -65,9 +65,14 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
   const set = (p: Partial<WorkbookData>) => updateNodeData(id, p);
   const r = useNodeResult(id);
   const [renaming, setRenaming] = useState<number | null>(null);
-  const own = data.sheets ?? [];
+  // its own sheets (a new Workbook's empty Sheet1, left out while only datasets / workbooks come in: none then)
+  const own = data.apart && r?.view.book?.own === 0 && data.sheets?.length === 1 && blankSheet(data.sheets[0]) ? [] : (data.sheets ?? []);
   const names = r?.view.sheets ?? own.map((s) => s.name);
   const k = Math.min(names.length - 1, Math.max(0, data.sheet ?? 0));
+  // the sheet given on “dataset”: its own, else the one shown (an older node, until another tab is shown)
+  const g = Math.min(names.length - 1, Math.max(0, data.give ?? k));
+  // (another sheet shown: the one given so far kept on “dataset”)
+  const show = (j: number, p: Partial<WorkbookData> = {}) => set({ sheet: j, ...(data.give === undefined ? { give: k } : {}), ...p });
   // the sheet shown comes from the inputs: read-only; its own table with inputs at its right: those columns read-only
   const kinds = r?.view.book?.kinds ?? names.map((_, j) => (j < own.length ? 'own' : 'input'));
   const viewOnly = kinds[k] === 'input';
@@ -83,7 +88,7 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
     if (ids.length !== names.length) return;
     const [x] = ids.splice(from, 1);
     ids.splice(to, 0, x);
-    set({ order: ids, sheet: shownAfterMove(k, from, to) });
+    set({ order: ids, sheet: shownAfterMove(k, from, to), ...(data.give !== undefined ? { give: shownAfterMove(data.give, from, to) } : {}) });
   });
   // its own sheets with their ids written (a sheet without one: its place until then), before one is added or removed:
   // the others keep theirs
@@ -97,8 +102,9 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
   const setName = (j: number) => r?.view.sheetsAs?.[j] ?? names[j];
   const colName = (j: number) => (keys?.[j]?.startsWith('i:') ? keys[j].slice(2) : ds?.columns[j]?.name);
   const aliases = useContext(NameAliases);
-  const firstSheet = own[0]?.name || 'inputs';
-  const ds = r?.outputs.out?.t === 'dataset' ? r.outputs.out.v : undefined;
+  const firstSheet = own[0]?.name || (data.apart ? 'Sheet1' : 'inputs');
+  // (the sheet shown: the one given on “dataset”, or another one looked at)
+  const ds = r?.view.shownSheet ?? (r?.outputs.out?.t === 'dataset' ? r.outputs.out.v : undefined);
   const conns = useNodeConnections({ handleType: 'target' });
   // one free input after the last one used
   const usedPorts = conns.map((c) => Number(/^in-(\d+)$/.exec(c.targetHandle ?? '')?.[1] ?? -1));
@@ -175,7 +181,10 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
   // (a sheet added: after the others; at the end of the tabs moved)
   const addSheet = (s: BookSheet) => {
     const list = stamped();
-    set({ sheets: [...list, { ...s, id: freeId(list) }], sheet: data.order?.length ? names.length : own.length });
+    const at = data.order?.length ? names.length : own.length;
+    // (the sheet given stays the same one: a place further when the new sheet comes before it)
+    const given = data.give ?? k;
+    show(at, { sheets: [...list, { ...s, id: freeId(list) }], give: names.length && given >= at ? given + 1 : given });
   };
   // a sheet of its own removed (asked first when it holds a table); one of the inputs taken out of the workbook (the input
   // stays as it is; Show hidden sheets brings it back)
@@ -183,9 +192,11 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
     const o = ownIx(j);
     const s = own[o];
     const next = Math.max(0, Math.min(k, names.length - 2));
-    if (!s) return set({ hideSheets: [...new Set([...(data.hideSheets ?? []), setName(j)])], sheet: next });
+    // (the sheet given: the same one, one place before when a sheet before it goes; the first when it goes itself)
+    const give = data.give === undefined ? {} : { give: j < data.give ? data.give - 1 : j === data.give ? 0 : data.give };
+    if (!s) return set({ hideSheets: [...new Set([...(data.hideSheets ?? []), setName(j)])], sheet: next, ...give });
     if ((s.text || s.edits?.cells) && !(await ask(`Remove the sheet “${s.name}” and its table?`, { ok: 'Remove', danger: true }))) return;
-    set({ sheets: stamped().filter((_, i) => i !== o), sheet: next });
+    set({ sheets: stamped().filter((_, i) => i !== o), sheet: next, ...give });
   };
   const hiddenSheets = r?.view.book?.hiddenSheets ?? [];
   const rename = (t: number, name: string) => {
@@ -229,7 +240,7 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
         const inp = ins.get(columnLetter(j));
         return (
           <InPort key={j} label={columnLetter(j)} port="dataset" id={`in-${j}`} title="Optional: a column, a dataset or a matrix, on the first sheet, or the sheet named in the options (read-only, it follows the input), side by side with the other inputs there; a workbook: its sheets as they are">
-            <span className="muted ellipsis grow">{inp ? `${inp.name} · ${inp.kind}${inp.kind !== 'workbook' ? ` → ${into(j) || firstSheet}` : ''}` : 'connect a column, dataset, workbook or matrix'}</span>
+            <span className="muted ellipsis grow">{inp ? `${inp.name} · ${inp.kind}${inp.kind !== 'workbook' ? ` → ${inp.sheet || into(j) || firstSheet}` : ''}` : 'connect a column, dataset, workbook or matrix'}</span>
           </InPort>
         );
       })}
@@ -279,7 +290,7 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
                       </>
                     )}
                   </span>
-                  <TextInput value={into(j)} placeholder={firstSheet} title={`The sheet this input goes to (empty: the first sheet, “${firstSheet}”), at the right of its table; inputs given the same sheet go side by side, a name not used yet makes a new sheet`} onChange={(v) => setInto(j, v)} />
+                  <TextInput value={into(j)} placeholder={(!into(j) && inp.sheet) || firstSheet} title={`The sheet this input goes to (empty: ${data.apart && inp.kind !== 'column' ? 'a sheet of its own, named after it' : `the first sheet, “${firstSheet}”`}), at the right of its table; inputs given the same sheet go side by side, a name not used yet makes a new sheet`} onChange={(v) => setInto(j, v)} />
                 </Fragment>
               ) : null;
             })}
@@ -305,7 +316,7 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
           plain
         />
       )}
-      <div className="sheet-tabs nowheel" title="The sheet shown and given on the “dataset” output; double-click a tab of its own to rename it; drag a tab to move the sheet (⇢: the sheet shows the inputs; the sheets made by them are named on their input)">
+      <div className="sheet-tabs nowheel" title="The sheet shown; ▸ marks the one given on the “dataset” output (looking at another one does not change it); double-click a tab of its own to rename it; drag a tab to move the sheet (⇢: the sheet shows the inputs; the sheets made by them are named on their input)">
         {names.map((nm, j) =>
           renaming === j && ownIx(j) >= 0 ? (
             <input
@@ -322,7 +333,7 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
               }}
             />
           ) : (
-            <button key={j} className={`nodrag${j === k ? ' on' : ''}${tabs.mark(j)}`} onClick={() => set({ sheet: j })} onDoubleClick={() => ownIx(j) >= 0 && setRenaming(j)} {...tabs.props(j)}>
+            <button key={j} className={`nodrag${j === k ? ' on' : ''}${j === g && names.length > 1 ? ' given' : ''}${tabs.mark(j)}`} onClick={() => show(j)} onDoubleClick={() => ownIx(j) >= 0 && setRenaming(j)} {...tabs.props(j)}>
               {kinds[j] === 'own' ? nm : `⇢ ${nm}`}
               {(names.length > 1 || ownIx(j) < 0) && (
                 <span
@@ -348,8 +359,16 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
           </button>
         )}
       </div>
+      {names.length > 1 && g !== k && (
+        <div className="row sheet-give">
+          <span className="muted ellipsis">“dataset” gives ▸ {names[g]}</span>
+          <button className="nodrag" title="Give the sheet shown on the “dataset” output (to the nodes connected to it)" onClick={() => set({ give: k })}>
+            Give this sheet
+          </button>
+        </div>
+      )}
       <Messages result={r} />
-      <OutPort label={names[k] ? `dataset (${names[k]})` : 'dataset'} port="dataset" />
+      <OutPort label={names[g] ? `dataset (${names[g]})` : 'dataset'} port="dataset" />
       <OutPort label={`workbook (${names.length} sheet${names.length === 1 ? '' : 's'})`} port="workbook" id="book" title="All the sheets, for Extract column (choose the sheet) or Sheets to columns" />
     </div>
   );

@@ -96,7 +96,7 @@ export function resampleNode(ds: Dataset, d: ResampleData): StatOut {
     names = lv;
     for (let i = 0; i < v.values.length; i++) if (Number.isFinite(v.values[i])) (levelOf(f, i) === lv[0] ? a : levelOf(f, i) === lv[1] ? b : []).push(v.values[i]);
   } else {
-    const cs = chosen(ds, d.cols);
+    const cs = chosen(ds, d.cols, true);
     if (typeof cs === 'string') return err(cs);
     const num = cs.filter((c) => !isText(c));
     const need = two || paired ? 2 : 1;
@@ -171,7 +171,7 @@ function fitBeta(x: number[], level: number): Fitted {
 export function distFitNode(ds: Dataset, d: DistFitData): StatOut {
   const report: string[] = [];
   const warnings: string[] = [];
-  const c = d.col ? byName(ds, d.col) : chosen(ds, '');
+  const c = d.col ? byName(ds, d.col) : chosen(ds, '', true);
   const col = Array.isArray(c) ? c.find((q) => !isText(q)) : c;
   if (!col || typeof col === 'string') return err(d.col ? `No column “${d.col}”.` : 'Choose the column of the values.');
   const sc = d.censor ? byName(ds, d.censor) : undefined;
@@ -247,7 +247,7 @@ export function agreeNode(ds: Dataset, d: AgreeData): StatOut {
   const report: string[] = [];
   const warnings: string[] = [];
   const lvl = d.level;
-  const cs = chosen(ds, d.cols);
+  const cs = chosen(ds, d.cols, true);
   if (typeof cs === 'string') return err(cs);
   if (d.mode === 'kappa') {
     if (cs.length < 2) return err('Choose the columns of the raters (2 or more).');

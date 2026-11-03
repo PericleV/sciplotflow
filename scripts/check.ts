@@ -145,7 +145,9 @@ import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { mergedNodes, parseProject, PROJECT_VERSION, stringifyProject, toProject, type Project } from '../src/project.ts';
 import { combine, keptBlocks, labelRuns, unstack } from '../src/engine/reshape.ts';
 import { JOHNSON_AU } from '../src/data/johnsonGold.ts';
-import { CALCULUS_DEFAULTS, newSheet, PEAK_DEFAULTS as PEAK_NEW, PICK_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS } from '../src/defaults.ts';
+import { CALCULUS_DEFAULTS, newSheet, PEAK_DEFAULTS as PEAK_NEW, PICK_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS as WORKBOOK_NEW } from '../src/defaults.ts';
+// the Workbook of the checks made before `apart` (an older node: a dataset on its first sheet); WORKBOOK_NEW: a new one
+const WORKBOOK_DEFAULTS: typeof WORKBOOK_NEW = { ...WORKBOOK_NEW, apart: undefined };
 // the Peak analyzer as before Run analysis: fitted at every change (the tests of the fit)
 const PEAK_DEFAULTS = { ...PEAK_NEW, needRun: undefined };
 import { fmtPm } from '../src/engine/report.ts';
@@ -980,6 +982,55 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   const eo = res.get('e')!.outputs.out;
   ok(firsts === '1,10,100', `columns of the same name in a file: each curve its own column (${firsts})`);
   ok(eo?.t === 'column' && eo.v.values[0] === 10 && isRepeatOf('Wavelength 2 (nm)', 'Wavelength (nm)') && !isRepeatOf('Intensity 2b', 'Intensity') && !isRepeatOf('Intensity', 'Intensity'), 'an older Extract column of a repeated name (by its place): the same column once the names are unique');
+}
+
+// ---- results that look good and are not: said ----
+{
+  const ev = (text: string, node: Omit<AppNode, 'position' | 'id'>, h = 'in') => evaluateGraph([{ id: 'i', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, text, textId: text.slice(0, 12) } } as AppNode, { ...node, id: 'n', position: { x: 0, y: 0 } } as AppNode], [{ id: '1', source: 'i', sourceHandle: 'out', target: 'n', targetHandle: h }]).get('n')!;
+  // a Gaussian on a straight line (R² 0.998) — and on a Gaussian: nothing said
+  const line = ev(['x,y', ...Array.from({ length: 30 }, (_, i) => `${i},${(2 * i + 1 + Math.sin(i)).toFixed(3)}`)].join('\n'), { type: 'fit', data: FIT_DEFAULTS } as never);
+  const peak = ev(['x,y', ...Array.from({ length: 41 }, (_, i) => `${i},${(3 * Math.exp(-((i - 20) ** 2) / 18) + 0.01 * Math.sin(7 * i)).toFixed(4)}`)].join('\n'), { type: 'fit', data: FIT_DEFAULTS } as never);
+  ok(line.warnings.some((w) => w.includes('may not suit the data') && w.includes('outside the data')) && !peak.warnings.some((w) => w.includes('may not suit')), `Fit: a peak model on data without a peak is said not to suit them (${line.warnings.join(' ')})`);
+  // the statistics: the x of x, y1, y2, y3 left out of the groups (said); a table of groups kept whole
+  const xy = ['x,y1,y2,y3', ...Array.from({ length: 12 }, (_, i) => `${i},${(Math.sin(i) + 5).toFixed(3)},${(Math.cos(i) + 5.2).toFixed(3)},${(5 + (i % 3) * 0.1).toFixed(3)}`)].join('\n');
+  const groupsOf = (r: ReturnType<typeof ev>) => {
+    const g = r.outputs.groups;
+    return g?.t === 'dataset' ? (g.v.columns[0].text ?? Array.from(g.v.columns[0].values, String)).join('/') : '';
+  };
+  const a = ev(xy, { type: 'anova', data: ANOVA_DEFAULTS } as never);
+  const t = ev('Control,Treated\n5.1,6.2\n4.8,6.0\n5.5,5.9\n5.0,6.4', { type: 'ttest', data: TTEST_DEFAULTS } as never);
+  ok(groupsOf(a) === 'y1/y2/y3' && a.warnings.some((w) => w.startsWith('“x” left out: an X axis')) && groupsOf(t) === 'Control/Treated' && !t.warnings.some((w) => w.includes('X axis')), `Statistics: an X axis is not a group (ANOVA on ${groupsOf(a)}; t-test on ${groupsOf(t)})`);
+  // Import of several files: the sheet given on “dataset” is not the one looked at (an older node: the one shown)
+  const sheets = ['A', 'B', 'C'].map((name, k) => ({ name, text: `x;y\n1;${k + 1}\n2;${k + 2}` }));
+  const imp = (d: object) => evaluateGraph([{ id: 'i', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, fileName: 'three', sheets, ...d } } as AppNode], []).get('i')!;
+  const firstY = (r: ReturnType<typeof imp>) => (r.outputs.out?.t === 'dataset' ? r.outputs.out.v.columns[1].values[0] : NaN);
+  const older = imp({ sheet: 2 });
+  const kept = imp({ sheet: 2, give: 0 });
+  ok(firstY(older) === 3 && !older.view.shownSheet && firstY(kept) === 1 && kept.view.shownSheet?.columns[1].values[0] === 3, 'Import: the sheet given on “dataset” apart from the one shown (an older node: the one shown)');
+}
+
+// ---- a new Workbook: a dataset a sheet of its own (named after it), no empty Sheet1 for datasets / workbooks; columns
+// and typing still on Sheet1; the sheet given on “dataset” apart from the one shown ----
+{
+  const at = { x: 0, y: 0 };
+  const calib = { id: 'i', type: 'import', position: at, data: { ...IMPORT_DEFAULTS, name: 'calib', text: 'c;A\n0;0\n1;12\n2;25', textId: 'wb-c' } } as AppNode;
+  const two = { id: 'i2', type: 'import', position: at, data: { ...IMPORT_DEFAULTS, fileName: 'two', sheets: [{ name: 'run 1', text: 'x;y\n1;2' }, { name: 'run 2', text: 'x;y\n1;3' }] } } as AppNode;
+  const col = { id: 'x', type: 'extract', position: at, data: { ...EXTRACT_DEFAULTS, column: 'A', index: 1 } } as AppNode;
+  const book = (d: object = {}) => ({ id: 'w', type: 'book', position: at, data: { ...structuredClone(WORKBOOK_NEW), ...d } }) as AppNode;
+  const e = (s: string, h = 'out', p = 'in-0') => ({ id: `${s}-${p}`, source: s, sourceHandle: h, target: 'w', targetHandle: p });
+  const sheetsOf = (nodes: AppNode[], edges: Edge[]) => evaluateGraph(nodes, edges).get('w')!.view.sheets?.join('|');
+  const typed = { ...newSheet('Sheet1'), edits: { addRows: 2, addCols: 1, cells: { '0:0': '5' } } };
+  ok(
+    sheetsOf([calib, book()], [e('i')]) === 'calib' &&
+      sheetsOf([two, book()], [e('i2', 'book')]) === 'run 1|run 2' &&
+      sheetsOf([calib, col, book()], [{ id: 'c', source: 'i', sourceHandle: 'out', target: 'x', targetHandle: 'in' }, e('x')]) === 'Sheet1' &&
+      sheetsOf([book()], []) === 'Sheet1' &&
+      sheetsOf([calib, book({ sheets: [typed] })], [e('i')]) === 'Sheet1|calib',
+    `Workbook (new): a dataset a sheet of its own, no empty Sheet1 (${sheetsOf([calib, book()], [e('i')])}; ${sheetsOf([two, book()], [e('i2', 'book')])}; a column: ${sheetsOf([calib, col, book()], [{ id: 'c', source: 'i', sourceHandle: 'out', target: 'x', targetHandle: 'in' }, e('x')])})`,
+  );
+  const own2 = book({ sheets: [{ name: 'S1', text: 'a\n1' }, { name: 'S2', text: 'a\n2' }], sheet: 1, give: 0 });
+  const g = evaluateGraph([own2], []).get('w')!;
+  ok(g.outputs.out?.t === 'dataset' && g.outputs.out.v.name === 'S1' && g.view.shownSheet?.name === 'S2', 'Workbook: the sheet given on “dataset” apart from the one shown');
 }
 
 // ---- more points than a spread into arguments holds (about 10⁵): Peak width ----

@@ -110,7 +110,7 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
   // another file: the changes made by hand to the old one are dropped (after asking)
   const changed = hasEdits(data.edits) || Object.values(data.sheetEdits ?? {}).some(hasEdits);
   const fresh = async () => !changed || (await ask('Open another table? The changes made by hand in the worksheet belong to the current one and are dropped.', { ok: 'Open', danger: true }));
-  const cleared = () => ({ textId: crypto.randomUUID().slice(0, 8), edits: undefined, sheetEdits: undefined, sheet: 0, sheetOrder: undefined });
+  const cleared = () => ({ textId: crypto.randomUUID().slice(0, 8), edits: undefined, sheetEdits: undefined, sheet: 0, give: undefined, sheetOrder: undefined });
   // one text file as before; a spreadsheet workbook (.xlsx, .xls, .ods) or several files: sheets
   // the files opened in this session: read again when another encoding is chosen
   const lastFiles = useRef<File[]>([]);
@@ -136,13 +136,15 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
   const csv = r?.view.csv;
   const sheets = data.sheets ?? [];
   const k = Math.min(sheets.length - 1, Math.max(0, data.sheet ?? 0));
+  // the sheet given on “dataset”: its own, else the one shown (an older node, until another tab is shown)
+  const g = Math.min(sheets.length - 1, Math.max(0, data.give ?? k));
   // the sheets in the order shown (a tab dragged onto another moves it: their places as read kept)
   const perm = inOrder(sheets.map((_, j) => j), data.sheetOrder);
   const tabs = useTabDrag((from, to) => {
     const p = [...perm];
     const [x] = p.splice(from, 1);
     p.splice(to, 0, x);
-    set({ sheetOrder: p, sheet: shownAfterMove(k, from, to) });
+    set({ sheetOrder: p, sheet: shownAfterMove(k, from, to), ...(data.give !== undefined ? { give: shownAfterMove(data.give, from, to) } : {}) });
   });
   const shownSheet = sheets.length ? sheets[perm[k]] : null;
   const shownText = shownSheet ? shownSheet.text : data.text;
@@ -248,14 +250,25 @@ export function ImportNodeView({ id, data }: NodeProps<ImportNode>) {
       )}
       {r?.outputs.out?.t === 'dataset' && r.view.sheet && (
         <>
-          <Worksheet key={shownSheet?.name ?? ''} dataset={r.outputs.out.v} map={r.view.sheet} edits={edits} onEdits={setEdits} look={data.look} onLook={(look) => set({ look })} />
+          <Worksheet key={shownSheet?.name ?? ''} dataset={r.view.shownSheet ?? r.outputs.out.v} map={r.view.sheet} edits={edits} onEdits={setEdits} look={data.look} onLook={(look) => set({ look })} />
           {sheets.length > 1 && (
-            <div className="sheet-tabs nowheel" title="The sheet shown here and given on the “dataset” output (the “workbook” output gives all of them, in this order); drag a tab to move the sheet">
+            <div className="sheet-tabs nowheel" title="The sheet shown here; ▸ marks the one given on the “dataset” output (looking at another one does not change it; the “workbook” output gives all of them, in this order); drag a tab to move the sheet">
               {perm.map((i, j) => (
-                <button key={i} className={`nodrag${j === k ? ' on' : ''}${tabs.mark(j)}`} onClick={() => set({ sheet: j })} {...tabs.props(j)}>
+                // (the first other tab shown: the sheet given so far kept on “dataset”)
+                <button key={i} className={`nodrag${j === k ? ' on' : ''}${j === g ? ' given' : ''}${tabs.mark(j)}`} title={j === g ? 'Given on the “dataset” output' : undefined} onClick={() => set({ sheet: j, ...(data.give === undefined ? { give: k } : {}) })} {...tabs.props(j)}>
                   {sheets[i].name}
                 </button>
               ))}
+            </div>
+          )}
+          {sheets.length > 1 && g !== k && (
+            <div className="row sheet-give">
+              <span className="muted ellipsis">
+                “dataset” gives ▸ {sheets[perm[g]].name}
+              </span>
+              <button className="nodrag" title="Give the sheet shown on the “dataset” output (to the nodes connected to it)" onClick={() => set({ give: k })}>
+                Give this sheet
+              </button>
             </div>
           )}
         </>
