@@ -27,7 +27,7 @@ export type CvStruct = 'mos' | 'pn' | 'schottky' | 'varactor' | 'mim' | 'ferro' 
 // sweep, the unit, ψs written too; then each structure's own numbers (absent: CV_MORE)
 export type CvSpec = {
   type: 'n' | 'p';
-  mode: 'deep' | 'lf' | 'hf' | 'lfhf';
+  mode: 'deep' | 'lf' | 'hf' | 'lfhf' | 'freq';
   temps: string;
   dop: number;
   tox: number;
@@ -55,6 +55,13 @@ export type CvSpec = {
   dit?: number; // cm⁻² eV⁻¹, at mid-gap
   ditEdge?: number; // cm⁻² eV⁻¹, more at the band edges (U)
   ditW?: number; // eV, how fast it rises to them
+  // at the frequencies f (mode 'freq'): their list (Hz); the inversion layer's response time τ_R from the generation
+  // lifetime τ_g (µs: τ_R = 2Nτ_g/nᵢ) or typed (s); the traps' capture cross-section σ (cm², electrons and holes alike)
+  freqs?: string;
+  resp?: 'lifetime' | 'typed';
+  taug?: number;
+  tauR?: number;
+  sigma?: number;
   rs?: number; // Ω in series
   gl?: number; // S, a leak in parallel
   freq?: number; // Hz, measured at
@@ -100,6 +107,11 @@ export const CV_MORE = {
   rs: 0,
   gl: 0,
   freq: 1e5,
+  freqs: '10, 1e3, 1e5',
+  resp: 'lifetime',
+  taug: 1,
+  tauR: 1,
+  sigma: 1e-16,
   na: 1e18,
   nd: 1e16,
   profile: 'abrupt',
@@ -210,8 +222,29 @@ export function trapsOf(c: CvSpec) {
       const xb = Math.min(36, (g - s) / phiT);
       return QE * 1e4 * piecewise((x) => D(s + phiT * x) / (4 * Math.cosh(x / 2) ** 2), xa, xb);
     },
+    // at the angular frequency w: every level its own time constant (Shockley–Read–Hall, small signal; Nicollian &
+    // Brews, ch. 5) τ = 1 / (c·(n_s/f₀ + p_s/(1 − f₀))), c = σ·v_th (cm³/s), n_s and p_s at the surface (ln, cm⁻³), f₀ its
+    // occupation: C_it(ω) = q∫D f₀(1 − f₀)/(1 + ω²τ²), G_it/ω = q∫D f₀(1 − f₀)·ωτ/(1 + ω²τ²) (F/m²; ∫ over the energy in kT)
+    ac: (s: number, phiT: number, w: number, lnNs: number, lnPs: number, cn: number) => {
+      const xa = Math.max(-36, (-g - s) / phiT);
+      const xb = Math.min(36, (g - s) / phiT);
+      // (ln(1 + eˣ), without overflow)
+      const sp = (x: number) => (x > 30 ? x : Math.log1p(Math.exp(x)));
+      const wt = (x: number) => w / (cn * (Math.exp(lnNs + sp(x)) + Math.exp(lnPs + sp(-x))));
+      const c = piecewise((x) => D(s + phiT * x) / (4 * Math.cosh(x / 2) ** 2) / (1 + wt(x) ** 2), xa, xb);
+      const gw = piecewise((x) => (D(s + phiT * x) / (4 * Math.cosh(x / 2) ** 2)) * (1 / (1 / wt(x) + wt(x))), xa, xb);
+      return { c: QE * 1e4 * c, gw: QE * 1e4 * gw };
+    },
   };
 }
+// The inversion layer's response time τ_R (s): typed, or from the generation lifetime, 2Nτ_g/nᵢ (generation in the
+// depletion layer; Nicollian & Brews, Schroder): its frequency 1/(2πτ_R) the one the curve turns from low to high at
+export function inversionTau(c: CvSpec, T: number): number {
+  if (more(c, 'resp') === 'typed') return more(c, 'tauR');
+  return 2 * c.dop * more(c, 'taug') * 1e-6 * Math.exp(-(bands(c, T).lnNi - Math.log(1e6)));
+}
+// The thermal velocity of the carriers (cm/s), √(3kT/mₑ)
+const vThermal = (T: number) => 100 * Math.sqrt((3 * KB * T) / ME);
 
 // The exact high-frequency capacitance of the semiconductor (Lindner 1962; Brews 1974): the majority carriers respond,
 // the minority ones (and the profile) stay. Y = L_D·δv′/δv along the equilibrium profile obeys the Riccati equation
@@ -261,11 +294,15 @@ export function hfExactTable(lnR: number, vMin: number, vMax: number): (v: numbe
   };
 }
 
-export type CvCurve = { T: number; v: number[]; c: number[]; psi: number[]; w: number[]; cox: number; vfb: number };
+// fc (mode 'freq'): at every frequency f, C and G as at the gate (parallel: C_p in F, G_p in S)
+export type CvCurve = { T: number; v: number[]; c: number[]; psi: number[]; w: number[]; cox: number; vfb: number; fc?: { f: number; c: number[]; g: number[] }[] };
 // The MOS curve at one temperature and mode, at the voltages of the sweep (empty beyond the surface potentials
 // reached). Written for an n-type semiconductor (v = ψ/φt > 0: accumulation); a p-type one is its mirror (ψ → −ψ,
 // Q → −Q). coxA: the oxide's capacitance per m² given (the Helmholtz layer of an electrode; Infinity: none).
-export function mosCurve(d: CvSpec, T: number, sweep: number[], modeOf?: 'deep' | 'lf' | 'hf', coxA0?: number): CvCurve | string {
+// mode 'freq': at the frequencies `freqs`, the small-signal admittance (Nicollian & Brews): the semiconductor's C_HF, the
+// inversion layer's C_LF − C_HF through its response time τ_R, the traps each with its own time constant, all in
+// series with C_ox — at a low f the low-frequency curve, at a high f the high-frequency one.
+export function mosCurve(d: CvSpec, T: number, sweep: number[], modeOf?: 'deep' | 'lf' | 'hf' | 'freq', coxA0?: number, freqs: number[] = []): CvCurve | string {
   if (!(T > 0)) return `C–V: the temperature ${T} K must be above 0.`;
   const mode = modeOf ?? (d.mode === 'lfhf' ? 'lf' : d.mode);
   const phiT = (KB * T) / QE;
@@ -305,13 +342,18 @@ export function mosCurve(d: CvSpec, T: number, sweep: number[], modeOf?: 'deep' 
   // the high frequency: C_s held below the band bending of strong inversion (2φ_B, or as CV_ideal.m), or exact
   const hfMin = more(d, 'hfMin');
   const vInv = hfMin === 'fit' ? -(2.1 * uB + 1.33) : -2 * uB;
-  const Y = mode === 'hf' && hfMin === 'exact' ? hfExactTable(lnR, lo / phiT - 1, hi / phiT + 1) : null;
-  const csAt = (psi: number) => {
+  const Y = (mode === 'hf' || mode === 'freq') && hfMin === 'exact' ? hfExactTable(lnR, lo / phiT - 1, hi / phiT + 1) : null;
+  const csHF = (psi: number) => {
     const v = psi / phiT;
-    if (mode !== 'hf') return cs(v, minOn);
     if (Y) return -CD * Y(v);
     return cs(Math.max(v, vInv), false);
   };
+  const csAt = (psi: number) => (mode === 'hf' || mode === 'freq' ? csHF(psi) : cs(psi / phiT, minOn));
+  // (at the frequencies: the inversion layer's response time, the traps' c = σ·v_th, nᵢ in cm⁻³)
+  const tauR = mode === 'freq' ? inversionTau(d, T) : NaN;
+  const cn = more(d, 'sigma') * vThermal(T);
+  const lnNiCm = lnNi - Math.log(1e6);
+  const fc = freqs.map((f) => ({ f, c: [] as number[], g: [] as number[] }));
   const [vLo, vHi] = [vn(lo), vn(hi)];
   const out = sweep.map((V) => {
     const t = d.type === 'n' ? V - vfb : vfb - V;
@@ -325,15 +367,52 @@ export function mosCurve(d: CvSpec, T: number, sweep: number[], modeOf?: 'deep' 
     const psi = (a + b) / 2;
     const s = csAt(psi);
     const sit = traps && mode === 'lf' ? traps.cap(phiT * uB + psi, phiT) : 0;
+    if (mode === 'freq') {
+      // (the inversion layer's part: what the low frequency adds to the high one)
+      const cinv = Math.max(0, cs(psi / phiT, true) - s);
+      const fs = phiT * uB + psi;
+      for (const q of fc) {
+        const w = 2 * Math.PI * q.f;
+        const wt = w * tauR;
+        const it = traps ? traps.ac(fs, phiT, w, lnNiCm + fs / phiT, lnNiCm - fs / phiT, cn) : { c: 0, gw: 0 };
+        // the semiconductor's admittance (S), Y_s = G_s + jωC_s, then C_ox in series: C_p = Im Y / ω, G_p = Re Y
+        const cS = (s + cinv / (1 + wt * wt) + it.c) * A;
+        const gS = w * (cinv / (1 / wt + wt) + it.gw) * A;
+        const m = gS * gS + (w * cS) ** 2;
+        const [zr, zi] = [gS / m, -(w * cS) / m - 1 / (w * cox)];
+        const z = zr * zr + zi * zi;
+        q.c.push(-zi / z / w);
+        q.g.push(zr / z);
+      }
+    }
     return { c: 1 / (1 / cox + 1 / ((s + sit) * A)), psi: d.type === 'n' ? psi : -psi, w: es / s };
   });
-  return { T, v: sweep, c: out.map((q) => q.c), psi: out.map((q) => q.psi), w: out.map((q) => q.w), cox, vfb };
+  // (the voltages beyond the surface potentials reached: empty at every frequency too)
+  for (const q of fc)
+    if (q.c.length < sweep.length) {
+      const c: number[] = [];
+      const g: number[] = [];
+      let k = 0;
+      for (const o of out) {
+        const ok = Number.isFinite(o.psi);
+        c.push(ok ? q.c[k] : NaN);
+        g.push(ok ? q.g[k++] : NaN);
+      }
+      [q.c, q.g] = [c, g];
+    }
+  return { T, v: sweep, c: out.map((q) => q.c), psi: out.map((q) => q.psi), w: out.map((q) => q.w), cox, vfb, ...(mode === 'freq' ? { fc } : {}) };
 }
 
 // ---- every structure: the sets of curves made (C in F; their names, the depletion width in m, more columns) ----
-export type CvSet = { label: string; c: number[]; w?: number[]; extra?: { name: string; v: number[] }[] };
+// f, g (mode 'freq'): the frequency of the set, and G_p (S) as at the gate with C
+export type CvSet = { label: string; c: number[]; w?: number[]; extra?: { name: string; v: number[] }[]; f?: number; g?: number[] };
 export type CvMade = { xName: string; v: number[]; sets: CvSet[]; cox?: number; warnings: string[] };
 
+// a frequency as written on a curve: 100 Hz, 10 kHz, 1 MHz
+export const fmtFreq = (f: number) => {
+  const [k, u] = f >= 1e9 ? [1e9, 'GHz'] : f >= 1e6 ? [1e6, 'MHz'] : f >= 1e3 ? [1e3, 'kHz'] : [1, 'Hz'];
+  return `${fmtNum(f / k, 4)} ${u}`;
+};
 const linspace = (a: number, b: number, n: number) => Array.from({ length: n }, (_, k) => (n === 1 ? a : a + ((b - a) * k) / (n - 1)));
 // the voltage a function rises to t at, between a and b (increasing)
 const solveUp = (f: (x: number) => number, t: number, a0: number, b0: number) => {
@@ -380,13 +459,28 @@ export function cvMake(c: CvSpec): CvMade | string {
     const spec: CvSpec = st === 'ms' ? { ...c, mode: 'deep', vfbFrom: 'typed', vfb: -more(c, 'efb'), ditShape: 'none' } : c;
     const at = st === 'ms' ? v.map((q) => -q) : v;
     const coxA = st === 'ms' ? (ch > 0 ? ch * 1e-2 : Infinity) : undefined;
-    const modes: ('deep' | 'lf' | 'hf')[] = st === 'ms' ? ['deep'] : c.mode === 'lfhf' ? ['lf', 'hf'] : [c.mode];
+    const modes: ('deep' | 'lf' | 'hf' | 'freq')[] = st === 'ms' ? ['deep'] : c.mode === 'lfhf' ? ['lf', 'hf'] : [c.mode];
+    // (at the frequencies: their list, Hz)
+    const fs = st === 'mos' && c.mode === 'freq' ? more(c, 'freqs').split(/[,;\s]+/).filter(Boolean).map(Number) : [];
+    if (st === 'mos' && c.mode === 'freq') {
+      if (!fs.length || fs.some((f) => !(f > 0))) return 'C–V: the frequencies (Hz), comma-separated (e.g. 10, 1e3, 1e5).';
+      if (!(more(c, 'sigma') > 0)) return 'C–V: the capture cross-section σ must be above 0.';
+      if (more(c, 'resp') === 'typed' ? !(more(c, 'tauR') > 0) : !(more(c, 'taug') > 0)) return 'C–V: the response time (τ_R, or the lifetime τ_g) must be above 0.';
+    }
     let cox = 0;
     for (const T of temps)
       for (const m of modes) {
-        const cur = mosCurve(spec, T, at, m, coxA);
+        const cur = mosCurve(spec, T, at, m, coxA, fs);
         if (typeof cur === 'string') return cur;
         cox = cur.cox;
+        if (cur.fc) {
+          for (const q of cur.fc) {
+            const label = join(fs.length > 1 ? `f = ${fmtFreq(q.f)}` : '', tag(T));
+            empty(label || `${fmtNum(T)} K`, q.c, 'beyond the surface potentials reached');
+            sets.push({ label, c: q.c, w: cur.w, f: q.f, g: q.g, extra: c.psi ? [{ name: 'ψs (V)', v: cur.psi }] : [] });
+          }
+          continue;
+        }
         const label = join(modes.length > 1 ? m.toUpperCase() : '', tag(T));
         empty(join(label || `${fmtNum(T)} K`), cur.c, `beyond the surface potentials reached${m !== 'deep' && T < 60 ? '; at low temperature the minority carriers limit the range' : ''}`);
         sets.push({ label, c: cur.c, w: cur.w, extra: c.psi ? [{ name: 'ψs (V)', v: cur.psi }] : [] });
@@ -476,9 +570,10 @@ export function cvMake(c: CvSpec): CvMade | string {
 }
 
 // the capacitance as measured at f in parallel mode, through a series resistance and with a leak across: C_m, G_m
-export function measured(C: number, rs: number, gl: number, f: number): { c: number; g: number } {
+// (g0: the device's own conductance, at the frequencies)
+export function measured(C: number, rs: number, gl: number, f: number, g0 = 0): { c: number; g: number } {
   const w = 2 * Math.PI * f;
-  const [yr, yi] = [gl, w * C];
+  const [yr, yi] = [gl + g0, w * C];
   const den = yr * yr + yi * yi;
   const [zr, zi] = [rs + yr / den, -yi / den];
   const m = zr * zr + zi * zi;

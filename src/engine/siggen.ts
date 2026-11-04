@@ -366,7 +366,8 @@ export function generate(d: SigGenSpec): { dataset: Dataset; warnings: string[];
     const keep = (title: string, name: string, y: number[]) => more.set(title, [...(more.get(title) ?? []), { name, y }]);
     for (const s of made.sets) {
       const t = s.label ? `, ${s.label}` : '';
-      const m = meas ? s.c.map((q) => measured(q, rs, gl, f)) : null;
+      // (a curve at its own frequency: its device conductance with it, measured at that frequency)
+      const m = meas || s.f ? s.c.map((q, i) => measured(q, rs, gl, s.f ?? f, s.g?.[i] ?? 0)) : null;
       const clean = (m ? m.map((q) => q.c) : s.c).map((q) => q * k);
       const y = spoil(clean, sweep);
       const empty = hole(n);
@@ -374,7 +375,13 @@ export function generate(d: SigGenSpec): { dataset: Dataset; warnings: string[];
       cols.push({ ...column(`${cName}${t}`, Float64Array.from(shown)), role: 'y' });
       if (d.clean && d.noise.kind !== 'none') cols.push({ ...column(`${cName} (clean)${t}`, Float64Array.from(clean)), role: 'y' });
       keep(cName, s.label || cName, shown);
-      if (m) {
+      if (m && s.f) {
+        // (at its frequency: G/ω, in the unit of C — the loss the conductance method reads)
+        const gName = unit === 'norm' ? 'G/(ωC_ox)' : `G/ω (${uName})`;
+        const gw = m.map((q) => (q.g / (2 * Math.PI * s.f!)) * k);
+        cols.push({ ...column(`${gName}${t}`, Float64Array.from(gw)), role: 'none' });
+        keep(gName, s.label || gName, gw);
+      } else if (m) {
         cols.push({ ...column(`G_m (S)${t}`, Float64Array.from(m, (q) => q.g)), role: 'none' });
         keep('G_m (S)', s.label || 'G_m', m.map((q) => q.g));
       }

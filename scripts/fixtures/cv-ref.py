@@ -152,6 +152,49 @@ for Ev in Es:
     gc.append(Ae * cd0 * np.cosh(Ev / (2 * phi)))
 out['gcs'] = {'E': Es.tolist(), 'gc': gc, 'gcs': gcs, 'phi': phis}
 
+# ---- at the frequencies: the small-signal admittance (Nicollian & Brews) ----
+# (A) interface traps alone, a constant D_it (1e11 cm^-2 eV^-1) over a 3 eV gap: every level its SRH time constant
+# tau = 1/(c (n_s/f0 + p_s/(1 - f0))), c = sigma v_th (1e-16 cm^2, v_th = sqrt(3kT/m_e)); C_it and G/w by quad, and
+# Nicollian & Goetzberger's closed forms (electrons only): G/w = qD/(2 w tm) ln(1 + (w tm)^2), C = qD/(w tm) atan(w tm)
+kf = k * 300.0; phf = kf / q; Df = 1e11 * 1e4; cf = 1e-16 * 100 * np.sqrt(3 * kf / me)
+trA = {'s': [0.1, 0.2, 0.3], 'f': [1e2, 1e4, 1e6], 'C': [], 'G': [], 'Cng': [], 'Gng': []}
+for s in trA['s']:
+    ns = 1e10 * np.exp(s / phf); ps = 1e10 * np.exp(-s / phf)
+    for fq in trA['f']:
+        w = 2 * np.pi * fq
+        def parts(E):
+            x = (E - s) / phf
+            f0 = 1 / (1 + np.exp(x))
+            rate = cf * (ns * (1 + np.exp(x)) + ps * (1 + np.exp(-x)))
+            return f0 * (1 - f0) / phf, w / rate
+        trA['C'].append(q * Df * integrate.quad(lambda E: parts(E)[0] / (1 + parts(E)[1] ** 2), -1.5, 1.5, points=[s], limit=400, epsabs=0, epsrel=1e-12)[0])
+        trA['G'].append(q * Df * integrate.quad(lambda E: parts(E)[0] * parts(E)[1] / (1 + parts(E)[1] ** 2), -1.5, 1.5, points=[s], limit=400, epsabs=0, epsrel=1e-12)[0])
+        tm = 1 / (cf * ns)
+        trA['Gng'].append(q * Df / (2 * w * tm) * np.log(1 + (w * tm) ** 2))
+        trA['Cng'].append(q * Df / (w * tm) * np.arctan(w * tm))
+# (B) a p-type Si capacitor without traps (1e16 cm^-3, 20 nm SiO2, 1 mm^2, n_i 1e10, tau_g 1 us: tau_R = 2 N tau_g / n_i),
+# its band bending by brentq, C_LF and C_HF (held at 2 phi_B) from Poisson's equation, the inversion layer C_LF - C_HF
+# through tau_R, C_ox in series: C_p and G_p as at the gate
+eSf = e0 * 11.7; Nf = 1e22; Af = 1e-6; Coxf = e0 * 3.9 / 20e-9
+uBf = np.log(Nf / 1e16); rf = np.exp(-2 * uBf); Kf = np.sqrt(2 * q * eSf * Nf * phf); CDf = np.sqrt(eSf * q * Nf / phf)
+Gf = lambda v, m: em1v(v) + (rf * em1v(-v) if m else 0)
+Gpf = lambda v, m: np.expm1(v) + (-rf * np.expm1(-v) if m else 0)
+csf = lambda v, m: CDf * np.sqrt(1 + (rf if m else 0)) if v == 0 else CDf * abs(Gpf(v, m)) / (np.sqrt(2) * np.sqrt(Gf(v, m)))
+tauRf = 2 * 1e16 * 1e-6 / 1e10
+VB = np.round(np.linspace(-3, 3, 61), 10); FB = [0.01, 0.08, 1.0, 1e3]
+cirB = {'V': VB.tolist(), 'f': FB, 'C': [], 'G': []}
+for fq in FB:
+    w = 2 * np.pi * fq; cc = []; gg = []
+    for V in VB:
+        psi = optimize.brentq(lambda pp: pp + np.sign(pp) * Kf * np.sqrt(Gf(pp / phf, True)) / Coxf + V, -2, 2, xtol=1e-15)
+        v = psi / phf
+        cH = csf(max(v, -2 * uBf), False); ci = max(0, csf(v, True) - cH); wt = w * tauRf
+        Ys = Af * (w * ci * wt / (1 + wt ** 2)) + 1j * w * Af * (cH + ci / (1 + wt ** 2))
+        Y = 1 / (1 / Ys + 1 / (1j * w * Coxf * Af))
+        cc.append(Y.imag / w); gg.append(Y.real)
+    cirB['C'].append(cc); cirB['G'].append(gg)
+out['freq'] = {'traps': trA, 'circuit': cirB, 'Cox': Coxf * Af}
+
 with open(__file__.replace('.py', '.json'), 'w') as f:
     json.dump(out, f)
 print('ok')

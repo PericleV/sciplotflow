@@ -5,7 +5,7 @@ import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { X } from 'lucide-react';
 import { useNodeResult } from '../engine/engine.ts';
 import { COMPONENTS, newComponent, type CompKind, type CvSpec, type GenComponent, type NoiseSpec, type SigGenSpec } from '../engine/siggen.ts';
-import { CV_MORE, type CvStruct } from '../engine/cv.ts';
+import { CV_MORE, fmtFreq, inversionTau, type CvStruct } from '../engine/cv.ts';
 import { EIS_CIRCUITS, paramUnit, parseCircuit, startParams } from '../engine/eis.ts';
 import type { AppNode, SigGenData, SigGenNode } from '../types.ts';
 import { CircuitEditor } from './EisNode.tsx';
@@ -255,16 +255,17 @@ export function SigGenNodeView({ id, data: d }: NodeProps<SigGenNode>) {
                   <span className="row wrap">
                     <Select<CvSpec['mode']>
                       value={d.cv.mode}
-                      title="Deep depletion: the majority carriers only (no inversion layer: a wide band gap, or a fast sweep). Low frequency: the minority carriers and the interface traps follow (back to C_ox in inversion). High frequency: they do not (C stays at its minimum)"
+                      title="Deep depletion: the majority carriers only (no inversion layer: a wide band gap, or a fast sweep). Low frequency: the minority carriers and the interface traps follow (back to C_ox in inversion). High frequency: they do not (C stays at its minimum). At the frequencies: as measured at each — the inversion layer follows through its response time, every trap through its own (C and G/ω)"
                       options={[
                         ['deep', 'deep depletion (majority carriers)'],
                         ['lf', 'low frequency (quasi-static)'],
                         ['hf', 'high frequency'],
                         ['lfhf', 'low and high frequency'],
+                        ['freq', 'at the frequencies (C and G/ω)'],
                       ]}
                       onChange={(mode) => setCv({ mode })}
                     />
-                    {(d.cv.mode === 'hf' || d.cv.mode === 'lfhf') && (
+                    {(d.cv.mode === 'hf' || d.cv.mode === 'lfhf' || d.cv.mode === 'freq') && (
                       <Select<NonNullable<CvSpec['hfMin']>>
                         value={more('hfMin')}
                         title="In strong inversion: C_s held at its value at 2φ_B (the depletion approximation, Sze), at 2.10|u_B| + 1.33 kT/q (CV_ideal.m), or exact (Lindner, Brews: the majority carriers respond on the equilibrium profile)"
@@ -277,6 +278,48 @@ export function SigGenNodeView({ id, data: d }: NodeProps<SigGenNode>) {
                       />
                     )}
                   </span>
+                  {d.cv.mode === 'freq' && (
+                    <>
+                      <span>Frequencies</span>
+                      <span className="row wrap">
+                        <TextInput className="short" value={more('freqs')} placeholder="10, 1e3, 1e5" title="The frequencies the curve is measured at (Hz), comma-separated: a curve for each" onChange={(freqs) => setCv({ freqs })} />
+                        <span className="muted">Hz</span>
+                      </span>
+                      <span>Inversion layer</span>
+                      <span className="row wrap">
+                        <Select<NonNullable<CvSpec['resp']>>
+                          value={more('resp')}
+                          title="How fast the inversion layer follows: its response time τ_R from the generation lifetime (τ_R = 2Nτ_g/nᵢ, the minority carriers made in the depletion layer), or typed"
+                          options={[
+                            ['lifetime', 'from the lifetime τ_g'],
+                            ['typed', 'τ_R typed'],
+                          ]}
+                          onChange={(resp) => setCv({ resp })}
+                        />
+                        {more('resp') === 'typed' ? (
+                          <Field label="τ_R s">
+                            <SciInput className="short" unit="s" value={more('tauR')} onChange={(tauR) => setCv({ tauR })} />
+                          </Field>
+                        ) : (
+                          <Field label="τ_g µs">
+                            <SciInput className="short" unit="µs" value={more('taug')} onChange={(taug) => setCv({ taug })} />
+                          </Field>
+                        )}
+                        <span className="hint" title="Below this frequency the inversion layer follows (the low-frequency curve), above it not (the high-frequency one): 1/(2πτ_R)">
+                          turns at{' '}
+                          {(() => {
+                            const ts = d.cv.temps.split(/[,;\s]+/).filter(Boolean).map(Number).filter((t) => t > 0);
+                            return ts
+                              .map((T) => {
+                                const f = 1 / (2 * Math.PI * inversionTau(d.cv, T));
+                                return `${f > 1e-12 ? fmtFreq(f) : 'never (τ_R ≈ ∞)'}${ts.length > 1 ? ` at ${T} K` : ''}`;
+                              })
+                              .join(', ');
+                          })()}
+                        </span>
+                      </span>
+                    </>
+                  )}
                   <span>Oxide</span>
                   <span className="row wrap">
                     <Field label="t_ox nm">
@@ -491,6 +534,11 @@ export function SigGenNodeView({ id, data: d }: NodeProps<SigGenNode>) {
                         </Field>
                       </>
                     )}
+                    {more('ditShape') !== 'none' && d.cv.mode === 'freq' && (
+                      <Field label="σ cm²" title="The traps' capture cross-section (electrons and holes alike): every trap's time constant τ = 1/(σ·v_th·(n_s/f₀ + p_s/(1 − f₀))), v_th = √(3kT/mₑ)">
+                        <SciInput className="short" unit="cm²" value={more('sigma')} onChange={(sigma) => setCv({ sigma })} />
+                      </Field>
+                    )}
                   </span>
                 </>
               )}
@@ -516,7 +564,7 @@ export function SigGenNodeView({ id, data: d }: NodeProps<SigGenNode>) {
                 <Field label="G S" title="A leak across (0: none)">
                   <SciInput className="tiny" unit="S" value={more('gl')} onChange={(gl) => setCv({ gl: Math.max(0, gl || 0) })} />
                 </Field>
-                {(more('rs') > 0 || more('gl') > 0) && (
+                {(more('rs') > 0 || more('gl') > 0) && d.cv.mode !== 'freq' && (
                   <Field label="f Hz">
                     <SciInput className="short" unit="Hz" value={more('freq')} onChange={(freq) => setCv({ freq })} />
                   </Field>

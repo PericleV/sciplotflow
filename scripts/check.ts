@@ -7333,6 +7333,7 @@ checkPhase(ok);
     ferro: { V: number[]; up: number[]; down: number[]; Pup: number[]; Pdown: number[] };
     ms: { E: number[]; C: number[] };
     gcs: { E: number[]; gc: number[]; gcs: number[]; phi: number[] };
+    freq: { traps: { s: number[]; f: number[]; C: number[]; G: number[]; Cng: number[]; Gng: number[] }; circuit: { V: number[]; f: number[]; C: number[][]; G: number[][] }; Cox: number };
   };
   const KB = 1.380649e-23;
   const QE = 1.602176634e-19;
@@ -7513,6 +7514,51 @@ checkPhase(ok);
   const [l1, l2] = [debye(0.01) / 3.04 - 1, debye(0.1) / 0.962 - 1];
   ok(dG.every((d) => d < 1e-9) && dPhi < 1e-12 && bf.every((d) => Math.abs(d) < 0.005) && Math.abs(l1) < 0.002 && Math.abs(l2) < 0.002, `C–V: the Gouy–Chapman and Gouy–Chapman–Stern double layers as the reference (${dG.map((d) => d.toExponential(1)).join(', ')}; the diffuse layer's potential to ${dPhi.toExponential(1)} V); Bard and Faulkner's 228.5·z·√C*·cosh(19.5·z·φ₀) µF/cm² to ${(Math.max(...bf.map(Math.abs)) * 100).toFixed(2)} % (its rounded constants), the Debye lengths 3.04 and 0.962 nm to ${(Math.max(Math.abs(l1), Math.abs(l2)) * 100).toFixed(2)} %`);
 
+  // at the frequencies (Nicollian & Brews): interface traps alone against scipy's quad (electrons and holes captured) and
+  // Nicollian & Goetzberger's closed forms (electrons only: they agree where the holes are few); a whole capacitor
+  // against the circuit solved apart; a low frequency gives the low-frequency curve, a high one the high-frequency one
+  {
+    const F = R.freq;
+    const tr = trapsOf({ ...base, eg: 3, ditShape: 'const', dit: 1e11 } as CvSpec)!;
+    const phiF = (KB * 300) / QE;
+    const cn = 1e-16 * 100 * Math.sqrt((3 * KB * 300) / 9.1093837015e-31);
+    const qD = QE * 1e15;
+    let worst = 0;
+    let worstNg = 0;
+    F.traps.s.forEach((sv, i) =>
+      F.traps.f.forEach((f, j) => {
+        const k = i * F.traps.f.length + j;
+        const r = tr.ac(sv, phiF, 2 * Math.PI * f, Math.log(1e10) + sv / phiF, Math.log(1e10) - sv / phiF, cn);
+        worst = Math.max(worst, Math.abs(r.c - F.traps.C[k]) / qD, Math.abs(r.gw - F.traps.G[k]) / qD);
+        if (sv >= 0.2) worstNg = Math.max(worstNg, Math.abs(r.c - F.traps.Cng[k]) / qD, Math.abs(r.gw - F.traps.Gng[k]) / qD);
+      }),
+    );
+    ok(worst < 1e-7 && worstNg < 1e-5, `C–V at the frequencies: interface traps' C_it and G/ω as scipy quad (worst ${worst.toExponential(1)} of q·D_it) and as Nicollian & Goetzberger where the holes are few (${worstNg.toExponential(1)})`);
+    const si: CvSpec = { ...base, type: 'p', epsS: 11.7, eg: 1.12, niFrom: 'typed', ni: 1e10, tox: 20, dop: 1e16, vfbFrom: 'typed', vfb: 0, temps: '300', vFrom: -3, vTo: 3, points: 61, unit: 'F', hfMin: 'sze', ditShape: 'none', mode: 'freq', freqs: F.circuit.f.join(', '), resp: 'lifetime', taug: 1 };
+    const m = cvMake(si);
+    let worstC = Infinity;
+    if (typeof m !== 'string') {
+      worstC = 0;
+      m.sets.forEach((q, j) => q.c.forEach((c, i) => (worstC = Math.max(worstC, Math.abs(c - F.circuit.C[j][i]) / F.Cox, Math.abs(q.g![i] - F.circuit.G[j][i]) / (2 * Math.PI * q.f! * F.Cox)))));
+    }
+    ok(worstC < 1e-9, `C–V at the frequencies: a p-type Si capacitor at ${F.circuit.f.join(', ')} Hz, C_p and G_p as the circuit solved apart (worst ${worstC.toExponential(1)} of C_ox)`);
+    // the limits: f → 0 the low-frequency curve, f → ∞ the high-frequency one (with U-shaped traps too)
+    const lim = (traps: Partial<CvSpec>) => {
+      const sp = { ...si, ...traps, points: 121 };
+      const lo = cvMake({ ...sp, mode: 'lf' });
+      const hi = cvMake({ ...sp, mode: 'hf' });
+      const fr = cvMake({ ...sp, mode: 'freq', freqs: '1e-7, 1e13' });
+      if (typeof lo === 'string' || typeof hi === 'string' || typeof fr === 'string') return [Infinity, Infinity];
+      const dev = (a: number[], b: number[]) => Math.max(...a.map((q, i) => Math.abs(q - b[i]) / lo.cox!));
+      return [dev(fr.sets[0].c, lo.sets[0].c), dev(fr.sets[1].c, hi.sets[0].c)];
+    };
+    const [a0, a1] = lim({});
+    const [b0, b1] = lim({ ditShape: 'u', dit: 2e11, ditEdge: 1e13, ditW: 0.1 });
+    ok(a0 < 1e-9 && a1 < 1e-12 && b0 < 1e-9 && b1 < 1e-3, `C–V at the frequencies: f → 0 the low-frequency curve, f → ∞ the high-frequency one (${a0.toExponential(1)}, ${a1.toExponential(1)}; with traps ${b0.toExponential(1)}, ${b1.toExponential(1)} of C_ox)`);
+    // the table: C and G/ω at every frequency
+    const gt = generate({ ...SIGGEN_DEFAULTS, kind: 'cv', cv: { ...si, freqs: '100, 1e5', unit: 'norm' } });
+    ok(typeof gt !== 'string' && gt.dataset.columns.map((c) => c.name).join(' / ') === 'V_G (V) / C/C_ox, f = 100 Hz / G/(ωC_ox), f = 100 Hz / C/C_ox, f = 100 kHz / G/(ωC_ox), f = 100 kHz', `C–V at the frequencies: its columns (${typeof gt === 'string' ? gt : gt.dataset.columns.map((c) => c.name).join(' / ')})`);
+  }
   // the table made: its columns, the units, the graphs (C, 1/C², W, G_m, the more columns)
   const g = generate({ ...SIGGEN_DEFAULTS, kind: 'cv', cv: { ...base, struct: 'pn', na: 1e18, nd: 1e16, temps: '300', vFrom: -5, vTo: 0, points: 51, inv2: true, width: true, rs: 10, gl: 0, freq: 1e5, unit: 'nF/cm2' } });
   const gf = generate({ ...SIGGEN_DEFAULTS, kind: 'cv', cv: { ...base, struct: 'ferro', vFrom: -8, vTo: 8, points: 81, unit: 'pF', area: 0.01 } });
