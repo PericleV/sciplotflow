@@ -22,7 +22,7 @@ import { legendLayout } from '../figure/legendLayout.ts';
 import { columnLetter, readTable, type CsvResult } from './csv.ts';
 import { curveColumns, digest, figPort, outValue, toPy, type PyJob, type PyModule, type PyResult, type PyValue } from './python.ts';
 import { applySheet, hasEdits, readSheet, type SheetMap } from './sheet.ts';
-import { findings, findSheet, foundAs, hasFindings, importSource, inOrder, inScope, knownAs, missKey, newScope, sheetId, type DataRefs, type Resolved } from './refs.ts';
+import { findings, findSheet, foundAs, hasFindings, importSource, inOrder, inScope, knownAs, missKey, newScope, sheetId, splitId, type DataRefs, type Resolved } from './refs.ts';
 import { applyFormulas, keysUsed, type ColFormula } from './sheetFormula.ts';
 import { flattenGroups, GROUP_IN, GROUP_OUT } from './subgraph.ts';
 import { columnRuns, fillNames, gather, gatherOne, orderFiles, portNames, readText, resultOf, runNames, skipSteps, withOwn, type FileRun } from './batch.ts';
@@ -5537,6 +5537,27 @@ function runBatch(n: Extract<AppNode, { type: 'subgraph' }>, inputs: Inputs, cac
 // Evaluates a graph without groups (a Batch is one node here); `cache` keeps the results between calls; `seed`: results
 // given beforehand (the input of a Batch's steps: the file).
 // The names found at their place in a source that changed (another file, another node): said, until kept (refs.ts).
+// The id of the input column a column was made of: the longest input name found in its name as a whole (not inside a
+// longer word), the only input column of that name with an id
+function madeOf(name: string, idx: Map<string, string | null>): string | undefined {
+  let best: string | undefined;
+  let len = 0;
+  let tie = false;
+  for (const [nm, id] of idx) {
+    if (!id || nm.length < 1 || nm === name || nm.length < len) continue;
+    let at = name.indexOf(nm);
+    let whole = false;
+    while (at >= 0 && !whole) {
+      const [a, b] = [name[at - 1], name[at + nm.length]];
+      whole = !(a && /[\p{L}\p{N}_]/u.test(a)) && !(b && /[\p{L}\p{N}_]/u.test(b));
+      at = name.indexOf(nm, at + 1);
+    }
+    if (!whole) continue;
+    if (nm.length === len) tie = true;
+    else [best, len, tie] = [id, nm.length, false];
+  }
+  return tie ? undefined : best;
+}
 function placeWarnings(f: Resolved): string[] {
   const list = (kind: 'cols' | 'sheets') => f.place.filter((p) => p.kind === kind).map((p) => `“${p.asked}” → “${p.got}”`);
   const say = (what: string, l: string[]) => (l.length ? [`${what}${l.length > 1 ? 's' : ''} found by place (the data changed): ${l.join(', ')}. Keep ${l.length > 1 ? 'them' : 'it'}, or choose another.`] : []);
@@ -5545,8 +5566,11 @@ function placeWarnings(f: Resolved): string[] {
 
 // The columns and sheets a node gives without an id take the id of the one of its inputs they come from (the same
 // name, the only one so named; a sheet's columns from the input sheet of the same id or name): a node that makes its
-// columns again (Filter rows, Smooth …) passes their ids on.
-function inheritIds(outputs: Record<string, Value>, inputs: Inputs): Record<string, Value> {
+// columns again (Filter rows, Smooth …) passes their ids on. A column it makes of one (“Sample A (smoothed)” of “Sample
+// A”: the longest input name in its own, as a whole word) gets an id of its own from it — the input's source and place,
+// the node and which of those it made of it (“import~file>smooth#0:s0:c1”): another file of the same layout through the
+// same nodes gives the same place, and the node after it finds its column by it (refs.ts).
+function inheritIds(outputs: Record<string, Value>, inputs: Inputs, node = ''): Record<string, Value> {
   const sheets: Dataset[] = [];
   const loose: Column[] = [];
   for (const l of inputs.values())
@@ -5574,13 +5598,26 @@ function inheritIds(outputs: Record<string, Value>, inputs: Inputs): Record<stri
   const colsWith = (cols: Column[], m: () => Map<string, string | null>): Column[] => {
     if (cols.every((c) => c.id !== undefined)) return cols;
     const idx = m();
-    if (cols.every((c) => c.id !== undefined || !idx.get(c.name))) return cols;
+    if (!node && cols.every((c) => c.id !== undefined || !idx.get(c.name))) return cols;
     const used = new Set(cols.flatMap((c) => (c.id === undefined ? [] : [c.id])));
+    const made = new Map<string, number>();
     return cols.map((c) => {
       const id = c.id === undefined ? idx.get(c.name) : undefined;
-      if (!id || used.has(id)) return c;
-      used.add(id);
-      return { ...c, id };
+      if (id && !used.has(id)) {
+        used.add(id);
+        return { ...c, id };
+      }
+      if (c.id !== undefined || !node) return c;
+      // (made of an input column: its id with this node in its source)
+      const of = madeOf(c.name, idx);
+      if (!of) return c;
+      const k = made.get(of) ?? 0;
+      made.set(of, k + 1);
+      const { source, place } = splitId(of);
+      const own = `${source}>${node}#${k}:${place}`;
+      if (used.has(own)) return c;
+      used.add(own);
+      return { ...c, id: own };
     });
   };
   const dsWith = (d: Dataset): Dataset => {
@@ -5673,7 +5710,7 @@ function evaluateFlat(nodes: AppNode[], edges: Edge[], cache: EvalCache = newCac
       if (lostSheet) out = { ...out, errors: [...(out.errors ?? []), `No sheet “${want}” in the workbook.`] };
       const found = findings(scope);
       const warnings = [...(out.warnings ?? []), ...placeWarnings(found)];
-      r = { rev: ++cache.rev, outputs: inheritIds(out.outputs ?? {}, inputs), errors: out.errors ?? [], warnings, view: { ...out.view, ...(bookSheets ? { sheets: bookSheets } : {}) }, ...(out.inner ? { inner: out.inner } : {}), ...(hasFindings(found) ? { found } : {}) };
+      r = { rev: ++cache.rev, outputs: inheritIds(out.outputs ?? {}, inputs, n.id), errors: out.errors ?? [], warnings, view: { ...out.view, ...(bookSheets ? { sheets: bookSheets } : {}) }, ...(out.inner ? { inner: out.inner } : {}), ...(hasFindings(found) ? { found } : {}) };
       // (a node inside measured formulas: the one around it too; what was asked before this node kept for its caller)
       const measured = resetMathAsked();
       cache.entries.set(id, { key, result: r, ...(measured ? { math: mathSizesVersion() } : {}), ...(found.misses.length ? { refs: missKey(refs, found.misses) } : {}) });

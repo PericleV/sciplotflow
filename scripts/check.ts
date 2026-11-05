@@ -17,7 +17,7 @@ import { trendFit, type TrendSpec } from '../src/engine/trend.ts';
 import { commaNumbers } from '../src/figure/comma.ts';
 import { adjustedPositions, bLife, fisherCov, fitMLE, fitRR, fitThreshold, kaplanMeier, logLik, paramCI, suspendedOf } from '../src/engine/reliability.ts';
 import { isErrorName, errorTargets } from '../src/engine/errcols.ts';
-import { CONV_DEFAULTS, FFT_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, SMOOTH_DEFAULTS } from '../src/defaults.ts';
+import { BASELINE_DEFAULTS, CONV_DEFAULTS, FFT_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, SMOOTH_DEFAULTS } from '../src/defaults.ts';
 import { CURVEMATH_DEFAULTS, PEAKWIDTH_DEFAULTS, TRANSLATE_DEFAULTS } from '../src/defaults.ts';
 import type { CurveMathData, ExtractData, TranslateData } from '../src/types.ts';
 import { anovaNode } from '../src/engine/statnodes.ts';
@@ -982,6 +982,65 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
   const eo = res.get('e')!.outputs.out;
   ok(firsts === '1,10,100', `columns of the same name in a file: each curve its own column (${firsts})`);
   ok(eo?.t === 'column' && eo.v.values[0] === 10 && isRepeatOf('Wavelength 2 (nm)', 'Wavelength (nm)') && !isRepeatOf('Intensity 2b', 'Intensity') && !isRepeatOf('Intensity', 'Intensity'), 'an older Extract column of a repeated name (by its place): the same column once the names are unique');
+}
+
+// ---- another file of the same layout through the same nodes: the Plot keeps its curves (columns made by a node get
+// an id of their own from the column they come of: found at their place) ----
+{
+  const at = { x: 0, y: 0 };
+  const file = (tag: string, k: number) => `Wavelength (nm),${tag} 1,${tag} 2\n` + Array.from({ length: 30 }, (_, i) => `${400 + i},${(Math.sin(i / 5 + k) + 1).toFixed(3)},${(Math.cos(i / 5 + k) + 2).toFixed(3)}`).join('\n');
+  let nodes = [
+    { id: 'i', type: 'import', position: at, data: { ...IMPORT_DEFAULTS, fileName: 'a.csv', text: file('A', 0), textId: 'A' } },
+    { id: 'sm', type: 'smooth', position: at, data: { ...SMOOTH_DEFAULTS } },
+    { id: 'no', type: 'normalize', position: at, data: { ...NORMALIZE_DEFAULTS } },
+    { id: 'p', type: 'plot1d', position: at, data: { ...structuredClone(PLOT1D_DEFAULTS), cols: { x: 'Wavelength (nm)', y: 'A 1 (smoothed) (normalized)' }, rows: [{ label: '', style: {}, cols: { x: 'Wavelength (nm)', y: 'A 2 (smoothed) (normalized)' } }] } },
+  ] as AppNode[];
+  const edges: Edge[] = [
+    { id: '1', source: 'i', sourceHandle: 'out', target: 'sm', targetHandle: 'in' },
+    { id: '2', source: 'sm', sourceHandle: 'out', target: 'no', targetHandle: 'in' },
+    { id: '3', source: 'no', sourceHandle: 'out', target: 'p', targetHandle: 'dataset' },
+  ];
+  const curvesOf = () => {
+    const res = evaluateGraph(nodes, edges);
+    nodes = learnNameIds(nodes, res) ?? nodes;
+    return (res.get('p')!.view.figure?.axes[0].curves ?? []).map((c) => c.series.y.name).join(' | ');
+  };
+  const a = curvesOf();
+  nodes = nodes.map((n) => (n.id === 'i' ? ({ ...n, data: { ...n.data, fileName: 'b.csv', text: file('B', 1), textId: 'B' } } as AppNode) : n));
+  const b = curvesOf();
+  ok(a === 'A 1 (smoothed) (normalized) | A 2 (smoothed) (normalized)' && b === 'B 1 (smoothed) (normalized) | B 2 (smoothed) (normalized)', `another file through Smooth and Normalize: the Plot's curves found at their place (${b})`);
+  // a Plot made on Normalize → Smooth, then given another file through Smooth only: by the places in the table (the
+  // same layout); through Baseline (another layout): the column made at the same place of the file
+  const chained = (first: [string, object][], then: [string, object][]) => {
+    let ns: AppNode[] = [
+      { id: 'iA', type: 'import', position: at, data: { ...IMPORT_DEFAULTS, text: file('A', 0), textId: 'A' } } as AppNode,
+      { id: 'iB', type: 'import', position: at, data: { ...IMPORT_DEFAULTS, text: file('B', 1), textId: 'B' } } as AppNode,
+    ];
+    let es: Edge[] = [];
+    const build = (src: string, chain: [string, object][], tag: string) =>
+      chain.reduce((prev, [type, data], k) => {
+        const id = `${tag}${k}`;
+        ns.push({ id, type, position: at, data: structuredClone(data) } as AppNode);
+        es.push({ id: `e${id}`, source: prev, sourceHandle: 'out', target: id, targetHandle: 'in' });
+        return id;
+      }, src);
+    const [e1, e2] = [build('iA', first, 'a'), build('iB', then, 'b')];
+    const ds = evaluateGraph(ns, es).get(e1)!.outputs.out;
+    const ys = ds?.t === 'dataset' ? ds.v.columns.slice(1).map((c) => c.name).filter((nm) => nm.includes('(')) : [];
+    ns.push({ id: 'p', type: 'plot1d', position: at, data: { ...structuredClone(PLOT1D_DEFAULTS), cols: { x: 'Wavelength (nm)', y: ys[0] }, rows: ys.slice(1).map((y) => ({ label: '', style: {}, cols: { x: 'Wavelength (nm)', y } })) } } as AppNode);
+    es.push({ id: 'ep', source: e1, sourceHandle: 'out', target: 'p', targetHandle: 'dataset' });
+    ns = learnNameIds(ns, evaluateGraph(ns, es)) ?? ns;
+    es = es.map((e) => (e.id === 'ep' ? { ...e, source: e2 } : e));
+    return (evaluateGraph(ns, es).get('p')!.view.figure?.axes[0].curves ?? []).map((c) => c.series.y.name).join(' | ');
+  };
+  const ns1 = chained([['normalize', NORMALIZE_DEFAULTS], ['smooth', SMOOTH_DEFAULTS]], [['smooth', SMOOTH_DEFAULTS]]);
+  const ns2 = chained([['smooth', SMOOTH_DEFAULTS]], [['baseline', BASELINE_DEFAULTS]]);
+  ok(ns1 === 'B 1 | B 1 (smoothed) | B 2 | B 2 (smoothed)' && ns2 === 'B 1 − baseline | B 2 − baseline', `another chain of nodes: the Plot's curves by their places in the table (${ns1}), or at their place in the file (${ns2})`);
+  // the place in the list alone: a list as long, its names all different; not a longer list, nor when the column's own
+  // source is still there (taken out, not replaced)
+  const findIn = (refs: object, list: { name: string; id?: string }[]) => inScope(newScope(refs as never), () => findColumn(list, 'A 1'))?.name ?? 'none';
+  const atRefs = { cols: { 'A 1': ['other:s0:c1'] }, at: { cols: { 'A 1': [1, 2] } } };
+  ok(findIn(atRefs, [{ name: 't' }, { name: 'signal' }]) === 'signal' && findIn(atRefs, [{ name: 't' }, { name: 'signal' }, { name: 'more' }]) === 'none' && findIn(atRefs, [{ name: 't', id: 'other:s0:c0' }, { name: 'x', id: 'other:s0:c2' }]) === 'none', 'a name not found otherwise: the column at its place in a table of the same layout');
 }
 
 // ---- results that look good and are not: said ----
