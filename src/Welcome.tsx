@@ -1,7 +1,7 @@
 // The welcome window: at every start (unless “Show at start” is unticked, kept in this browser) and from Help ▸
 // Welcome. What the app is; import a data file, open a project file, start empty or go on with the project open; the
 // examples in one menu, by their groups; the guided tours (one left half-way: taken up again); the projects kept in
-// this browser last worked on; who made it, and how to cite it.
+// this browser last worked on; who made it.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { FileUp, FolderOpen, FilePlus2, ArrowRight, GraduationCap, X, Check, Copy, Quote } from 'lucide-react';
 import { Popover } from '@mantine/core';
@@ -48,7 +48,8 @@ function CopyCite({ text, label, rows }: { text: string; label: string; rows: nu
   );
 }
 
-// Cite: a link that opens the citation (APA, BibTeX) with their copy buttons and the DOI
+// Cite: a link that opens the citation (APA, BibTeX) with their copy buttons and the DOI (not shown for now: the
+// Zenodo record is to be made again)
 export function Cite() {
   const [open, setOpen] = useState(false);
   return (
@@ -116,13 +117,9 @@ export function TopCredit() {
     <span ref={ref} className="tb-credit" style={shown ? undefined : { display: 'none' }}>
       Developed by <b>Pericle Vărășteanu</b>
       <span aria-hidden="true">·</span>
-      IMT Bucharest
-      <span aria-hidden="true">·</span>
       <a href={INSTAGRAM} target="_blank" rel="noopener noreferrer" title="Follow me on Instagram">
         <InstagramIcon /> @pericle_v
       </a>
-      <span aria-hidden="true">·</span>
-      <Cite />
     </span>
   );
 }
@@ -132,7 +129,7 @@ export function MadeBy() {
   return (
     <div className="made-by">
       <div>
-        SciPlotFlow {versionShown} · Developed by <b>Pericle Vărășteanu</b> · IMT Bucharest · <Cite />
+        SciPlotFlow {versionShown} · Developed by <b>Pericle Vărășteanu</b>
       </div>
       <div>
         If you find this app useful, please support my photography: follow me on Instagram{' '}
