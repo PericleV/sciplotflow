@@ -4,6 +4,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { SYMBOL_GROUPS } from '../figure/draw.ts';
 import { FONTS, type TextStyle } from '../figure/spec.ts';
 import { NumInput } from './ui.tsx';
+import { useTyped } from '../ui/useTyped.ts';
 import { CornerDownLeft, RotateCcw, Sigma, X } from 'lucide-react';
 import { IC } from './iconProps.ts';
 
@@ -14,6 +15,11 @@ export function RichInput({ value, onChange, placeholder, title, multiline }: { 
   const input = useRef<HTMLInputElement>(null);
   const area = useRef<HTMLTextAreaElement>(null);
   const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useTyped(value);
+  const typing = (v: string) => {
+    setTyped(v);
+    onChange(v);
+  };
   // the menu kept inside the window: moved aside when it would stick out of it (a narrow panel at the window's edge)
   const pop = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -42,9 +48,9 @@ export function RichInput({ value, onChange, placeholder, title, multiline }: { 
   return (
     <span className="rich-input">
       {multiline ? (
-        <textarea ref={area} className="nodrag nowheel rich-field" rows={2} value={value} placeholder={placeholder} title={title ?? RICH_HELP} spellCheck={false} onChange={(e) => onChange(e.target.value)} />
+        <textarea ref={area} className="nodrag nowheel rich-field" rows={2} value={typed} placeholder={placeholder} title={title ?? RICH_HELP} spellCheck={false} onChange={(e) => typing(e.target.value)} />
       ) : (
-        <input ref={input} className="nodrag rich-field" type="text" value={value} placeholder={placeholder} title={title ?? RICH_HELP} spellCheck={false} onChange={(e) => onChange(e.target.value)} />
+        <input ref={input} className="nodrag rich-field" type="text" value={typed} placeholder={placeholder} title={title ?? RICH_HELP} spellCheck={false} onChange={(e) => typing(e.target.value)} />
       )}
       <button className={`nodrag omega${open ? ' on' : ''}`} title="Symbols and formatting" onClick={() => setOpen((o) => !o)}>
         Ω

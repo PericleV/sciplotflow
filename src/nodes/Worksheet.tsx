@@ -2,7 +2,8 @@
 // block; the column letter or the row number for a whole column or row), double-click, Enter or just type to change
 // it (Enter: the cell below, Tab: the next one, Esc: cancel). Ctrl+C copies the selection (Ctrl+Shift+C with the
 // names), Ctrl+V pastes a table from a spreadsheet or a text file at the selected cell (rows and columns are added when
-// needed), Delete empties it. Right-click (or Ctrl+Shift+= / Ctrl+−): insert, delete and move columns and rows. Every
+// needed), Delete empties it. Right-click (or Ctrl+Shift+= / Ctrl+−): insert, delete and move columns and rows; on
+// cells, delete them (those below moving up, or those above down) or insert empty ones (those below moving down). Every
 // column has its designation (X, Y, ±Y …), used by the quick plot. Only the rows in view are drawn, so large files
 // scroll at once. The changes are kept apart from the file.
 import { useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
@@ -15,7 +16,7 @@ import { Lock, X } from 'lucide-react';
 import { formulaOfKept, type ColFormula } from '../engine/sheetFormula.ts';
 import { FormulaWindow } from './FormulaWindow.tsx';
 import { IC } from './iconProps.ts';
-import { ask } from '../ui/dialogStore.ts';
+import { ask, notify } from '../ui/dialogStore.ts';
 import { looksNumeric } from '../engine/convert.ts';
 import { ConvertPanel, ConvertProposal } from './SheetConvert.tsx';
 
@@ -487,7 +488,36 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
         }
     if (any) onEdits({ ...e, cells });
   };
-  const onCopy = (ev: ClipboardEvent) => {
+  // the cells selected taken out of their columns, those below moving up (up) or those above moving down (down) into
+  // their place; or empty cells put in, those below moving down (insert). Only in its own columns (not given by a formula
+  // nor locked); the rest of the row stays as it is
+  const shiftable = (c: number) => reads[c] >= 0 && !userLocked(c) && !formulaOf(c);
+  const shiftCells = (how: 'up' | 'down' | 'insert') => {
+    if (!lo || !hi) return;
+    const k = hi.r - lo.r + 1;
+    const rowAt = (r: number) => (r < nOwn ? map.rows[r] : map.baseRows + (e.addRows ?? 0) + (r - nOwn));
+    // (a cell's value in full, not as shown)
+    const raw = (col: (typeof cols)[number], r: number) => (r >= col.values.length ? '' : col.text && col.text[r] !== undefined && !Number.isFinite(col.values[r]) ? col.text[r] : Number.isFinite(col.values[r]) ? String(col.values[r]) : '');
+    const cells = { ...e.cells };
+    let more = 0;
+    const cs = span(lo.c, hi.c).filter(shiftable);
+    if (cs.length < hi.c - lo.c + 1) noteLocked();
+    for (const c of cs) {
+      const was = Array.from({ length: nOwn }, (_, r) => raw(cols[c], r));
+      const now = was.map((v, r) => (how === 'up' ? (r < lo.r ? v : (was[r + k] ?? '')) : how === 'down' ? (r > hi.r ? v : (was[r - k] ?? '')) : r < lo.r ? v : r <= hi.r ? '' : was[r - k]));
+      // (inserted: the values pushed past the last row on new rows)
+      if (how === 'insert') {
+        const last = was.findLastIndex((v) => v !== '');
+        for (let r = nOwn; r <= last + k; r++) now.push(was[r - k] ?? '');
+        more = Math.max(more, now.length - nOwn);
+      }
+      now.forEach((v, r) => {
+        if (v !== (was[r] ?? '')) cells[`${rowAt(r)}:${reads[c]}`] = v;
+      });
+    }
+    if (cs.length) onEdits({ ...e, cells, ...(more ? { addRows: (e.addRows ?? 0) + more } : {}) });
+  };
+  const onCopy =(ev: ClipboardEvent) => {
     if (editing || !lo || !hi) return;
     const lines: string[] = [];
     const cs = span(lo.c, hi.c);
@@ -575,7 +605,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
   const selText = lo && hi && (hi.r > lo.r || hi.c > lo.c) ? `${hi.r - lo.r + 1} × ${hi.c - lo.c + 1} selected` : '';
 
   // the entries of the menu for the selection (columns: when a column or a cell was clicked; rows: a row or a cell)
-  const items: { label: string; run: () => void; danger?: boolean; kbd?: string }[] = [];
+  const items: { label: string; run: () => void; danger?: boolean; kbd?: string; off?: string }[] = [];
   if (menu && picks) {
     const ownPicked = picks.on === 'col' ? picks.list.filter((c) => reads[c] >= 0) : [];
     if (ownPicked.length) items.push({ label: ownPicked.every(userLocked) ? `Unlock ${ownPicked.length === 1 ? 'column' : `${ownPicked.length} columns`}` : `Lock ${ownPicked.length === 1 ? 'column' : `${ownPicked.length} columns`}`, run: () => toggleLock(ownPicked) });
@@ -608,6 +638,15 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
         const hides = gone.every(lockedCol);
         items.push({ label: `${hides ? 'Hide' : 'Delete'} ${gone.length === 1 ? 'column' : `${gone.length} columns`}`, run: () => removeCols(gone), danger: true, kbd: menu.on === 'col' ? 'Delete' : undefined });
       }
+    }
+    // (cells: taken out or put in, the others of their columns moved; not in the inputs' columns, which follow them)
+    if (menu.on === 'cell' && lo.r < n && !(readOnly && !layout)) {
+      const off = span(lo.c, hi.c).some(shiftable) ? undefined : span(lo.c, hi.c).some((c) => reads[c] < 0) ? 'These columns follow the inputs: to change their cells, Copy into its own sheets (in the options)' : 'These columns are locked or given by a formula: unlock them, or Remove formula, to change their cells';
+      items.push(
+        { label: 'Delete cells, shift up', run: () => shiftCells('up'), off },
+        { label: 'Delete cells, shift down', run: () => shiftCells('down'), off },
+        { label: 'Insert cells, shift down', run: () => shiftCells('insert'), off },
+      );
     }
     // (the rows of a sheet of the inputs: moved one place)
     if (menu.on !== 'col' && rowLayout && hi.r === lo.r && lo.r < n) {
@@ -867,9 +906,11 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
             {items.map((it) => (
               <button
                 key={it.label}
-                className={it.danger ? 'danger' : ''}
+                className={it.off ? 'muted' : it.danger ? 'danger' : ''}
+                title={it.off}
                 onClick={() => {
-                  it.run();
+                  if (it.off) notify(it.off);
+                  else it.run();
                   setMenu(null);
                   focus();
                 }}

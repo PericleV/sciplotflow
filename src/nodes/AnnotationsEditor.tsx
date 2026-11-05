@@ -6,7 +6,8 @@
 // The settings of one (also of an object of a Figure Drawing): the same sections in the same order for every kind —
 // its own (Arrow, Star …), Text, Line, Fill, Position, Effects, More —, each kind showing those it has.
 import { useState, type ReactNode } from 'react';
-import { Button, Select as MSelect, TextInput as MTextInput, Textarea, Tooltip, ActionIcon, Group } from '@mantine/core';
+import { TypedTextarea, TypedTextInput } from '../ui/typed.tsx';
+import { Button, Select as MSelect, Tooltip, ActionIcon, Group } from '@mantine/core';
 import { pageText, shapeSpec } from '../engine/evaluate.ts';
 import { PageTextContext } from '../ui/pageText.ts';
 import { setQuickBar, useQuickBar } from '../ui/quickBarStore.ts';
@@ -219,7 +220,7 @@ function ArrowShape({ s, set, unit }: { s: ShapeSpec; set: (p: Partial<ShapeSpec
                 </Button>
               )}
             </div>
-            {bends.length > 0 && <MTextInput value={s.bends ?? ''} placeholder="x y; x y" title={`The points the line goes through, in order: x y; x y … ${unit ? `(${unit})` : '(in its units)'}`} onChange={(e) => set({ bends: e.currentTarget.value.trim() ? e.currentTarget.value : undefined })} />}
+            {bends.length > 0 && <TypedTextInput value={s.bends ?? ''} placeholder="x y; x y" title={`The points the line goes through, in order: x y; x y … ${unit ? `(${unit})` : '(in its units)'}`} onChange={(e) => set({ bends: e.currentTarget.value.trim() ? e.currentTarget.value : undefined })} />}
           </Row>
         </>
       )}
@@ -388,7 +389,7 @@ export function ShapeEditor({ s, set, where, placing, onPlace }: { s: ShapeSpec;
             <Choice<string> value={String(s.dec ?? 1)} onChange={(v) => set({ dec: Math.max(0, Math.min(6, Math.round(Number(v)) || 0)) })} options={['0', '1', '2', '3', '4', '5', '6'].map((d) => [d, d])} />
           </Row>
           <Row label="Unit" hint="Written after the length (in a drawing the length is in mm)">
-            <MTextInput value={s.unit ?? ''} placeholder="none" onChange={(e) => set({ unit: e.currentTarget.value || undefined })} />
+            <TypedTextInput value={s.unit ?? ''} placeholder="none" onChange={(e) => set({ unit: e.currentTarget.value || undefined })} />
           </Row>
         </>
       )}
@@ -446,7 +447,7 @@ export function ShapeEditor({ s, set, where, placing, onPlace }: { s: ShapeSpec;
       {k === 'polygon' && (
         <>
           <Row label="Points" hint={`x y; x y; … ${unit ? `(${unit})` : '(in the units chosen in Position)'}, or placed with the mouse`}>
-            <MTextInput value={s.points} placeholder="x y; x y; x y" onChange={(e) => set({ points: e.currentTarget.value })} />
+            <TypedTextInput value={s.points} placeholder="x y; x y; x y" onChange={(e) => set({ points: e.currentTarget.value })} />
             {onPlace && (
               <Button variant={placing ? 'filled' : 'default'} leftSection={<MousePointerClick size={13} />} onClick={onPlace} title="Click on the figure: a point each click, drag one to move it, double-click to remove it (again: stop)">
                 {placing ? 'Placing: click to stop' : 'Place on the figure'}
@@ -471,7 +472,7 @@ export function ShapeEditor({ s, set, where, placing, onPlace }: { s: ShapeSpec;
       {k === 'path' && (
         <>
           <Row label="Outline" hint="Its outline as SVG path text, in its units (M, L, H, V, C, S, Q, T, A, Z): edit it or paste one; on the figure: its nodes dragged (double-click one: removed; Alt + click: smooth / corner; double-click the path: a node there)">
-            <Textarea className="mono-input" autosize minRows={2} maxRows={6} value={s.d ?? ''} placeholder="M 0 0 L 10 0 …" onChange={(e) => set({ d: e.currentTarget.value })} />
+            <TypedTextarea className="mono-input" autosize minRows={2} maxRows={6} value={s.d ?? ''} placeholder="M 0 0 L 10 0 …" onChange={(e) => set({ d: e.currentTarget.value })} />
           </Row>
           <Row label="Holes" hint="Where it crosses itself or one part is inside another: holes by the even-odd rule (else by the direction of each part)">
             <Toggle value={!!s.evenodd} onChange={(evenodd) => set({ evenodd: evenodd || undefined })} label="by even-odd" />
@@ -634,7 +635,7 @@ export function ShapeEditor({ s, set, where, placing, onPlace }: { s: ShapeSpec;
           cols={4}
         />
         {(ownDash || !!s.dashPattern) && (
-          <MTextInput value={s.dashPattern ?? ''} placeholder="e.g. 6 2 1 2" title="In pt: a dash, a gap, a dash, a gap … (e.g. 6 2 1 2: long dash, gap, dot, gap)" onChange={(e) => set({ dashPattern: e.currentTarget.value.trim() ? e.currentTarget.value : undefined })} />
+          <TypedTextInput value={s.dashPattern ?? ''} placeholder="e.g. 6 2 1 2" title="In pt: a dash, a gap, a dash, a gap … (e.g. 6 2 1 2: long dash, gap, dot, gap)" onChange={(e) => set({ dashPattern: e.currentTarget.value.trim() ? e.currentTarget.value : undefined })} />
         )}
       </Row>
       <Row label="Opacity">
@@ -989,7 +990,7 @@ export function ColorbarEditor({ s, set, where }: { s: ColorbarSpec; set: (p: Pa
           {labels === 'levels' && <div className="prop-note">The levels of a map filled by levels (a contour). Without levels: as Auto.</div>}
           {labels === 'custom' && (
             <Row label="List" hint="The values, with commas: 0, 0.5, 1.2 (those outside the map left out)">
-              <MTextInput value={s.custom ?? ''} placeholder="0, 0.5, 1" onChange={(e) => set({ custom: e.currentTarget.value })} />
+              <TypedTextInput value={s.custom ?? ''} placeholder="0, 0.5, 1" onChange={(e) => set({ custom: e.currentTarget.value })} />
             </Row>
           )}
           {labels !== 'none' && (

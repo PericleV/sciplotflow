@@ -1,6 +1,6 @@
 // A hatching's look in a properties panel, with sliders: its text (a text of its own), spacing, line, size of its marks,
 // angle, opacity, background, staggered rows. The same fields and rules as HatchLookFields (nodes/HatchMore.tsx).
-import { TextInput } from '@mantine/core';
+import { TypedTextInput } from './typed.tsx';
 import type { Hatch, HatchLook } from '../figure/spec.ts';
 import { AngleField, AutoSlider, ColorField, OpacityField, Row, Toggle } from './props.tsx';
 
@@ -20,7 +20,7 @@ export function HatchRows({ h, look, onChange, spacing = true }: { h: Hatch; loo
     <div className="prop-sub">
       {h === 'text' && (
         <Row label="Its text" hint="The text repeated: at most 5 characters (letters, signs, emoji; emoji may look different in Word / PowerPoint)">
-          <TextInput value={v.text ?? ''} placeholder="×" onChange={(e) => set({ text: [...e.currentTarget.value].slice(0, 5).join('') })} />
+          <TypedTextInput value={v.text ?? ''} placeholder="×" onChange={(e) => set({ text: [...e.currentTarget.value].slice(0, 5).join('') })} />
         </Row>
       )}
       {spacing && (

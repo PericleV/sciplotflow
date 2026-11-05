@@ -8,7 +8,7 @@ import type { PolarData } from '../types.ts';
 import { AutoNumber, Choice, ColorField, ListField, NumPair, OpacityField, PicturePick, Row, Section, Sections, SliderField, TextStyleRows, Toggle, WidthField } from '../ui/props.tsx';
 import { DASH_PICS } from '../ui/dashPics.tsx';
 import { RichInput } from './fields.tsx';
-import { TextInput } from '@mantine/core';
+import { TypedTextInput } from '../ui/typed.tsx';
 
 const FORMATS: [LabelFormat, string][] = [
   ['auto', 'Auto'],
@@ -144,7 +144,7 @@ export function PolarAxesEditor({ d, set }: { d: PolarData; set: (p: Partial<Pol
               </Row>
               {d.thetaLabels === 'custom' && (
                 <Row label="Typed" hint="Comma-separated, in the order of the spokes (an empty one: no label)">
-                  <TextInput size="xs" value={A.thetaCustom ?? ''} placeholder="E, NE, N …" onChange={(e) => setA({ thetaCustom: e.currentTarget.value || undefined })} />
+                  <TypedTextInput size="xs" value={A.thetaCustom ?? ''} placeholder="E, NE, N …" onChange={(e) => setA({ thetaCustom: e.currentTarget.value || undefined })} />
                 </Row>
               )}
               <Row label="Minor spokes" hint="Between two spokes (and a minor circle halfway between two circles)">

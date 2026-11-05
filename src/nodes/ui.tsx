@@ -11,6 +11,7 @@ import { useShownName } from './aliasStore.ts';
 import { keepPlaces } from '../engine/refs.ts';
 import { parseSci, sciPretty, sciText } from '../engine/table.ts';
 import { Popover } from '@mantine/core';
+import { useTyped } from '../ui/useTyped.ts';
 
 const num = (v: string) => (v === '' ? NaN : Number(v));
 
@@ -58,8 +59,23 @@ export function SciInput({ value, onChange, className, title, unit }: { value: n
   );
 }
 
+// (the text kept as typed: useTyped, ../ui/useTyped.ts)
 export function TextInput({ value, onChange, placeholder, className, title }: { value: string; onChange: (v: string) => void; placeholder?: string; className?: string; title?: string }) {
-  return <input className={`nodrag ${className ?? ''}`} type="text" value={value} placeholder={placeholder} title={title} spellCheck={false} onChange={(e) => onChange(e.target.value)} />;
+  const [typed, setTyped] = useTyped(value);
+  return (
+    <input
+      className={`nodrag ${className ?? ''}`}
+      type="text"
+      value={typed}
+      placeholder={placeholder}
+      title={title}
+      spellCheck={false}
+      onChange={(e) => {
+        setTyped(e.target.value);
+        onChange(e.target.value);
+      }}
+    />
+  );
 }
 
 // seg: a few short choices that never change, shown side by side (as in the newer panels) in place of a list
@@ -223,6 +239,7 @@ export function Messages({ result }: { result?: NodeResult }) {
 export function AutoText({ value, onChange, className, placeholder, title, inputRef }: { value: string; onChange: (v: string) => void; className?: string; placeholder?: string; title?: string; inputRef?: RefObject<HTMLTextAreaElement | null> }) {
   const own = useRef<HTMLTextAreaElement>(null);
   const ref = inputRef ?? own;
+  const [typed, setTyped] = useTyped(value);
   useLayoutEffect(() => {
     const t = ref.current;
     if (!t) return;
@@ -234,12 +251,16 @@ export function AutoText({ value, onChange, className, placeholder, title, input
       ref={ref}
       rows={1}
       className={`nodrag nowheel auto-text ${className ?? ''}`}
-      value={value}
+      value={typed}
       placeholder={placeholder}
       title={title}
       spellCheck={false}
       onKeyDown={(e) => e.key === 'Enter' && e.preventDefault()}
-      onChange={(e) => onChange(e.target.value.replace(/\s*\n\s*/g, ' '))}
+      onChange={(e) => {
+        const v = e.target.value.replace(/\s*\n\s*/g, ' ');
+        setTyped(v);
+        onChange(v);
+      }}
     />
   );
 }

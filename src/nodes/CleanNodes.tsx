@@ -2,7 +2,7 @@
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
 import { useState } from 'react';
-import { ActionIcon, Button, TextInput, Tooltip } from '@mantine/core';
+import { ActionIcon, Button, Tooltip } from '@mantine/core';
 import { Plus, X } from 'lucide-react';
 import type { AppNode, CleanData, CleanNode, FilterData, FilterNode } from '../types.ts';
 import { sortRulesOf, type FilterPart, type SortKey, type SortRule } from '../engine/cleaning.ts';
@@ -10,6 +10,7 @@ import { DataPreview } from './DataNodes.tsx';
 import { Y_AUTO } from './xAuto.ts';
 import { RowsControls, WhereConds } from './RowsPanel.tsx';
 import { Choice, ListField, NumField, Row, Section, Sections, Toggle } from '../ui/props.tsx';
+import { TypedTextInput } from '../ui/typed.tsx';
 import { Field, InPort, Messages, NumInput, OutPort, Select, ResultSummary } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
 import { ColumnsPicker } from './ColumnsPicker.tsx';
@@ -41,7 +42,7 @@ function ColumnsField({ value, names, onChange, auto, hint }: { value: string; n
           if (m !== LIST) onChange(m);
         }}
       />
-      {mode === LIST && <TextInput value={value} placeholder="2, B-D, names, A*" onChange={(e) => onChange(e.currentTarget.value)} aria-label={hint} />}
+      {mode === LIST && <TypedTextInput value={value} placeholder="2, B-D, names, A*" onChange={(e) => onChange(e.currentTarget.value)} aria-label={hint} />}
     </>
   );
 }
@@ -232,7 +233,7 @@ function SplitParts({ data, names, set }: { data: FilterData; names: string[]; s
       {parts.map((p, k) => (
         <div key={k} className="split-part">
           <div className="where-line">
-            <TextInput size="xs" value={p.name} placeholder={`Part ${k + 1}`} onChange={(e) => put(k, { name: e.currentTarget.value })} aria-label="The part's name" />
+            <TypedTextInput size="xs" value={p.name} placeholder={`Part ${k + 1}`} onChange={(e) => put(k, { name: e.currentTarget.value })} aria-label="The part's name" />
             <Tooltip label="Remove this part">
               <ActionIcon variant="subtle" size="sm" onClick={() => set({ parts: parts.filter((_, j) => j !== k) })} aria-label="Remove this part">
                 <X size={14} />

@@ -3,6 +3,7 @@
 // blocks and the export are in the options panel (a small word processor), or on a page of its own. The grip at its
 // bottom-right corner changes its width and height (kept in the project).
 import { lazy, Suspense, useState } from 'react';
+import { TypedArea } from '../ui/typed.tsx';
 import { NodeResizeControl, useReactFlow, useStore, type NodeProps } from '@xyflow/react';
 import type { AppNode, NoteData, NoteNode } from '../types.ts';
 import { NodeOptions } from './NodeOptions.tsx';
@@ -34,7 +35,7 @@ export function NoteNodeView({ id, data }: NodeProps<NoteNode>) {
           </Suspense>
         </div>
       ) : (
-        <textarea className="nodrag nowheel note-text" value={data.text} placeholder="Notes: sample, instrument, settings (formatting, the whole note: in the options panel)" spellCheck={false} onChange={(e) => updateNodeData(id, { text: e.target.value })} />
+        <TypedArea className="nodrag nowheel note-text" value={data.text} placeholder="Notes: sample, instrument, settings (formatting, the whole note: in the options panel)" spellCheck={false} onChange={(e) => updateNodeData(id, { text: e.target.value })} />
       )}
       {!data.collapsed && (
         <NodeResizeControl position="bottom-right" minWidth={200} minHeight={90} className="note-grip" style={{ background: 'transparent', border: 'none' }}>

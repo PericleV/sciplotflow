@@ -21,6 +21,7 @@ import { rescaleAxis, usePlotZoom, viewBox, zoomAt, type View, type ZoomMode } f
 import { ZoomTools } from './ZoomTools.tsx';
 import { ReaderButton, ReaderLayer, ReaderOptions, type ReadCurve, type ReaderProp } from './CanvasReader.tsx';
 import { READER_OFF, type ReaderState } from './readerState.ts';
+import { TypedArea } from '../ui/typed.tsx';
 import { Check, Field, InPort, Messages, NumInput, OutPort, ResultSummary, Select, TextInput } from './ui.tsx';
 import { sheetOptions } from './sheetOptions.ts';
 
@@ -511,7 +512,7 @@ function OpFields({ o, k, set, adding, setAdding }: { o: CurveOpData; k: number;
   if (o.op === 'formula')
     return (
       <>
-        <textarea
+        <TypedArea
           className="nodrag nowheel mono formula-lines"
           rows={Math.max(3, (o.formula ?? '').split('\n').length + 1)}
           value={o.formula ?? ''}

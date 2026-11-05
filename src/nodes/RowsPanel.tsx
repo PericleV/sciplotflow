@@ -2,6 +2,7 @@
 // (a column, a comparison, a value; all of them true or any one), the formula optional (the conditions written as one
 // when it is turned on).
 import { ActionIcon, Button, TextInput, Tooltip } from '@mantine/core';
+import { TypedTextInput } from '../ui/typed.tsx';
 import { useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import type { NodeResult } from '../engine/evaluate.ts';
@@ -48,7 +49,7 @@ export function WhereConds({ value, onChange, names, hasX }: { value: RowSelect;
     <div className="where">
       {formula ? (
         <Tooltip label={FORMULA_HINT(hasX)} multiline w={280}>
-          <TextInput value={value.rule ?? ''} placeholder={hasX ? 'x >= 500 and x <= 600' : 'mod(i, 2) == 0'} onChange={(e) => onChange({ ...value, rule: e.currentTarget.value })} aria-label="Formula" />
+          <TypedTextInput value={value.rule ?? ''} placeholder={hasX ? 'x >= 500 and x <= 600' : 'mod(i, 2) == 0'} onChange={(e) => onChange({ ...value, rule: e.currentTarget.value })} aria-label="Formula" />
         </Tooltip>
       ) : (
         <>
@@ -166,7 +167,7 @@ export function RowsControls({ value, onChange, hasX, result, names }: { value: 
       )}
       {v.mode === 'list' && (
         <Row label="Row numbers" hint="3, 7-12, 1:2:100 (every 2nd), 50-end: rows count from 1">
-          <TextInput value={v.list ?? ''} placeholder="3, 7-12, 50-end" onChange={(e) => onChange({ ...v, list: e.currentTarget.value })} />
+          <TypedTextInput value={v.list ?? ''} placeholder="3, 7-12, 50-end" onChange={(e) => onChange({ ...v, list: e.currentTarget.value })} />
         </Row>
       )}
       {v.mode === 'rule' && <WhereConds value={v} onChange={onChange} names={names} hasX={hasX} />}
@@ -185,7 +186,7 @@ export function RowsControls({ value, onChange, hasX, result, names }: { value: 
         <div className="where">
           {v.alsoOn && (
             <Tooltip label={FORMULA_HINT(hasX)} multiline w={280}>
-              <TextInput value={v.also ?? ''} placeholder={hasX ? 'x > 0 and row % 2 == 0' : 'row % 2 == 0'} onChange={(e) => onChange({ ...v, also: e.currentTarget.value })} aria-label="And a formula" />
+              <TypedTextInput value={v.also ?? ''} placeholder={hasX ? 'x > 0 and row % 2 == 0' : 'row % 2 == 0'} onChange={(e) => onChange({ ...v, also: e.currentTarget.value })} aria-label="And a formula" />
             </Tooltip>
           )}
           <Toggle value={!!v.alsoOn} label="And a formula" onChange={(on) => onChange({ ...v, alsoOn: on || undefined })} />
