@@ -40,6 +40,8 @@ const asSheet = (ds: Dataset, name: string): BookSheet => {
 const matrixRows = (are?: string) => (are === 'names' ? 'the rows’ names as the first column' : are === 'Y' ? 'the rows’ Y as the first column' : 'the row numbers as the first column');
 const matrixCols = (are?: string) => (are === 'names' ? 'the columns’ names as the names' : are === 'X' ? 'the columns’ X as the names' : 'the columns named C1, C2 …');
 type BookIn = NonNullable<NodeView['book']>['ins'][number];
+// an input's port by its letter (A: 0, AA: 26)
+const portOf = (letter: string) => (/^[A-Z]+$/.test(letter) ? [...letter].reduce((a, ch) => a * 26 + ch.charCodeAt(0) - 64, 0) - 1 : -1);
 // the question asked when a matrix is connected (both ticked to begin with; OK keeps the answer, changed in the options)
 function MatrixAsk({ letter, inp, onAnswer }: { letter: string; inp: BookIn; onAnswer: (rows: boolean, cols: boolean) => void }) {
   const [rows, setRows] = useState(true);
@@ -124,11 +126,17 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
     if (nm !== undefined) set({ layout: { ...data.layout, [nm]: { ...data.layout?.[nm], ...p } } });
   };
   const hiddenKeys = data.layout?.[setName(k) ?? '']?.hide ?? [];
+  // the inputs that make the sheet shown, when it is not one of its own (columns, datasets, matrices; not a workbook's
+  // sheet): their ports
+  const portsOf = (j: number) =>
+    ownIx(j) >= 0 ? [] : [...ins.entries()].flatMap(([letter, inp]) => (inp.kind !== 'workbook' && (inp.sheet === names[j] || inp.sheet === setName(j)) ? [portOf(letter)] : []));
   // a column of its own at the place `at` among the inputs' (as many rows as the sheet): an empty sheet showing the
-  // inputs starts a table of its own
+  // inputs starts a table of its own; a sheet of the inputs only gets a sheet of its own of that name, the inputs sent to
+  // it (at the same tab, its settings kept)
   const addOwnCol = (at: number) => {
-    const sh = own[ownIx(k)];
     const nm = names[k];
+    const fed = portsOf(k);
+    const sh: BookSheet | undefined = own[ownIx(k)] ?? (fed.length && nm !== undefined ? { name: nm, text: '' } : undefined);
     if (!sh || nm === undefined) return;
     const rows = ds ? Math.max(0, maxOf(ds.columns.map((c) => c.values.length))) : 0;
     let edits: SheetEdits;
@@ -145,7 +153,18 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
     }
     const order = [...(keys ?? [])];
     order.splice(at, 0, `o${read}`);
-    set({ sheets: own.map((q, i) => (i === ownIx(k) ? { ...q, edits } : q)), layout: { ...data.layout, [nm]: { ...data.layout?.[nm], order } } });
+    if (ownIx(k) >= 0) return set({ sheets: own.map((q, i) => (i === ownIx(k) ? { ...q, edits } : q)), layout: { ...data.layout, [nm]: { ...data.layout?.[nm], order } } });
+    const list = stamped();
+    const made = { ...sh, id: freeId(list), edits };
+    const was = setName(k) ?? nm;
+    const tabIds = r?.view.book?.ids ?? [];
+    set({
+      sheets: [...list, made],
+      into: Array.from({ length: Math.max(count, ...fed.map((p) => p + 1)) }, (_, i) => (fed.includes(i) ? nm : into(i))),
+      layout: { ...data.layout, [nm]: { ...data.layout?.[was], order } },
+      ...(was !== nm && data.roles?.[was] ? { roles: { ...data.roles, [nm]: data.roles[was] } } : {}),
+      ...(tabIds.length === names.length ? { order: tabIds.map((q, j) => (j === k ? `${id}:${made.id}` : q)) } : {}),
+    });
   };
   const layout: SheetLayout | undefined =
     kinds[k] !== 'own' && keys
@@ -153,7 +172,7 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
           keys,
           onOrder: (order) => setLayout({ order }),
           onHide: (ks) => setLayout({ hide: [...new Set([...hiddenKeys, ...ks])] }),
-          ...(ownIx(k) >= 0 ? { onAdd: addOwnCol } : {}),
+          ...(ownIx(k) >= 0 || portsOf(k).length ? { onAdd: addOwnCol } : {}),
           hidden: hiddenKeys.map((q) => {
             const nm = q.replace(/^i:/, '');
             return aliases.cols?.[nm] ?? nm;
@@ -246,7 +265,7 @@ export function WorkbookNodeView({ id, data }: NodeProps<WorkbookNode>) {
       })}
       {[...ins.entries()].map(([letter, inp]) => {
         if (inp.kind !== 'matrix' || !inp.ask) return null;
-        const port = /^[A-Z]+$/.test(letter) ? [...letter].reduce((a, ch) => a * 26 + ch.charCodeAt(0) - 64, 0) - 1 : -1;
+        const port = portOf(letter);
         return <MatrixAsk key={letter} letter={letter} inp={inp} onAnswer={(rows, cols) => set({ matrix: { ...data.matrix, [port]: { rows, cols } } })} />;
       })}
       {r?.outputs.out?.t === 'dataset' && (
