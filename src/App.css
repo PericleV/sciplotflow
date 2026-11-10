@@ -1084,6 +1084,8 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .wall-list .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .mark-row { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; padding: 3px 0; border-top: 1px solid var(--border); }
 .fit-stats { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
+.fit-eq { font-size: var(--fs-small); font-variant-numeric: tabular-nums; min-width: 0; }
+.fit-eq-params { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0 10px; }
 .fit-runs select { min-width: 0; }
 .run-ranges table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--fs-small); }
 .run-ranges th { text-align: left; }

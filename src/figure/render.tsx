@@ -2305,7 +2305,16 @@ function ShapeView({ s, m, defaults, id = 'shape' }: { s: ShapeSpec; m: Mapper; 
     }
     case 'xband': {
       const [x, w] = [Math.min(x1, x2), Math.abs(x2 - x1)];
-      return <ClosedShape s={s} id={id} box={gradFrame(s, m)?.box} color={s.color} outline={false} make={(p) => <rect x={n2(x)} y={n2(m.box.y)} width={n2(w)} height={n2(m.box.h)} {...p} />} />;
+      const band = <ClosedShape s={s} id={id} box={gradFrame(s, m)?.box} color={s.color} outline={false} make={(p) => <rect x={n2(x)} y={n2(m.box.y)} width={n2(w)} height={n2(m.box.h)} {...p} />} />;
+      // (its text at the top, in the middle: the number of a Quick fit's range)
+      return s.text ? (
+        <g>
+          {band}
+          <RichText x={x + w / 2} y={m.box.y + 2} text={s.text} st={resolveText(s.textStyle, defaults)} anchor="middle" valign="top" />
+        </g>
+      ) : (
+        band
+      );
     }
     case 'yband': {
       const [y, h] = [Math.min(y1, y2), Math.abs(y2 - y1)];

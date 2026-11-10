@@ -1,7 +1,7 @@
 // Evaluation of the graph: every node in the order of its connections, from the values on its input ports to the
 // values on its output ports. Pure (no React): also runs in the scripts. A node whose settings and inputs did not
 // change keeps its previous result (the cache), so a change recomputes only what follows from it.
-import { fitLook, isTrend, paramText, QUICK_FIT_NAMES, quickFit, quickFitsOf, type QuickFitResult, type QuickFitSpec } from './quickfit.ts';
+import { fitLook, isTrend, paramText, QUICK_FIT_NAMES, rangeName, usedRanges, quickFit, quickFitsOf, type QuickFitResult, type QuickFitSpec } from './quickfit.ts';
 import { aggregateByX } from './aggregate.ts';
 import { richMetrics } from '../figure/draw.ts';
 import { markMathAsked, mathSizesVersion, resetMathAsked } from '../math/sizes.ts';
@@ -795,10 +795,12 @@ function quickFitCurves(id: string, ins: QFIn[], warnings: string[]): { curves: 
     f.fits.forEach((q, j) => {
       // the ranges drawn (also of a fit turned off: they can still be moved)
       const look = q.region ?? {};
+      // (every range fitted on its own: its number at its top, as the fit is named, Reg. 1 …)
+      const numbered = !!q.perRange && usedRanges(q).length > 1;
       if (look.show !== false)
         (q.ranges ?? []).forEach((r, i) => {
           const [lo, hi] = [Number.isFinite(r.lo) ? r.lo : span[0], Number.isFinite(r.hi) ? r.hi : span[1]];
-          regions.push({ key: `${id}/qf-${f.k}-${j}-${i}`, owner: { node: id, field: 'qfit', curve: f.k, fit: j, item: i }, kind: 'shape', shape: shapeSpec({ kind: 'xband', coords: 'data', x1: Math.min(lo, hi), x2: Math.max(lo, hi), color: look.edge || RANGE_COLOR, width: look.edgeWidth ?? 0, dash: look.edgeDash ?? 'solid', fill: look.fill || RANGE_COLOR, fillOpacity: look.opacity ?? 0.13, ...(look.hatch && look.hatch !== 'none' ? { hatch: look.hatch, hatchColor: look.hatchColor || look.fill || RANGE_COLOR, ...(look.hatchLook ? { hatchLook: look.hatchLook } : {}) } : {}), z: -1 }) });
+          regions.push({ key: `${id}/qf-${f.k}-${j}-${i}`, owner: { node: id, field: 'qfit', curve: f.k, fit: j, item: i }, kind: 'shape', shape: shapeSpec({ kind: 'xband', coords: 'data', x1: Math.min(lo, hi), x2: Math.max(lo, hi), color: look.edge || RANGE_COLOR, width: look.edgeWidth ?? 0, dash: look.edgeDash ?? 'solid', fill: look.fill || RANGE_COLOR, fillOpacity: look.opacity ?? 0.13, ...(numbered && (Number.isFinite(r.lo) || Number.isFinite(r.hi)) ? { text: String(i + 1), textStyle: { size: 7, color: look.edge || '#555555' } } : {}), ...(look.hatch && look.hatch !== 'none' ? { hatch: look.hatch, hatchColor: look.hatchColor || look.fill || RANGE_COLOR, ...(look.hatchLook ? { hatchLook: look.hatchLook } : {}) } : {}), z: -1 }) });
         });
       if (q.show === false) return;
       const r = quickFit(xs, yv, q, span);
@@ -817,8 +819,9 @@ function quickFitCurves(id: string, ins: QFIn[], warnings: string[]): { curves: 
       const many = r.results.length > 1;
       r.results.forEach((res, i) => {
         const r2 = Number.isFinite(res.r2) ? `, R² = ${res.r2.toFixed(4)}` : '';
-        const where = many ? ` (${res.range})` : '';
-        const label = mode === 'equation' ? (trend && q.kind !== 'movavg' ? `${res.equation}${r2}` : `${name}${r2}`) + where : mode === 'params' ? [`${name}${where}`, ...res.params.map(paramText).flatMap((_, k, a) => (k % 2 ? [] : [a.slice(k, k + 2).join(', ')]))].join('\\\\') : `${name}${where}`;
+        // (a range fitted on its own: named by its number, Reg. 1 …; ranges fitted together: by their x)
+        const where = res.reg ? ` · Reg. ${res.reg}` : many ? ` (${res.range})` : '';
+        const label = mode === 'equation' ? (res.reg ? `Reg. ${res.reg}: ` : '') + (trend && q.kind !== 'movavg' ? `${res.equation}${r2}` : `${name}${r2}`) + (res.reg ? '' : where) : mode === 'params' ? [`${name}${where}`, ...res.params.map(paramText).flatMap((_, k, a) => (k % 2 ? [] : [a.slice(k, k + 2).join(', ')]))].join('\\\\') : `${name}${where}`;
         const lo = res.curve.lo;
         const hi = res.curve.hi;
         const band = lo && hi ? { yErr: column('band +', Float64Array.from(hi, (h, k) => h - res.curve.y[k])), yErrLo: column('band −', Float64Array.from(lo, (l, k) => res.curve.y[k] - l)) } : {};
@@ -834,8 +837,9 @@ function quickFitCurves(id: string, ins: QFIn[], warnings: string[]): { curves: 
         res.parts?.forEach((p, t) => curves.push({ key: `${key}:p${t}`, label: `${name}${where} · ${p.name}`, noLegend: true, series: ser(p.x, p.y), style: curveStyle({ mode: 'line', color, lineWidth: Math.max(0.5, width * 0.6), dash: 'dash', ...axes }) }));
         if (res.base) curves.push({ key: `${key}:base`, label: `${name}${where} · baseline`, noLegend: true, series: ser(res.base.x, res.base.y), style: curveStyle({ mode: 'line', color, lineWidth: Math.max(0.5, width * 0.6), dash: 'dot', ...axes }) });
         const all = [...res.params, ...res.derived];
-        for (const p of all) rows.push({ curve: f.label, fit: name, range: res.range, name: p.name, value: p.value, error: p.error });
-        rows.push({ curve: f.label, fit: name, range: res.range, name: 'R²', value: res.r2, error: NaN }, { curve: f.label, fit: name, range: res.range, name: 'n', value: res.n, error: NaN });
+        const range = rangeName(res);
+        for (const p of all) rows.push({ curve: f.label, fit: name, range, name: p.name, value: p.value, error: p.error });
+        rows.push({ curve: f.label, fit: name, range, name: 'R²', value: res.r2, error: NaN }, { curve: f.label, fit: name, range, name: 'n', value: res.n, error: NaN });
         if (q.box && q.box !== 'none') (corners[q.box] ??= []).push(`\\bold{${name}${where}}`, ...all.map(paramText), ...(Number.isFinite(res.r2) ? [`R² = ${res.r2.toFixed(4)}`] : []));
       });
       view.push({ curve: f.k, fit: j, curveLabel: f.label, name, results: r.results.map(({ curve: _c, parts: _p, base: _b, ...rest }) => rest) });

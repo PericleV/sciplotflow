@@ -1,14 +1,14 @@
 // The results of all the quick fits of a Plot in one table: a row per parameter (and the peaks' areas, R², n) of every
 // fit of every curve, every range; copied (tab-separated: paste into a spreadsheet) or saved as CSV.
 import type { QuickFitView } from '../engine/evaluate.ts';
-import { paramText } from '../engine/quickfit.ts';
+import { paramText, rangeName } from '../engine/quickfit.ts';
 import { fmtNum } from '../engine/table.ts';
 
 function tableRows(fits: QuickFitView[]): string[][] {
   const out: string[][] = [['curve', 'fit', 'range', 'parameter', 'value', 'error']];
   for (const f of fits)
     for (const r of f.results) {
-      const at = r.range || 'all';
+      const at = rangeName(r) || 'all';
       for (const p of [...r.params, ...r.derived]) out.push([f.curveLabel, f.name, at, p.name, String(p.value), Number.isFinite(p.error) ? String(p.error) : '']);
       if (Number.isFinite(r.r2)) out.push([f.curveLabel, f.name, at, 'R2', String(r.r2), '']);
       out.push([f.curveLabel, f.name, at, 'n', String(r.n), '']);
@@ -51,7 +51,7 @@ export function QuickFitResults({ fits }: { fits: QuickFitView[] }) {
         <tbody>
           {fits.flatMap((f) =>
             f.results.flatMap((r, i) => {
-              const head = `${f.name}${r.range ? ` (${r.range})` : ''}`;
+              const head = r.reg ? `${f.name} · ${rangeName(r)}` : `${f.name}${r.range ? ` (${r.range})` : ''}`;
               const ps = [...r.params, ...r.derived];
               return [
                 ...ps.map((p, k) => (

@@ -56,7 +56,7 @@ export function QuickFitControls({ value, onChange, results, drawing, onDraw, pl
       <div className="row wrap">
         <b title="Fits drawn with this curve: lines and curves (least squares), peaks over a baseline, or a formula: on all its points or on ranges of x drawn on the figure">Quick fit</b>
         <span className="grow" />
-        <button className="nodrag" title="Another fit of this curve (another model, or other ranges)" onClick={() => onChange([...value, { kind: 'linear' }])}>
+        <button className="nodrag" title="Another fit of this curve (another model, or other ranges)" onClick={() => onChange([...value, { kind: 'linear', perRange: true }])}>
           + Fit
         </button>
       </div>

@@ -10,7 +10,7 @@ import * as Sg from '../src/engine/signal.ts';
 import { componentAt, generate, mosCurve, newComponent, noiseOf, rng } from '../src/engine/siggen.ts';
 import { cvMake, gradedVbi, hfExactTable, measured, trapsOf, type CvSpec } from '../src/engine/cv.ts';
 import { legendLayout } from '../src/figure/legendLayout.ts';
-import { fitLook, quickFit, quickFitsOf } from '../src/engine/quickfit.ts';
+import { fitLook, quickFit, quickFitsOf, rangeName } from '../src/engine/quickfit.ts';
 import { aggregateByX } from '../src/engine/aggregate.ts';
 import { COLOR_MAPS, mapColor, PALETTES, shapedStops, stopsOf } from '../src/figure/colors.ts';
 import { trendFit, type TrendSpec } from '../src/engine/trend.ts';
@@ -5205,6 +5205,11 @@ for (const ex of EXAMPLES) {
   const tc = typeof tog === 'string' ? null : tog.results[0].curve;
   const mid = tc ? tc.y[tc.x.findIndex((x) => x > 5)] : 0;
   ok(typeof per !== 'string' && per.results.length === 2 && per.results[1].range === '8.5 – 10' && !!tc && Number.isNaN(mid) && Number.isFinite(tc.y[0]) && typeof all !== 'string' && all.results[0].curve.y.every(Number.isFinite) && all.results[0].curve.x[0] === 0 && all.results[0].curve.x[all.results[0].curve.x.length - 1] === 10, 'Quick fit: a fit per range, or one of all the ranges (its curve only inside them), or the curve over all X');
+  // a fit per range named by the range's number among those drawn (one not set left out): Reg. 1, Reg. 3
+  {
+    const gap = quickFit(R.x, R.y, { kind: 'linear', ranges: [two[0], { lo: NaN, hi: NaN }, two[1]], perRange: true }, [0, 10]);
+    ok(typeof gap !== 'string' && gap.results.map((q) => q.reg).join() === '1,3' && rangeName(gap.results[1]) === 'Reg. 3 (8.5 – 10)' && typeof tog !== 'string' && tog.results[0].reg === undefined && rangeName(tog.results[0]) === '0 – 1.5, 8.5 – 10', 'Quick fit: a fit per range named Reg. 1, Reg. 3 … by its range; ranges together by their x');
+  }
   // a formula, a parameter fixed; peaks placed by hand (their number and starts); the old trend line read as a quick fit
   const xs = Array.from({ length: 50 }, (_, i) => i * 0.2);
   const fo = quickFit(xs, xs.map((x) => 2 * Math.exp(-x / 3) + 0.1), { kind: 'formula', formula: 'A*exp(-x/t) + y0', params: [{ name: 'y0', value: 0.1, fixed: true, min: NaN, max: NaN, shared: false }] }, [0, 10]);

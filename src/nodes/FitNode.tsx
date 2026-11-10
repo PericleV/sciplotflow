@@ -25,6 +25,20 @@ import { ReaderButton, ReaderLayer, ReaderOptions, type ReadCurve, type ReaderPr
 import { READER_OFF, type ReaderState } from './readerState.ts';
 
 const M = { l: 50, r: 10, t: 8, b: 26 };
+// the parameters shown in the node under its statistics (the others: in Parameters)
+const SHOWN_PARAMS = 9;
+// a model's equation, as its note begins: up to what is said of it (“, w = FWHM”, “: L, G of the same area”, “ with the
+// errors”), outside the brackets
+function equationOf(note: string): string {
+  let depth = 0;
+  for (let i = 0; i < note.length; i++) {
+    const ch = note[i];
+    if ('([{'.includes(ch)) depth++;
+    else if (')]}'.includes(ch)) depth--;
+    else if (!depth && (note.startsWith(', ', i) || note.startsWith(': ', i) || note.startsWith('; ', i) || note.startsWith(' with ', i))) return note.slice(0, i);
+  }
+  return note;
+}
 const RES_H = 64;
 const C = { data: '#1f6fd6', unused: '#b4b4b4', fit: '#d62728', fit2: '#2ca02c', band: 'rgba(214, 39, 40, 0.15)', range: 'rgba(230, 159, 0, 0.13)', rangeEdge: '#e69f00' };
 type Range = { lo: number; hi: number };
@@ -951,6 +965,22 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
               <span>χ²ᵣ {fmtNum(res.stats.redChi2, 4)}</span>
               <span>RMSE {fmtNum(res.stats.rmse, 4)}</span>
               <span>{res.stats.iterations} it.</span>
+            </div>
+          )}
+          {res && !regKind && info && (
+            <div className="fit-eq">
+              <div className="mono ellipsis" title={info.note}>
+                {equationOf(info.note)}
+                {results.length > 1 && <span className="muted"> · range {res.range ?? ri + 1}</span>}
+              </div>
+              <div className="fit-eq-params mono">
+                {res.params.slice(0, SHOWN_PARAMS).map((p) => (
+                  <span key={p.name} className="ellipsis" title={`${p.name} = ${fmtPm(p.value, p.error)}`}>
+                    <b>{p.name}</b> = {p.fixed ? `${fmtNum(p.value, 6)} (fixed)` : p.linked ? `${fmtPm(p.value, p.error)} (linked)` : fmtPm(p.value, p.error)}
+                  </span>
+                ))}
+                {res.params.length > SHOWN_PARAMS && <span className="muted">… {res.params.length - SHOWN_PARAMS} more in Parameters</span>}
+              </div>
             </div>
           )}
         </>

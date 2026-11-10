@@ -59,6 +59,7 @@ export type QFParam = { name: string; value: number; error: number; fixed?: bool
 // the curve (NaN between ranges fitted together) with its band; each peak (on the baseline) and the baseline
 export type QuickFitResult = {
   range: string;
+  reg?: number; // a fit per range: the range's number (Reg. 1, Reg. 2 …)
   model: string;
   equation: string;
   params: QFParam[];
@@ -77,6 +78,8 @@ export const isTrend = (k: QuickFitKind) => k !== 'peaks' && k !== 'formula';
 const inRanges = (rs: XRange[], x: number) => !rs.length || rs.some((r) => x >= Math.min(r.lo, r.hi) && x <= Math.max(r.lo, r.hi));
 const fmtR = (v: number) => (Number.isFinite(v) ? String(+v.toPrecision(5)) : '…');
 export const rangeText = (r: XRange) => `${fmtR(r.lo)} – ${fmtR(r.hi)}`;
+// a fit's range as named: Reg. 1 (54.98 – 60.37) for a range fitted on its own, else its x
+export const rangeName = (res: Pick<QuickFitResult, 'range' | 'reg'>) => (res.reg ? `Reg. ${res.reg}${res.range ? ` (${res.range})` : ''}` : res.range);
 // the ranges as written (an open end: none on that side)
 export const usedRanges = (q: QuickFitSpec): XRange[] => (q.ranges ?? []).filter((r) => Number.isFinite(r.lo) || Number.isFinite(r.hi)).map((r) => ({ lo: Number.isFinite(r.lo) ? r.lo : -Infinity, hi: Number.isFinite(r.hi) ? r.hi : Infinity }));
 
@@ -169,7 +172,9 @@ export function quickFit(xIn: ArrayLike<number>, yIn: ArrayLike<number>, q: Quic
   }
   const rs = usedRanges(q);
   // the jobs: every range on its own, or all of them together (or all the points)
-  const jobs = q.perRange && rs.length > 1 ? rs.map((r) => ({ rs: [r], text: rangeText(r) })) : [{ rs, text: rs.length ? rs.map(rangeText).join(', ') : '' }];
+  // (a range on its own: its number among the ranges drawn, Reg. 1, Reg. 2 …)
+  const regs = (q.ranges ?? []).flatMap((r, i) => (Number.isFinite(r.lo) || Number.isFinite(r.hi) ? [i + 1] : []));
+  const jobs: { rs: XRange[]; text: string; reg?: number }[] = q.perRange && rs.length > 1 ? rs.map((r, i) => ({ rs: [r], text: rangeText(r), reg: regs[i] })) : [{ rs, text: rs.length ? rs.map(rangeText).join(', ') : '' }];
   const pick = (r: XRange[]) => {
     const idx = xs0.map((_, i) => i).filter((i) => inRanges(r, xs0[i]));
     return { xs: idx.map((i) => xs0[i]), ys: idx.map((i) => ys0[i]) };
@@ -193,6 +198,7 @@ export function quickFit(xIn: ArrayLike<number>, yIn: ArrayLike<number>, q: Quic
       const names = trendNames(q);
       results.push({
         range: job.text,
+        ...(job.reg ? { reg: job.reg } : {}),
         model: QUICK_FIT_NAMES[q.kind],
         equation: t.equation,
         params: names.map((name, k) => ({ name, value: t.coef[k], error: t.se[k] })),
@@ -247,6 +253,7 @@ export function quickFit(xIn: ArrayLike<number>, yIn: ArrayLike<number>, q: Quic
     const label = q.kind === 'peaks' ? `${shapes.length > 1 ? `${shapes.length} ` : ''}${SHAPE_NAMES[shapes[0]]}${shapes.length > 1 ? 's' : ''}` : 'formula';
     results.push({
       range: job.text,
+      ...(job.reg ? { reg: job.reg } : {}),
       model: label,
       equation: q.kind === 'formula' ? model.note : `${label}${nb ? ` + ${q.baseline ?? 'constant'} baseline` : ''}`,
       params: r.params.map((v) => ({ name: v.name, value: v.value, error: v.error, ...(v.fixed ? { fixed: true } : {}) })),
