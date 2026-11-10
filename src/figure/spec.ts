@@ -349,8 +349,9 @@ export type ThreeLine = { pts: P3[]; color: string; width: number; dash: Dash; p
 export type ThreePoints = { pts: P3[]; colors: string[]; symbol: SymbolShape; size: number; fill: SymbolFill; edge: number; drop: boolean; depthShade: boolean; place?: 'front' | 'back' };
 // an axis of a 3D plot, its own look (absent: as before): its values every `step` or about `count`, their format and
 // decimals, shown or not, their text; its title's text and how much farther it is (pt); the ticks out, in or none and
-// their length (pt); reversed (from the highest value to the lowest)
-export type Axis3D = { step?: number; count?: number; format?: LabelFormat; decimals?: number; labels?: boolean; labelText?: TextStyle; titleText?: TextStyle; titleGap?: number; ticks?: 'out' | 'in' | 'none'; tickLen?: number; reverse?: boolean };
+// their length (pt); reversed (from the highest value to the lowest); its scale (log: the values ≤ 0 left out, the box
+// in decades — the scene's coordinates on it are log10 of the values)
+export type Axis3D = { scale?: 'linear' | 'log'; step?: number; count?: number; format?: LabelFormat; decimals?: number; labels?: boolean; labelText?: TextStyle; titleText?: TextStyle; titleGap?: number; ticks?: 'out' | 'in' | 'none'; tickLen?: number; reverse?: boolean };
 // a flat map at a height z (a layer of 3D stacked maps): cells between the edges xe (nx + 1) and ye (ny + 1), a value
 // each (v[j·nx + i], NaN: empty), coloured when drawn by the curve's colour map over its colour range (so a Merge can
 // give its panels one scale); its opacity
@@ -444,7 +445,8 @@ export type AxisSpec = {
   time?: 'date' | 'duration';
 };
 export type TickDir = 'in' | 'out' | 'both' | 'none';
-export type LabelFormat = 'auto' | 'decimal' | 'sci' | 'eng' | 'common' | 'percent' | 'si';
+// enot: E notation (1e−3, 2.5e4)
+export type LabelFormat = 'auto' | 'decimal' | 'sci' | 'enot' | 'eng' | 'common' | 'percent' | 'si';
 export type Side = 'bottom' | 'left' | 'top' | 'right';
 // How one side of the frame looks.
 export type SideStyle = {

@@ -14,6 +14,7 @@ const FORMATS: [LabelFormat, string][] = [
   ['auto', 'Auto'],
   ['decimal', 'Decimal'],
   ['sci', 'Scientific'],
+  ['enot', 'E notation (1e-3)'],
   ['eng', 'Engineering'],
   ['si', 'SI prefixes'],
   ['percent', 'Percent'],

@@ -1003,6 +1003,7 @@ export function ColorbarEditor({ s, set, where }: { s: ColorbarSpec; set: (p: Pa
                     ['auto', 'Automatic'],
                     ['decimal', 'Decimal'],
                     ['sci', 'Scientific'],
+                    ['enot', 'E notation (1e-3)'],
                     ['eng', 'Engineering'],
                     ['common', 'Common ×10ⁿ'],
                     ['percent', 'Percent'],

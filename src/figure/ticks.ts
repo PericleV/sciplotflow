@@ -353,6 +353,16 @@ export function formatLabels(values: number[], log: boolean, side: SideStyle): {
         return mantExp(v, e, dec);
       });
       break;
+    case 'enot':
+      // E notation, as calculators and programs write it: 1e−3, 2.5e4 (a log axis: as few digits as each needs)
+      body = vals.map((v) => {
+        if (v === 0) return '0';
+        const e = Math.floor(Math.log10(Math.abs(v)) + 1e-12);
+        const m = v / 10 ** e;
+        const t = fixedDec !== null ? m.toFixed(fixedDec) : log ? String(+m.toPrecision(4)) : m.toFixed(Math.max(0, Math.min(6, decimalsFor(step / 10 ** e))));
+        return `${minus(t)}e${minus(String(e))}`;
+      });
+      break;
     case 'si': {
       // SI prefixes: 1.5k, 20M, 300µ, 4n (powers of 1000)
       const PRE: Record<number, string> = { [-24]: 'y', [-21]: 'z', [-18]: 'a', [-15]: 'f', [-12]: 'p', [-9]: 'n', [-6]: 'µ', [-3]: 'm', 0: '', 3: 'k', 6: 'M', 9: 'G', 12: 'T', 15: 'P', 18: 'E' };

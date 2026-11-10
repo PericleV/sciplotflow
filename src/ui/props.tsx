@@ -1,11 +1,55 @@
 // The controls of the properties panels (Mantine): sections that remember being open, a row with its label, colour,
 // opacity, sliders with their value, choices as pictures, the 3 × 3 anchor, angles, and numbers that show the value
 // used when left empty (auto).
-import { Accordion, ActionIcon, AngleSlider, ColorPicker, ColorSwatch, Group, NumberInput, Popover, SegmentedControl, Select, Slider, Text, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
+import { Accordion, ActionIcon, AngleSlider, ColorPicker, ColorSwatch, Group, Popover, SegmentedControl, Select, Slider, Text, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
 import { useContext, useRef, useState, type ReactNode } from 'react';
 import { PageTextContext } from './pageText.ts';
 import { Ban, ChevronDown, ChevronUp, RotateCcw } from 'lucide-react';
 import { FONTS, PALETTE, type TextStyle } from '../figure/spec.ts';
+import { parseSci, sciText } from '../engine/table.ts';
+
+// A number typed as 0.001, 1e-3, 1×10^-3 or 1·10⁻³ (parseSci); shown short (1e-6, 2e8) when very small or very large;
+// what is typed stays as typed while the field has the focus (empty: NaN); ↑ ↓ step it by `step`
+type SciProps = { value: number; onChange: (v: number) => void; step?: number; placeholder?: string; className?: string; autoFocus?: boolean; onBlur?: () => void; onEnter?: () => void; left?: ReactNode; right?: ReactNode; leftWidth?: number; rightWidth?: number };
+function SciNumber({ value, onChange, step, placeholder, className, autoFocus, onBlur, onEnter, left, right, leftWidth, rightWidth }: SciProps) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = Number.isFinite(value) ? sciText(value) : '';
+  return (
+    <TextInput
+      className={className}
+      value={draft ?? shown}
+      placeholder={placeholder}
+      inputMode="decimal"
+      spellCheck={false}
+      autoFocus={autoFocus}
+      leftSection={left}
+      leftSectionWidth={leftWidth}
+      rightSection={right}
+      rightSectionWidth={rightWidth}
+      onFocus={() => setDraft(shown)}
+      onBlur={() => {
+        setDraft(null);
+        onBlur?.();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') onEnter?.();
+        if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && step) {
+          e.preventDefault();
+          const v = +((Number.isFinite(value) ? value : 0) + (e.key === 'ArrowUp' ? step : -step)).toPrecision(12);
+          setDraft(sciText(v));
+          onChange(v);
+        }
+      }}
+      onChange={(e) => {
+        const t = e.currentTarget.value;
+        setDraft(t);
+        if (!t.trim()) return onChange(NaN);
+        const v = parseSci(t);
+        if (Number.isFinite(v)) onChange(v);
+      }}
+    />
+  );
+}
 
 const round = (v: number, step: number) => {
   const d = Math.max(0, Math.min(4, -Math.floor(Math.log10(step || 1))));
@@ -149,16 +193,7 @@ export function SliderField({ value, onChange, min, max, step, unit = '', marks,
     <div className="slider-field">
       <Slider className="grow" value={Math.min(max, Math.max(min, value))} onChange={(v) => onChange(round(v, step))} min={min} max={max} step={step} marks={marks?.map((v) => ({ value: v }))} />
       {typing ? (
-        <NumberInput
-          className="slider-num"
-          autoFocus
-          hideControls
-          value={value}
-          step={step}
-          onBlur={() => setTyping(false)}
-          onKeyDown={(e) => e.key === 'Enter' && setTyping(false)}
-          onChange={(v) => typeof v === 'number' && onChange(v)}
-        />
+        <SciNumber className="slider-num" autoFocus value={value} step={step} onBlur={() => setTyping(false)} onEnter={() => setTyping(false)} onChange={(v) => Number.isFinite(v) && onChange(v)} />
       ) : (
         <UnstyledButton className={`slider-value${auto ? ' auto' : ''}`} onClick={() => setTyping(true)} title="Type a value">
           {+value.toFixed(3)}
@@ -378,14 +413,7 @@ export function AutoNumber({ value, auto, onChange, unit }: { value: number; aut
   const own = Number.isFinite(value);
   return (
     <Group gap={6} wrap="nowrap">
-      <NumberInput
-        className="grow"
-        value={own ? value : ''}
-        placeholder={auto === undefined || !Number.isFinite(auto) ? '' : String(+auto.toPrecision(6))}
-        onChange={(v) => onChange(typeof v === 'number' ? v : NaN)}
-        rightSection={unit ? <Text size="xs" c="dimmed">{unit}</Text> : undefined}
-        hideControls
-      />
+      <SciNumber className="grow" value={own ? value : NaN} placeholder={auto === undefined || !Number.isFinite(auto) ? '' : sciText(+auto.toPrecision(6))} onChange={onChange} right={unit ? <Text size="xs" c="dimmed">{unit}</Text> : undefined} />
       {own ? (
         <Tooltip label={`Back to auto${auto !== undefined && Number.isFinite(auto) ? ` (${+auto.toPrecision(6)})` : ''}`}>
           <ActionIcon variant="default" size="input-xs" onClick={() => onChange(NaN)} aria-label="Back to auto">
@@ -414,22 +442,19 @@ export function Toggle({ value, onChange, label, disabled }: { value: boolean; o
 
 // ---- numbers typed ----
 // a number (empty: NaN, as the app's own fields), its unit after it
-export function NumField({ value, onChange, step, min, max, unit, prefix, placeholder }: { value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; unit?: string; prefix?: string; placeholder?: string }) {
+// (min, max: what the value is meant to be within; not enforced while typing)
+export function NumField({ value, onChange, step, unit, prefix, placeholder }: { value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; unit?: string; prefix?: string; placeholder?: string }) {
   return (
-    <NumberInput
+    <SciNumber
       className="num-field"
-      value={Number.isFinite(value) ? +value.toPrecision(10) : ''}
-      onChange={(v) => onChange(typeof v === 'number' ? v : v === '' || v === '-' ? NaN : Number(v))}
+      value={value}
+      onChange={onChange}
       step={step}
-      min={min}
-      max={max}
-      clampBehavior="none"
-      hideControls
       placeholder={placeholder}
-      leftSection={prefix ? <Text size="xs" c="dimmed">{prefix}</Text> : undefined}
-      leftSectionWidth={prefix ? 22 : undefined}
-      rightSection={unit ? <Text size="xs" c="dimmed">{unit}</Text> : undefined}
-      rightSectionWidth={unit ? 30 : undefined}
+      left={prefix ? <Text size="xs" c="dimmed">{prefix}</Text> : undefined}
+      leftWidth={prefix ? 22 : undefined}
+      right={unit ? <Text size="xs" c="dimmed">{unit}</Text> : undefined}
+      rightWidth={unit ? 30 : undefined}
     />
   );
 }

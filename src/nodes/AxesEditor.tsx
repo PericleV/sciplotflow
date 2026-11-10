@@ -315,6 +315,7 @@ function SideSections({ side, s, onChange, scale }: { side: Side | 'extra'; s: S
               { value: 'auto', label: 'Automatic' },
               { value: 'decimal', label: 'Decimal' },
               { value: 'sci', label: 'Scientific' },
+              { value: 'enot', label: 'E notation (1e-3)' },
               { value: 'eng', label: 'Engineering' },
               { value: 'common', label: 'Common ×10ⁿ' },
               { value: 'percent', label: 'Percent' },

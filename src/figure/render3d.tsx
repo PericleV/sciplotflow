@@ -47,10 +47,27 @@ function towardWhite(c: string, k: number): string {
   return `#${f(16)}${f(8)}${f(0)}`;
 }
 
-// the nice values of an axis between lo and hi (about n; or every `every`)
-function axisTicks(lo: number, hi: number, n: number, every?: number): number[] {
+// the nice values of an axis between lo and hi (about n; or every `every`); a log axis (lo, hi: logs): the decades (every
+// few when there are many), or within a decade or two the logs of the values' own steps
+function axisTicks(lo: number, hi: number, n: number, every?: number, log = false): number[] {
   if (hi < lo) [lo, hi] = [hi, lo];
   if (!(hi > lo)) return [lo];
+  if (log) {
+    const [k0, k1] = [Math.ceil(lo - 1e-9), Math.floor(hi + 1e-9)];
+    // (one or two decades: 1, 2, 5 of each)
+    if (k1 - k0 >= 1 && k1 - k0 < 3 && n > 3) {
+      const out: number[] = [];
+      for (let k = k0 - 1; k <= k1; k++) for (const m of [1, 2, 5]) if (k + Math.log10(m) >= lo - 1e-9 && k + Math.log10(m) <= hi + 1e-9) out.push(k + Math.log10(m));
+      return out;
+    }
+    if (k1 - k0 >= 1) {
+      const st = Math.max(1, Math.ceil((k1 - k0 + 1) / Math.max(2, n)));
+      const out: number[] = [];
+      for (let k = k0; k <= k1; k += st) out.push(k);
+      return out;
+    }
+    return axisTicks(10 ** lo, 10 ** hi, n).filter((v) => v > 0).map(Math.log10);
+  }
   const step = every && every > 0 && (hi - lo) / every <= 200 ? every : niceStep(hi - lo, Math.max(2, n));
   const out: number[] = [];
   for (let k = Math.ceil(lo / step - 1e-9); k * step <= hi + step * 1e-9; k++) out.push(Math.abs(k * step) < step * 1e-9 ? 0 : k * step);
@@ -76,7 +93,8 @@ export function ThreeView({ c, frame, defaults }: { c: Curve; frame: Box; defaul
   const AX = [0, 1, 2].map((a) => S.axes?.[a] ?? {});
   // the values of every axis (Z: the layers' own, when given)
   const own = [undefined, S.yLabels, S.zLabels].map((L, a) => (L ? L.at.map((v, k) => ({ v, text: L.text[k] ?? '' })).filter((q) => q.v >= lohi[a][0] && q.v <= lohi[a][1]) : null));
-  const tk = range.map((r, a) => own[a]?.map((q) => q.v) ?? axisTicks(r[0], r[1], AX[a].count && AX[a].count > 1 ? Math.min(30, AX[a].count) : S.ticks, AX[a].step));
+  const logAx = AX.map((ax) => ax.scale === 'log');
+  const tk = range.map((r, a) => own[a]?.map((q) => q.v) ?? axisTicks(r[0], r[1], AX[a].count && AX[a].count > 1 ? Math.min(30, AX[a].count) : S.ticks, logAx[a] ? undefined : AX[a].step, logAx[a]));
   const tn = tk.map((vs, a) => vs.map((v) => ((v - range[a][0]) / (range[a][1] - range[a][0] || 1)) * 2 - 1));
   // halfway between the values (the minor grid), inside the box
   const half = tn.map((us0, a) => {
@@ -437,7 +455,7 @@ export function ThreeView({ c, frame, defaults }: { c: Curve; frame: Box; defaul
     if (a === 2) [dx, dy] = [-1, 0];
     const l = Math.hypot(dx, dy) || 1;
     [dx, dy] = [dx / l, dy / l];
-    const labels = !shown ? [] : own[a] ? own[a].map((q) => q.text) : formatLabels(tk[a], false, { ...SIDE_DEFAULTS, ...(ax.format ? { format: ax.format } : {}), ...(ax.decimals !== undefined && ax.decimals >= 0 ? { decimals: ax.decimals } : {}) }).labels;
+    const labels = !shown ? [] : own[a] ? own[a].map((q) => q.text) : formatLabels(logAx[a] ? tk[a].map((u) => 10 ** u) : tk[a], logAx[a], { ...SIDE_DEFAULTS, ...(ax.format ? { format: ax.format } : {}), ...(ax.decimals !== undefined && ax.decimals >= 0 ? { decimals: ax.decimals } : {}) }).labels;
     const anchor = dx > 0.35 ? 'start' : dx < -0.35 ? 'end' : 'middle';
     const valign = dy > 0.35 ? 'top' : dy < -0.35 ? 'bottom' : 'middle';
     parts.push(

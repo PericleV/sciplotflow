@@ -179,7 +179,7 @@ import { normalize, ternaryChart, ternaryXY } from '../src/engine/ternary.ts';
 import { asGrid, coarsen, contourLevels, contourLines, contourPlot, gridFromMatrix, gridFromScatter, profileList, profiles, type Grid } from '../src/engine/contour.ts';
 import { hasRefs, withRefs } from '../src/textStore.ts';
 import { waterfallChart, waterfallShifts, waterfallZ } from '../src/engine/waterfall.ts';
-import { plot3d } from '../src/engine/plot3d.ts';
+import { logScene, plot3d } from '../src/engine/plot3d.ts';
 import { sceneCamera } from '../src/figure/camera3d.ts';
 import { onPlane3d, planeValue, rectCorners } from '../src/nodes/figure3d.ts';
 import { hiddenBy } from '../src/engine/hide.ts';
@@ -7655,6 +7655,22 @@ checkPhase(ok);
   const narrow = graphTicks('log', Math.log10(2), Math.log10(8), 4);
   ok(lin === '0,2,4,6,8,10' && majors.map((t) => t.text).join() === '1,10,100,1000,10000,10⁵,10⁶' && minors.length === 6 * 8 && minors.every((t) => t.text === '') && near2(minors[0].u, Math.log10(2)) && wide.length <= 7 && wide.every((t) => Number.isInteger(t.u)) && wide.some((t) => t.text === '10⁻¹²') && narrow.length >= 3 && narrow.every((t) => !t.minor && t.text !== '' && 10 ** t.u >= 2 - 1e-9 && 10 ** t.u <= 8 + 1e-9), 'graph scale: the ticks (linear as before, decades and 2 … 9 on a log axis, 10⁻¹² written so, the values within a decade)');
   ok(notDrawn({ y: 'log' }, [1, 2, 3, 4], [1, -2, 0, 5]) === '2 points ≤ 0 not drawn on the log Y axis' && notDrawn({ x: 'abslog', y: 'abslog' }, [1, -2, 3], [-1, 2, 0]) === '1 point at 0 not drawn on the log X / Y axis' && notDrawn({}, [1], [-1]) === '' && axisTitle('abslog', 'I (A)') === '|I (A)|' && axisTitle('log', 'I (A)') === 'I (A)', 'graph scale: the points not drawn said, the title of an absolute value');
+}
+// the numbers of an axis in E notation (1e−3, 2.5e4; a log axis as few digits as each needs)
+{
+  const en = { ...SIDE_DEFAULTS, format: 'enot' as const };
+  const lin = formatLabels([0.001, 0.0015, 0.002], false, en).labels.map((t) => t.replace('−', '-')).join(' ');
+  const lg = formatLabels([1e-3, 0.01, 20000], true, en).labels.map((t) => t.replace('−', '-')).join(' ');
+  ok(lin === '1.0e-3 1.5e-3 2.0e-3' && lg === '1e-3 1e-2 2e4' && formatLabels([0], false, en).labels[0] === '0', 'axis numbers in E notation');
+}
+// a 3D plot's log axes: the scene's coordinates on them as log10 (≤ 0 left out, a bar's foot at the floor), the box from
+// the values drawn
+{
+  const S = { range: { x: [-1, 1000], y: [0, 1], z: [0, 100] }, surfaces: [], bars: { items: [{ x: 10, y: 0.5, z0: 0, z1: 100, dx: 2, dy: 0.2, color: '#000' }], edge: '', edgeWidth: 0, opacity: 1 }, lines: [], points: [{ pts: [[1, 0.2, 1], [100, 0.4, 10], [-5, 0.6, 50]], colors: [], symbol: 'circle', size: 1, fill: 'filled', edge: 0, drop: false, depthShade: false }] } as unknown as Parameters<typeof logScene>[0];
+  logScene(S, [true, false, true]);
+  const p = S.points[0].pts;
+  const b = S.bars.items[0];
+  ok(p[0][0] === 0 && p[1][0] === 2 && Number.isNaN(p[2][0]) && p[1][1] === 0.4 && p[1][2] === 1 && S.range.y[0] === 0 && S.range.x[0] < 0 && S.range.x[1] > 2 && S.range.z[1] <= 2 + 1e-12 && b.z1 === 2 && b.z0 === S.range.z[0] && Math.abs(b.dx - (Math.log10(11) - Math.log10(9))) < 1e-12, 'Plot 3D: a log axis as log10 of the values, the values ≤ 0 left out, the box of the decades, a bar from the floor');
 }
 // the version shown in the app is package.json's
 ok(APP_VERSION === (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version, `the app's version (${APP_VERSION}) as package.json's`);

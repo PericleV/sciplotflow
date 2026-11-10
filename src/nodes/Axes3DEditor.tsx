@@ -10,6 +10,7 @@ const FORMATS: [LabelFormat, string][] = [
   ['auto', 'Auto'],
   ['decimal', 'Decimal'],
   ['sci', 'Scientific'],
+  ['enot', 'E notation (1e-3)'],
   ['eng', 'Engineering'],
   ['si', 'SI prefixes'],
   ['percent', 'Percent'],
@@ -47,6 +48,16 @@ export function Axes3DEditor({ d, set, names }: { d: Plot3DData; set: (p: Partia
                 </Row>
                 <Row label="Limits" hint="From and to (empty: the data's); what is outside the box is cut">
                   <NumPair a={lim?.[0] ?? NaN} b={lim?.[1] ?? NaN} onA={(v) => end(0, v)} onB={(v) => end(1, v)} names={['from', 'to']} />
+                </Row>
+                <Row label="Scale" hint="Log: the values in decades (those ≤ 0 left out; a bar's foot at the floor)">
+                  <Choice<'linear' | 'log'>
+                    value={ax.scale ?? 'linear'}
+                    onChange={(scale) => setAxis(a, { scale: scale === 'log' ? 'log' : undefined })}
+                    options={[
+                      ['linear', 'Linear'],
+                      ['log', 'Log'],
+                    ]}
+                  />
                 </Row>
                 <Row label="Reversed" hint="From the highest value to the lowest">
                   <Toggle value={!!ax.reverse} onChange={(reverse) => setAxis(a, { reverse: reverse || undefined })} />

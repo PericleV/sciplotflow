@@ -547,6 +547,8 @@ export function plot3d(data: Plot3DInput, d: Plot3DSpec): { curves: Curve[]; col
   clipScene(scene, d);
   // the lines and rectangles marked (cut at the layers' heights)
   scene.lines.push(...markLines(d.marks, scene.range.z, (scene.planes ?? []).map((p) => p.z), scene));
+  // a log axis: everything on it as log10 of the values (the limits and the cuts were on the values)
+  logScene(scene, [d.axis3?.x?.scale === 'log', d.axis3?.y?.scale === 'log', d.axis3?.z?.scale === 'log']);
   // a reversed axis: its range from the highest to the lowest (the box drawn the other way along it)
   if (d.axis3?.x?.reverse) scene.range.x = [scene.range.x[1], scene.range.x[0]];
   if (d.axis3?.y?.reverse) scene.range.y = [scene.range.y[1], scene.range.y[0]];
@@ -563,6 +565,69 @@ export function plot3d(data: Plot3DInput, d: Plot3DSpec): { curves: Curve[]; col
     ...(colorRange ? { colorRange, group: { base: 'three', index: 0, count: 1, value: NaN, name: data.kind === 'curves' ? data.names.y : data.kind === 'points' && d.colorBy === 'column' && data.names.c ? data.names.c : data.names.z, range: colorRange, color: 'map' as const } } : {}),
   };
   return { curves: [main, ...legend], colorRange, warnings };
+}
+
+// ---- log axes: the scene's coordinates on them as log10 of the values (≤ 0: left out, a bar's foot at the floor), the
+// box from the values drawn (the limits typed, as their logs) ----
+export function logScene(S: ThreeScene, log: [boolean, boolean, boolean]) {
+  if (!log.some(Boolean)) return;
+  const lg = (v: number) => (v > 0 ? Math.log10(v) : NaN);
+  const f = log.map((on) => (on ? lg : (v: number) => v));
+  const [fx, fy, fz] = f;
+  const p3 = (p: P3): P3 => [fx(p[0]), fy(p[1]), fz(p[2])];
+  // (the values drawn on every axis, for the box)
+  const seen: number[][] = [[], [], []];
+  const see = (a: number, v: number) => {
+    if (log[a] && Number.isFinite(v)) seen[a].push(v);
+    return v;
+  };
+  const seeP = (p: P3): P3 => {
+    const q = p3(p);
+    q.forEach((v, a) => see(a, v));
+    return q;
+  };
+  S.surfaces = S.surfaces.map((sf) => ({ ...sf, xs: sf.xs.map((v) => see(0, fx(v))), ys: sf.ys.map((v) => see(1, fy(v))), z: log[2] ? Float64Array.from(sf.z, (v) => see(2, lg(v))) : sf.z }));
+  S.bars = {
+    ...S.bars,
+    items: S.bars.items.map((b) => {
+      const [x0, x1] = [fx(b.x - b.dx / 2), fx(b.x + b.dx / 2)];
+      const [y0, y1] = [fy(b.y - b.dy / 2), fy(b.y + b.dy / 2)];
+      for (const v of [x0, x1]) see(0, v);
+      for (const v of [y0, y1]) see(1, v);
+      // (a foot at 0 or below on a log Z: at the floor, set once the box is known)
+      const z1 = see(2, fz(b.z1));
+      return { ...b, x: (x0 + x1) / 2, dx: x1 - x0, y: (y0 + y1) / 2, dy: y1 - y0, z0: log[2] && !(b.z0 > 0) ? -Infinity : see(2, fz(b.z0)), z1 };
+    }),
+  };
+  S.lines = S.lines.map((l) => ({ ...l, pts: l.pts.map(seeP) }));
+  S.points = S.points.map((q) => ({ ...q, pts: q.pts.map(seeP) }));
+  const flat = (pl: ThreeScene['floor']) =>
+    pl && {
+      ...(pl.cells ? { cells: pl.cells.map((c) => ({ ...c, x0: fx(c.x0), x1: fx(c.x1), y0: fy(c.y0), y1: fy(c.y1) })) } : {}),
+      ...(pl.lines ? { lines: pl.lines.map((l) => ({ ...l, pts: l.pts.map((p): [number, number] => [fx(p[0]), fy(p[1])]) })) } : {}),
+    };
+  if (S.floor) S.floor = flat(S.floor);
+  if (S.ceiling) S.ceiling = flat(S.ceiling);
+  if (S.labels) S.labels = S.labels.map((q) => ({ ...q, at: p3(q.at) }));
+  if (S.planes) S.planes = S.planes.map((pl) => ({ ...pl, z: see(2, fz(pl.z)), xe: pl.xe.map((v) => see(0, fx(v))), ye: pl.ye.map((v) => see(1, fy(v))) }));
+  if (S.yLabels && log[1]) S.yLabels = { at: S.yLabels.at.map(lg), text: S.yLabels.text };
+  if (S.zLabels && log[2]) S.zLabels = { at: S.zLabels.at.map(lg), text: S.zLabels.text };
+  // the box: the decades the values span (a little more), within the logs of its limits when they were positive
+  const keys = ['x', 'y', 'z'] as const;
+  keys.forEach((k, a) => {
+    if (!log[a]) return;
+    const [r0, r1] = S.range[k];
+    const lo0 = Math.min(r0, r1);
+    const hi0 = Math.max(r0, r1);
+    let [lo, hi] = seen[a].length ? [minOf(seen[a]), maxOf(seen[a])] : [0, 1];
+    const pad = (hi - lo || 1) * 0.03;
+    [lo, hi] = [lo - pad, hi + pad];
+    if (lo0 > 0) lo = Math.max(lo, Math.log10(lo0));
+    if (hi0 > 0) hi = Math.min(hi, Math.log10(hi0));
+    if (!(hi > lo)) [lo, hi] = [lo - 0.5, hi + 0.5];
+    S.range[k] = [lo, hi];
+  });
+  if (log[2]) S.bars.items = S.bars.items.map((b) => (Number.isFinite(b.z0) ? b : { ...b, z0: S.range.z[0] }));
 }
 
 // ---- the limits of the axes: the box from them, what is outside it cut ----

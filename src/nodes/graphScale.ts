@@ -40,6 +40,15 @@ export function axisTicks(s: AxisScale | undefined, u0: number, u1: number, n: n
     return out;
   }
   const [k0, k1] = [Math.ceil(a - 1e-9), Math.floor(b + 1e-9)];
+  // (one or two decades: 1, 2, 5 of each labelled, the rest of 2 … 9 between them)
+  if (k1 - k0 >= 1 && k1 - k0 < 3 && n > 3) {
+    for (let k = k0 - 1; k <= k1; k++)
+      for (let m = 1; m <= 9; m++) {
+        const u = k + Math.log10(m);
+        if (u >= a - 1e-9 && u <= b + 1e-9) out.push(m === 1 || m === 2 || m === 5 ? { u, text: m === 1 ? decade(k) : fmtNum(m * 10 ** k, 4) } : { u, text: '', minor: true });
+      }
+    return out;
+  }
   if (k1 - k0 >= 1) {
     const st = Math.max(1, Math.ceil((k1 - k0 + 1) / Math.max(2, n)));
     for (let k = k0; k <= k1; k += st) out.push({ u: k, text: decade(k) });
