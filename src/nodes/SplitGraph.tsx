@@ -12,7 +12,8 @@ import { Maximize2, Scissors, SeparatorHorizontal, SquareDashedMousePointer, Mou
 import type { SplitGraph } from '../engine/reshape.ts';
 import { turnPoints } from '../engine/split.ts';
 import { fmtNum } from '../engine/table.ts';
-import { niceStep } from '../figure/ticks.ts';
+import { axisTicks, axisTitle, fromAxis, notDrawn, toAxis } from './graphScale.ts';
+import { useGraphScale } from './useGraphScale.ts';
 import { IC } from './iconProps.ts';
 import { REGION_COLORS } from './regionColors.ts';
 import { rescaleAxis, usePlotZoom, viewBox, zoomAt, type View, type ZoomMode } from './plotZoom.ts';
@@ -57,6 +58,10 @@ function Graph({ g, view, W, H, zoom, box: zbox, onView, zoomOut, tool, snap, to
   const [hover, setHover] = useState<number | null>(null);
   const rowsView = view === 'rows';
   const Y = g.ys[Math.min(yAt, g.ys.length - 1)];
+  // X and Y linear, log or log |v| (graphScale.ts): the box in the axes' own units
+  const [sc] = useGraphScale();
+  const tx = (v: number) => toAxis(sc.x, v);
+  const ty = (v: number) => toAxis(sc.y, v);
   // the points of a block: (row, F) along the rows, or (X, Y)
   const px = (i: number) => (rowsView ? i + 1 : g.x.values[i]);
   const py = (i: number) => (rowsView ? g.f.values[i] : (Y?.values[i] ?? NaN));
@@ -79,12 +84,15 @@ function Graph({ g, view, W, H, zoom, box: zbox, onView, zoomOut, tool, snap, to
   }, [g, rowsView, Y, tol]);
   let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
   if (rowsView) {
-    [x0, x1] = [1, Math.max(2, g.n)];
-    for (const v of g.f.values) if (Number.isFinite(v)) [y0, y1] = [Math.min(y0, v), Math.max(y1, v)];
+    [x0, x1] = [tx(1), tx(Math.max(2, g.n))];
+    for (const fv of g.f.values) {
+      const v = ty(fv);
+      if (Number.isFinite(v)) [y0, y1] = [Math.min(y0, v), Math.max(y1, v)];
+    }
   } else
     for (const b of g.blocks)
       for (const i of b.rows) {
-        const [u, v] = [px(i), py(i)];
+        const [u, v] = [tx(px(i)), ty(py(i))];
         if (Number.isFinite(u) && Number.isFinite(v)) [x0, x1, y0, y1] = [Math.min(x0, u), Math.max(x1, u), Math.min(y0, v), Math.max(y1, v)];
       }
   if (y1 === y0) [y0, y1] = [y0 - 1, y1 + 1];
@@ -100,10 +108,14 @@ function Graph({ g, view, W, H, zoom, box: zbox, onView, zoomOut, tool, snap, to
     if (zoomOut) onView(zoomAt(box, (box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2, 1.6, 'both'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoomOut]);
-  const fx = (v: number) => M.l + ((v - box.x0) / (box.x1 - box.x0)) * pw;
-  const fy = (v: number) => M.t + (1 - (v - box.y0) / (box.y1 - box.y0)) * ph;
-  const ix = (p: number) => box.x0 + ((p - M.l) / pw) * (box.x1 - box.x0);
-  const iy = (p: number) => box.y0 + (1 - (p - M.t) / ph) * (box.y1 - box.y0);
+  // (on the axes' own units, and the data's values through their scales)
+  const ux = (u: number) => M.l + ((u - box.x0) / (box.x1 - box.x0)) * pw;
+  const uy = (u: number) => M.t + (1 - (u - box.y0) / (box.y1 - box.y0)) * ph;
+  const fx = (v: number) => ux(tx(v));
+  const fy = (v: number) => uy(ty(v));
+  const ix = (p: number) => fromAxis(sc.x, box.x0 + ((p - M.l) / pw) * (box.x1 - box.x0));
+  const iy = (p: number) => fromAxis(sc.y, box.y0 + (1 - (p - M.t) / ph) * (box.y1 - box.y0));
+  const hidden = rowsView ? notDrawn(sc, Array.from({ length: g.n }, (_, i) => i + 1), g.f.values) : Y ? notDrawn(sc, g.x.values, Y.values) : '';
   const cutsShown = rowsView && g.contiguous;
   // the level lines drawn here: along the rows those on its column, on the curves those on the first Y (when it is drawn)
   const levelsShown = g.levels.map((L, k) => ({ ...L, k })).filter((L) => (rowsView ? L.on === 'from' : L.on === 'y' && yAt === 0));
@@ -144,12 +156,12 @@ function Graph({ g, view, W, H, zoom, box: zbox, onView, zoomOut, tool, snap, to
       ctx.beginPath();
       let on = false;
       for (let p = 0; p < rows.length; p++) {
-        const [u, v] = [px(rows[p]), py(rows[p])];
+        const [u, v] = [fx(px(rows[p])), fy(py(rows[p]))];
         if (!Number.isFinite(u) || !Number.isFinite(v)) {
           on = false;
           continue;
         }
-        ctx[on ? 'lineTo' : 'moveTo'](fx(u), fy(v));
+        ctx[on ? 'lineTo' : 'moveTo'](u, v);
         on = true;
       }
       ctx.stroke();
@@ -271,18 +283,24 @@ function Graph({ g, view, W, H, zoom, box: zbox, onView, zoomOut, tool, snap, to
     ctx.strokeRect(M.l + 0.5, M.t + 0.5, pw, ph);
     ctx.fillStyle = '#333333';
     ctx.font = '10px system-ui, sans-serif';
-    const sx = niceStep(box.x1 - box.x0, Math.max(3, Math.round(pw / 80)));
     ctx.textAlign = 'center';
     // (the last one kept inside the canvas)
-    for (let v = Math.ceil(box.x0 / sx) * sx; v <= box.x1 + sx * 1e-9; v += sx) {
-      const t = fmtNum(Math.abs(v) < sx * 1e-9 ? 0 : v, 4);
-      ctx.fillText(t, Math.min(fx(v), W - ctx.measureText(t).width / 2 - 1), H - M.b + 12);
+    for (const t of axisTicks(sc.x, box.x0, box.x1, Math.max(3, Math.round(pw / 80)))) {
+      if (t.text) ctx.fillText(t.text, Math.min(ux(t.u), W - ctx.measureText(t.text).width / 2 - 1), H - M.b + 12);
+      else ctx.fillRect(ux(t.u), M.t + ph - 2, 1, 2);
     }
-    const sy = niceStep(box.y1 - box.y0, Math.max(3, Math.round(ph / 40)));
     ctx.textAlign = 'right';
-    for (let v = Math.ceil(box.y0 / sy) * sy; v <= box.y1 + sy * 1e-9; v += sy) ctx.fillText(fmtNum(Math.abs(v) < sy * 1e-9 ? 0 : v, 4), M.l - 4, fy(v) + 3);
+    for (const t of axisTicks(sc.y, box.y0, box.y1, Math.max(3, Math.round(ph / 40)))) {
+      if (t.text) ctx.fillText(t.text, M.l - 4, uy(t.u) + 3);
+      else ctx.fillRect(M.l, uy(t.u), 2, 1);
+    }
     ctx.textAlign = 'center';
-    ctx.fillText(rowsView ? `row: ${g.f.name || 'X'} along the rows` : `${g.x.name || 'X'}: ${Y?.name ?? ''}`, M.l + pw / 2, H - 3);
+    ctx.fillText(rowsView ? `row: ${axisTitle(sc.y, g.f.name || 'X')} along the rows` : `${axisTitle(sc.x, g.x.name || 'X')}: ${axisTitle(sc.y, Y?.name ?? '')}`, M.l + pw / 2, H - 3);
+    if (hidden) {
+      ctx.fillStyle = '#888888';
+      ctx.textAlign = 'left';
+      ctx.fillText(hidden, M.l + 4, M.t + ph - 5);
+    }
     if (z.rect) {
       ctx.strokeStyle = '#1f6fd6';
       ctx.setLineDash([4, 3]);
@@ -290,7 +308,7 @@ function Graph({ g, view, W, H, zoom, box: zbox, onView, zoomOut, tool, snap, to
       ctx.setLineDash([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [g, view, yAt, W, H, box.x0, box.x1, box.y0, box.y1, z.rect, drag, hover, tool]);
+  }, [g, view, yAt, W, H, box.x0, box.x1, box.y0, box.y1, z.rect, drag, hover, tool, sc.x, sc.y]);
 
   const at = (e: { currentTarget: EventTarget; clientX: number; clientY: number }): [number, number] => {
     const b = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -532,6 +550,7 @@ export function SplitGraphView({ g, view, setView, edits, tol }: { g: SplitGraph
       <div className="row wrap">
         <span className="grow" />
         <ZoomTools
+          scaled
           mode={zoom}
           setMode={(m) => {
             setZoom(m);

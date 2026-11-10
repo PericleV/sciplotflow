@@ -5,7 +5,8 @@ import { createPortal } from 'react-dom';
 import { Maximize2, Plus, X as XIcon } from 'lucide-react';
 import type { PickGraph, PickRule } from '../engine/pick.ts';
 import { fmtNum } from '../engine/table.ts';
-import { niceStep } from '../figure/ticks.ts';
+import { axisTicks, axisTitle, fromAxis, notDrawn, toAxis } from './graphScale.ts';
+import { useGraphScale } from './useGraphScale.ts';
 import { IC } from './iconProps.ts';
 import { REGION_COLORS } from './regionColors.ts';
 import { rescaleAxis, usePlotZoom, viewBox, zoomAt, type View, type ZoomMode } from './plotZoom.ts';
@@ -70,13 +71,17 @@ function Graph({
   const [cursor, setCursor] = useState('default');
   const [drag, setDrag] = useState<Drag>(null);
 
+  // X and Y linear, log or log |v| (graphScale.ts): the box in the axes' own units
+  const [sc] = useGraphScale();
+  const tx = (v: number) => toAxis(sc.x, v);
+  const ty = (v: number) => toAxis(sc.y, v);
   // Compute bounding box across all curves
   let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
   for (const c of g.curves) {
     const n = Math.min(c.x.length, c.y.length);
     for (let i = 0; i < n; i++) {
-      const u = c.x[i];
-      const v = c.y[i];
+      const u = tx(c.x[i]);
+      const v = ty(c.y[i]);
       if (Number.isFinite(u) && Number.isFinite(v)) {
         x0 = Math.min(x0, u);
         x1 = Math.max(x1, u);
@@ -87,11 +92,12 @@ function Graph({
   }
   // Include points picked
   for (const p of g.points) {
-    if (Number.isFinite(p.x) && Number.isFinite(p.y)) {
-      x0 = Math.min(x0, p.x);
-      x1 = Math.max(x1, p.x);
-      y0 = Math.min(y0, p.y);
-      y1 = Math.max(y1, p.y);
+    const [u, v] = [tx(p.x), ty(p.y)];
+    if (Number.isFinite(u) && Number.isFinite(v)) {
+      x0 = Math.min(x0, u);
+      x1 = Math.max(x1, u);
+      y0 = Math.min(y0, v);
+      y1 = Math.max(y1, v);
     }
   }
 
@@ -112,10 +118,16 @@ function Graph({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoomOut]);
 
-  const fx = (v: number) => M.l + ((v - box.x0) / (box.x1 - box.x0)) * pw;
-  const fy = (v: number) => M.t + (1 - (v - box.y0) / (box.y1 - box.y0)) * ph;
-  const ix = (p: number) => box.x0 + ((p - M.l) / pw) * (box.x1 - box.x0);
-  const iy = (p: number) => box.y0 + (1 - (p - M.t) / ph) * (box.y1 - box.y0);
+  // (on the axes' own units, and the data's values through their scales)
+  const ux = (u: number) => M.l + ((u - box.x0) / (box.x1 - box.x0)) * pw;
+  const uy = (u: number) => M.t + (1 - (u - box.y0) / (box.y1 - box.y0)) * ph;
+  const fx = (v: number) => ux(tx(v));
+  const fy = (v: number) => uy(ty(v));
+  const ix = (p: number) => fromAxis(sc.x, box.x0 + ((p - M.l) / pw) * (box.x1 - box.x0));
+  const iy = (p: number) => fromAxis(sc.y, box.y0 + (1 - (p - M.t) / ph) * (box.y1 - box.y0));
+  const hidden = notDrawn(sc, g.curves.flatMap((c) => Array.from(c.x)), g.curves.flatMap((c) => Array.from(c.y)));
+  const ticksX = axisTicks(sc.x, box.x0, box.x1, Math.max(3, Math.round(pw / 80)));
+  const ticksY = axisTicks(sc.y, box.y0, box.y1, Math.max(3, Math.round(ph / 50)));
 
   // Parse lines from rules
   const lines: LineRef[] = useMemo(() => {
@@ -190,17 +202,17 @@ function Graph({
     // Draw grid
     ctx.strokeStyle = '#f0f0f0';
     ctx.lineWidth = 1;
-    const tickX = niceStep(box.x1 - box.x0, Math.max(3, Math.round(pw / 80)));
-    for (let v = Math.ceil(box.x0 / tickX) * tickX; v <= box.x1 + tickX * 1e-9; v += tickX) {
-      const p = fx(v);
+    for (const t of ticksX) {
+      if (t.minor) continue;
+      const p = ux(t.u);
       ctx.beginPath();
       ctx.moveTo(p, M.t);
       ctx.lineTo(p, M.t + ph);
       ctx.stroke();
     }
-    const tickY = niceStep(box.y1 - box.y0, Math.max(3, Math.round(ph / 50)));
-    for (let v = Math.ceil(box.y0 / tickY) * tickY; v <= box.y1 + tickY * 1e-9; v += tickY) {
-      const p = fy(v);
+    for (const t of ticksY) {
+      if (t.minor) continue;
+      const p = uy(t.u);
       ctx.beginPath();
       ctx.moveTo(M.l, p);
       ctx.lineTo(M.l + pw, p);
@@ -215,14 +227,12 @@ function Graph({
       let first = true;
       const n = Math.min(curve.x.length, curve.y.length);
       for (let i = 0; i < n; i++) {
-        const u = curve.x[i];
-        const v = curve.y[i];
-        if (!Number.isFinite(u) || !Number.isFinite(v)) {
+        const px = fx(curve.x[i]);
+        const py = fy(curve.y[i]);
+        if (!Number.isFinite(px) || !Number.isFinite(py)) {
           first = true;
           continue;
         }
-        const px = fx(u);
-        const py = fy(v);
         if (first) {
           ctx.moveTo(px, py);
           first = false;
@@ -280,29 +290,34 @@ function Graph({
 
     // X numbers
     ctx.textAlign = 'center';
-    for (let v = Math.ceil(box.x0 / tickX) * tickX; v <= box.x1 + tickX * 1e-9; v += tickX) {
-      const p = fx(v);
-      ctx.fillRect(p, M.t + ph - 4, 1, 4);
-      ctx.fillText(fmtNum(Math.abs(v) < tickX * 1e-9 ? 0 : v, 4), p, M.t + ph + 12);
+    for (const t of ticksX) {
+      const p = ux(t.u);
+      ctx.fillRect(p, M.t + ph - (t.minor ? 2 : 4), 1, t.minor ? 2 : 4);
+      if (t.text) ctx.fillText(t.text, p, M.t + ph + 12);
     }
     // Y numbers
     ctx.textAlign = 'right';
-    for (let v = Math.ceil(box.y0 / tickY) * tickY; v <= box.y1 + tickY * 1e-9; v += tickY) {
-      const p = fy(v);
-      ctx.fillRect(M.l, p, 4, 1);
-      ctx.fillText(fmtNum(Math.abs(v) < tickY * 1e-9 ? 0 : v, 4), M.l - 4, p + 3);
+    for (const t of ticksY) {
+      const p = uy(t.u);
+      ctx.fillRect(M.l, p, t.minor ? 2 : 4, 1);
+      if (t.text) ctx.fillText(t.text, M.l - 4, p + 3);
     }
 
     // Axis titles
     ctx.textAlign = 'center';
-    ctx.fillText(g.xName || 'X', M.l + pw / 2, H - 3);
+    ctx.fillText(axisTitle(sc.x, g.xName || 'X'), M.l + pw / 2, H - 3);
     ctx.save();
     ctx.translate(12, M.t + ph / 2);
     ctx.rotate(-Math.PI / 2);
-    ctx.fillText(g.yName || 'Y', 0, 0);
+    ctx.fillText(axisTitle(sc.y, g.yName || 'Y'), 0, 0);
     ctx.restore();
+    if (hidden) {
+      ctx.fillStyle = '#888888';
+      ctx.textAlign = 'left';
+      ctx.fillText(hidden, M.l + 4, M.t + ph - 5);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [W, H, box, g, lines, drag, pw, ph]);
+  }, [W, H, box, g, lines, drag, pw, ph, sc.x, sc.y]);
 
   const at = (e: { clientX: number; clientY: number; currentTarget: HTMLElement }): [number, number] => {
     const b = e.currentTarget.getBoundingClientRect();
@@ -502,6 +517,7 @@ export function PickGraphView({
         />
         <span className="grow" />
         <ZoomTools
+          scaled
           mode={zoom}
           setMode={(m) => {
             setZoom(m);

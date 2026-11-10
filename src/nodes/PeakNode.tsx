@@ -14,7 +14,8 @@ import type { BaseMethod } from '../engine/baselines.ts';
 import { BaselineFields } from './BaselineFields.tsx';
 import { fmtNum } from '../engine/table.ts';
 import { fmtPm } from '../engine/report.ts';
-import { niceStep } from '../figure/ticks.ts';
+import { axisTicks, axisTitle, fromAxis, notDrawn, toAxis } from './graphScale.ts';
+import { useGraphScale } from './useGraphScale.ts';
 import type { AppNode, PeakData, PeakNode } from '../types.ts';
 import { Check, Field, InPort, Messages, NumInput, OutPort, Select } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
@@ -48,6 +49,10 @@ type Drag = { kind: 'pt'; k: number; x: number; y: number; fresh?: boolean } | {
 function PeakPlot(props: { run: PeakRunView; width: number; height: number; points: Pt[]; placing: boolean; onPoints: (p: Pt[]) => void; adding: boolean; onAdd: (x: number) => void; regions: PeakRegion[]; drawing: boolean; onRegion: (from: number, to: number) => void; onEdge: (k: number, side: 'from' | 'to', x: number) => void; reader?: ReaderProp; xTitle: string; yTitle: string; zoom: ZoomMode; view: View | null; onView: (v: View | null) => void; zoomOut: number; resid: boolean }) {
   const { run, width: W, height: H } = props;
   const cv = useRef<HTMLCanvasElement>(null);
+  // X and Y linear, log or log |v| (graphScale.ts): the box in the axes' own units
+  const [sc] = useGraphScale();
+  const tx = (v: number) => toAxis(sc.x, v);
+  const ty = (v: number) => toAxis(sc.y, v);
   const [drag, setDragState] = useState<Drag>(null);
   const dragRef = useRef<Drag>(null);
   const [cursor, setCursor] = useState('default');
@@ -61,11 +66,17 @@ function PeakPlot(props: { run: PeakRunView; width: number; height: number; poin
   const pts = props.points;
   const auto = (() => {
     let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
-    run.x.forEach((v) => ([x0, x1] = [Math.min(x0, v), Math.max(x1, v)]));
+    run.x.forEach((xv) => {
+      const v = tx(xv);
+      if (Number.isFinite(v)) [x0, x1] = [Math.min(x0, v), Math.max(x1, v)];
+    });
     // the range of the data only: the baseline and the peaks follow the points placed — with them in the range, the
     // graph rescaled at every point and the points jumped away from where they were clicked
-    for (const v of run.y) if (Number.isFinite(v)) [y0, y1] = [Math.min(y0, v), Math.max(y1, v)];
-    if (!Number.isFinite(x0)) return { x0: 0, x1: 1, y0: 0, y1: 1 };
+    for (const yv of run.y) {
+      const v = ty(yv);
+      if (Number.isFinite(v)) [y0, y1] = [Math.min(y0, v), Math.max(y1, v)];
+    }
+    if (!Number.isFinite(x0) || !Number.isFinite(y0)) return { x0: 0, x1: 1, y0: 0, y1: 1 };
     const px = (x1 - x0 || 1) * 0.03;
     const py = (y1 - y0 || 1) * 0.1;
     return { x0: x0 - px, x1: x1 + px, y0: y0 - py, y1: y1 + py };
@@ -76,10 +87,14 @@ function PeakPlot(props: { run: PeakRunView; width: number; height: number; poin
     if (props.zoomOut) props.onView(zoomAt(box, (box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2, 1.6, 'both'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.zoomOut]);
-  const fx = (v: number) => M.l + ((v - box.x0) / (box.x1 - box.x0)) * pw;
-  const fy = (v: number) => M.t + (1 - (v - box.y0) / (box.y1 - box.y0)) * ph;
-  const ix = (p: number) => box.x0 + ((p - M.l) / pw) * (box.x1 - box.x0);
-  const iy = (p: number) => box.y0 + (1 - (p - M.t) / ph) * (box.y1 - box.y0);
+  // (on the axes' own units, and the data's values through their scales)
+  const ux = (u: number) => M.l + ((u - box.x0) / (box.x1 - box.x0)) * pw;
+  const uy = (u: number) => M.t + (1 - (u - box.y0) / (box.y1 - box.y0)) * ph;
+  const fx = (v: number) => ux(tx(v));
+  const fy = (v: number) => uy(ty(v));
+  const ix = (p: number) => fromAxis(sc.x, box.x0 + ((p - M.l) / pw) * (box.x1 - box.x0));
+  const iy = (p: number) => fromAxis(sc.y, box.y0 + (1 - (p - M.t) / ph) * (box.y1 - box.y0));
+  const hidden = notDrawn(sc, run.x, run.y);
   const shownPts = drag?.kind === 'pt' ? (drag.fresh ? [...pts, { x: drag.x, y: drag.y }] : pts.map((p, k) => (k === drag.k ? { x: drag.x, y: drag.y } : p))) : pts;
   // the regions as they are while one is drawn or an edge dragged
   const regions = [
@@ -101,7 +116,7 @@ function PeakPlot(props: { run: PeakRunView; width: number; height: number; poin
       g.beginPath();
       let on = false;
       xs.forEach((x, i) => {
-        if (!Number.isFinite(ys[i])) return void (on = false);
+        if (!Number.isFinite(fx(x)) || !Number.isFinite(fy(ys[i]))) return void (on = false);
         g[on ? 'lineTo' : 'moveTo'](fx(x), fy(ys[i]));
         on = true;
       });
@@ -113,7 +128,10 @@ function PeakPlot(props: { run: PeakRunView; width: number; height: number; poin
     g.clip();
     // the regions of the peaks: a band each, its edges dashed
     for (const rg of regions) {
-      const [a, b] = [fx(Math.min(rg.from, rg.to)), fx(Math.max(rg.from, rg.to))];
+      // (an end not on a log axis: the edge)
+      const edge = (v: number, e: number) => (Number.isFinite(fx(v)) ? fx(v) : e);
+      const [p, q] = [edge(rg.from, M.l), edge(rg.to, M.l + pw)];
+      const [a, b] = [Math.min(p, q), Math.max(p, q)];
       g.fillStyle = alpha(rg.color, 0.1);
       g.fillRect(a, M.t, b - a, ph);
       g.strokeStyle = rg.color;
@@ -216,20 +234,23 @@ function PeakPlot(props: { run: PeakRunView; width: number; height: number; poin
     g.strokeRect(M.l + 0.5, M.t + 0.5, pw, ph);
     g.fillStyle = '#333333';
     g.font = '10px system-ui, sans-serif';
-    const st = niceStep(box.x1 - box.x0, Math.max(3, Math.round(pw / 80)));
-    for (let v = Math.ceil(box.x0 / st) * st; v <= box.x1 + st * 1e-9; v += st) {
+    for (const t of axisTicks(sc.x, box.x0, box.x1, Math.max(3, Math.round(pw / 80)))) {
       g.textAlign = 'center';
-      g.fillText(fmtNum(Math.abs(v) < st * 1e-9 ? 0 : v, 4), fx(v), M.t + ph + RH + 12);
-      g.fillRect(fx(v), M.t + ph - 4, 1, 4);
+      if (t.text) g.fillText(t.text, ux(t.u), M.t + ph + RH + 12);
+      g.fillRect(ux(t.u), M.t + ph - (t.minor ? 2 : 4), 1, t.minor ? 2 : 4);
     }
-    const sy = niceStep(box.y1 - box.y0, Math.max(3, Math.round(ph / 45)));
-    for (let v = Math.ceil(box.y0 / sy) * sy; v <= box.y1 + sy * 1e-9; v += sy) {
+    for (const t of axisTicks(sc.y, box.y0, box.y1, Math.max(3, Math.round(ph / 45)))) {
       g.textAlign = 'right';
-      g.fillText(fmtNum(Math.abs(v) < sy * 1e-9 ? 0 : v, 4), M.l - 4, fy(v) + 3);
-      g.fillRect(M.l, fy(v), 4, 1);
+      if (t.text) g.fillText(t.text, M.l - 4, uy(t.u) + 3);
+      g.fillRect(M.l, uy(t.u), t.minor ? 2 : 4, 1);
     }
     g.textAlign = 'center';
-    g.fillText(props.xTitle, M.l + pw / 2, H - 4);
+    g.fillText(axisTitle(sc.x, props.xTitle), M.l + pw / 2, H - 4);
+    if (hidden) {
+      g.fillStyle = '#888888';
+      g.textAlign = 'left';
+      g.fillText(hidden, M.l + 4, M.t + ph - 5);
+    }
     // the residuals below (when shown)
     if (RH) drawResiduals(g, { l: M.l, t: M.t + ph + 6, w: pw, h: RH - 10 }, run.resid ? run.x.map(fx) : [], run.resid ?? [], '#1f6fd6');
     if (z.rect) {
@@ -239,7 +260,7 @@ function PeakPlot(props: { run: PeakRunView; width: number; height: number; poin
       g.setLineDash([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run, shownPts, regions, box.x0, box.x1, box.y0, box.y1, z.rect, W, H, props.xTitle, RH]);
+  }, [run, shownPts, regions, box.x0, box.x1, box.y0, box.y1, z.rect, W, H, props.xTitle, RH, sc.x, sc.y]);
 
   const at = (e: RPointerEvent | RMouseEvent) => {
     const b = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -426,6 +447,7 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
       </button>
       <span className="grow" />
       <ZoomTools
+        scaled
         mode={zoom}
         setMode={(m) => {
           setZoom(m);

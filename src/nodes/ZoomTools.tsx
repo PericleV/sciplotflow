@@ -1,14 +1,20 @@
 // The zoom tools of a graph: Zoom (a rectangle, the wheel), Pan (drag the view), Rescale (all the data again). Esc
-// turns Zoom / Pan off.
+// turns Zoom / Pan off. scaled: a node's working graph — the scale of X and of Y (linear, log, log |v|; graphScale.ts),
+// kept with the node, the view rescaled when one changes (the scales the graph has by itself, when given: kept as none).
 import { useEffect } from 'react';
 import type { ZoomMode } from './plotZoom.ts';
 import { PanIcon, ZoomIcon } from './icons.tsx';
 import { RotateCcw } from 'lucide-react';
 import { IC } from './iconProps.ts';
+import { AXIS_SCALES, type AxisScale, type GraphScale } from './graphScale.ts';
+import { useGraphScale } from './useGraphScale.ts';
 
 // onRescaleAxis: Rescale X and Rescale Y (only one direction automatic again), where the graph offers them; fitNew:
 // they fit that direction to the curves as they come out (always on)
-export function ZoomTools({ mode, setMode, onRescale, onZoomOut, zoomed, onRescaleAxis, fitNew }: { mode: ZoomMode; setMode: (m: ZoomMode) => void; onRescale: () => void; onZoomOut: () => void; zoomed: boolean; onRescaleAxis?: (which: 'x' | 'y') => void; fitNew?: boolean }) {
+export function ZoomTools({ mode, setMode, onRescale, onZoomOut, zoomed, onRescaleAxis, fitNew, scaled }: { mode: ZoomMode; setMode: (m: ZoomMode) => void; onRescale: () => void; onZoomOut: () => void; zoomed: boolean; onRescaleAxis?: (which: 'x' | 'y') => void; fitNew?: boolean; scaled?: boolean | GraphScale }) {
+  const [sc, setSc] = useGraphScale();
+  // (the scales a graph has by itself: a spectrum's log X)
+  const own: GraphScale = typeof scaled === 'object' ? scaled : {};
   useEffect(() => {
     if (mode === 'none') return;
     const key = (e: KeyboardEvent) => e.key === 'Escape' && setMode('none');
@@ -39,6 +45,26 @@ export function ZoomTools({ mode, setMode, onRescale, onZoomOut, zoomed, onResca
           </button>
         </>
       )}
+      {scaled &&
+        (['x', 'y'] as const).map((a) => (
+          <select
+            key={a}
+            className={`nodrag graph-scale${(sc[a] ?? own[a] ?? 'lin') !== 'lin' ? ' on' : ''}`}
+            value={sc[a] ?? own[a] ?? 'lin'}
+            title={`The scale of ${a.toUpperCase()} on this graph: linear, log (the values ≤ 0 not drawn) or log of the absolute value (negative values drawn by their size; 0 not drawn). Only as drawn: the data and the outputs of the node as they are`}
+            onChange={(e) => {
+              const v = e.target.value as AxisScale;
+              setSc({ ...sc, [a]: v === (own[a] ?? 'lin') ? undefined : v });
+              onRescale();
+            }}
+          >
+            {AXIS_SCALES.map(([v, l]) => (
+              <option key={v} value={v}>
+                {a.toUpperCase()}: {v === 'abslog' ? `log |${a}|` : l}
+              </option>
+            ))}
+          </select>
+        ))}
     </span>
   );
 }

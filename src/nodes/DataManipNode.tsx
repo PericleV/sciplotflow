@@ -14,7 +14,8 @@ import { parseRows } from '../engine/rows.ts';
 import { rowsText } from '../engine/split.ts';
 import { describe } from '../engine/stats.ts';
 import { fmtNum } from '../engine/table.ts';
-import { niceStep } from '../figure/ticks.ts';
+import { axisTicks, axisTitle, fromAxis, notDrawn, toAxis } from './graphScale.ts';
+import { useGraphScale } from './useGraphScale.ts';
 import type { AppNode, DataManipData, DataManipNode, ImportData } from '../types.ts';
 import { Field, InPort, Messages, NumInput, OutPort, Select, TextInput } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
@@ -63,6 +64,8 @@ function ManipPlot(props: {
 }) {
   const { x, y, state, sel, tool, width: W, height: H } = props;
   const cv = useRef<HTMLCanvasElement>(null);
+  // X and Y linear, log or log |v| (graphScale.ts): the box in the axes' own units
+  const [sc] = useGraphScale();
   type Drag = { kind: 'rect' | 'lasso' | 'move' | 'addnew' | 'addmove'; pts: [number, number][]; mods: { add: boolean; remove: boolean; onlyY: boolean; onlyX: boolean }; k?: number };
   const [drag, setDragState] = useState<Drag | null>(null);
   // the drag as it is now (events can come faster than the redraws)
@@ -77,17 +80,18 @@ function ManipPlot(props: {
   const auto: Box = useMemo(() => {
     let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
     for (let i = 0; i < x.length; i++) {
-      if (!Number.isFinite(x[i]) || !Number.isFinite(y[i])) continue;
-      x0 = Math.min(x0, x[i]);
-      x1 = Math.max(x1, x[i]);
-      y0 = Math.min(y0, y[i]);
-      y1 = Math.max(y1, y[i]);
+      const [u, v] = [toAxis(sc.x, x[i]), toAxis(sc.y, y[i])];
+      if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
+      x0 = Math.min(x0, u);
+      x1 = Math.max(x1, u);
+      y0 = Math.min(y0, v);
+      y1 = Math.max(y1, v);
     }
     if (!Number.isFinite(x0)) return { x0: 0, x1: 1, y0: 0, y1: 1 };
     const px = (x1 - x0 || Math.abs(x0) || 1) * 0.04;
     const py = (y1 - y0 || Math.abs(y0) || 1) * 0.06;
     return { x0: x0 - px, x1: x1 + px, y0: y0 - py, y1: y1 + py };
-  }, [x, y]);
+  }, [x, y, sc.x, sc.y]);
   const box: Box = viewBox(props.view, auto);
   const z = usePlotZoom(props.zoom ?? 'none', { l: M.l, t: M.t, w: pw, h: ph }, box, (v) => props.onView?.(v));
   // Zoom out (the button): the view widened around its middle
@@ -95,10 +99,14 @@ function ManipPlot(props: {
     if (props.zoomOut) props.onView?.(zoomAt(box, (box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2, 1.6, 'both'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.zoomOut]);
-  const fx = (v: number) => M.l + ((v - box.x0) / (box.x1 - box.x0)) * pw;
-  const fy = (v: number) => M.t + (1 - (v - box.y0) / (box.y1 - box.y0)) * ph;
-  const ix = (p: number) => box.x0 + ((p - M.l) / pw) * (box.x1 - box.x0);
-  const iy = (p: number) => box.y0 + (1 - (p - M.t) / ph) * (box.y1 - box.y0);
+  // (on the axes' own units, and the data's values through their scales)
+  const ux = (u: number) => M.l + ((u - box.x0) / (box.x1 - box.x0)) * pw;
+  const uy = (u: number) => M.t + (1 - (u - box.y0) / (box.y1 - box.y0)) * ph;
+  const fx = (v: number) => ux(toAxis(sc.x, v));
+  const fy = (v: number) => uy(toAxis(sc.y, v));
+  const ix = (p: number) => fromAxis(sc.x, box.x0 + ((p - M.l) / pw) * (box.x1 - box.x0));
+  const iy = (p: number) => fromAxis(sc.y, box.y0 + (1 - (p - M.t) / ph) * (box.y1 - box.y0));
+  const hidden = useMemo(() => notDrawn(sc, x, y), [sc, x, y]);
   const shift = drag?.kind === 'move' && drag.pts.length > 1 ? [drag.mods.onlyY ? 0 : drag.pts[drag.pts.length - 1][0] - drag.pts[0][0], drag.mods.onlyX ? 0 : drag.pts[drag.pts.length - 1][1] - drag.pts[0][1]] : [0, 0];
 
   useEffect(() => {
@@ -124,7 +132,7 @@ function ManipPlot(props: {
       g.beginPath();
       let on = false;
       for (let i = 0; i < n; i++) {
-        if (state[i] & (ROW_DELETED | ROW_MASKED | ROW_ADDED) || !Number.isFinite(x[i]) || !Number.isFinite(y[i])) continue;
+        if (state[i] & (ROW_DELETED | ROW_MASKED | ROW_ADDED) || !Number.isFinite(fx(x[i])) || !Number.isFinite(fy(y[i]))) continue;
         if (on) g.lineTo(fx(x[i]), fy(y[i]));
         else g.moveTo(fx(x[i]), fy(y[i]));
         on = true;
@@ -188,33 +196,32 @@ function ManipPlot(props: {
     g.strokeRect(M.l + 0.5, M.t + 0.5, pw, ph);
     g.fillStyle = '#333333';
     g.font = '10px system-ui, sans-serif';
-    const tick = (lo: number, hi: number, f: (v: number) => number, horiz: boolean) => {
-      const st = niceStep(hi - lo, horiz ? Math.max(3, Math.round(pw / 80)) : Math.max(3, Math.round(ph / 50)));
-      for (let v = Math.ceil(lo / st) * st; v <= hi + st * 1e-9; v += st) {
-        const p = f(v);
-        const t = fmtNum(Math.abs(v) < st * 1e-9 ? 0 : v, 4);
-        if (horiz) {
-          g.fillRect(p, M.t + ph - 4, 1, 4);
-          g.textAlign = 'center';
-          g.fillText(t, p, M.t + ph + 12);
-        } else {
-          g.fillRect(M.l, p, 4, 1);
-          g.textAlign = 'right';
-          g.fillText(t, M.l - 4, p + 3);
-        }
-      }
-    };
-    tick(box.x0, box.x1, fx, true);
-    tick(box.y0, box.y1, fy, false);
+    for (const t of axisTicks(sc.x, box.x0, box.x1, Math.max(3, Math.round(pw / 80)))) {
+      const p = ux(t.u);
+      g.fillRect(p, M.t + ph - (t.minor ? 2 : 4), 1, t.minor ? 2 : 4);
+      g.textAlign = 'center';
+      if (t.text) g.fillText(t.text, p, M.t + ph + 12);
+    }
+    for (const t of axisTicks(sc.y, box.y0, box.y1, Math.max(3, Math.round(ph / 50)))) {
+      const p = uy(t.u);
+      g.fillRect(M.l, p, t.minor ? 2 : 4, 1);
+      g.textAlign = 'right';
+      if (t.text) g.fillText(t.text, M.l - 4, p + 3);
+    }
     g.textAlign = 'center';
-    g.fillText(props.xTitle, M.l + pw / 2, H - 3);
+    g.fillText(axisTitle(sc.x, props.xTitle), M.l + pw / 2, H - 3);
     g.save();
     g.translate(10, M.t + ph / 2);
     g.rotate(-Math.PI / 2);
-    g.fillText(props.yTitle, 0, 0);
+    g.fillText(axisTitle(sc.y, props.yTitle), 0, 0);
     g.restore();
+    if (hidden) {
+      g.fillStyle = '#888888';
+      g.textAlign = 'left';
+      g.fillText(hidden, M.l + 4, M.t + ph - 5);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [x, y, state, sel, W, H, box, shift[0], shift[1], props.xTitle, props.yTitle, drag]);
+  }, [x, y, state, sel, W, H, box, shift[0], shift[1], props.xTitle, props.yTitle, drag, sc.x, sc.y, hidden]);
 
   const at = (e: RPointerEvent): [number, number] => {
     const b = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -688,6 +695,7 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
       </button>
       <span className="grow" />
       <ZoomTools
+        scaled
         mode={zoom}
         setMode={(m) => {
           setZoom(m);

@@ -11,7 +11,8 @@ import { useNodeResult } from '../engine/engine.ts';
 import { CURVE_FUNCS, CURVE_OP_LABELS, curveOpPort, curveOps, type CurveMathData, type CurveMathOp, type CurveOpData, type CurveOpView, type CurvePlotLine } from '../engine/curvemath.ts';
 import { CURVEMATH_DEFAULTS } from '../defaults.ts';
 import { fmtNum, type ColumnRole } from '../engine/table.ts';
-import { niceStep } from '../figure/ticks.ts';
+import { axisTicks, axisTitle, fromAxis, notDrawn, toAxis } from './graphScale.ts';
+import { useGraphScale } from './useGraphScale.ts';
 import type { AppNode, CurveMathNode } from '../types.ts';
 import { DataPreview } from './DataNodes.tsx';
 import { IC } from './iconProps.ts';
@@ -45,13 +46,14 @@ export type Band = { k: number; i: number; axis: 'x' | 'y'; from: number; to: nu
 export type Adding = { k: number; axis: 'x' | 'y'; range?: boolean } | null;
 type Drag = { kind: 'line'; k: number; i: number; v: number } | { kind: 'edge'; b: number; side: 'from' | 'to'; v: number } | { kind: 'new'; k: number; axis: 'x' | 'y'; a: number; b: number } | null;
 
-// the limits of curves
-function spanOf(cs: { x: number[]; y: number[] }[]) {
+// the limits of curves (on the axes' own units: tx, ty)
+function spanOf(cs: { x: number[]; y: number[] }[], tx = (v: number) => v, ty = (v: number) => v) {
   let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
   for (const c of cs)
-    c.x.forEach((x, i) => {
-      if (!Number.isFinite(x) || !Number.isFinite(c.y[i])) return;
-      [x0, x1, y0, y1] = [Math.min(x0, x), Math.max(x1, x), Math.min(y0, c.y[i]), Math.max(y1, c.y[i])];
+    c.x.forEach((xv, i) => {
+      const [x, y] = [tx(xv), ty(c.y[i])];
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      [x0, x1, y0, y1] = [Math.min(x0, x), Math.max(x1, x), Math.min(y0, y), Math.max(y1, y)];
     });
   return { x0, x1, y0, y1 };
 }
@@ -81,18 +83,22 @@ function CurvePlot(props: {
   const cv = useRef<HTMLCanvasElement>(null);
   const [drag, setDrag] = useState<Drag>(null);
   const [cursor, setCursor] = useState('default');
+  // X and Y linear, log or log |v| (graphScale.ts): the boxes in the axes' own units, the results' axis too
+  const [sc] = useGraphScale();
+  const tx = (v: number) => toAxis(sc.x, v);
+  const ty = (v: number) => toAxis(sc.y, v);
   // the curves computed (A − B, A × B …): on the axis of A and B, or on their own at the right when their values are of
   // another size (else they leave the graph, or A and B flatten)
   const results = ops.flatMap((o, k) => (o.overlay.curve ? [{ k, c: o.overlay.curve }] : []));
-  const ab = spanOf([a, ...(b ? [b] : [])]);
-  const rs = spanOf(results.map((q) => q.c));
+  const ab = spanOf([a, ...(b ? [b] : [])], tx, ty);
+  const rs = spanOf(results.map((q) => q.c), tx, ty);
   const spanAB = ab.y1 - ab.y0 || Math.abs(ab.y1) || 1;
   const differs = Number.isFinite(rs.y0) && (rs.y0 < ab.y0 - 0.5 * spanAB || rs.y1 > ab.y1 + 0.5 * spanAB || rs.y1 - rs.y0 < 0.15 * spanAB);
   const own = results.length > 0 && Number.isFinite(rs.y0) && (props.resultAxis === 'own' || (props.resultAxis === 'auto' && differs));
   const pw = W - M.l - (own ? M.l : M.r);
   const ph = H - M.t - M.b;
   const auto = (() => {
-    const s = own || !results.length ? ab : spanOf([a, ...(b ? [b] : []), ...results.map((q) => q.c)]);
+    const s = own || !results.length ? ab : spanOf([a, ...(b ? [b] : []), ...results.map((q) => q.c)], tx, ty);
     if (!Number.isFinite(s.x0)) return { x0: 0, x1: 1, y0: 0, y1: 1 };
     const [px, py] = [(s.x1 - s.x0 || 1) * 0.03, (s.y1 - s.y0 || 1) * 0.08];
     return { x0: Math.min(s.x0, Number.isFinite(rs.x0) ? rs.x0 : s.x0) - px, x1: Math.max(s.x1, Number.isFinite(rs.x1) ? rs.x1 : s.x1) + px, y0: s.y0 - py, y1: s.y1 + py };
@@ -110,10 +116,14 @@ function CurvePlot(props: {
     if (zoomOut) onView(zoomAt(box, (box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2, 1.6, 'both'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoomOut]);
-  const fx = (v: number) => M.l + ((v - box.x0) / (box.x1 - box.x0)) * pw;
-  const fy = (v: number) => M.t + (1 - (v - box.y0) / (box.y1 - box.y0)) * ph;
-  const ix = (p: number) => box.x0 + ((p - M.l) / pw) * (box.x1 - box.x0);
-  const iy = (p: number) => box.y0 + (1 - (p - M.t) / ph) * (box.y1 - box.y0);
+  // (on the axes' own units, and the data's values through their scales)
+  const ux = (u: number) => M.l + ((u - box.x0) / (box.x1 - box.x0)) * pw;
+  const uy = (u: number) => M.t + (1 - (u - box.y0) / (box.y1 - box.y0)) * ph;
+  const fx = (v: number) => ux(tx(v));
+  const fy = (v: number) => uy(ty(v));
+  const ix = (p: number) => fromAxis(sc.x, box.x0 + ((p - M.l) / pw) * (box.x1 - box.x0));
+  const iy = (p: number) => fromAxis(sc.y, box.y0 + (1 - (p - M.t) / ph) * (box.y1 - box.y0));
+  const hidden = notDrawn(sc, [...a.x, ...(b?.x ?? [])], [...a.y, ...(b?.y ?? [])]);
   const [q0, q1] = [r0 + ((box.y0 - auto.y0) / (auto.y1 - auto.y0)) * (r1 - r0), r0 + ((box.y1 - auto.y0) / (auto.y1 - auto.y0)) * (r1 - r0)];
   // the lines and the bands as they are while one is dragged; a band being drawn
   const shownLines = lines.map((l) => (drag?.kind === 'line' && drag.k === l.k ? { ...l, values: l.values.map((v, i) => (i === drag.i ? drag.v : v)) } : l));
@@ -137,7 +147,9 @@ function CurvePlot(props: {
       let on = false;
       xs.forEach((x, i) => {
         if (!Number.isFinite(x) || !Number.isFinite(ys[i])) return void (on = false);
-        g[on ? 'lineTo' : 'moveTo'](fx(x), fy(right ? toLeft(ys[i]) : ys[i]));
+        const py = right ? uy(toLeft(ty(ys[i]))) : fy(ys[i]);
+        if (!Number.isFinite(fx(x)) || !Number.isFinite(py)) return void (on = false);
+        g[on ? 'lineTo' : 'moveTo'](fx(x), py);
         on = true;
       });
       g.stroke();
@@ -271,31 +283,33 @@ function CurvePlot(props: {
     g.strokeRect(M.l + 0.5, M.t + 0.5, pw, ph);
     g.fillStyle = '#333333';
     g.font = '10px system-ui, sans-serif';
-    const sx = niceStep(box.x1 - box.x0, Math.max(3, Math.round(pw / 80)));
     g.textAlign = 'center';
-    for (let v = Math.ceil(box.x0 / sx) * sx; v <= box.x1 + sx * 1e-9; v += sx) {
-      g.fillText(fmtNum(Math.abs(v) < sx * 1e-9 ? 0 : v, 4), fx(v), M.t + ph + 12);
-      g.fillRect(fx(v), M.t + ph - 4, 1, 4);
+    for (const t of axisTicks(sc.x, box.x0, box.x1, Math.max(3, Math.round(pw / 80)))) {
+      if (t.text) g.fillText(t.text, ux(t.u), M.t + ph + 12);
+      g.fillRect(ux(t.u), M.t + ph - (t.minor ? 2 : 4), 1, t.minor ? 2 : 4);
     }
-    const sy = niceStep(box.y1 - box.y0, Math.max(3, Math.round(ph / 45)));
     g.textAlign = 'right';
-    for (let v = Math.ceil(box.y0 / sy) * sy; v <= box.y1 + sy * 1e-9; v += sy) {
-      g.fillText(fmtNum(Math.abs(v) < sy * 1e-9 ? 0 : v, 4), M.l - 4, fy(v) + 3);
-      g.fillRect(M.l, fy(v), 4, 1);
+    for (const t of axisTicks(sc.y, box.y0, box.y1, Math.max(3, Math.round(ph / 45)))) {
+      if (t.text) g.fillText(t.text, M.l - 4, uy(t.u) + 3);
+      g.fillRect(M.l, uy(t.u), t.minor ? 2 : 4, 1);
     }
     if (own) {
       g.fillStyle = opColor(results[0].k);
       g.textAlign = 'left';
-      const sr = niceStep(q1 - q0, Math.max(3, Math.round(ph / 45)));
-      for (let v = Math.ceil(q0 / sr) * sr; v <= q1 + sr * 1e-9; v += sr) {
-        const y = fy(toLeft(v));
-        g.fillText(fmtNum(Math.abs(v) < sr * 1e-9 ? 0 : v, 4), M.l + pw + 4, y + 3);
-        g.fillRect(M.l + pw - 4, y, 4, 1);
+      for (const t of axisTicks(sc.y, q0, q1, Math.max(3, Math.round(ph / 45)))) {
+        const y = uy(toLeft(t.u));
+        if (t.text) g.fillText(t.text, M.l + pw + 4, y + 3);
+        g.fillRect(M.l + pw - (t.minor ? 2 : 4), y, t.minor ? 2 : 4, 1);
       }
     }
     g.fillStyle = '#333333';
     g.textAlign = 'center';
-    g.fillText(a.xName, M.l + pw / 2, H - 4);
+    g.fillText(axisTitle(sc.x, a.xName), M.l + pw / 2, H - 4);
+    if (hidden) {
+      g.fillStyle = '#888888';
+      g.textAlign = 'left';
+      g.fillText(hidden, M.l + 4, M.t + ph - 5);
+    }
     g.textAlign = 'left';
     g.font = 'bold 10px system-ui, sans-serif';
     g.fillStyle = CA;
@@ -318,7 +332,7 @@ function CurvePlot(props: {
       g.setLineDash([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [a, b, ops, shownLines, shownBands, own, W, H, box.x0, box.x1, box.y0, box.y1, z.rect]);
+  }, [a, b, ops, shownLines, shownBands, own, W, H, box.x0, box.x1, box.y0, box.y1, z.rect, sc.x, sc.y]);
 
   const pos = (e: RPointerEvent | RMouseEvent) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -346,7 +360,7 @@ function CurvePlot(props: {
       return v >= Math.min(bd.from, bd.to) && v <= Math.max(bd.from, bd.to);
     });
   const inFrame = (px: number, py: number) => px >= M.l && px <= M.l + pw && py >= M.t && py <= M.t + ph;
-  const curves: ReadCurve[] = [{ name: `A: ${a.name}`, color: CA, x: a.x, y: a.y }, ...(b ? [{ name: `B: ${b.name}`, color: CB, x: b.x, y: b.y }] : []), ...results.map((q) => ({ name: `${q.k + 1}. ${q.c.name}${own ? ' (right axis)' : ''}`, color: opColor(q.k), x: q.c.x, y: q.c.y, ...(own ? { onAxis: toLeft } : {}) }))];
+  const curves: ReadCurve[] = [{ name: `A: ${a.name}`, color: CA, x: a.x, y: a.y }, ...(b ? [{ name: `B: ${b.name}`, color: CB, x: b.x, y: b.y }] : []), ...results.map((q) => ({ name: `${q.k + 1}. ${q.c.name}${own ? ' (right axis)' : ''}`, color: opColor(q.k), x: q.c.x, y: q.c.y, ...(own ? { onAxis: (v: number) => fromAxis(sc.y, toLeft(ty(v))) } : {}) }))];
   return (
     <div className="region-plot nodrag nowheel">
       <div className="reader-host">
@@ -730,6 +744,7 @@ export function CurveMathNodeView({ id, data }: NodeProps<CurveMathNode>) {
     <div className="row wrap">
       <span className="grow" />
       <ZoomTools
+        scaled
         mode={zoom}
         setMode={(m) => {
           setZoom(m);

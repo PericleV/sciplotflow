@@ -141,6 +141,7 @@ export function RegionGraph<T extends RegionData>({ data, set, view, points = fa
         )}
         <span className="grow" />
         <ZoomTools
+        scaled
           mode={zoom}
           setMode={(m) => {
             setZoom(m);

@@ -11,6 +11,7 @@ import { componentAt, generate, mosCurve, newComponent, noiseOf, rng } from '../
 import { cvMake, gradedVbi, hfExactTable, measured, trapsOf, type CvSpec } from '../src/engine/cv.ts';
 import { legendLayout } from '../src/figure/legendLayout.ts';
 import { fitLook, quickFit, quickFitsOf, rangeName } from '../src/engine/quickfit.ts';
+import { axisTicks as graphTicks, axisTitle, fromAxis, notDrawn, toAxis } from '../src/nodes/graphScale.ts';
 import { aggregateByX } from '../src/engine/aggregate.ts';
 import { COLOR_MAPS, mapColor, PALETTES, shapedStops, stopsOf } from '../src/figure/colors.ts';
 import { trendFit, type TrendSpec } from '../src/engine/trend.ts';
@@ -7641,6 +7642,20 @@ checkPhase(ok);
   ok(sciText(1e16) === '1e16' && sciText(2.5e18) === '2.5e18' && sciText(5e-9) === '5e-9' && sciText(1e-6) === '1e-6' && sciText(100) === '100' && sciText(0.01) === '0.01' && sciText(0) === '0' && sciText(1e5) === '1e5' && sciText(0.1 + 0.2) === '0.3' && sciPretty(1e16) === '1·10¹⁶' && sciPretty(-2.5e-9) === '-2.5·10⁻⁹' && sciPretty(42) === '42' && [1e16, 2.5e18, 5e-9, 123456.789, 3e-7].every((v) => parseSci(sciText(v)) === v), 'Scientific numbers: written short only when very large or very small (1e16, 5e-9; 100, 0.01 as they are), and read back the same');
 }
 
+// the scales of a node's working graph: log and log |v| (values not on the axis: NaN), back to the values, the ticks
+// (linear as before; decades labelled, 2 … 9 between them; within a decade the values' steps), what is not drawn
+{
+  const near2 = (a: number, b: number) => Math.abs(a - b) < 1e-12;
+  ok(toAxis('log', 100) === 2 && Number.isNaN(toAxis('log', -5)) && Number.isNaN(toAxis('log', 0)) && near2(toAxis('abslog', -1e-6), -6) && Number.isNaN(toAxis('abslog', 0)) && toAxis('lin', -3) === -3 && toAxis(undefined, 4) === 4 && near2(fromAxis('log', -3), 1e-3) && fromAxis('lin', 7) === 7, 'graph scale: log, log |v| and linear, and back');
+  const lin = graphTicks('lin', 0, 10, 5).map((t) => t.text).join();
+  const dec = graphTicks('log', 0, 6, 8);
+  const majors = dec.filter((t) => !t.minor);
+  const minors = dec.filter((t) => t.minor);
+  const wide = graphTicks('log', -12, 12, 6).filter((t) => !t.minor);
+  const narrow = graphTicks('log', Math.log10(2), Math.log10(8), 4);
+  ok(lin === '0,2,4,6,8,10' && majors.map((t) => t.text).join() === '1,10,100,1000,10000,10⁵,10⁶' && minors.length === 6 * 8 && minors.every((t) => t.text === '') && near2(minors[0].u, Math.log10(2)) && wide.length <= 7 && wide.every((t) => Number.isInteger(t.u)) && wide.some((t) => t.text === '10⁻¹²') && narrow.length >= 3 && narrow.every((t) => !t.minor && t.text !== '' && 10 ** t.u >= 2 - 1e-9 && 10 ** t.u <= 8 + 1e-9), 'graph scale: the ticks (linear as before, decades and 2 … 9 on a log axis, 10⁻¹² written so, the values within a decade)');
+  ok(notDrawn({ y: 'log' }, [1, 2, 3, 4], [1, -2, 0, 5]) === '2 points ≤ 0 not drawn on the log Y axis' && notDrawn({ x: 'abslog', y: 'abslog' }, [1, -2, 3], [-1, 2, 0]) === '1 point at 0 not drawn on the log X / Y axis' && notDrawn({}, [1], [-1]) === '' && axisTitle('abslog', 'I (A)') === '|I (A)|' && axisTitle('log', 'I (A)') === 'I (A)', 'graph scale: the points not drawn said, the title of an absolute value');
+}
 // the version shown in the app is package.json's
 ok(APP_VERSION === (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version, `the app's version (${APP_VERSION}) as package.json's`);
 // the citation: CITATION.cff's version the app's; no DOI in it or in the README while the Zenodo record is made again

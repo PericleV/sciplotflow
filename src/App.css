@@ -1156,6 +1156,8 @@ button.btn-stop { animation: run-pulse 1.6s ease-in-out infinite; }
 .big-figure { position: relative; }
 .big-tools { position: absolute; top: 10px; left: 14px; display: flex; gap: 6px; }
 .zoom-tools { display: inline-flex; gap: 4px; }
+.zoom-tools select.graph-scale { width: auto; min-width: 0; flex: none; }
+.zoom-tools select.graph-scale.on { border-color: var(--accent); color: var(--accent); }
 
 /* Import: the delimiter's own characters, next to its list (the list gives way) */
 .node label > .field-ctl > input.delim-chars[type='text'] { flex: none; width: 56px; min-width: 56px; }

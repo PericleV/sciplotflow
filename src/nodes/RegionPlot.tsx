@@ -1,12 +1,13 @@
 // The graph of Differentiate / Integrate: two panels on the same X. Top, the data of the run shown with its regions
 // (each its colour and number, 1, 2 …; “Add a range” draws one, then stops; the edges of a region are dragged) and
 // the baseline (its points placed, moved and removed with the mouse when “Baseline points” is on). Below, apart, the
-// derivative or the integral with its own axis.
+// derivative or the integral with its own axis. X and the data's Y linear, log or log |v| (graphScale.ts): the boxes in
+// the axes' own units, the values in and out as the data's.
 import { ReaderLayer, type ReaderProp } from './CanvasReader.tsx';
 import { useEffect, useRef, useState, type MouseEvent as RMouseEvent, type PointerEvent as RPointerEvent } from 'react';
 import type { Pt, Region } from '../engine/calculus.ts';
-import { fmtNum } from '../engine/table.ts';
-import { niceStep } from '../figure/ticks.ts';
+import { axisTicks, axisTitle, fromAxis, notDrawn, toAxis, type AxisScale } from './graphScale.ts';
+import { useGraphScale } from './useGraphScale.ts';
 import { regionColor } from './regionColors.ts';
 import { usePlotZoom, viewBox, zoomAt, type View, type ZoomMode } from './plotZoom.ts';
 
@@ -29,33 +30,26 @@ function extent(xs: ArrayLike<number>[], ys: ArrayLike<number>[]): Box {
   return { x0: x0 - px, x1: x1 + px, y0: y0 - py, y1: y1 + py };
 }
 
-// the frame, the numbers on both axes and the titles of one panel
-function axes(g: CanvasRenderingContext2D, box: Box, W: number, top: number, ph: number, fx: (v: number) => number, fy: (v: number) => number, yTitle: string, xTitle: string) {
+// the frame, the numbers on both axes (in their scales; the box in their units) and the titles of one panel
+function axes(g: CanvasRenderingContext2D, box: Box, W: number, top: number, ph: number, sx: AxisScale | undefined, sy: AxisScale | undefined, yTitle: string, xTitle: string) {
   const pw = W - M.l - M.r;
   g.strokeStyle = '#333333';
   g.lineWidth = 1;
   g.strokeRect(M.l + 0.5, top + 0.5, pw, ph);
   g.fillStyle = '#333333';
   g.font = '10px system-ui, sans-serif';
-  const tick = (lo: number, hi: number, horiz: boolean) => {
-    const st = niceStep(hi - lo, horiz ? Math.max(3, Math.round(pw / 80)) : Math.max(2, Math.round(ph / 40)));
-    for (let v = Math.ceil(lo / st) * st; v <= hi + st * 1e-9; v += st) {
-      const t = fmtNum(Math.abs(v) < st * 1e-9 ? 0 : v, 4);
-      if (horiz) {
-        const p = fx(v);
-        g.textAlign = 'center';
-        g.fillText(t, p, top + ph + 12);
-        g.fillRect(p, top + ph - 4, 1, 4);
-      } else {
-        const p = fy(v);
-        g.textAlign = 'right';
-        g.fillText(t, M.l - 4, p + 3);
-        g.fillRect(M.l, p, 4, 1);
-      }
-    }
-  };
-  tick(box.x0, box.x1, true);
-  tick(box.y0, box.y1, false);
+  for (const t of axisTicks(sx, box.x0, box.x1, Math.max(3, Math.round(pw / 80)))) {
+    const p = M.l + ((t.u - box.x0) / (box.x1 - box.x0)) * pw;
+    g.textAlign = 'center';
+    if (t.text) g.fillText(t.text, p, top + ph + 12);
+    g.fillRect(p, top + ph - (t.minor ? 2 : 4), 1, t.minor ? 2 : 4);
+  }
+  for (const t of axisTicks(sy, box.y0, box.y1, Math.max(2, Math.round(ph / 40)))) {
+    const p = top + (1 - (t.u - box.y0) / (box.y1 - box.y0)) * ph;
+    g.textAlign = 'right';
+    if (t.text) g.fillText(t.text, M.l - 4, p + 3);
+    g.fillRect(M.l, p, t.minor ? 2 : 4, 1);
+  }
   if (xTitle) {
     g.textAlign = 'center';
     g.fillText(xTitle, M.l + pw / 2, top + ph + 25);
@@ -109,6 +103,9 @@ export function RegionPlot(props: {
 }) {
   const { x, y, run, used, shown, regions, width: W, topH, lowerH } = props;
   const one = lowerH <= 0;
+  const [sc] = useGraphScale();
+  const tx = (v: number) => toAxis(sc.x, v);
+  const ty = (v: number) => toAxis(sc.y, v);
   const top = useRef<HTMLCanvasElement>(null);
   const low = useRef<HTMLCanvasElement>(null);
   const [drag, setDragState] = useState<Drag>(null);
@@ -127,7 +124,7 @@ export function RegionPlot(props: {
   const pts = props.points ?? [];
   // the range of the data only: the baseline follows the points placed — with it (and them) in the range, the graph
   // rescaled at every point and the points jumped away from where they were clicked
-  const box = viewBox(props.view, extent([idx.map((i) => x[i])], [idx.map((i) => y[i])]));
+  const box = viewBox(props.view, extent([idx.map((i) => tx(x[i]))], [idx.map((i) => ty(y[i]))]));
   const z = usePlotZoom(props.zoom ?? 'none', { l: M.l, t: M.t, w: pw, h: ph }, box, (v) => props.onView?.(v));
   // Zoom out (the button): the view widened around its middle
   useEffect(() => {
@@ -135,18 +132,25 @@ export function RegionPlot(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.zoomOut]);
   const lbox = { ...extent([[box.x0, box.x1]], [props.lower?.y ?? [], ...(props.lowerMore ?? []).map((q) => q.y), props.lowerBand?.lo ?? [], props.lowerBand?.hi ?? []]), x0: box.x0, x1: box.x1 };
-  const fx = (v: number) => M.l + ((v - box.x0) / (box.x1 - box.x0)) * pw;
-  const fy = (v: number) => M.t + (1 - (v - box.y0) / (box.y1 - box.y0)) * ph;
+  // (values of the data to px and back, through the axes' scales)
+  const fx = (v: number) => M.l + ((tx(v) - box.x0) / (box.x1 - box.x0)) * pw;
+  const fy = (v: number) => M.t + (1 - (ty(v) - box.y0) / (box.y1 - box.y0)) * ph;
   const ly = (v: number) => M.t + (1 - (v - lbox.y0) / (lbox.y1 - lbox.y0)) * lh;
-  const ix = (p: number) => box.x0 + ((p - M.l) / pw) * (box.x1 - box.x0);
-  const iy = (p: number) => box.y0 + (1 - (p - M.t) / ph) * (box.y1 - box.y0);
+  const ix = (p: number) => fromAxis(sc.x, box.x0 + ((p - M.l) / pw) * (box.x1 - box.x0));
+  const iy = (p: number) => fromAxis(sc.y, box.y0 + (1 - (p - M.t) / ph) * (box.y1 - box.y0));
   // the regions and the points as they are while dragged
   const shownRegions = drag && drag.kind !== 'pt' ? (drag.kind === 'new' ? [...regions, { lo: Math.min(drag.a, drag.b), hi: Math.max(drag.a, drag.b) }] : regions.map((r, k) => (k === drag.k ? (drag.kind === 'lo' ? { ...r, lo: drag.b } : { ...r, hi: drag.b }) : r))) : regions;
   const shownPts = drag?.kind === 'pt' ? (drag.fresh ? [...pts, { x: drag.x, y: drag.y }] : pts.map((p, k) => (k === drag.k ? { x: drag.x, y: drag.y } : p))) : pts;
+  // (an open end, or one not on a log axis: the edge of the graph)
   const span = (r: Region): [number, number] => {
-    const [l, h] = [Number.isFinite(r.lo) ? r.lo : box.x0, Number.isFinite(r.hi) ? r.hi : box.x1];
-    return [fx(Math.min(l, h)), fx(Math.max(l, h))];
+    const at = (v: number, edge: number) => {
+      const p = Number.isFinite(v) ? fx(v) : NaN;
+      return Number.isFinite(p) ? p : edge;
+    };
+    const [a, b] = [at(r.lo, M.l), at(r.hi, M.l + pw)];
+    return [Math.min(a, b), Math.max(a, b)];
   };
+  const hidden = notDrawn(sc, idx.map((i) => x[i]), idx.map((i) => y[i]));
 
   useEffect(() => {
     const dpr = window.devicePixelRatio || 1;
@@ -221,7 +225,7 @@ export function RegionPlot(props: {
         g.beginPath();
         let on = false;
         for (let k = 0; k < bs.x.length; k++) {
-          if (!Number.isFinite(bs.y[k]) || !Number.isFinite(bs.x[k])) {
+          if (!Number.isFinite(fx(bs.x[k])) || !Number.isFinite(fy(bs.y[k]))) {
             on = false;
             continue;
           }
@@ -263,7 +267,12 @@ export function RegionPlot(props: {
         g.strokeRect(fx(p.x) - 3.5, fy(p.y) - 3.5, 7, 7);
       }
       g.restore();
-      axes(g, box, W, M.t, ph, fx, fy, props.yTitle, one ? props.xTitle : '');
+      axes(g, box, W, M.t, ph, sc.x, sc.y, axisTitle(sc.y, props.yTitle), one ? axisTitle(sc.x, props.xTitle) : '');
+      if (hidden) {
+        g.fillStyle = '#888888';
+        g.textAlign = 'left';
+        g.fillText(hidden, M.l + 4, M.t + ph - 5);
+      }
       if (z.rect) {
         g.strokeStyle = '#1f6fd6';
         g.setLineDash([4, 3]);
@@ -335,10 +344,10 @@ export function RegionPlot(props: {
         h.stroke();
       }
       h.restore();
-      axes(h, lbox, W, M.t, lh, fx, ly, props.lowerTitle, props.xTitle);
+      axes(h, lbox, W, M.t, lh, sc.x, 'lin', props.lowerTitle, axisTitle(sc.x, props.xTitle));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [x, y, run, used, shown, shownRegions, shownPts, props.base, props.fills, props.lower, props.lowerMore, props.lowerBand, props.baseColor, props.view, props.marks, props.segments, z.rect, W, topH, lowerH, props.xTitle, props.yTitle, props.lowerTitle]);
+  }, [x, y, run, used, shown, shownRegions, shownPts, props.base, props.fills, props.lower, props.lowerMore, props.lowerBand, props.baseColor, props.view, props.marks, props.segments, z.rect, W, topH, lowerH, props.xTitle, props.yTitle, props.lowerTitle, sc.x, sc.y]);
 
   // ---- the mouse on the top panel ----
   const at = (e: RPointerEvent) => {

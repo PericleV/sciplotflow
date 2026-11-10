@@ -69,13 +69,15 @@ import type { EisData } from './engine/eis.ts';
 export type { EisData };
 import type { Baseline as WidthBaseline, WidthKind } from './engine/measure.ts';
 import type { ModelSpec } from './engine/fitModels.ts';
+import type { GraphScale } from './nodes/graphScale.ts';
 import type { FitBand, FitParamSpec, FitWeight } from './engine/fit.ts';
 import type { ScaleShape } from './figure/colors.ts';
 import type { AxesStyle, ColorbarSpec, ColorMapName, CurveStyle, Dash, GradFill, InsetItem, LegendSpec, LengthUnit, PanelScheme, Placement, ShapeSpec, TextSpec, TextStyle } from './figure/spec.ts';
 
 // Common to every node: a free label shown above it and the collapsed state (only the title bar shown); nameIds: the
-// ids of the columns and sheets it names, as its evaluation found them (src/engine/refs.ts)
-export type NodeMeta = { caption?: string; collapsed?: boolean; nameIds?: DataRefs };
+// ids of the columns and sheets it names, as its evaluation found them (src/engine/refs.ts); graphScale: the scales of the
+// axes of its working graph (linear, log, log |v|; only as drawn: src/nodes/graphScale.ts)
+export type NodeMeta = { caption?: string; collapsed?: boolean; nameIds?: DataRefs; graphScale?: GraphScale };
 type Node<D extends Record<string, unknown>, T extends string> = FlowNode<D & NodeMeta, T>;
 
 // ---- Data ----

@@ -3,7 +3,7 @@
 // node works in (Add a range: dragged on the graph), the outputs. Kramers–Kronig
 // (in Analysis) is drawn the same way: its graphs with the tails assumed dashed, past dashed lines where the data end.
 import { xAutoLabel, Y_AUTO } from './xAuto.ts';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNodeConnections, useReactFlow, type NodeProps } from '@xyflow/react';
 import { columnLetter } from '../engine/csv.ts';
 import { useNodeResult } from '../engine/engine.ts';
@@ -13,7 +13,6 @@ import type { Region } from '../engine/calculus.ts';
 import { regionColor } from './regionColors.ts';
 import { RunRangesTable } from './FitNode.tsx';
 import { fmtNum, type ColumnRole } from '../engine/table.ts';
-import { niceStep } from '../figure/ticks.ts';
 import type { AppNode, AverageData, AverageNode, ConvData, ConvNode, FFTData, FFTNode, InterpData, InterpNode, KKData, KKNode, NormalizeData, NormalizeNode, SmoothData, SmoothNode } from '../types.ts';
 import { KK_DEFAULTS } from '../engine/kk.ts';
 import { Check, Field, InPort, Messages, NumInput, OutPort, Select } from './ui.tsx';
@@ -28,23 +27,8 @@ import { rescaleAxis, usePlotZoom, viewBox, zoomAt, type View, type ZoomMode } f
 import { ZoomTools } from './ZoomTools.tsx';
 import { ReaderButton, ReaderLayer, ReaderOptions, type ReadCurve, type ReaderProp } from './CanvasReader.tsx';
 import { READER_OFF, type ReaderState } from './readerState.ts';
-
-// a plot with a logarithmic X: its X values (all of them) as their log10, the points at X ≤ 0 left out
-function logPlot(p: SignalPlot): SignalPlot {
-  const lg = (c: { x: number[]; y: number[] }) => {
-    const keep = c.x.map((v) => v > 0);
-    return { x: c.x.filter((_, i) => keep[i]).map(Math.log10), y: c.y.filter((_, i) => keep[i]) };
-  };
-  return {
-    ...p,
-    ...(p.data ? { data: lg(p.data) } : {}),
-    result: lg(p.result),
-    ...(p.others ? { others: p.others.map(lg) } : {}),
-    ...(p.series ? { series: p.series.map((sr) => ({ ...sr, ...lg(sr) })) } : {}),
-    ...(p.band ? { band: { x: p.band.x.map((v) => Math.log10(Math.max(v, 1e-300))), lo: p.band.lo, hi: p.band.hi } } : {}),
-    ...(p.marks ? { marks: p.marks.filter((v) => v > 0).map(Math.log10) } : {}),
-  };
-}
+import { axisTicks, axisTitle, fromAxis, notDrawn, toAxis, type AxisScale } from './graphScale.ts';
+import { useGraphScale } from './useGraphScale.ts';
 
 const alpha = (hex: string, a: number) => `${hex}${Math.round(a * 255).toString(16).padStart(2, '0')}`;
 const W0 = 520;
@@ -66,7 +50,8 @@ function rangeOf(sets: { x: number[]; y: number[] }[]): [number, number, number,
 
 // the graph of one Y: the data as dots, the result as a line (on its own axis at the right when asked); zoomed and
 // panned with the tools above it (the result's axis follows), read with the data reader; the ranges shaded (each its
-// colour), one added by dragging while “Add a range” is on, their edges dragged
+// colour), one added by dragging while “Add a range” is on, their edges dragged. X and Y linear, log or log |v|
+// (graphScale.ts; a spectrum's X log by itself): the boxes in the axes' own units, the values in and out as the data's
 type RangeDrag = { kind: 'new' | 'lo' | 'hi'; k: number; a: number; b: number } | null;
 function SignalGraph({ plot: given, W, H, zoom, view, onView, zoomOut, reader, regions, onRegions, adding, onAdded }: { plot: SignalPlot; W: number; H: number; zoom: ZoomMode; view: View | null; onView: (v: View | null) => void; zoomOut: number; reader?: Omit<ReaderProp, 'curves'>; regions?: Region[]; onRegions?: (r: Region[]) => void; adding?: boolean; onAdded?: () => void }) {
   const cv = useRef<HTMLCanvasElement>(null);
@@ -79,14 +64,18 @@ function SignalGraph({ plot: given, W, H, zoom, view, onView, zoomOut, reader, r
   const rgs = regions ?? [];
   // (the ranges as they are while dragged)
   const shownRegions = drag ? (drag.kind === 'new' ? [...rgs, { lo: Math.min(drag.a, drag.b), hi: Math.max(drag.a, drag.b) }] : rgs.map((r, k) => (k === drag.k ? (drag.kind === 'lo' ? { ...r, lo: drag.b } : { ...r, hi: drag.b }) : r))) : rgs;
-  // (a logarithmic X: everything drawn on log10 of it, the ticks labelled with the values)
-  const plot = useMemo(() => (given.logX ? logPlot(given) : given), [given]);
+  const plot = given;
+  const [sc] = useGraphScale();
+  const ex: AxisScale = sc.x ?? (plot.logX ? 'log' : 'lin');
+  const ey: AxisScale = sc.y ?? 'lin';
+  const T = (c: { x: number[]; y: number[] }) => ({ x: c.x.map((v) => toAxis(ex, v)), y: c.y.map((v) => toAxis(ey, v)) });
   const [cursor, setCursor] = useState('default');
-  // the limits: of everything, or (the result on its own axis, at the right) of the data and of the result apart
+  // the limits (on the axes' own units): of everything, or (the result on its own axis, at the right) of the data and of
+  // the result apart
   const own = !!plot.ownAxis && !!plot.data;
   const all = [plot.result, ...(plot.data ? [plot.data] : []), ...(plot.others ?? []), ...(plot.series ?? []), ...(plot.band ? [{ x: plot.band.x, y: plot.band.lo }, { x: plot.band.x, y: plot.band.hi }] : [])];
-  let [x0, x1, y0, y1] = rangeOf(own ? [plot.data!] : all);
-  const [rx0, rx1, r0, r1] = own ? rangeOf([plot.result]) : [x0, x1, y0, y1];
+  let [x0, x1, y0, y1] = rangeOf((own ? [plot.data!] : all).map(T));
+  const [rx0, rx1, r0, r1] = own ? rangeOf([T(plot.result)]) : [x0, x1, y0, y1];
   [x0, x1] = [Math.min(x0, rx0), Math.max(x1, rx1)];
   if (x1 === x0) [x0, x1] = [x0 - 1, x1 + 1];
   const okBox = [x0, x1, y0, y1].every(Number.isFinite);
@@ -99,14 +88,18 @@ function SignalGraph({ plot: given, W, H, zoom, view, onView, zoomOut, reader, r
     if (zoomOut) onView(zoomAt(box, (box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2, 1.6, 'both'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoomOut]);
-  const fx = (v: number) => M.l + ((v - box.x0) / (box.x1 - box.x0)) * pw;
-  const fy = (v: number) => M.t + (1 - (v - box.y0) / (box.y1 - box.y0)) * ph;
-  const ix = (p: number) => box.x0 + ((p - M.l) / pw) * (box.x1 - box.x0);
-  const iy = (p: number) => box.y0 + (1 - (p - M.t) / ph) * (box.y1 - box.y0);
+  // (on the axes' own units, and the data's values through their scales)
+  const ux = (u: number) => M.l + ((u - box.x0) / (box.x1 - box.x0)) * pw;
+  const uy = (u: number) => M.t + (1 - (u - box.y0) / (box.y1 - box.y0)) * ph;
+  const fx = (v: number) => ux(toAxis(ex, v));
+  const fy = (v: number) => uy(toAxis(ey, v));
+  const ix = (p: number) => fromAxis(ex, box.x0 + ((p - M.l) / pw) * (box.x1 - box.x0));
+  const iy = (p: number) => fromAxis(ey, box.y0 + (1 - (p - M.t) / ph) * (box.y1 - box.y0));
   // the result's own axis: the same part of its range as the left axis shows of its own (it follows the zoom)
   const toLeft = (u: number) => auto.y0 + ((u - r0) / (r1 - r0)) * (auto.y1 - auto.y0);
   const [q0, q1] = [r0 + ((box.y0 - auto.y0) / (auto.y1 - auto.y0)) * (r1 - r0), r0 + ((box.y1 - auto.y0) / (auto.y1 - auto.y0)) * (r1 - r0)];
-  const fr = (u: number) => fy(toLeft(u));
+  const fr = (v: number) => uy(toLeft(toAxis(ey, v)));
+  const hidden = plot.data ? notDrawn({ x: ex, y: ey }, plot.data.x, plot.data.y) : notDrawn({ x: ex, y: ey }, plot.result.x, plot.result.y);
   useEffect(() => {
     const c = cv.current;
     if (!c) return;
@@ -124,7 +117,9 @@ function SignalGraph({ plot: given, W, H, zoom, view, onView, zoomOut, reader, r
     g.clip();
     // the ranges: shaded, their edges in their colour
     shownRegions.forEach((rg, k) => {
-      const [a, b] = [Number.isFinite(rg.lo) ? fx(rg.lo) : M.l, Number.isFinite(rg.hi) ? fx(rg.hi) : M.l + pw];
+      // (an open end, or one not on a log axis: the edge)
+      const edge = (v: number, e: number) => (Number.isFinite(fx(v)) ? fx(v) : e);
+      const [a, b] = [edge(rg.lo, M.l), edge(rg.hi, M.l + pw)];
       g.fillStyle = alpha(regionColor(k), 0.12);
       g.fillRect(Math.min(a, b), M.t, Math.abs(b - a), ph);
       g.fillStyle = regionColor(k);
@@ -140,7 +135,7 @@ function SignalGraph({ plot: given, W, H, zoom, view, onView, zoomOut, reader, r
       g.closePath();
       g.fill();
     }
-    if (plot.zero && box.y0 < 0 && box.y1 > 0) {
+    if (plot.zero && ey === 'lin' && box.y0 < 0 && box.y1 > 0) {
       g.strokeStyle = '#9aa3ad';
       g.lineWidth = 1;
       g.beginPath();
@@ -169,7 +164,7 @@ function SignalGraph({ plot: given, W, H, zoom, view, onView, zoomOut, reader, r
         let on = false;
         sr.x.forEach((v, i) => {
           const u = sr.y[i];
-          if (!Number.isFinite(u) || !Number.isFinite(v)) return void (on = false);
+          if (!Number.isFinite(fx(v)) || !Number.isFinite(fy(u))) return void (on = false);
           g[on ? 'lineTo' : 'moveTo'](fx(v), fy(u));
           on = true;
         });
@@ -207,8 +202,9 @@ function SignalGraph({ plot: given, W, H, zoom, view, onView, zoomOut, reader, r
     let on = false;
     plot.result.x.forEach((v, i) => {
       const u = plot.result.y[i];
-      if (!Number.isFinite(u) || !Number.isFinite(v)) return void (on = false);
-      g[on ? 'lineTo' : 'moveTo'](fx(v), own ? fr(u) : fy(u));
+      const py = own ? fr(u) : fy(u);
+      if (!Number.isFinite(fx(v)) || !Number.isFinite(py)) return void (on = false);
+      g[on ? 'lineTo' : 'moveTo'](fx(v), py);
       on = true;
     });
     g.stroke();
@@ -218,23 +214,22 @@ function SignalGraph({ plot: given, W, H, zoom, view, onView, zoomOut, reader, r
     g.strokeRect(M.l + 0.5, M.t + 0.5, pw, ph);
     g.fillStyle = '#333333';
     g.font = '10px system-ui, sans-serif';
-    const sx = plot.logX ? Math.max(1, Math.round(niceStep(box.x1 - box.x0, Math.max(3, Math.round(pw / 80))))) : niceStep(box.x1 - box.x0, Math.max(3, Math.round(pw / 80)));
-    for (let v = Math.ceil(box.x0 / sx) * sx; v <= box.x1 + sx * 1e-9; v += sx) {
+    for (const t of axisTicks(ex, box.x0, box.x1, Math.max(3, Math.round(pw / 80)))) {
       g.textAlign = 'center';
-      g.fillText(plot.logX ? fmtNum(10 ** Math.round(v), 3) : fmtNum(Math.abs(v) < sx * 1e-9 ? 0 : v, 4), fx(v), H - M.b + 12);
+      if (t.text) g.fillText(t.text, ux(t.u), H - M.b + 12);
+      else g.fillRect(ux(t.u), M.t + ph - 2, 1, 2);
     }
-    const sy = niceStep(box.y1 - box.y0, Math.max(3, Math.round(ph / 40)));
-    for (let v = Math.ceil(box.y0 / sy) * sy; v <= box.y1 + sy * 1e-9; v += sy) {
+    for (const t of axisTicks(ey, box.y0, box.y1, Math.max(3, Math.round(ph / 40)))) {
       g.textAlign = 'right';
-      g.fillText(fmtNum(Math.abs(v) < sy * 1e-9 ? 0 : v, 4), M.l - 4, fy(v) + 3);
+      if (t.text) g.fillText(t.text, M.l - 4, uy(t.u) + 3);
+      else g.fillRect(M.l, uy(t.u), 2, 1);
     }
     if (own) {
       // the axis of the result, at the right, in its colour
       g.fillStyle = '#d62728';
-      const sr = niceStep(q1 - q0, Math.max(3, Math.round(ph / 40)));
-      for (let v = Math.ceil(q0 / sr) * sr; v <= q1 + sr * 1e-9; v += sr) {
+      for (const t of axisTicks(ey, q0, q1, Math.max(3, Math.round(ph / 40)))) {
         g.textAlign = 'left';
-        g.fillText(fmtNum(Math.abs(v) < sr * 1e-9 ? 0 : v, 4), M.l + pw + 4, fr(v) + 3);
+        if (t.text) g.fillText(t.text, M.l + pw + 4, uy(toLeft(t.u)) + 3);
       }
       g.fillStyle = '#1f6fd6';
       g.textAlign = 'left';
@@ -257,7 +252,12 @@ function SignalGraph({ plot: given, W, H, zoom, view, onView, zoomOut, reader, r
       g.fillStyle = '#333333';
     }
     g.textAlign = 'center';
-    g.fillText(plot.xName, M.l + pw / 2, H - 3);
+    g.fillText(axisTitle(ex, plot.xName), M.l + pw / 2, H - 3);
+    if (hidden) {
+      g.fillStyle = '#888888';
+      g.textAlign = 'left';
+      g.fillText(hidden, M.l + 4, M.t + ph - 5);
+    }
     if (z.rect) {
       g.strokeStyle = '#1f6fd6';
       g.setLineDash([4, 3]);
@@ -265,7 +265,7 @@ function SignalGraph({ plot: given, W, H, zoom, view, onView, zoomOut, reader, r
       g.setLineDash([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plot, W, H, box.x0, box.x1, box.y0, box.y1, z.rect, shownRegions]);
+  }, [plot, W, H, box.x0, box.x1, box.y0, box.y1, z.rect, shownRegions, ex, ey]);
   const at = (e: { currentTarget: EventTarget; clientX: number; clientY: number }): [number, number] => {
     const b = (e.currentTarget as HTMLElement).getBoundingClientRect();
     return [((e.clientX - b.left) * W) / b.width, ((e.clientY - b.top) * H) / b.height];
@@ -280,7 +280,7 @@ function SignalGraph({ plot: given, W, H, zoom, view, onView, zoomOut, reader, r
     return null;
   };
   const r6 = (v: number) => +v.toPrecision(6);
-  const curves: ReadCurve[] = [...(plot.data ? [{ name: 'data', color: '#1f6fd6', x: plot.data.x, y: plot.data.y }] : []), { name: own ? 'result (right axis)' : 'result', color: '#d62728', x: plot.result.x, y: plot.result.y, ...(own ? { onAxis: toLeft } : {}) }, ...(plot.others ?? []).map((o, j) => ({ name: `curve ${j + 1}`, color: '#9aa3ad', x: o.x, y: o.y })), ...(plot.series ?? []).map((sr) => ({ name: sr.name, color: sr.color, x: sr.x, y: sr.y }))];
+  const curves: ReadCurve[] = [...(plot.data ? [{ name: 'data', color: '#1f6fd6', x: plot.data.x, y: plot.data.y }] : []), { name: own ? 'result (right axis)' : 'result', color: '#d62728', x: plot.result.x, y: plot.result.y, ...(own ? { onAxis: (v: number) => fromAxis(ey, toLeft(toAxis(ey, v))) } : {}) }, ...(plot.others ?? []).map((o, j) => ({ name: `curve ${j + 1}`, color: '#9aa3ad', x: o.x, y: o.y })), ...(plot.series ?? []).map((sr) => ({ name: sr.name, color: sr.color, x: sr.x, y: sr.y }))];
   return (
     <div className="reader-host nodrag nowheel">
       <canvas
@@ -437,6 +437,7 @@ export function Result({ r, children, ranges }: { r?: NodeResult; children?: Rea
         )}
         <span className="grow" />
         <ZoomTools
+          scaled={plot?.logX ? { x: 'log' } : true}
           mode={zoom}
           setMode={(m) => {
             setZoom(m);

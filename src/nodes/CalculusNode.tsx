@@ -158,6 +158,7 @@ export function CalculusNodeView({ id, data }: NodeProps<CalculusNode>) {
       )}
       <span className="grow" />
       <ZoomTools
+        scaled
         mode={zoom}
         setMode={(m) => {
           setZoom(m);

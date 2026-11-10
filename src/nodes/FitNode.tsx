@@ -12,7 +12,8 @@ import { fmtNum } from '../engine/table.ts';
 import { fmtPm } from '../engine/report.ts';
 import { rescaleAxis, usePlotZoom, viewBox, zoomAt, type View, type ZoomMode } from './plotZoom.ts';
 import { ZoomTools } from './ZoomTools.tsx';
-import { niceStep } from '../figure/ticks.ts';
+import { axisTicks, axisTitle, fromAxis, notDrawn, toAxis } from './graphScale.ts';
+import { useGraphScale } from './useGraphScale.ts';
 import type { AppNode, FitNode, FitNodeData } from '../types.ts';
 import { AutoText, Check, Field, InPort, Messages, NumInput, OutPort, Select, TextInput } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
@@ -44,11 +45,14 @@ const C = { data: '#1f6fd6', unused: '#b4b4b4', fit: '#d62728', fit2: '#2ca02c',
 type Range = { lo: number; hi: number };
 
 // The data of one run with its ranges (dragged; “Add a range” draws one, then turns off: onAdded), the fit and its
-// band, the residuals below.
+// band, the residuals below. X and Y linear, log or log |v| (graphScale.ts): the box in the axes' own units.
 function FitPlot(props: { x: Float64Array; y: Float64Array; run: Int32Array; used: Uint8Array; shown: number; results: RunResult[]; ranges: Range[]; width: number; height: number; addRange: boolean; onRanges: (r: Range[]) => void; onAdded: () => void; xTitle: string; yTitle: string; zoom?: ZoomMode; view?: View | null; onView?: (v: View | null) => void; zoomOut?: number; results2?: RunResult[]; resid?: boolean; reader?: ReaderProp }) {
   const { x, y, run, used, shown, results, ranges, width: W, height: H } = props;
   const results2 = props.results2 ?? [];
   const cv = useRef<HTMLCanvasElement>(null);
+  const [sc] = useGraphScale();
+  const tx = (v: number) => toAxis(sc.x, v);
+  const ty = (v: number) => toAxis(sc.y, v);
   const [drag, setDrag] = useState<{ kind: 'new' | 'lo' | 'hi'; k: number; a: number; b: number } | null>(null);
   const dragRef = useRef<typeof drag>(null);
   const setD = (d: typeof drag) => {
@@ -66,13 +70,21 @@ function FitPlot(props: { x: Float64Array; y: Float64Array; run: Int32Array; use
   }, [x, y, run, shown]);
   const auto = useMemo(() => {
     let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
-    for (const i of idx) [x0, x1, y0, y1] = [Math.min(x0, x[i]), Math.max(x1, x[i]), Math.min(y0, y[i]), Math.max(y1, y[i])];
-    for (const result of results) for (let k = 0; k < result.curve.y.length; k++) if (Number.isFinite(result.curve.y[k])) [y0, y1] = [Math.min(y0, result.curve.y[k]), Math.max(y1, result.curve.y[k])];
-    if (!Number.isFinite(x0)) return { x0: 0, x1: 1, y0: 0, y1: 1 };
+    for (const i of idx) {
+      const [u, v] = [toAxis(sc.x, x[i]), toAxis(sc.y, y[i])];
+      if (Number.isFinite(u)) [x0, x1] = [Math.min(x0, u), Math.max(x1, u)];
+      if (Number.isFinite(v)) [y0, y1] = [Math.min(y0, v), Math.max(y1, v)];
+    }
+    for (const result of results)
+      for (let k = 0; k < result.curve.y.length; k++) {
+        const v = toAxis(sc.y, result.curve.y[k]);
+        if (Number.isFinite(v)) [y0, y1] = [Math.min(y0, v), Math.max(y1, v)];
+      }
+    if (!Number.isFinite(x0) || !Number.isFinite(y0)) return { x0: Number.isFinite(x0) ? x0 : 0, x1: Number.isFinite(x0) ? x1 : 1, y0: 0, y1: 1 };
     const px = (x1 - x0 || 1) * 0.03;
     const py = (y1 - y0 || 1) * 0.06;
     return { x0: x0 - px, x1: x1 + px, y0: y0 - py, y1: y1 + py };
-  }, [idx, x, y, results]);
+  }, [idx, x, y, results, sc.x, sc.y]);
   const box = viewBox(props.view, auto);
   const z = usePlotZoom(props.zoom ?? 'none', { l: M.l, t: M.t, w: pw, h: ph }, box, (v) => props.onView?.(v));
   // Zoom out (the button): the view widened around its middle
@@ -80,10 +92,14 @@ function FitPlot(props: { x: Float64Array; y: Float64Array; run: Int32Array; use
     if (props.zoomOut) props.onView?.(zoomAt(box, (box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2, 1.6, 'both'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.zoomOut]);
-  const fx = (v: number) => M.l + ((v - box.x0) / (box.x1 - box.x0)) * pw;
-  const fy = (v: number) => M.t + (1 - (v - box.y0) / (box.y1 - box.y0)) * ph;
-  const ix = (p: number) => box.x0 + ((p - M.l) / pw) * (box.x1 - box.x0);
-  const iy = (p: number) => box.y0 + (1 - (p - M.t) / ph) * (box.y1 - box.y0);
+  // (on the axes' own units, and the data's values through their scales)
+  const ux = (u: number) => M.l + ((u - box.x0) / (box.x1 - box.x0)) * pw;
+  const uy = (u: number) => M.t + (1 - (u - box.y0) / (box.y1 - box.y0)) * ph;
+  const fx = (v: number) => ux(tx(v));
+  const fy = (v: number) => uy(ty(v));
+  const ix = (p: number) => fromAxis(sc.x, box.x0 + ((p - M.l) / pw) * (box.x1 - box.x0));
+  const iy = (p: number) => fromAxis(sc.y, box.y0 + (1 - (p - M.t) / ph) * (box.y1 - box.y0));
+  const hidden = notDrawn(sc, idx.map((i) => x[i]), idx.map((i) => y[i]));
   const shownRanges = drag ? (drag.kind === 'new' ? [...ranges, { lo: Math.min(drag.a, drag.b), hi: Math.max(drag.a, drag.b) }] : ranges.map((r, k) => (k === drag.k ? (drag.kind === 'lo' ? { ...r, lo: drag.b } : { ...r, hi: drag.b }) : r))) : ranges;
 
   useEffect(() => {
@@ -98,9 +114,10 @@ function FitPlot(props: { x: Float64Array; y: Float64Array; run: Int32Array; use
     g.fillRect(0, 0, W, H);
     // the fit ranges
     for (const r of shownRanges) {
-      // an empty end (a range typed per run): to the edge of the graph
-      const [l, h] = [Number.isFinite(r.lo) ? r.lo : box.x0, Number.isFinite(r.hi) ? r.hi : box.x1];
-      const [a, b] = [fx(Math.min(l, h)), fx(Math.max(l, h))];
+      // an empty end (a range typed per run), or one not on a log axis: to the edge of the graph
+      const edge = (v: number, e: number) => (Number.isFinite(fx(v)) ? fx(v) : e);
+      const [p, q] = [edge(r.lo, M.l), edge(r.hi, M.l + pw)];
+      const [a, b] = [Math.min(p, q), Math.max(p, q)];
       g.fillStyle = C.range;
       g.fillRect(Math.max(M.l, a), M.t, Math.min(M.l + pw, b) - Math.max(M.l, a), ph);
       g.fillStyle = C.rangeEdge;
@@ -134,7 +151,7 @@ function FitPlot(props: { x: Float64Array; y: Float64Array; run: Int32Array; use
       const { x: cx, y: cy } = result.curve;
       let on = false;
       for (let k = 0; k < cx.length; k++) {
-        if (!Number.isFinite(cy[k])) {
+        if (!Number.isFinite(fx(cx[k])) || !Number.isFinite(fy(cy[k]))) {
           on = false;
           continue;
         }
@@ -162,26 +179,25 @@ function FitPlot(props: { x: Float64Array; y: Float64Array; run: Int32Array; use
     g.strokeRect(M.l + 0.5, M.t + 0.5, pw, ph);
     g.fillStyle = '#333333';
     g.font = '10px system-ui, sans-serif';
-    const tick = (lo: number, hi: number, f: (v: number) => number, horiz: boolean) => {
-      const st = niceStep(hi - lo, horiz ? Math.max(3, Math.round(pw / 80)) : Math.max(3, Math.round(ph / 45)));
-      for (let v = Math.ceil(lo / st) * st; v <= hi + st * 1e-9; v += st) {
-        const p = f(v);
-        const t = fmtNum(Math.abs(v) < st * 1e-9 ? 0 : v, 4);
-        if (horiz) {
-          g.textAlign = 'center';
-          g.fillText(t, p, H - M.b + 12);
-          g.fillRect(p, M.t + ph - 4, 1, 4);
-        } else {
-          g.textAlign = 'right';
-          g.fillText(t, M.l - 4, p + 3);
-          g.fillRect(M.l, p, 4, 1);
-        }
-      }
-    };
-    tick(box.x0, box.x1, fx, true);
-    tick(box.y0, box.y1, fy, false);
+    for (const t of axisTicks(sc.x, box.x0, box.x1, Math.max(3, Math.round(pw / 80)))) {
+      const p = ux(t.u);
+      g.textAlign = 'center';
+      if (t.text) g.fillText(t.text, p, H - M.b + 12);
+      g.fillRect(p, M.t + ph - (t.minor ? 2 : 4), 1, t.minor ? 2 : 4);
+    }
+    for (const t of axisTicks(sc.y, box.y0, box.y1, Math.max(3, Math.round(ph / 45)))) {
+      const p = uy(t.u);
+      g.textAlign = 'right';
+      if (t.text) g.fillText(t.text, M.l - 4, p + 3);
+      g.fillRect(M.l, p, t.minor ? 2 : 4, 1);
+    }
     g.textAlign = 'center';
-    g.fillText(props.xTitle, M.l + pw / 2, H - 2);
+    g.fillText(axisTitle(sc.x, props.xTitle), M.l + pw / 2, H - 2);
+    if (hidden) {
+      g.fillStyle = '#888888';
+      g.textAlign = 'left';
+      g.fillText(hidden, M.l + 4, M.t + ph - 5);
+    }
     if (z.rect) {
       g.strokeStyle = '#1f6fd6';
       g.setLineDash([4, 3]);
@@ -189,7 +205,7 @@ function FitPlot(props: { x: Float64Array; y: Float64Array; run: Int32Array; use
       g.setLineDash([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idx, used, results, results2, shownRanges, W, H, box, props.xTitle, z.rect, RH]);
+  }, [idx, used, results, results2, shownRanges, W, H, box, props.xTitle, z.rect, RH, sc.x, sc.y]);
 
   const at = (e: { currentTarget: EventTarget; clientX: number }) => {
     const b = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -434,6 +450,7 @@ export function FitNodeView({ id, data }: NodeProps<FitNode>) {
       </button>
       <span className="grow" />
       <ZoomTools
+        scaled
         mode={zoom}
         setMode={(m) => {
           setZoom(m);

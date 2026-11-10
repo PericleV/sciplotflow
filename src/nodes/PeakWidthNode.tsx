@@ -149,6 +149,7 @@ export function PeakWidthNodeView({ id, data }: NodeProps<PeakWidthNode>) {
       )}
       <span className="grow" />
       <ZoomTools
+        scaled
         mode={zoom}
         setMode={(m) => {
           setZoom(m);
