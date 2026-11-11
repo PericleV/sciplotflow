@@ -264,7 +264,7 @@ function overlapExample(): Project {
   // the baseline fitted with the peaks and subtracted; the peak at 1625 hides in the side of the one at 1580: added to the
   // list by hand (+ Peak in the shoulder), every peak with its shape
   const pk = add(b, 'peaks', 'ov-peaks', 640, 0, {
-    ...PEAK_DEFAULTS,
+    ...PEAK_DEFAULTS, withData: true,
     baseline: 'linear',
     subtract: true,
     peaks: [
@@ -348,7 +348,7 @@ function semiIntegralExample(): Project {
   const cv = add(b, 'import', 'cv-data', 0, 0, { ...IMPORT_DEFAULTS, name: 'cyclic voltammogram', fileName: 'ferricyanide_cv.txt', text: lines.join('\n'), textId: 'cv-1' });
   const cvp = add(b, 'plot1d', 'cv-plot', 680, -760, plot({ label: 'CV', style: curve(0, { mode: 'line', lineWidth: 1.2 }), cols: { x: 'Potential (V)', y: 'Current (µA)' } }, { page: { name: 'voltammogram' } }));
   link(b, cv, cvp, 'dataset');
-  const fr = add(b, 'fraccalc', 'cv-semi', 680, 0, { ...FRAC_DEFAULTS, orders: '-0.5, 0.5', along: 'rows', rate: 0.1, semi: true, electrons: 1, area: 0.0707, conc: 1, unit: 'µA' });
+  const fr = add(b, 'fraccalc', 'cv-semi', 680, 0, { ...FRAC_DEFAULTS, withData: true, orders: '-0.5, 0.5', along: 'rows', rate: 0.1, semi: true, electrons: 1, area: 0.0707, conc: 1, unit: 'µA' });
   link(b, cv, fr, 'in');
   const mp = add(b, 'plot1d', 'cv-mplot', 1400, 0, plot({ label: 'semi-integral', style: curve(1, { mode: 'line', lineWidth: 1.4 }), cols: { x: 'Potential (V)', y: 'D^-0.5 Current (µA)' } }, { axes: titled('Potential (V)', 'm (µA s^½)'), page: { name: 'semi_integral' } }));
   link(b, fr, mp, 'dataset');
@@ -506,7 +506,7 @@ function signalToolsExample(): Project {
   const wf = add(b, 'waveform', 'sg-wave', 680, 1300, { ...WAVEFORM_DEFAULTS });
   link(b, pi, wf, 'in');
   const si = add(b, 'import', 'sg-steps', 0, 2500, { ...IMPORT_DEFAULTS, name: 'photobleaching', fileName: 'photobleaching.txt', text: st.join('\n'), textId: 'sg-3' });
-  const sd = add(b, 'steps', 'sg-stepsnode', 680, 2500, { ...STEPS_DEFAULTS });
+  const sd = add(b, 'steps', 'sg-stepsnode', 680, 2500, { ...STEPS_DEFAULTS, withData: true });
   link(b, si, sd, 'in');
   const ei = add(b, 'import', 'sg-events', 0, 3700, { ...IMPORT_DEFAULTS, name: 'evoked responses', fileName: 'evoked.txt', text: ev.join('\n'), textId: 'sg-4' });
   const ea = add(b, 'events', 'sg-avg', 680, 3700, { ...EVENTS_DEFAULTS, ys: 'Response (µV)', trigger: 'column', markCol: 'Stimulus', before: 10, after: 50 });
@@ -717,7 +717,7 @@ function signalExample(): Project {
   const dots = (k: number) => curve(k, { mode: 'scatter', symbol: 'circle', symbolSize: 2, color: '#9a9a9a' });
   // 1. a noisy spectrum: smoothed (Savitzky–Golay), then normalized (maximum = 1)
   const i1 = add(b, 'import', 'sg-noisy', 0, 0, { ...IMPORT_DEFAULTS, name: 'noisy spectrum', fileName: 'raman_noisy.txt', text: f.noisy, textId: 'sg-1' });
-  const sm = add(b, 'smooth', 'sg-smooth', 680, 0, { ...SMOOTH_DEFAULTS, method: 'savgol', points: 21, order: 3 });
+  const sm = add(b, 'smooth', 'sg-smooth', 680, 0, { ...SMOOTH_DEFAULTS, withData: true, method: 'savgol', points: 21, order: 3 });
   link(b, i1, sm, 'in');
   const nm = add(b, 'normalize', 'sg-norm', 1360, 0, { ...NORMALIZE_DEFAULTS, method: 'max', ys: 'Counts (smoothed)' });
   link(b, sm, nm, 'in');
@@ -771,7 +771,7 @@ function cvExample(): Project {
   const segs = add(b, 'unstack', 'cv-segments', 640, 1100, { ...UNSTACK_DEFAULTS, by: 'direction', xs: 'each' });
   link(b, imp, segs, 'in');
   // the area between going up and coming back in cycle 1 (segments 1 and 2), absolute, between 0.1 and 0.6 V
-  const calc = add(b, 'calculus', 'cv-area', 1240, 1100, { ...CALCULUS_DEFAULTS, op: 'int', ys: 'Current (mA) · segment 1', baseline: 'curve', baseFrom: 'column', baseColumn: 'Current (mA) · segment 2', area: 'abs', regions: [{ lo: 0.1, hi: 0.6 }] });
+  const calc = add(b, 'calculus', 'cv-area', 1240, 1100, { ...CALCULUS_DEFAULTS, withData: true, op: 'int', ys: 'Current (mA) · segment 1', baseline: 'curve', baseFrom: 'column', baseColumn: 'Current (mA) · segment 2', area: 'abs', regions: [{ lo: 0.1, hi: 0.6 }] });
   link(b, segs, calc, 'in');
   // the peaks and the current at 0.5 V of every segment
   const pk = add(b, 'pick', 'cv-pick', 1900, 1100, { ...PICK_DEFAULTS, rules: [{ kind: 'max', value: '' }, { kind: 'min', value: '' }, { kind: 'x', value: '0.5' }] });
@@ -860,7 +860,7 @@ function batchExample(): Project {
   const imp = add(b, 'import', 'pl-files', 0, 0, { ...IMPORT_DEFAULTS, name: 'PL spectra', fileName: '6 files', textId: 'pl-series', sheets: plSeries(), sheet: 0 });
   const inner: AppNode[] = [
     { id: 'group-in', type: 'groupin', position: { x: -380, y: 0 }, data: {} },
-    { id: 'sm', type: 'smooth', position: { x: 0, y: 0 }, data: { ...SMOOTH_DEFAULTS, points: 15 } },
+    { id: 'sm', type: 'smooth', position: { x: 0, y: 0 }, data: { ...SMOOTH_DEFAULTS, withData: true, points: 15 } },
     { id: 'pk', type: 'pick', position: { x: 620, y: 0 }, data: { ...PICK_DEFAULTS, rules: [{ kind: 'max', value: '' }] } },
     { id: 'group-out', type: 'groupout', position: { x: 1240, y: 0 }, data: {} },
   ] as AppNode[];
@@ -1841,7 +1841,7 @@ function xpsFile(): string {
 function xpsExample(): Project {
   const b = builder();
   const imp = add(b, 'import', 'xps-file', 0, 0, { ...IMPORT_DEFAULTS, name: 'Ni 2p', fileName: 'ni2p.txt', text: xpsFile(), textId: 'xps-1' });
-  const pk = add(b, 'peaks', 'xps-peaks', 640, 0, { ...PEAK_DEFAULTS, baseline: 'shirley', fit: true, subtract: false, peaks: [{ shape: 'voigtx', x: 852.5, doublet: { dx: 17.3, ratio: 0.5 } }] });
+  const pk = add(b, 'peaks', 'xps-peaks', 640, 0, { ...PEAK_DEFAULTS, withData: true, baseline: 'shirley', fit: true, subtract: false, peaks: [{ shape: 'voigtx', x: 852.5, doublet: { dx: 17.3, ratio: 0.5 } }] });
   link(b, imp, pk, 'in');
   const X = 'Binding energy (eV)';
   const pl = add(b, 'plot1d', 'xps-plot', 1300, 0, {
@@ -1883,9 +1883,9 @@ function ramanFile(): string {
 function ramanBaselineExample(): Project {
   const b = builder();
   const imp = add(b, 'import', 'rb-file', 0, 0, { ...IMPORT_DEFAULTS, name: 'Raman', fileName: 'raman_fluorescence.txt', text: ramanFile(), textId: 'rb-1' });
-  const pk = add(b, 'peaks', 'rb-peaks', 640, 0, { ...PEAK_DEFAULTS, baseline: 'airpls', baseOpt: { lambda: 6 }, fit: true, subtract: false, peaks: [1001, 1031, 1155, 1450].map((x) => ({ shape: 'lorentz' as const, x })) });
+  const pk = add(b, 'peaks', 'rb-peaks', 640, 0, { ...PEAK_DEFAULTS, withData: true, baseline: 'airpls', baseOpt: { lambda: 6 }, fit: true, subtract: false, peaks: [1001, 1031, 1155, 1450].map((x) => ({ shape: 'lorentz' as const, x })) });
   link(b, imp, pk, 'in');
-  const area = add(b, 'calculus', 'rb-area', 640, 900, { ...CALCULUS_DEFAULTS, op: 'int', baseline: 'asls', baseOpt: { lambda: 4, p: 0.01 }, regions: [{ lo: 960, hi: 1060 }, { lo: 1380, hi: 1520 }] });
+  const area = add(b, 'calculus', 'rb-area', 640, 900, { ...CALCULUS_DEFAULTS, withData: true, op: 'int', baseline: 'asls', baseOpt: { lambda: 4, p: 0.01 }, regions: [{ lo: 960, hi: 1060 }, { lo: 1380, hi: 1520 }] });
   link(b, imp, area, 'in');
   const width = add(b, 'peakwidth', 'rb-width', 1300, 900, { ...PEAKWIDTH_DEFAULTS, kind: 'peak', base: 'snip', baseOpt: { width: 15 }, regions: [{ lo: 960, hi: 1060 }, { lo: 1100, hi: 1220 }] });
   link(b, imp, width, 'in');

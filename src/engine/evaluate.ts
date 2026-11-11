@@ -4006,7 +4006,7 @@ function calculusNode(d: CalculusData, v: Value | undefined, baseIn: Value | und
   });
   if (d.op === 'diff' && d.method === 'sg' && d.window < 2 * d.order + 1) warnings.push(`Savitzky–Golay: a window of ${d.window} points is small for a derivative of order ${d.order}.`);
 
-  // the dataset: X, (the group column of a sweep), every Y followed by its result
+  // the dataset: X, (the group column of a sweep), every Y (with the data) followed by its result
   const bare = (c: Column) => {
     const b = bareName(c.name) || c.name;
     return /\s/.test(b) ? `(${b})` : b;
@@ -4016,7 +4016,7 @@ function calculusNode(d: CalculusData, v: Value | undefined, baseIn: Value | und
   Ys.forEach((y, k) => {
     // a Y with another X than the one before it: its X first
     if (k > 0 && XsOk[k] !== XsOk[k - 1]) columns.push({ ...XsOk[k], role: 'x' });
-    columns.push({ ...y, role: 'y' });
+    if (d.withData !== false) columns.push({ ...y, role: 'y' });
     columns.push({ ...column(resName(y, XsOk[k]), result[k]), role: 'y' });
   });
   const outputs: Record<string, Value> = { out: { t: 'dataset', v: { name: v.v.name, columns } } };
@@ -4223,7 +4223,8 @@ function peakNode(d0: PeakData, v: Value | undefined): Out {
     const F = (a: number[]) => Float64Array.from(a);
     const sub = d.subtract;
     dataCols.push({ ...column(`${xc.name}${tag}`, F(X)), role: 'x' });
-    dataCols.push({ ...column(sub ? `${y.name} − baseline` : y.name, F(Y.map((v, i) => (sub ? v - base[i] : v)))), role: 'y', ...(y.key ? { key: y.key } : {}) });
+    // (the data: when asked, or over the baseline, a result of its own)
+    if (sub || d.withData !== false) dataCols.push({ ...column(sub ? `${y.name} − baseline` : y.name, F(Y.map((v, i) => (sub ? v - base[i] : v)))), role: 'y', ...(y.key ? { key: y.key } : {}) });
     if (!sub) dataCols.push({ ...column(`baseline${tag}`, F(base)), role: 'y' });
     comps.forEach((q, j) => dataCols.push({ ...column(`peak ${j + 1}${tag}`, F(q.map((v, i) => (sub ? v : v + base[i])))), role: 'y' }));
     if (env) dataCols.push({ ...column(`envelope${tag}`, F(env.map((v, i) => (sub ? v - base[i] : v)))), role: 'y' });

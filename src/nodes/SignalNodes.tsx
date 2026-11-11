@@ -640,7 +640,7 @@ export function SmoothNodeView({ id, data }: NodeProps<SmoothNode>) {
         )}
       </div>
       <div className="row wrap">
-        <Check label="With the data" value={data.withData} onChange={(withData) => set({ withData })} />
+        <Check label="With the data" title="The input curves too, beside the results (to draw both from this one dataset); else X and the results only, as every processing node gives them" value={data.withData} onChange={(withData) => set({ withData })} />
         <Check label="With the residual" value={data.withResid} onChange={(withResid) => set({ withResid })} />
       </div>
       </NodeOptions>

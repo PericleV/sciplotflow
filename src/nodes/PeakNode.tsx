@@ -525,6 +525,7 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
           />
         </div>
         <Check label="Subtract it (the outputs over the baseline)" value={data.subtract} onChange={(subtract) => set({ subtract })} />
+        {!data.subtract && <Check label="With the data" title="The data too on the main output, under the baseline and the peaks (to draw them all from this one dataset); else X, the baseline, the peaks and their sum only" value={data.withData !== false} onChange={(withData) => set({ withData })} />}
       </details>
       <details open>
         <summary>3 · Peaks</summary>

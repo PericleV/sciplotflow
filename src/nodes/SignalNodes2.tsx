@@ -74,6 +74,7 @@ export function StepsNodeView({ id, data }: NodeProps<StepsNode>) {
       <InPort label="dataset" port="dataset" id="in" title="A signal in steps: X and the Y columns" />
       <NodeOptions>
         <XYFields data={data} set={set} names={names} avail={r?.view.available} />
+        <Check label="With the data (on “fit”)" title="The input curves too, beside the results (to draw both from this one dataset); else X and the results only, as every processing node gives them" value={data.withData !== false} onChange={(withData) => set({ withData })} />
         <div className="grid2">
           <Field label="A change of" title="The mean only (the noise the same throughout), or the mean and the noise (each level its own spread)">
             <Select<StepsData['cost']>

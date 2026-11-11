@@ -31,7 +31,7 @@ export const FIT_DEFAULTS: FitNodeData = {
   band: 'confidence',
   points: 400,
 };
-export const CALCULUS_DEFAULTS: CalculusData = { op: 'diff', x: '', ys: '', order: 1, method: 'central', window: 7, poly: 2, area: 'signed', baseline: 'zero', base: 0, join: 'separate', regions: [] };
+export const CALCULUS_DEFAULTS: CalculusData = { withData: false, op: 'diff', x: '', ys: '', order: 1, method: 'central', window: 7, poly: 2, area: 'signed', baseline: 'zero', base: 0, join: 'separate', regions: [] };
 const STAT_IN = { layout: 'columns' as const, cols: '', value: '', factor: '', factor2: '', alpha: 0.05 };
 export const NORM_DEFAULTS: NormData = { ...STAT_IN, outliers: 'grubbs' };
 export const TTEST_DEFAULTS: TTestData = { ...STAT_IN, test: 'two', mu: 0, equalVar: false, alt: 'two-sided' };
@@ -50,10 +50,10 @@ export const METHCOMP_DEFAULTS: MethCompData = { x: '', y: '', method: 'both', l
 export const LOGISTIC_DEFAULTS: LogisticData = { y: '', positive: '', xs: '', factors: '', interact: false, intercept: true, threshold: 0.5, alpha: 0.05 };
 export const BASELINE_DEFAULTS: BaselineData = { x: '', ys: '', regions: [], method: 'arpls', base: 0, baseOpt: { lambda: 6 }, bgOrder: 2, mode: 'subtract', outside: 'empty', original: false };
 export const WAVEFORM_DEFAULTS: WaveformData = { x: '', ys: '', regions: [], levels: 'histogram', base: 0, top: 1, lo: 10, hi: 90, hyst: 5, tol: 2 };
-export const STEPS_DEFAULTS: StepsData = { x: '', ys: '', regions: [], cost: 'mean', method: 'pelt', penalty: 'bic', factor: 3, minSize: 5, count: 0 };
+export const STEPS_DEFAULTS: StepsData = { withData: false, x: '', ys: '', regions: [], cost: 'mean', method: 'pelt', penalty: 'bic', factor: 3, minSize: 5, count: 0 };
 export const EVENTS_DEFAULTS: EventsData = { x: '', ys: '', regions: [], trigger: 'rising', level: NaN, markCol: '', times: '', before: NaN, after: NaN, gap: NaN, baseline: true, spread: 'sd' };
 export const WAVELET_DEFAULTS: WaveletData = { x: '', ys: '', regions: [], mode: 'cwt', mother: 'morlet', param: NaN, voices: 12, pMin: NaN, pMax: NaN, level: 0.95, noise: 'red', band1: NaN, band2: NaN, y2: '', wavelet: 'sym8', levels: 5, keep: '', rule: 'bayes', thr: 'soft', perLevel: false, wMin: NaN, wMax: NaN, minSnr: 1, noisePerc: 10 };
-export const FRAC_DEFAULTS: FracData = { x: '', ys: '', regions: [], orders: '-0.5', method: 'rl', along: 'x', rate: 0.1, semi: false, electrons: 1, area: 0.0707, conc: 1, unit: 'A' };
+export const FRAC_DEFAULTS: FracData = { withData: false, x: '', ys: '', regions: [], orders: '-0.5', method: 'rl', along: 'x', rate: 0.1, semi: false, electrons: 1, area: 0.0707, conc: 1, unit: 'A' };
 export const FRFT_DEFAULTS: FrftData = { x: '', ys: '', regions: [], mode: 'scan', order: 0.5, auto: true, u1: NaN, u2: NaN, width: 3, keep: 'remove' };
 export const REGRESS_DEFAULTS: RegressData = { y: '', xs: '', factors: '', interact: false, intercept: true, weights: '', alpha: 0.05 };
 export const CURVEMATH_DEFAULTS: CurveMathData = { ya: '', yb: '', op: 'dxAtY', values: '', crossing: 'first', abs: false, grid: 'a', from: NaN, to: NaN, points: 200 };
@@ -110,7 +110,7 @@ export const PHASE_DIGITIZER_DEFAULTS: PhaseDigitizerData = {
 };
 export const EIS_DEFAULTS: EisData = { form: 'reim', freq: '', re: '', im: '', imSign: 'auto', freqUnit: 'Hz', circuit: 'R(RQ)', params: [], weight: 'modulus', excluded: [], labels: 'decades', values: false, view: 'nyquist' };
 export const AVERAGE_DEFAULTS: AverageData = { x: '', ys: '', grid: 'union', points: 200, from: NaN, to: NaN, need: 'all', k: 2, method: 'linear', extra: false };
-export const SMOOTH_DEFAULTS: SmoothData = { x: '', ys: '', method: 'savgol', points: 11, order: 3, sigma: 2, frac: 0.2, iter: 3, cutoff: 0.1, edge: 'interp', withData: true, withResid: false };
+export const SMOOTH_DEFAULTS: SmoothData = { x: '', ys: '', method: 'savgol', points: 11, order: 3, sigma: 2, frac: 0.2, iter: 3, cutoff: 0.1, edge: 'interp', withData: false, withResid: false };
 export const INTERP_DEFAULTS: InterpData = { x: '', ys: '', method: 'spline', extrap: 'none', grid: 'points', from: NaN, to: NaN, points: 500, step: 1 };
 export const NORMALIZE_DEFAULTS: NormalizeData = { x: '', ys: '', method: 'max', at: 0, value: 1, from: NaN, to: NaN };
 export const FFT_DEFAULTS: FFTData = { x: '', ys: '', mode: 'spectrum', output: 'amp', window: 'hann', detrend: 'mean', pad: false, filter: 'low', f1: 0, f2: 0, order: 0, mirror: true };
@@ -118,7 +118,7 @@ export { KK_DEFAULTS } from './engine/kk.ts';
 export const CONV_DEFAULTS: ConvData = { x: '', ys: '', op: 'conv', shape: 'gauss', fwhm: 1, lambda: 0.01, iterations: 30, edge: 'reflect' };
 export const FILTER_DEFAULTS: FilterData = { rows: { mode: 'all' }, dup: 'keep', dupCol: '', sortBy: '', desc: false, every: 1 };
 export const CLEAN_DEFAULTS: CleanData = { cols: '', missing: 'keep', value: 0, window: 5, outliers: 'median', k: 3, alpha: 0.05, action: 'mask' };
-export const PEAK_DEFAULTS: PeakData = { x: '', ys: '', baseline: 'linear', subtract: false, find: { sign: 'peaks', count: 6, minHeight: 5, shoulders: false }, shape: 'gauss', peaks: [], fit: true, needRun: true };
+export const PEAK_DEFAULTS: PeakData = { withData: false, x: '', ys: '', baseline: 'linear', subtract: false, find: { sign: 'peaks', count: 6, minHeight: 5, shoulders: false }, shape: 'gauss', peaks: [], fit: true, needRun: true };
 export const PICK_DEFAULTS: PickData = { x: '', ys: '', rules: [{ kind: 'x', value: '' }], interp: 'linear', outside: 'empty', layout: 'long', others: 'none' };
 export const DATAMANIP_DEFAULTS: DataManipData = { x: '', y: '', ops: [] };
 export const AUTOEXTRACT_DEFAULTS: AutoExtractData = {

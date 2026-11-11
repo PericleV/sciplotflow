@@ -59,6 +59,7 @@ export function FracNodeView({ id, data }: NodeProps<FracNode>) {
             </Field>
           )}
         </div>
+        <Check label="With the data" title="The input curves too, beside the results (to draw both from this one dataset); else X and the results only, as every processing node gives them" value={data.withData !== false} onChange={(withData) => set({ withData })} />
         <Check label="electrochemistry: D from the plateau of the semi-integral" title="Convolution voltammetry (Oldham 1972; Bard and Faulkner, ch. 6): the semi-integral of the current of a diffusion-limited wave levels off at m_L = n F A c √D" value={data.semi} onChange={(semi) => set({ semi })} />
         {data.semi && (
           <div className="grid2">

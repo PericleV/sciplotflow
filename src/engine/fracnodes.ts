@@ -17,7 +17,8 @@ const COLORS = ['#d62728', '#2ca02c', '#9467bd', '#ff7f0e', '#17becf', '#8c564b'
 // orders: one or several (“-0.5, 0.5”); along: X is the time (the points in its order), or the rows are (a
 // voltammogram: X the potential, the time |ΔE| / rate); semi: the electrochemical constants for D from the plateau of
 // the semi-integral (n electrons, the area in cm², the concentration in mM, the current's unit)
-export type FracData = RegionSpec & { orders: string; method: FracMethod; along: 'x' | 'rows'; rate: number; semi: boolean; electrons: number; area: number; conc: number; unit: 'A' | 'mA' | 'µA' | 'nA' };
+// withData: the input curves too, each before its results (absent: as older nodes, with them; new nodes: without)
+export type FracData = RegionSpec & { withData?: boolean; orders: string; method: FracMethod; along: 'x' | 'rows'; rate: number; semi: boolean; electrons: number; area: number; conc: number; unit: 'A' | 'mA' | 'µA' | 'nA' };
 const UNIT: Record<FracData['unit'], number> = { A: 1, mA: 1e-3, µA: 1e-6, nA: 1e-9 };
 const FARADAY = 96485.33212;
 export function fracNode(ds: Dataset, d: FracData): Out {
@@ -84,7 +85,7 @@ export function fracNode(ds: Dataset, d: FracData): Out {
     view.notes!.push(notes);
     if (k === 0 || run.X !== runs[k - 1].X) cols.push({ ...run.X, role: 'x' });
     if (d.along === 'rows') cols.push({ ...column(`Time (s)${runs.length > 1 ? ` (${run.label})` : ''}`, tcol), role: 'none' });
-    cols.push({ ...run.Y, role: 'y' });
+    if (d.withData !== false) cols.push({ ...run.Y, role: 'y' });
     orders.forEach((a, q) => cols.push({ ...column(`D^${fmtNum(a, 4)} ${run.Y.name}`, res[q]), role: 'y' }));
   });
   report.unshift(`${orders.map(name).join(', ')} (${d.method === 'rl' ? 'Riemann–Liouville' : d.method === 'caputo' ? 'Caputo' : d.method === 'gl' ? 'Grünwald–Letnikov' : 'Weyl, by the Fourier transform'}), from the start of every range${d.along === 'rows' ? `, the time from the potential at ${d.rate} V/s` : ''}.`);

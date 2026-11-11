@@ -212,7 +212,9 @@ export type CombineData = Omit<CombineSpec, 'how'> & {
 // the slopes to the neighbours or Savitzky–Golay (window points, polynomial degree). Integral: signed or absolute area
 // over a baseline, cumulative, regions separate (from 0 in each) or combined (on across the gaps). Regions on X drawn on
 // the node's graph (none: all X), common or of every run (by its name).
+// withData: the input curves too, each before its result (absent: as older nodes, with them; new nodes: without)
 export type CalculusData = {
+  withData?: boolean;
   op: 'diff' | 'int';
   x: string;
   ys: string;
@@ -251,6 +253,7 @@ export type PickData = PickOptions & { x: string; ys: string; rules: PickRule[];
 // list (none: found in every run, of `shape`); measured on the data, or fitted together (every peak its shape).
 export type PeakData = {
   showResid?: boolean; // the residuals panel under the graph (default shown)
+  withData?: boolean; // the data on the main output, under the baseline and the peaks (absent: as older nodes, with them)
   x: string;
   ys: string;
   from?: number;

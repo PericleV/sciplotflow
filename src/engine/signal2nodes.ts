@@ -105,7 +105,8 @@ export function waveformNode(ds: Dataset, d: WaveformData): Out {
 // ---- Step detection ----
 // cost: a change of the mean, or of the mean and the variance; penalty: BIC, AIC, or a factor × σ² ln n (mean) or
 // × ln n (mean and variance); count (binary segmentation): so many changes (0: by the penalty)
-export type StepsData = RegionSpec & { cost: CostKind; method: 'pelt' | 'binseg'; penalty: 'bic' | 'aic' | 'manual'; factor: number; minSize: number; count: number };
+// withData: the input curves on the “fit” output too, each before its steps (absent: as older nodes, with them)
+export type StepsData = RegionSpec & { withData?: boolean; cost: CostKind; method: 'pelt' | 'binseg'; penalty: 'bic' | 'aic' | 'manual'; factor: number; minSize: number; count: number };
 export function stepsNode(ds: Dataset, d: StepsData): Out {
   const rr = regionRuns(ds, d);
   if ('error' in rr || 'waiting' in rr) return rr;
@@ -160,7 +161,8 @@ export function stepsNode(ds: Dataset, d: StepsData): Out {
   const cols: Column[] = [];
   runs.forEach((run, k) => {
     if (k === 0 || run.X !== runs[k - 1].X) cols.push({ ...run.X, role: 'x' });
-    cols.push({ ...run.Y, role: 'y' }, { ...column(`steps (${run.Y.name})`, fits[k]), role: 'y' });
+    if (d.withData !== false) cols.push({ ...run.Y, role: 'y' });
+    cols.push({ ...column(`steps (${run.Y.name})`, fits[k]), role: 'y' });
   });
   return { tables: { out: table('segments', segRows), steps: table('steps', stepRows), fit: { name: 'step fit', columns: cols } }, view, warnings, report };
 }

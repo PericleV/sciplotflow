@@ -18,7 +18,7 @@ import { trendFit, type TrendSpec } from '../src/engine/trend.ts';
 import { commaNumbers } from '../src/figure/comma.ts';
 import { adjustedPositions, bLife, fisherCov, fitMLE, fitRR, fitThreshold, kaplanMeier, logLik, paramCI, suspendedOf } from '../src/engine/reliability.ts';
 import { isErrorName, errorTargets } from '../src/engine/errcols.ts';
-import { BASELINE_DEFAULTS, CONV_DEFAULTS, FFT_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, SMOOTH_DEFAULTS } from '../src/defaults.ts';
+import { BASELINE_DEFAULTS, CONV_DEFAULTS, FFT_DEFAULTS, INTERP_DEFAULTS, NORMALIZE_DEFAULTS, SMOOTH_DEFAULTS as SMOOTH_NEW } from '../src/defaults.ts';
 import { CURVEMATH_DEFAULTS, PEAKWIDTH_DEFAULTS, TRANSLATE_DEFAULTS } from '../src/defaults.ts';
 import type { CurveMathData, ExtractData, TranslateData } from '../src/types.ts';
 import { anovaNode } from '../src/engine/statnodes.ts';
@@ -146,11 +146,14 @@ import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { mergedNodes, parseProject, PROJECT_VERSION, stringifyProject, toProject, type Project } from '../src/project.ts';
 import { combine, keptBlocks, labelRuns, unstack } from '../src/engine/reshape.ts';
 import { JOHNSON_AU } from '../src/data/johnsonGold.ts';
-import { CALCULUS_DEFAULTS, newSheet, PEAK_DEFAULTS as PEAK_NEW, PICK_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS as WORKBOOK_NEW } from '../src/defaults.ts';
+import { CALCULUS_DEFAULTS as CALCULUS_NEW, newSheet, PEAK_DEFAULTS as PEAK_NEW, PICK_DEFAULTS, UNSTACK_DEFAULTS, WORKBOOK_DEFAULTS as WORKBOOK_NEW } from '../src/defaults.ts';
 // the Workbook of the checks made before `apart` (an older node: a dataset on its first sheet); WORKBOOK_NEW: a new one
 const WORKBOOK_DEFAULTS: typeof WORKBOOK_NEW = { ...WORKBOOK_NEW, apart: undefined };
-// the Peak analyzer as before Run analysis: fitted at every change (the tests of the fit)
-const PEAK_DEFAULTS = { ...PEAK_NEW, needRun: undefined };
+// the Peak analyzer as before Run analysis: fitted at every change (the tests of the fit); with the data on its output,
+// as the Smooth and Differentiate / Integrate of the checks made before “With the data” was off for new nodes
+const PEAK_DEFAULTS = { ...PEAK_NEW, needRun: undefined, withData: undefined };
+const SMOOTH_DEFAULTS = { ...SMOOTH_NEW, withData: true };
+const CALCULUS_DEFAULTS = { ...CALCULUS_NEW, withData: undefined };
 import { fmtPm } from '../src/engine/report.ts';
 import { looksNumeric, readCell, TO_NUMBER_DEFAULTS } from '../src/engine/convert.ts';
 import { columnsToSheets, convertTable, stackColumns, transposeTable } from '../src/engine/tableShape.ts';
@@ -7676,6 +7679,21 @@ checkPhase(ok);
   ok(maj(tk(ax({ scale: 'log', ticksBy: 'count', count: 3 }), 1, 1e6)) === '1,1000,1000000', 'axis ticks by count on a log axis: about that many decades');
   ok(maj(tk(inc(2, { scale: 'log', base: 2 }), 1, 64)) === '1,4,16,64' && maj(tk(inc(2, { scale: 'symlog' }), -1e4, 1e4)) === '-10000,-100,-1,0,1,100,10000', 'axis step: powers of 2, a symmetric log axis');
   ok(maj(tk(inc(20, { scale: 'probability' }), 1, 99)) === '20,40,60,80' && maj(tk(inc(0.25, { scale: 'logit' }), 0.01, 0.99)) === '0.25,0.5,0.75', 'axis step: a probability axis in %, a logit axis in values');
+}
+// a processing node gives X and its results only (new nodes); with the data, as older ones (absent: with them)
+{
+  const rowsT = Array.from({ length: 30 }, (_, i) => `${i};${(Math.sin(i / 4) + 2).toFixed(4)};${(Math.cos(i / 5) + 3).toFixed(4)}`);
+  const t = ['X (s);A (V);B (V)', ...rowsT, ''].join(String.fromCharCode(10));
+  const names = (type: string, data: object) => {
+    const r = evaluateGraph([{ id: 'i', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, text: t, textId: 'wd' } } as AppNode, { id: 'n', type, position: { x: 0, y: 0 }, data } as AppNode], [{ id: 'e', source: 'i', sourceHandle: 'out', target: 'n', targetHandle: 'in' }]).get('n');
+    const o = r?.outputs.out;
+    return o?.t === 'dataset' ? o.v.columns.map((c) => c.name).join(' | ') : String(r?.errors);
+  };
+  const sm = names('smooth', SMOOTH_NEW);
+  const smOld = names('smooth', { ...SMOOTH_NEW, withData: true });
+  const df = names('calculus', CALCULUS_NEW);
+  const dfOld = names('calculus', { ...CALCULUS_NEW, withData: undefined });
+  ok(sm === 'X (s) | A (V) (smoothed) | B (V) (smoothed)' && smOld === 'X (s) | A (V) | A (V) (smoothed) | B (V) | B (V) (smoothed)' && df === 'X (s) | dA/dX | dB/dX' && dfOld === 'X (s) | A (V) | dA/dX | B (V) | dB/dX', `a new Smooth, Differentiate gives X and its results only; with the data as before — ${sm} · ${df}`);
 }
 // the numbers of an axis in E notation (1e−3, 2.5e4; a log axis as few digits as each needs)
 {

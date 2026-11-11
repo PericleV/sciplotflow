@@ -15,7 +15,7 @@ import { RegionPlot } from './RegionPlot.tsx';
 import { regionColor } from './regionColors.ts';
 import { ZoomTools } from './ZoomTools.tsx';
 import { rescaleAxis, type View, type ZoomMode } from './plotZoom.ts';
-import { Field, InPort, Messages, NumInput, OutPort, Select } from './ui.tsx';
+import { Check, Field, InPort, Messages, NumInput, OutPort, Select } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
 import { ColumnsPicker } from './ColumnsPicker.tsx';
 import { BaselineFields } from './BaselineFields.tsx';
@@ -216,6 +216,7 @@ export function CalculusNodeView({ id, data }: NodeProps<CalculusNode>) {
           </Field>
         </div>
       )}
+      <Check label="With the data" title="The input curves too, beside the results (to draw both from this one dataset); else X and the results only, as every processing node gives them" value={data.withData !== false} onChange={(withData) => set({ withData })} />
       {!isInt ? (
         <div className="grid2">
           <Field label="Order">
