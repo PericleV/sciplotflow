@@ -19,6 +19,7 @@ import { IC } from './iconProps.ts';
 import { ask, notify } from '../ui/dialogStore.ts';
 import { looksNumeric } from '../engine/convert.ts';
 import { ConvertPanel, ConvertProposal } from './SheetConvert.tsx';
+import { addKey, macMenuClick } from '../ui/platform.ts';
 
 const ROW_H = 21;
 const VIEW_H = 300;
@@ -593,9 +594,13 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
     focus();
   };
   // right-click: on the selection it keeps it, else selects what was clicked (the column, the row, the cell)
+  // (the click a browser may send after a right click — a Mac's Ctrl + click, a tap of two fingers —: not a selection)
+  const menuAt = useRef(0);
+  const afterMenu = (ev: ReactMouseEvent) => macMenuClick(ev) || ev.timeStamp - menuAt.current < 400;
   const openMenu = (ev: ReactMouseEvent, on: Menu['on'], r: number, c: number) => {
     ev.preventDefault();
     ev.stopPropagation();
+    menuAt.current = ev.timeStamp;
     const inside = on === 'col' ? chosenCols.includes(c) : on === 'row' ? chosenRows.includes(r) : !picks && isSel(r, c);
     if (!inside) setPicks(null);
     if (!inside) setSel(on === 'col' ? { r0: 0, c0: c, r1: n - 1, c1: c } : on === 'row' ? { r0: r, c0: 0, r1: r, c1: cols.length - 1 } : { r0: r, c0: c, r1: r, c1: c });
@@ -672,7 +677,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
                   key={j}
                   className={`col-letter${userLocked(j) || (lockedCol(j) && !readOnly) ? ' locked-col' : ''}${formulaOf(j) ? ' fx-col-head' : ''}${chosenCols.includes(j) ? ' sel' : ''}${dropAt === j && moving !== null && moving !== j ? (moving < j ? ' drop-after' : ' drop-before') : ''}`}
                   title={canArrange(j) ? 'Select the whole column (Shift: up to this one); drag it to move the column; right-click: insert, delete, move' : 'Select the whole column (Shift: up to this one)'}
-                  onClick={(ev) => selCols(j, ev.shiftKey, ev.ctrlKey || ev.metaKey)}
+                  onClick={(ev) => !afterMenu(ev) && selCols(j, ev.shiftKey, addKey(ev))}
                   onContextMenu={(ev) => openMenu(ev, 'col', 0, j)}
                   draggable={canArrange(j)}
                   onDragStart={(ev) => {
@@ -773,7 +778,7 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
             )}
             {Array.from({ length: last - first }, (_, k) => first + k).map((r) => (
               <tr key={r} style={{ height: rowH }}>
-                <td className="rowhead" title={rowsEditable ? 'Select the whole row (Shift: up to this one); right-click: insert, delete' : 'Select the whole row (Shift: up to this one)'} onClick={(ev) => selRows(r, ev.shiftKey, ev.ctrlKey || ev.metaKey)} onContextMenu={(ev) => openMenu(ev, 'row', r, 0)}>
+                <td className="rowhead" title={rowsEditable ? 'Select the whole row (Shift: up to this one); right-click: insert, delete' : 'Select the whole row (Shift: up to this one)'} onClick={(ev) => !afterMenu(ev) && selRows(r, ev.shiftKey, addKey(ev))} onContextMenu={(ev) => openMenu(ev, 'row', r, 0)}>
                   {r + 1}
                   {onLook && <span className="row-grip" title="Drag: the rows' height (all of them)" onPointerDown={dragRow} onClick={(ev) => ev.stopPropagation()} />}
                   {rowGone(r) && (
@@ -805,7 +810,8 @@ export function Worksheet({ dataset, map: given, edits, onEdits, readOnly, plain
                       data-c={j}
                       className={`${!locked(r, j) && edited(r, j) ? 'edited' : ''}${userLocked(j) || (lockedCol(j) && !readOnly) ? ' locked-col' : ''}${formulaOf(j) ? ' fx-cell' : ''}${isSel(r, j) ? ' sel' : ''}${inFill(r, j) ? ' fill-preview' : ''}${showHandle && hi && r === hi.r && j === hi.c ? ' fill-at' : ''}`}
                       onMouseDown={(ev) => {
-                        if (ev.button !== 0) return;
+                        // (a Mac's Ctrl + click: the context menu, which selects the cell itself)
+                        if (ev.button !== 0 || macMenuClick(ev)) return;
                         dragging.current = true;
                         setPicks(null);
                         setSel(ev.shiftKey && sel ? { ...sel, r1: r, c1: j } : { r0: r, c0: j, r1: r, c1: j });

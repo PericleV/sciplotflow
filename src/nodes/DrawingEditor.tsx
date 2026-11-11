@@ -69,6 +69,7 @@ import { isoDeltaToPage, isoEdges } from '../engine/isoPlane.ts';
 import type { Pt, StickSide } from '../figure/shapes.ts';
 import { IMAGE_ACCEPT, imageUrl } from '../imageFile.ts';
 import { ask, notify } from '../ui/dialogStore.ts';
+import { addKey } from '../ui/platform.ts';
 
 type Tool = 'select' | 'corner' | 'pen' | 'pencil' | 'builder' | 'image' | 'text' | 'line' | 'arrow' | 'double' | 'curved' | 'elbow' | 'equilibrium' | 'retro' | 'dimension' | 'rect' | 'ellipse' | 'polygon' | 'polyline' | 'star' | 'regular' | 'arc' | 'pie' | 'bracket' | 'brace' | 'callout';
 // what each tool draws: its first look (the points come from the drag)
@@ -723,7 +724,7 @@ export function DrawingEditor({ id, data, fig: figIn, under, pinShift: pinIn, on
     const hit = partEl ? items.find((it) => it.id === partEl.getAttribute('data-part')!.slice(4)) : undefined;
     if (!hit || hit.locked) {
       // a box around the objects to select
-      const keep = e.shiftKey || e.ctrlKey || e.metaKey ? sel : [];
+      const keep = e.shiftKey || addKey(e) ? sel : [];
       if (!keep.length) setSel([]);
       follow(
         (ev) => {
@@ -751,7 +752,7 @@ export function DrawingEditor({ id, data, fig: figIn, under, pinShift: pinIn, on
       setSpec(hit.id, { d: pathText(toggleNode(parsePath(hit.spec.d), Number(anchor.getAttribute('data-anchor')))) });
       return;
     }
-    const multi = e.shiftKey || e.ctrlKey || e.metaKey;
+    const multi = e.shiftKey || addKey(e);
     // an object of a group: the whole group (Alt: that one)
     const groupOf = (it: AnnotationItem) => (it.group && !e.altKey ? items.filter((x) => x.group === it.group).map((x) => x.id) : [it.id]);
     if (multi && sel.includes(hit.id)) {
@@ -1212,7 +1213,7 @@ export function DrawingEditor({ id, data, fig: figIn, under, pinShift: pinIn, on
       const order = items.map((x) => x.id);
       const [a, b] = [order.indexOf(sel[sel.length - 1]), order.indexOf(it.id)];
       setSel(order.slice(Math.min(a, b), Math.max(a, b) + 1));
-    } else if (e.ctrlKey || e.metaKey) setSel(sel.includes(it.id) ? sel.filter((x) => x !== it.id) : [...sel, it.id]);
+    } else if (addKey(e)) setSel(sel.includes(it.id) ? sel.filter((x) => x !== it.id) : [...sel, it.id]);
     else setSel([it.id]);
   };
   // a layer dropped on another: put in front of it (above it in the list)

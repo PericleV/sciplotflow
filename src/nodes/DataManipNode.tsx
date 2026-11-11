@@ -24,6 +24,7 @@ import { IC } from './iconProps.ts';
 import { ReaderButton, ReaderLayer, ReaderOptions, type ReaderProp } from './CanvasReader.tsx';
 import { READER_OFF, type ReaderState } from './readerState.ts';
 import { ask, notify } from '../ui/dialogStore.ts';
+import { addKey, macMenuClick } from '../ui/platform.ts';
 
 // (pick: one point at a time, the nearest to the mouse, as the reader; its values changed exactly)
 type Tool = 'select' | 'move' | 'add' | 'pick';
@@ -245,13 +246,15 @@ function ManipPlot(props: {
     } catch {
       // a pointer the browser does not track (nothing to capture)
     }
+    // (a Mac's Ctrl + click is a right click: not a selection)
+    if (macMenuClick(e)) return;
     const p = at(e);
     if (z.down(p[0], p[1], e)) return;
-    const mods = { add: e.ctrlKey || e.metaKey, remove: e.altKey && tool === 'select', onlyY: e.shiftKey, onlyX: e.altKey };
+    const mods = { add: addKey(e), remove: e.altKey && tool === 'select', onlyY: e.shiftKey, onlyX: e.altKey };
     if (tool === 'pick') {
       // (the nearest point, however far: as the reader snaps)
       const k = nearest(p[0], p[1], Infinity);
-      if (k >= 0) props.onPick?.(k, e.altKey ? 'remove' : e.ctrlKey || e.metaKey ? 'add' : 'set');
+      if (k >= 0) props.onPick?.(k, e.altKey ? 'remove' : addKey(e) ? 'add' : 'set');
       return;
     }
     if (tool === 'add') {
