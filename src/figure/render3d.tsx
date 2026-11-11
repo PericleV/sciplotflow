@@ -54,6 +54,13 @@ function axisTicks(lo: number, hi: number, n: number, every?: number, log = fals
   if (!(hi > lo)) return [lo];
   if (log) {
     const [k0, k1] = [Math.ceil(lo - 1e-9), Math.floor(hi + 1e-9)];
+    // (a step asked: every so many decades, counted from 1)
+    if (every && every > 0) {
+      const st = Math.max(1, Math.round(every));
+      const out: number[] = [];
+      for (let k = k0; k <= k1; k++) if (((k % st) + st) % st === 0) out.push(k);
+      if (out.length >= 2) return out;
+    }
     // (one or two decades: 1, 2, 5 of each)
     if (k1 - k0 >= 1 && k1 - k0 < 3 && n > 3) {
       const out: number[] = [];
@@ -66,7 +73,9 @@ function axisTicks(lo: number, hi: number, n: number, every?: number, log = fals
       for (let k = k0; k <= k1; k += st) out.push(k);
       return out;
     }
-    return axisTicks(10 ** lo, 10 ** hi, n).filter((v) => v > 0).map(Math.log10);
+    return axisTicks(10 ** lo, 10 ** hi, n)
+      .filter((v) => v > 0)
+      .map(Math.log10);
   }
   const step = every && every > 0 && (hi - lo) / every <= 200 ? every : niceStep(hi - lo, Math.max(2, n));
   const out: number[] = [];
@@ -94,7 +103,7 @@ export function ThreeView({ c, frame, defaults }: { c: Curve; frame: Box; defaul
   // the values of every axis (Z: the layers' own, when given)
   const own = [undefined, S.yLabels, S.zLabels].map((L, a) => (L ? L.at.map((v, k) => ({ v, text: L.text[k] ?? '' })).filter((q) => q.v >= lohi[a][0] && q.v <= lohi[a][1]) : null));
   const logAx = AX.map((ax) => ax.scale === 'log');
-  const tk = range.map((r, a) => own[a]?.map((q) => q.v) ?? axisTicks(r[0], r[1], AX[a].count && AX[a].count > 1 ? Math.min(30, AX[a].count) : S.ticks, logAx[a] ? undefined : AX[a].step, logAx[a]));
+  const tk = range.map((r, a) => own[a]?.map((q) => q.v) ?? axisTicks(r[0], r[1], AX[a].count && AX[a].count > 1 ? Math.min(30, AX[a].count) : S.ticks, AX[a].step, logAx[a]));
   const tn = tk.map((vs, a) => vs.map((v) => ((v - range[a][0]) / (range[a][1] - range[a][0] || 1)) * 2 - 1));
   // halfway between the values (the minor grid), inside the box
   const half = tn.map((us0, a) => {

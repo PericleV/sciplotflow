@@ -62,7 +62,7 @@ export function Axes3DEditor({ d, set, names }: { d: Plot3DData; set: (p: Partia
                 <Row label="Reversed" hint="From the highest value to the lowest">
                   <Toggle value={!!ax.reverse} onChange={(reverse) => setAxis(a, { reverse: reverse || undefined })} />
                 </Row>
-                <Row label="Step" hint="The step between the values (empty: about as many as asked below)">
+                <Row label="Step" hint="The step between the values (a log axis: every so many decades; empty: about as many as asked below)">
                   <AutoNumber value={ax.step ?? NaN} auto={undefined} onChange={(v) => setAxis(a, { step: Number.isFinite(v) && v > 0 ? v : undefined })} />
                 </Row>
                 <Row label="About" hint="About this many values (auto: as all the axes, in the node's Box)">

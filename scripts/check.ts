@@ -380,7 +380,7 @@ const near = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol * Mat
     const M = drawnLimits(fm, 'am');
     const fl = xy('al', [1, 1000], [1, 2], { axes: { x: { ...AXIS_DEFAULTS, scale: 'log' } } });
     const G = drawnLimits(fl, 'al');
-    ok(L.bottom?.lo === 0 && L.bottom.hi === 4 && L.bottom.step > 0 && L.left?.lo === 0 && L.left.hi === 1 && M.bottom?.lo === 0.5 && M.bottom.hi === 4 && L.top?.hi === 4 && G.bottom?.lo === 1 && G.bottom.hi === 1000 && Number.isNaN(G.bottom.step), `the axes' limits as drawn: X ${L.bottom?.lo} – ${L.bottom?.hi} every ${L.bottom?.step}, Y ${L.left?.lo} – ${L.left?.hi}; a start typed kept (${M.bottom?.lo}); a log axis without a step`);
+    ok(L.bottom?.lo === 0 && L.bottom.hi === 4 && L.bottom.step > 0 && L.left?.lo === 0 && L.left.hi === 1 && M.bottom?.lo === 0.5 && M.bottom.hi === 4 && L.top?.hi === 4 && G.bottom?.lo === 1 && G.bottom.hi === 1000 && G.bottom.step === 1, `the axes' limits as drawn: X ${L.bottom?.lo} – ${L.bottom?.hi} every ${L.bottom?.step}, Y ${L.left?.lo} – ${L.left?.hi}; a start typed kept (${M.bottom?.lo}); a log axis every 1 power`);
   }
   const p = fa.axes[0].style.pos;
   ok(fa.width === 85 && fa.unit === 'mm' && fa.axes.length === 1 && fa.axes[0].legends.length === 1, 'Plot: a page of 85 mm with its frame and legend');
@@ -7655,6 +7655,27 @@ checkPhase(ok);
   const narrow = graphTicks('log', Math.log10(2), Math.log10(8), 4);
   ok(lin === '0,2,4,6,8,10' && majors.map((t) => t.text).join() === '1,10,100,1000,10000,10⁵,10⁶' && minors.length === 6 * 8 && minors.every((t) => t.text === '') && near2(minors[0].u, Math.log10(2)) && wide.length <= 7 && wide.every((t) => Number.isInteger(t.u)) && wide.some((t) => t.text === '10⁻¹²') && narrow.length >= 3 && narrow.every((t) => !t.minor && t.text !== '' && 10 ** t.u >= 2 - 1e-9 && 10 ** t.u <= 8 + 1e-9), 'graph scale: the ticks (linear as before, decades and 2 … 9 on a log axis, 10⁻¹² written so, the values within a decade)');
   ok(notDrawn({ y: 'log' }, [1, 2, 3, 4], [1, -2, 0, 5]) === '2 points ≤ 0 not drawn on the log Y axis' && notDrawn({ x: 'abslog', y: 'abslog' }, [1, -2, 3], [-1, 2, 0]) === '1 point at 0 not drawn on the log X / Y axis' && notDrawn({}, [1], [-1]) === '' && axisTitle('abslog', 'I (A)') === '|I (A)|' && axisTitle('log', 'I (A)') === 'I (A)', 'graph scale: the points not drawn said, the title of an absolute value');
+}
+// the step of an axis (Every …) on every scale: a distance on a linear axis; every so many powers on a log axis (the
+// decades between as minor ticks; counted from 1, or from “Starting at”), in powers of 2, on a symmetric log axis; a
+// percent on a probability axis; a value on a logit one. Without a step: as before
+{
+  const ax = (p: Partial<typeof AXIS_DEFAULTS>) => ({ ...AXIS_DEFAULTS, ...p });
+  const inc = (step: number, p: Partial<typeof AXIS_DEFAULTS> = {}) => ax({ ticksBy: 'increment', step, ...p });
+  // (the ticks inside the axis)
+  let [lo, hi] = [0, 100];
+  const tk = (spec: typeof AXIS_DEFAULTS, a: number, b: number) => (([lo, hi] = [a, b]), ticks(spec, a, b));
+  const maj = (t: { major: number[] }) => t.major.filter((v) => v >= lo - 1e-9 && v <= hi + 1e-9).map((v) => +v.toPrecision(10)).join();
+  ok(maj(ticks(inc(25), 0, 100)) === '0,25,50,75,100' && maj(ticks(inc(25, { first: 10 }), 0, 100)) === '10,35,60,85', 'axis step: linear, every 25 (from 0, or from 10)');
+  const l1 = maj(tk(ax({ scale: 'log' }), 1, 1e6));
+  const t2 = tk(inc(2, { scale: 'log' }), 1, 1e6);
+  const l2 = maj(t2);
+  const l3 = maj(tk(inc(2, { scale: 'log', first: 10 }), 1, 1e6));
+  const l4 = maj(tk(inc(3, { scale: 'log' }), 0.5, 20));
+  ok(l1 === '1,10,100,1000,10000,100000,1000000' && l2 === '1,100,10000,1000000' && t2.minor.includes(10) && t2.minor.includes(1000) && !t2.minor.includes(20) && l3 === '10,1000,100000' && l4 === '5,10,15,20', `axis step: log, every 2 decades (those between minor), from 10; too few decades: placed by itself — ${l2} | ${l3} | ${l4}`);
+  ok(maj(tk(ax({ scale: 'log', ticksBy: 'count', count: 3 }), 1, 1e6)) === '1,1000,1000000', 'axis ticks by count on a log axis: about that many decades');
+  ok(maj(tk(inc(2, { scale: 'log', base: 2 }), 1, 64)) === '1,4,16,64' && maj(tk(inc(2, { scale: 'symlog' }), -1e4, 1e4)) === '-10000,-100,-1,0,1,100,10000', 'axis step: powers of 2, a symmetric log axis');
+  ok(maj(tk(inc(20, { scale: 'probability' }), 1, 99)) === '20,40,60,80' && maj(tk(inc(0.25, { scale: 'logit' }), 0.01, 0.99)) === '0.25,0.5,0.75', 'axis step: a probability axis in %, a logit axis in values');
 }
 // the numbers of an axis in E notation (1e−3, 2.5e4; a log axis as few digits as each needs)
 {

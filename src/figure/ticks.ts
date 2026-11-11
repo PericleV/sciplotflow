@@ -69,6 +69,13 @@ const PROB_SETS = [
 const probLabel = (v: number) => String(+v.toPrecision(6));
 function probTicks(spec: AxisSpec, lo: number, hi: number, count: number): Ticks {
   const inside = (v: number) => v >= lo * (1 - 1e-9) && v <= hi * (1 + 1e-9);
+  // a step asked, in %: its multiples between 0 and 100 (10: 10, 20 … 90)
+  const st = stepAsked(spec);
+  if (st !== null && st < 100) {
+    const own: number[] = [];
+    for (let k = 1; k * st < 100 - 1e-9 && own.length < 500; k++) if (inside(k * st)) own.push(+(k * st).toPrecision(12));
+    if (own.length >= 2) return { major: own, minor: [], labels: own.map(probLabel) };
+  }
   // the densest set that is not much more than wanted (fewer when the numbers touch: the count is lowered then, see
   // roomyTicks) — a probability paper reads best with many percents (1, 2, 5, 10, 20 …)
   let major = PROB_SETS[PROB_SETS.length - 1];
@@ -110,7 +117,7 @@ function symlogTicks(spec: AxisSpec, lo: number, hi: number): Ticks {
   const big = Math.max(Math.abs(lo), Math.abs(hi), linOf(spec));
   const k0 = Math.floor(Math.log10(linOf(spec)) + 1e-9);
   const k1 = Math.ceil(Math.log10(big) - 1e-9);
-  const every = Math.max(1, Math.ceil((k1 - k0 + 1) / 5));
+  const every = stepAsked(spec) !== null ? Math.max(1, Math.round(stepAsked(spec)!)) : Math.max(1, Math.ceil((k1 - k0 + 1) / 5));
   const pos: number[] = [];
   for (let k = k0; k <= k1; k++) if ((k - k0) % every === 0) pos.push(10 ** k);
   const major = [...pos.map((v) => -v).reverse(), 0, ...pos].filter((v) => v >= lo - 1e-12 * big && v <= hi + 1e-12 * big);
@@ -120,8 +127,15 @@ function symlogTicks(spec: AxisSpec, lo: number, hi: number): Ticks {
   return { major, minor: [], labels: major.map(label) };
 }
 const LOGIT_SETS = PROB_SETS.map((s) => s.map((v) => +(v / 100).toPrecision(10)));
-function logitTicks(lo: number, hi: number, count: number): Ticks {
+function logitTicks(spec: AxisSpec, lo: number, hi: number, count: number): Ticks {
   const inside = (v: number) => v >= lo * (1 - 1e-9) && v <= hi * (1 + 1e-9);
+  // a step asked: its multiples between 0 and 1 (0.1: 0.1, 0.2 … 0.9)
+  const st = stepAsked(spec);
+  if (st !== null && st < 1) {
+    const own: number[] = [];
+    for (let k = 1; k * st < 1 - 1e-9 && own.length < 500; k++) if (inside(k * st)) own.push(+(k * st).toPrecision(12));
+    if (own.length >= 2) return { major: own, minor: [], labels: own.map((v) => String(+v.toPrecision(6))) };
+  }
   let major = LOGIT_SETS[LOGIT_SETS.length - 1];
   for (const set of LOGIT_SETS)
     if (set.filter(inside).length <= Math.max(3, count * 2.5)) {
@@ -135,9 +149,9 @@ function baseTicks(spec: AxisSpec, lo: number, hi: number): Ticks {
   const B = baseOf(spec);
   const k0 = Math.floor(Math.log(lo) / Math.log(B) - 1e-9);
   const k1 = Math.ceil(Math.log(hi) / Math.log(B) + 1e-9);
-  const every = Math.max(1, Math.ceil((k1 - k0) / 8));
+  const { every, from } = powersPlan(spec, B, lo, hi, k0, Math.max(1, Math.ceil((k1 - k0) / 8)));
   const ks: number[] = [];
-  for (let k = k0; k <= k1; k++) if ((k - k0) % every === 0) ks.push(k);
+  for (let k = k0; k <= k1; k++) if ((((k - from) % every) + every) % every === 0) ks.push(k);
   const label = (k: number) => (B === 2 ? (k >= -3 && k <= 10 ? String(2 ** k) : `2^{${minus(String(k))}}`) : k === 0 ? '1' : k === 1 ? 'e' : `e^{${minus(String(k))}}`);
   return { major: ks.map((k) => B ** k), minor: [], labels: ks.map(label) };
 }
@@ -154,6 +168,24 @@ export function niceStep(span: number, count = 5): number {
 export const ticksMode = (spec: AxisSpec) => spec.ticksBy ?? (spec.custom?.trim() ? 'values' : Number.isFinite(spec.step) && spec.step > 0 ? 'increment' : Number.isFinite(spec.count) && spec.count >= 2 ? 'count' : 'auto');
 const wantCount = (spec: AxisSpec, fallback: number) => (ticksMode(spec) === 'count' && Number.isFinite(spec.count) && spec.count >= 2 ? spec.count - 1 : fallback);
 const stepOf = (spec: AxisSpec, span: number, count: number) => (ticksMode(spec) === 'increment' && Number.isFinite(spec.step) && spec.step > 0 && span / spec.step <= 500 ? spec.step : niceStep(span, wantCount(spec, count)));
+
+// The step asked (Every …), or null. On an axis that is not linear it is not a distance between values: every so many
+// powers on a log axis (decades, or powers of 2 or e: 1 — 1, 10, 100; 2 — 1, 100, 10⁴) and on a symmetric log one, a
+// percent on a probability axis, a value on a logit one.
+const stepAsked = (spec: AxisSpec) => (ticksMode(spec) === 'increment' && Number.isFinite(spec.step) && spec.step > 0 ? spec.step : null);
+// The powers of a log axis that are major ticks, every `every` counted from `from`: as asked — a whole number, 1 at least,
+// from the power of “Starting at” (100: 100, 10⁴ …), else from 0 (1, 100, 10⁴ …) —; by count — about that many over the
+// powers inside the axis, from the first of them —; else `auto`, from the power k0 (as before)
+function powersPlan(spec: AxisSpec, base: number, lo: number, hi: number, k0: number, auto: number): { every: number; from: number; asked: boolean } {
+  const st = stepAsked(spec);
+  const lb = (v: number) => Math.log(v) / Math.log(base);
+  if (st !== null) return { every: Math.max(1, Math.round(st)), from: Number.isFinite(spec.first ?? NaN) && spec.first! > 0 ? Math.round(lb(spec.first!)) : 0, asked: true };
+  if (ticksMode(spec) === 'count' && Number.isFinite(spec.count) && spec.count >= 2) {
+    const [a, b] = [Math.ceil(lb(lo) - 1e-9), Math.floor(lb(hi) + 1e-9)];
+    if (b > a) return { every: Math.max(1, Math.round((b - a) / (Math.floor(spec.count) - 1))), from: a, asked: false };
+  }
+  return { every: auto, from: k0, asked: false };
+}
 
 // Data extent → axis limits. Manual limits win; NaN ones are automatic.
 export function axisRange(spec: AxisSpec, lo: number, hi: number): [number, number] {
@@ -270,21 +302,24 @@ export function ticks(spec: AxisSpec, lo: number, hi: number, count = 5): Ticks 
   if (spec.time) return { ...timeTicks(lo, hi, count, spec.time, spec.timeFormat), minor: [] };
   if (spec.scale === 'probability') return probTicks(spec, lo, hi, count);
   if (spec.scale === 'symlog') return symlogTicks(spec, lo, hi);
-  if (spec.scale === 'logit') return logitTicks(lo, hi, count);
+  if (spec.scale === 'logit') return logitTicks(spec, lo, hi, count);
   if (spec.scale === 'log' && spec.base && spec.base !== 10) return baseTicks(spec, lo, hi);
   if (spec.scale === 'log') {
     const major: number[] = [];
     const minor: number[] = [];
     const d0 = Math.floor(Math.log10(lo) - 1e-9);
     const d1 = Math.ceil(Math.log10(hi) + 1e-9);
-    const every = Math.max(1, Math.ceil((d1 - d0) / 8));
+    const { every, from, asked } = powersPlan(spec, 10, lo, hi, d0, Math.max(1, Math.ceil((d1 - d0) / 8)));
     for (let d = d0; d <= d1; d++) {
       const v = 10 ** d;
-      if ((d - d0) % every === 0) major.push(v);
+      const on = (((d - from) % every) + every) % every === 0;
+      if (on) major.push(v);
+      // (a step asked of several decades: the decades between are minor ticks)
+      else if (asked && spec.minor > 0) minor.push(v);
       if (every === 1 && spec.minor > 0) for (let k = 2; k <= 9; k++) minor.push(v * k);
     }
-    // less than a decade: linear ticks inside it
-    if (major.filter((v) => v >= lo && v <= hi).length < 2) return linear(spec, lo, hi, count);
+    // less than a decade (or no two of the decades asked): linear ticks inside it, placed by themselves
+    if (major.filter((v) => v >= lo && v <= hi).length < 2) return linear(asked ? { ...spec, ticksBy: 'auto' } : spec, lo, hi, count);
     return { major, minor };
   }
   return linear(spec, lo, hi, count);

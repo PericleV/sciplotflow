@@ -20,8 +20,10 @@ export function drawnLimits(fig: Figure, node: string): Record<string, DrawnLimi
     // names or times: their limits are not typed as numbers
     if (!sc || sc.spec.cats?.length || sc.spec.time) continue;
     const m = d.pos.major;
-    // the step between two numbers: of a linear axis only (a log axis has none)
-    const step = sc.spec.scale === 'linear' && m.length > 1 ? +(m[1] - m[0]).toPrecision(10) : NaN;
+    // the step between two numbers: of a linear axis; a log axis: how many powers (decades, or of its base) between them
+    const B = sc.spec.base === 2 ? 2 : sc.spec.base === 'e' ? Math.E : 10;
+    const powers = sc.spec.scale === 'log' && m.length > 1 && m[0] > 0 && m[1] > 0 ? Math.log(m[1] / m[0]) / Math.log(B) : NaN;
+    const step = sc.spec.scale === 'linear' && m.length > 1 ? +(m[1] - m[0]).toPrecision(10) : Math.abs(powers - Math.round(powers)) < 1e-6 && powers >= 1 ? Math.round(powers) : NaN;
     out[d.key] = { lo: sc.lo, hi: sc.hi, step };
   }
   return out;

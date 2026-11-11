@@ -5,6 +5,7 @@ import { Button, Select as MSelect, TextInput as MTextInput, ActionIcon, Group, 
 import { Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import { AXIS_DEFAULTS, axisKind, axesStyle, type AxesStyle, type AxisSpec, type ExtraAxis, type GridStyle, type ProbAxis, type Side, type SideStyle } from '../figure/spec.ts';
 import type { DrawnLimits } from '../figure/drawnLimits.ts';
+import { ticksMode } from '../figure/ticks.ts';
 import { RichInput, Tabs } from './fields.tsx';
 import { AngleField, AutoNumber, Choice, ColorField, NumField, NumPair, OpacityField, PictureGrid, Row, Section, Sections, SliderField, TextStyleRows, Toggle, WidthField } from '../ui/props.tsx';
 import { DASH_PICS } from '../ui/dashPics.tsx';
@@ -53,6 +54,17 @@ function BreaksRows({ spec, set }: { spec: AxisSpec; set: (p: Partial<AxisSpec>)
     </>
   );
 }
+
+const stepHint = (scale: AxisSpec['scale']) =>
+  scale === 'log' || scale === 'symlog'
+    ? 'Every so many powers: 1 gives 1, 10, 100 …; 2 gives 1, 100, 10⁴ … (empty: automatic)'
+    : scale === 'probability'
+      ? 'In %: 10 gives 10, 20 … 90 (empty: automatic)'
+      : scale === 'logit'
+        ? 'In values between 0 and 1: 0.1 gives 0.1, 0.2 … 0.9 (empty: automatic)'
+        : 'The distance between two numbers, e.g. 5: 10, 15, 20 … (empty: automatic; the value used is shown in grey)';
+// the step typed: the numbers every so much (none: placed automatically again)
+const stepPatch = (spec: AxisSpec, step: number): Partial<AxisSpec> => (step > 0 ? { step, ticksBy: 'increment' } : { step: NaN, ...(ticksMode(spec) === 'increment' ? { ticksBy: 'auto' as const } : {}) });
 
 // dataKinds: the values can be numbers, categories or times (the bottom and left axes of a 1D plot)
 // drawn: its limits and step as drawn (the values “auto” gives)
@@ -121,6 +133,11 @@ function ScaleRows({ spec, onChange, kinds = true, dataKinds = false, drawn }: {
       <Row label="End" hint="Empty: automatic (the value used is shown in grey)">
         <AutoNumber value={spec.max} auto={drawn?.hi} onChange={(max) => set({ max })} />
       </Row>
+      {vk !== 'category' && vk !== 'time' && (
+        <Row label="Step" hint={stepHint(spec.scale)}>
+          <AutoNumber value={ticksMode(spec) === 'increment' ? spec.step : NaN} auto={drawn?.step} onChange={(step) => set(stepPatch(spec, step))} />
+        </Row>
+      )}
       <Row label="Auto range" hint="How the automatic limits are chosen (when Start or End is empty): rounded out to the ticks, the data ± 5 %, or the data exactly">
         <Choice
           value={spec.range}
@@ -209,14 +226,14 @@ function TickRows({ spec, onScale, s, set, drawn }: { spec: AxisSpec | null; onS
                 ['values', 'Values'],
               ]}
             />
-            {mode === 'auto' && drawn && Number.isFinite(drawn.step) && <span className="prop-note">every {+drawn.step.toPrecision(6)} now</span>}
+            {mode === 'auto' && drawn && Number.isFinite(drawn.step) && <span className="prop-note">every {+drawn.step.toPrecision(6)}{spec.scale === 'log' ? (drawn.step === 1 ? ' power' : ' powers') : ''} now</span>}
           </Row>
           {mode === 'increment' && (
             <>
-              <Row label="Every" hint="The distance between two numbers, e.g. 5: 10, 15, 20 …">
+              <Row label="Every" hint={stepHint(spec.scale)}>
                 <AutoNumber value={spec.step} auto={drawn?.step} onChange={(step) => setScale({ step: step > 0 ? step : NaN })} />
               </Row>
-              <Row label="Starting at" hint="The first number (empty: the multiples of the step, 0, 5, 10 …)">
+              <Row label="Starting at" hint="The first number (empty: the multiples of the step, 0, 5, 10 …; a log axis: 1, then every so many powers)">
                 <AutoNumber value={spec.first ?? NaN} auto={undefined} onChange={(first) => setScale({ first })} />
               </Row>
             </>
