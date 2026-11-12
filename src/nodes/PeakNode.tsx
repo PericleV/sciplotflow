@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, type MouseEvent as RMouseEvent, type Point
 import { createPortal } from 'react-dom';
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
-import type { PeakRunView } from '../engine/evaluate.ts';
+import type { PeakRunView, PeakView } from '../engine/evaluate.ts';
 import type { Pt } from '../engine/calculus.ts';
 import { SHAPE_NAMES, type PeakShape } from '../engine/fitModels.ts';
 import { baseKindOf, baseMethodOf, FITTED_BASES, isFitted, peakRunKey, type BaseKind, type FindOptions, type PeakItem } from '../engine/peaks.ts';
@@ -44,9 +44,9 @@ const RES_H = 70;
 type Box = View;
 // a region of a peak (manual peaks): its edges, its colour
 export type PeakRegion = { k: number; from: number; to: number; color: string };
-type Drag = { kind: 'pt'; k: number; x: number; y: number; fresh?: boolean } | { kind: 'reg'; x0: number; x1: number } | { kind: 'edge'; k: number; side: 'from' | 'to'; x: number } | null;
+type Drag = { kind: 'pt'; k: number; x: number; y: number; fresh?: boolean } | { kind: 'reg'; x0: number; x1: number } | { kind: 'edge'; k: number; side: 'from' | 'to'; x: number } | { kind: 'shift'; k: number; at: number; x: number } | null;
 
-function PeakPlot(props: { run: PeakRunView; width: number; height: number; points: Pt[]; placing: boolean; onPoints: (p: Pt[]) => void; adding: boolean; onAdd: (x: number) => void; regions: PeakRegion[]; drawing: boolean; onRegion: (from: number, to: number) => void; onEdge: (k: number, side: 'from' | 'to', x: number) => void; reader?: ReaderProp; xTitle: string; yTitle: string; zoom: ZoomMode; view: View | null; onView: (v: View | null) => void; zoomOut: number; resid: boolean }) {
+function PeakPlot(props: { run: PeakRunView; width: number; height: number; points: Pt[]; placing: boolean; onPoints: (p: Pt[]) => void; adding: boolean; onAdd: (x: number) => void; regions: PeakRegion[]; drawing: boolean; onRegion: (from: number, to: number) => void; onEdge: (k: number, side: 'from' | 'to', x: number) => void; selected: number | null; onSelect: (k: number | null) => void; onShift: (k: number, from: number, to: number) => void; onRemove: (k: number) => void; ghost?: PeakRunView; reader?: ReaderProp; xTitle: string; yTitle: string; zoom: ZoomMode; view: View | null; onView: (v: View | null) => void; zoomOut: number; resid: boolean }) {
   const { run, width: W, height: H } = props;
   const cv = useRef<HTMLCanvasElement>(null);
   // X and Y linear, log or log |v| (graphScale.ts): the box in the axes' own units
@@ -96,9 +96,11 @@ function PeakPlot(props: { run: PeakRunView; width: number; height: number; poin
   const iy = (p: number) => fromAxis(sc.y, box.y0 + (1 - (p - M.t) / ph) * (box.y1 - box.y0));
   const hidden = notDrawn(sc, run.x, run.y);
   const shownPts = drag?.kind === 'pt' ? (drag.fresh ? [...pts, { x: drag.x, y: drag.y }] : pts.map((p, k) => (k === drag.k ? { x: drag.x, y: drag.y } : p))) : pts;
-  // the regions as they are while one is drawn or an edge dragged
+  // (a region moved whole: by the distance dragged)
+  const shifted = (g: PeakRegion) => (drag?.kind === 'shift' && drag.k === g.k ? { ...g, from: g.from + drag.x - drag.at, to: g.to + drag.x - drag.at } : g);
+  // the regions as they are while one is drawn, moved or an edge dragged
   const regions = [
-    ...props.regions.map((g) => (drag?.kind === 'edge' && drag.k === g.k ? { ...g, [drag.side]: drag.x } : g)),
+    ...props.regions.map((g) => shifted(drag?.kind === 'edge' && drag.k === g.k ? { ...g, [drag.side]: drag.x } : g)),
     ...(drag?.kind === 'reg' ? [{ k: -1, from: drag.x0, to: drag.x1, color: '#888888' }] : []),
   ];
 
@@ -132,11 +134,13 @@ function PeakPlot(props: { run: PeakRunView; width: number; height: number; poin
       const edge = (v: number, e: number) => (Number.isFinite(fx(v)) ? fx(v) : e);
       const [p, q] = [edge(rg.from, M.l), edge(rg.to, M.l + pw)];
       const [a, b] = [Math.min(p, q), Math.max(p, q)];
-      g.fillStyle = alpha(rg.color, 0.1);
+      // (the one selected: stronger, its edges solid)
+      const on = rg.k >= 0 && rg.k === props.selected;
+      g.fillStyle = alpha(rg.color, on ? 0.22 : 0.1);
       g.fillRect(a, M.t, b - a, ph);
       g.strokeStyle = rg.color;
-      g.lineWidth = 1;
-      g.setLineDash([4, 3]);
+      g.lineWidth = on ? 2 : 1;
+      g.setLineDash(on ? [] : [4, 3]);
       for (const e of [a, b]) {
         g.beginPath();
         g.moveTo(e + 0.5, M.t);
@@ -144,6 +148,24 @@ function PeakPlot(props: { run: PeakRunView; width: number; height: number; poin
         g.stroke();
       }
       g.setLineDash([]);
+    }
+    // the last fit, faded, while the settings changed since it (until Run analysis)
+    const gh = props.ghost;
+    if (gh && !run.comps.length) {
+      g.globalAlpha = 0.45;
+      g.lineWidth = 1;
+      gh.comps.forEach((cp, j) => {
+        g.strokeStyle = peakColor(j + 1);
+        g.setLineDash([3, 3]);
+        line(gh.x, cp);
+      });
+      if (gh.env) {
+        g.strokeStyle = '#111111';
+        g.setLineDash([6, 3]);
+        line(gh.x, gh.env);
+      }
+      g.setLineDash([]);
+      g.globalAlpha = 1;
     }
     // every peak, filled from the baseline, in its colour
     run.comps.forEach((cp, j) => {
@@ -222,11 +244,16 @@ function PeakPlot(props: { run: PeakRunView; width: number; height: number; poin
     // the numbers of the peaks, over the frame
     g.font = 'bold 11px system-ui, sans-serif';
     g.textAlign = 'center';
+    // (two numbers too close: the second one inside the frame, under the first)
+    let last = -Infinity;
+    let low = false;
     run.marks.forEach((m, j) => {
       const x = fx(m.x);
       if (x < M.l - 2 || x > M.l + pw + 2) return;
+      low = x - last < 14 && !low;
+      last = x;
       g.fillStyle = peakColor(j + 1);
-      g.fillText(String(j + 1), x, M.t - 5);
+      g.fillText(String(j + 1), x, low ? M.t + 12 : M.t - 5);
     });
     // the frame and the numbers
     g.strokeStyle = '#333333';
@@ -260,7 +287,7 @@ function PeakPlot(props: { run: PeakRunView; width: number; height: number; poin
       g.setLineDash([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run, shownPts, regions, box.x0, box.x1, box.y0, box.y1, z.rect, W, H, props.xTitle, RH, sc.x, sc.y]);
+  }, [run, shownPts, regions, box.x0, box.x1, box.y0, box.y1, z.rect, W, H, props.xTitle, RH, sc.x, sc.y, props.selected, props.ghost]);
 
   const at = (e: RPointerEvent | RMouseEvent) => {
     const b = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -273,6 +300,21 @@ function PeakPlot(props: { run: PeakRunView; width: number; height: number; poin
       for (const side of ['from', 'to'] as const) if (Math.abs(fx(g[side]) - px) < 5) return { k: g.k, side };
     return null;
   };
+  // the region under the mouse (inside it; the narrowest when they overlap)
+  const regionAt = (px: number): number | null => {
+    const x = ix(px);
+    const inside = props.regions.filter((g) => x >= Math.min(g.from, g.to) && x <= Math.max(g.from, g.to));
+    if (!inside.length) return null;
+    return inside.reduce((a, b) => (Math.abs(b.to - b.from) < Math.abs(a.to - a.from) ? b : a)).k;
+  };
+  // right-click on a region: its menu (Remove)
+  const [menu, setMenu] = useState<{ x: number; y: number; k: number } | null>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    window.addEventListener('pointerdown', close);
+    return () => window.removeEventListener('pointerdown', close);
+  }, [menu]);
   const down = (e: RPointerEvent) => {
     if (e.button !== 0) return;
     e.stopPropagation();
@@ -289,17 +331,29 @@ function PeakPlot(props: { run: PeakRunView; width: number; height: number; poin
       if (k >= 0) return setDrag({ kind: 'pt', k, x: pts[k].x, y: pts[k].y });
       return setDrag({ kind: 'pt', k: pts.length, x: ix(px), y: iy(py), fresh: true });
     }
-    if (props.drawing) return setDrag({ kind: 'reg', x0: ix(px), x1: ix(px) });
+    // an edge: dragged; inside a region: selected, and dragged whole (also while + Region is on: a new region is drawn
+    // outside the others); else a new region, a peak, or nothing selected
     const edge = nearEdge(px);
-    if (edge) return setDrag({ kind: 'edge', ...edge, x: ix(px) });
+    if (edge) {
+      props.onSelect(edge.k);
+      return setDrag({ kind: 'edge', ...edge, x: ix(px) });
+    }
+    const inside = regionAt(px);
+    if (inside !== null) {
+      props.onSelect(inside);
+      return setDrag({ kind: 'shift', k: inside, at: ix(px), x: ix(px) });
+    }
+    props.onSelect(null);
+    if (props.drawing) return setDrag({ kind: 'reg', x0: ix(px), x1: ix(px) });
     if (props.adding) props.onAdd(+ix(px).toPrecision(6));
   };
   const move = (e: RPointerEvent) => {
     const { px, py } = at(e);
     if (z.move(px, py)) return setCursor(props.zoom === 'pan' ? 'grab' : 'crosshair');
     const d = dragRef.current;
-    if (!d) return setCursor(props.placing ? (nearPoint(px, py) >= 0 ? 'move' : 'crosshair') : props.drawing ? 'col-resize' : nearEdge(px) ? 'ew-resize' : props.adding ? 'copy' : 'default');
+    if (!d) return setCursor(props.placing ? (nearPoint(px, py) >= 0 ? 'move' : 'crosshair') : nearEdge(px) ? 'ew-resize' : regionAt(px) !== null ? 'grab' : props.drawing ? 'col-resize' : props.adding ? 'copy' : 'default');
     if (d.kind === 'reg') return setDrag({ ...d, x1: ix(px) });
+    if (d.kind === 'shift') return setDrag({ ...d, x: ix(px) });
     if (d.kind === 'edge') return setDrag({ ...d, x: ix(px) });
     setDrag({ ...d, x: ix(px), y: iy(py) });
   };
@@ -316,6 +370,12 @@ function PeakPlot(props: { run: PeakRunView; width: number; height: number; poin
       return;
     }
     if (d.kind === 'edge') return props.onEdge(d.k, d.side, r6(d.x));
+    if (d.kind === 'shift') {
+      // (moved by a few px at least: else only selected)
+      const g = props.regions.find((q) => q.k === d.k);
+      if (g && Math.abs(fx(d.x) - fx(d.at)) >= 3) props.onShift(d.k, r6(g.from + d.x - d.at), r6(g.to + d.x - d.at));
+      return;
+    }
     const p = { x: +d.x.toPrecision(6), y: +d.y.toPrecision(6) };
     props.onPoints(d.fresh ? [...pts, p] : pts.map((q, k) => (k === d.k ? p : q)));
   };
@@ -336,6 +396,15 @@ function PeakPlot(props: { run: PeakRunView; width: number; height: number; poin
         onPointerMove={move}
         onPointerUp={up}
         onDoubleClick={dbl}
+        onContextMenu={(e) => {
+          const { px } = at(e);
+          const k = regionAt(px);
+          if (k === null) return;
+          e.preventDefault();
+          e.stopPropagation();
+          props.onSelect(k);
+          setMenu({ x: e.clientX, y: e.clientY, k });
+        }}
         onWheel={(e) => {
           const { px, py } = at(e);
           z.wheel(px, py, e.deltaY, e);
@@ -346,10 +415,78 @@ function PeakPlot(props: { run: PeakRunView; width: number; height: number; poin
             e.stopPropagation();
             props.onView(null);
           }
+          // the region selected: removed (its peak too)
+          if ((e.key === 'Delete' || e.key === 'Backspace') && props.selected !== null) {
+            e.preventDefault();
+            e.stopPropagation();
+            props.onRemove(props.selected);
+          }
         }}
       />
+      {menu &&
+        createPortal(
+          <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(e) => e.stopPropagation()} onContextMenu={(e) => e.preventDefault()}>
+            <button
+              className="danger"
+              onClick={() => {
+                props.onRemove(menu.k);
+                setMenu(null);
+              }}
+            >
+              Remove peak {menu.k + 1} and its region <span className="kbd">Delete</span>
+            </button>
+          </div>,
+          document.body,
+        )}
       <ReaderLayer reader={props.reader} W={W} H={H} map={{ fx, fy, ix, iy, frame: { l: M.l, t: M.t, w: pw, h: ph } }} />
       </div>
+    </div>
+  );
+}
+
+// the formula of a peak of every shape (A its height, xc its centre, w its FWHM)
+const SHAPE_FORMULAS: Record<PeakShape, string> = {
+  gauss: 'A·exp(−4 ln2 (x − xc)²/w²)',
+  lorentz: 'A/(1 + 4(x − xc)²/w²)',
+  voigt: 'A·[η·L + (1 − η)·G], L, G of FWHM w; μ the Lorentzian part of the area',
+  voigtx: 'A·V(x − xc)/V(0), V the Voigt profile: Gaussian FWHM w, Lorentzian FWHM wL',
+  fano: 'A·[(q + ε)²/(1 + ε²) − 1]/(1 + q²), ε = 2(x − xc)/w',
+  ds: 'A·cos(πα/2 + (1 − α)·atan t)/[(1 + t²)^((1 − α)/2)·cos(πα/2)], t = 2(xc − x)/w',
+};
+const SHOWN_PEAKS = 8;
+const pm = (v: number, e: number | undefined) => (e !== undefined && Number.isFinite(e) ? fmtPm(v, e) : fmtNum(v, 5));
+// Under the graph: the shapes' formulas over the baseline, then every peak — its region (or place), centre, height,
+// FWHM, area, area % (a fit: ± the errors of the centre and FWHM; % Gauss of a pseudo-Voigt); R²
+function PeakResults({ table, baseline, r2, fitted, selected, onSelect }: { table: PeakView['table'][number]; baseline: string; r2: number; fitted: boolean; selected: number | null; onSelect: (k: number | null) => void }) {
+  if (!table.length) return null;
+  const shapes = [...new Set(table.flatMap((q) => (q.shape ? [q.shape] : [])))];
+  return (
+    <div className="peak-results">
+      <div className="ellipsis" title={shapes.map((sh) => `${SHAPE_NAMES[sh]}: ${SHAPE_FORMULAS[sh]}`).join('\n')}>
+        {fitted && shapes.length ? (
+          <>
+            y = baseline ({baseline}) + Σ peaks · {shapes.map((sh) => `${SHAPE_NAMES[sh]}: ${SHAPE_FORMULAS[sh]}`).join(' · ')}
+          </>
+        ) : (
+          <span className="muted">measured on the data over the baseline ({baseline}){fitted ? '' : ': Run analysis for the fit'}</span>
+        )}
+        {Number.isFinite(r2) && <span className="muted"> · R² {fmtNum(r2, 6)}</span>}
+      </div>
+      {table.slice(0, SHOWN_PEAKS).map((q, j) => (
+        <div key={j} className={`peak-result${selected === j ? ' on' : ''}`} onClick={() => q.region && onSelect(j)}>
+          <span className="peak-swatch" style={{ background: peakColor(j + 1) }} />
+          <b>{j + 1}</b>
+          {q.of !== undefined && <span className="muted">2× of {q.of}</span>}
+          {q.shape && <span className="muted">{SHAPE_NAMES[q.shape]}</span>}
+          {q.region && <span className="muted">{fmtNum(q.region[0], 5)} – {fmtNum(q.region[1], 5)}</span>}
+          <span>xc = {pm(q.center, q.centerErr)}</span>
+          <span>height = {fmtNum(q.height, 4)}</span>
+          <span>FWHM = {pm(q.fwhm, q.fwhmErr)}</span>
+          <span>area = {fmtNum(q.area, 4)} ({fmtNum(q.pct, 3)} %)</span>
+          {q.gauss !== undefined && <span>Gauss {pm(q.gauss, q.gaussErr)} %</span>}
+        </div>
+      ))}
+      {table.length > SHOWN_PEAKS && <div className="muted">… {table.length - SHOWN_PEAKS} more in the table (in the options)</div>}
     </div>
   );
 }
@@ -362,6 +499,15 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
   const names = (r?.view.available ?? []).map((c) => c.name);
   const [shown, setShown] = useState(0);
   const [mode, setMode] = useState<'none' | 'peak' | 'base' | 'region'>('none');
+  // the region selected on the graph (its peak in the list)
+  const [selReg, setSelReg] = useState<number | null>(null);
+  // Esc: + Region, + Point, Baseline points off
+  useEffect(() => {
+    if (mode === 'none') return;
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && setMode('none');
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, [mode]);
   const [zoom, setZoom] = useState<ZoomMode>('none');
   const [view, setView] = useState<View | null>(null);
   const [out, setOut] = useState(0);
@@ -385,12 +531,31 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
     set({ mode: 'manual', peaks: sorted([...(manual ? list : (run?.found ?? []).map((f) => ({ shape: data.shape, x: +f.x.toPrecision(6) }))), { shape: data.shape, x }]) });
     setMode('none');
   };
-  // a region drawn on the graph: a peak at its maximum (minimum) — the mode stays on for the next one
-  const addRegion = (from: number, to: number) => set({ mode: 'manual', peaks: sorted([...(manual ? list : []), { shape: data.shape, x: (from + to) / 2, from, to }]) });
+  // a region drawn on the graph: a peak at its maximum (minimum) — the mode stays on for the next one; drawn while the
+  // peaks are found automatically, those found stay (as points) and the list becomes yours
+  const addRegion = (from: number, to: number) => {
+    const before = manual ? list : (run?.found ?? []).map((f) => ({ shape: data.shape, x: +f.x.toPrecision(6) }));
+    const peak = { shape: data.shape, x: (from + to) / 2, from, to };
+    const next = sorted([...before, peak]);
+    set({ mode: 'manual', peaks: next });
+    setSelReg(next.indexOf(peak));
+  };
+  // a region moved whole; a peak removed with its region
+  const shiftRegion = (j: number, from: number, to: number) => setPeak(j, { from, to, x: (from + to) / 2 });
+  const removePeak = (j: number) => {
+    set({ peaks: list.filter((_, i) => i !== j) });
+    setSelReg(null);
+  };
   const regions: PeakRegion[] = manual ? list.flatMap((q, j) => (Number.isFinite(q.from) && Number.isFinite(q.to) ? [{ k: j, from: q.from!, to: q.to!, color: peakColor(j + 1) }] : [])) : [];
   // Run analysis: the fit made with these settings (until they change)
   const runIt = () => set({ needRun: true, ran: peakRunKey({ ...data, needRun: true }) });
   const runState = info?.run;
+  // the last fit of every run, shown faded while the settings changed since it (until Run analysis)
+  const [lastFit, setLastFit] = useState<Record<string, PeakRunView>>({});
+  const runLabel = labels[k] ?? '';
+  // (kept as it comes: the state of this render follows the result)
+  if (run && runState === 'fitted' && run.comps.length && lastFit[runLabel] !== run) setLastFit({ ...lastFit, [runLabel]: run });
+  const ghost = runState === 'changed' ? lastFit[runLabel] : undefined;
   // the data reader: the data, the baseline, every peak, the envelope
   const readCurves: ReadCurve[] = run
     ? [
@@ -417,6 +582,11 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
         drawing={mode === 'region' && zoom === 'none'}
         onRegion={addRegion}
         onEdge={(j, side, x) => setPeak(j, { [side]: x })}
+        selected={selReg}
+        onSelect={setSelReg}
+        onShift={shiftRegion}
+        onRemove={removePeak}
+        ghost={ghost}
         xTitle={info?.xName ?? ''}
         yTitle={labels[k] ?? ''}
         zoom={zoom}
@@ -429,11 +599,13 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
   const tools = (
     <>
     <div className="row wrap">
-      {manual && (
-        <button className={`nodrag${mode === 'region' ? ' on' : ''}`} title="Then drag across a peak on the graph: its region, the peak is taken at the maximum (or the minimum) of the data there, and stays in it in the fit; drag the edges of a region to change it" onClick={() => setMode(mode === 'region' ? 'none' : 'region')}>
-          + Region
-        </button>
-      )}
+      <button
+        className={`nodrag${mode === 'region' ? ' on' : ''}`}
+        title={`Then drag across a peak on the graph: its region, the peak is taken at the maximum (or the minimum) of the data there, and stays in it in the fit${manual ? '' : ' (the peaks found stay, as a list of your own)'}. A region: click it to select it, drag it to move it, drag its edges, Delete or right-click to remove it. Esc: off`}
+        onClick={() => setMode(mode === 'region' ? 'none' : 'region')}
+      >
+        + Region
+      </button>
       <button className={`nodrag${mode === 'peak' ? ' on' : ''}`} title={manual ? 'Then click on the graph: a peak at that place (e.g. in a shoulder), added to the list' : 'Then click on the graph: a peak there; the peaks found become a list of your own, with this one'} onClick={() => setMode(mode === 'peak' ? 'none' : 'peak')}>
         + Point
       </button>
@@ -579,7 +751,7 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
           <>
             <div className="peak-list">
               {list.map((q, j) => (
-                <div key={j} className="row">
+                <div key={j} className={`row${selReg === j ? ' on' : ''}`} onClick={() => Number.isFinite(q.from) && setSelReg(j)}>
                   <span className="peak-swatch" style={{ background: peakColor(j + 1) }} />
                   <b>{j + 1}</b>
                   <Select value={q.shape} options={SHAPES} onChange={(shape) => setPeak(j, { shape })} />
@@ -624,7 +796,7 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
                       </Field>
                     </>
                   )}
-                  <button className="nodrag ts-btn" title="Remove this peak" onClick={() => set({ peaks: list.filter((_, i) => i !== j) })}>
+                  <button className="nodrag ts-btn" title="Remove this peak" onClick={() => removePeak(j)}>
                     <X {...IC} />
                   </button>
                 </div>
@@ -717,7 +889,7 @@ export function PeakNodeView({ id, data }: NodeProps<PeakNode>) {
             </table>
           )}
           </NodeOptions>
-          {Number.isFinite(run.r2) && <div className="hint">R² {fmtNum(run.r2, 6)}</div>}
+          <PeakResults table={table} baseline={data.baseline} r2={run.r2} fitted={!!data.fit && runState !== 'changed' && runState !== 'never'} selected={selReg} onSelect={setSelReg} />
         </>
       )}
       <Messages result={r} />

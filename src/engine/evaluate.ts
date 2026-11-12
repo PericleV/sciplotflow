@@ -4053,7 +4053,8 @@ function calculusNode(d: CalculusData, v: Value | undefined, baseIn: Value | und
 // (the envelope), the residuals, the peaks marked; the peaks found automatically (to keep as the list).
 export type PeakRunView = { x: number[]; y: number[]; base: number[]; comps: number[][]; env: number[] | null; resid: number[] | null; marks: { x: number; y: number }[]; found: Found[]; r2: number };
 // run: the state of the fit — fitted, not run yet, or run with other settings (to be run again); none: no fit asked
-export type PeakView = { run?: 'fitted' | 'never' | 'changed'; labels: string[]; runs: PeakRunView[]; xName: string; yNames: string[]; table: { center: number; height: number; fwhm: number; area: number; pct: number; gauss?: number; gaussErr?: number; of?: number }[][] };
+// table: every peak of every run — its shape when fitted, the errors of its centre and FWHM (a fit), its region (drawn)
+export type PeakView = { run?: 'fitted' | 'never' | 'changed'; labels: string[]; runs: PeakRunView[]; xName: string; yNames: string[]; table: { center: number; height: number; fwhm: number; area: number; pct: number; gauss?: number; gaussErr?: number; of?: number; shape?: PeakShape; centerErr?: number; fwhmErr?: number; region?: [number, number] }[][] };
 
 function peakNode(d0: PeakData, v: Value | undefined): Out {
   let d = d0;
@@ -4213,7 +4214,21 @@ function peakNode(d0: PeakData, v: Value | undefined): Out {
       ms.forEach((q, j) => runRows.push({ run: k, label: y.name, k: j + 1, of: parts[j].of !== undefined ? parts[j].of! + 1 : NaN, shape: '', center: q.x, centerErr: NaN, height: q.height, fwhm: q.fwhm, fwhmErr: NaN, area: q.area, pct: (100 * Math.abs(q.area)) / total, gauss: NaN, gaussErr: NaN, centroid: q.centroid, from: q.from, to: q.to, r2: NaN }));
     }
     rows.push(...runRows);
-    table.push(runRows.map((q) => ({ center: q.center, height: q.height, fwhm: q.fwhm, area: q.area, pct: q.pct, ...(Number.isFinite(q.gauss) ? { gauss: q.gauss, gaussErr: q.gaussErr } : {}), ...(Number.isFinite(q.of) ? { of: q.of } : {}) })));
+    table.push(
+      runRows.map((q, j) => ({
+        center: q.center,
+        height: q.height,
+        fwhm: q.fwhm,
+        area: q.area,
+        pct: q.pct,
+        ...(Number.isFinite(q.gauss) ? { gauss: q.gauss, gaussErr: q.gaussErr } : {}),
+        ...(Number.isFinite(q.of) ? { of: q.of } : {}),
+        ...(q.shape ? { shape: q.shape } : {}),
+        ...(Number.isFinite(q.centerErr) ? { centerErr: q.centerErr } : {}),
+        ...(Number.isFinite(q.fwhmErr) ? { fwhmErr: q.fwhmErr } : {}),
+        ...(parts[j]?.lo !== undefined && parts[j]?.hi !== undefined ? { region: [parts[j].lo!, parts[j].hi!] as [number, number] } : {}),
+      })),
+    );
     const marks = runRows.map((q) => {
       const i = X.reduce((b, v, j) => (Math.abs(v - q.center) < Math.abs(X[b] - q.center) ? j : b), 0);
       return { x: q.center, y: base[i] + (comps.length ? comps[q.k - 1][i] : Y[i] - base[i]) };
