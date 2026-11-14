@@ -22,7 +22,7 @@ type Tool = 'none' | 'points' | 'errbar' | 'pipette' | 'area' | 'lasso' | 'exclu
 // a calibration point being placed: one of the axes / corners, or a new grid point
 type Placing = { kind: 'axes' | 'corners'; k: number } | { kind: 'grid' } | null;
 // what the mouse holds: a calibration point, a point of the active set (or an end of its error bar), a shape drawn
-type Hold = { kind: 'axes' | 'corners' | 'grid' | 'point'; k: number; end?: 'hi' | 'lo'; at: Px } | { kind: 'shape'; tool: 'area' | 'lasso' | 'exclude'; path: Px[] } | { kind: 'pan'; sx: number; sy: number; ox: number; oy: number } | { kind: 'zoom'; a: Px; b: Px } | null;
+type Hold = { kind: 'axes' | 'corners' | 'grid' | 'point'; k: number; end?: 'hi' | 'lo'; at: Px } | { kind: 'shape'; tool: 'area' | 'lasso' | 'exclude'; path: Px[] } | { kind: 'pan'; sx: number; sy: number; ox: number; oy: number } | { kind: 'press'; sx: number; sy: number; ox: number; oy: number; at: Px } | { kind: 'zoom'; a: Px; b: Px } | null;
 type View = { ox: number; oy: number; s: number }; // the image pixel at the top left, screen px per image px
 
 const AXES = ['X₁', 'X₂', 'Y₁', 'Y₂'];
@@ -30,8 +30,8 @@ const CORNERS = ['bottom left', 'bottom right', 'top right', 'top left'];
 const CAL_COLOR = '#e67e00';
 const NEAR = 7; // screen px
 const HINT: Record<Tool, string> = {
-  none: 'Drag a calibration point to move it (the arrow keys: 1 px; Shift: 0.1 px). Wheel: zoom around the mouse.',
-  points: 'Click on the curve: a point of the active set; drag a point to move it, double-click to remove it.',
+  none: 'Drag a calibration point to move it (the arrow keys: 1 px; Shift: 0.1 px). Wheel: zoom around the mouse; drag an empty place, or Shift / Space + drag: pan.',
+  points: 'Click on the curve: a point of the active set; drag a point to move it, double-click to remove it. Drag an empty place: pan (with any tool: Shift or Space + drag, or the middle button).',
   errbar: 'Click above or below a point: the upper or lower end of its error bar (double-click an end: removed).',
   pipette: 'Click on the curve (or right beside it): its colour is the one looked for — of the pixels around the click, the one that differs most from the background (then back to Points).',
   area: 'Drag a rectangle: the area searched (then back to Points).',
@@ -61,8 +61,9 @@ const loadImg = (url: string) =>
 // mask: the pixels of the colour looked for, drawn over the image (Show matching pixels)
 function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) => void; img: HTMLImageElement | null; width: number; height: number; tool: Tool; placing: Placing; onPlaced: () => void; zoom: ZoomMode; view: View | null; setView: (v: View | null) => void; pixels: () => ImageData | null; loupe: boolean; onToolDone: () => void; mask: HTMLCanvasElement | null }) {
   const { data: d, set, img, width: W, height: H, tool, placing } = props;
-  // Shift held: a drag pans the image (as the middle button)
+  // Shift or Space held: a drag pans the image (as the middle button), with any tool
   const [shift, setShift] = useState(false);
+  const [space, setSpace] = useState(false);
   const cv = useRef<HTMLCanvasElement>(null);
   const [hold, setHold] = useState<Hold>(null);
   const [mouse, setMouse] = useState<{ x: number; y: number } | null>(null);
@@ -96,7 +97,7 @@ function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) =>
     return [unit(yv / det, -yu / det), unit(-xv / det, xu / det)];
   };
   // the positions while dragged
-  const live = (kind: string, k: number, end?: string): Px | null => (hold && 'at' in hold && hold.kind === kind && hold.k === k && hold.end === end ? hold.at : null);
+  const live = (kind: string, k: number, end?: string): Px | null => (hold && 'k' in hold && hold.kind === kind && hold.k === k && hold.end === end ? hold.at : null);
 
   useEffect(() => {
     const c = cv.current;
@@ -357,7 +358,7 @@ function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) =>
       /* a click still works */
     }
     // pan: the middle button, Shift + drag, or the Pan tool
-    if (e.button === 1 || (e.button === 0 && e.shiftKey) || props.zoom === 'pan') return setHold({ kind: 'pan', sx: x, sy: y, ox: v.ox, oy: v.oy });
+    if (e.button === 1 || (e.button === 0 && (e.shiftKey || space)) || props.zoom === 'pan') return setHold({ kind: 'pan', sx: x, sy: y, ox: v.ox, oy: v.oy });
     if (props.zoom === 'zoom') return setHold({ kind: 'zoom', a: p, b: p });
     if (placing) return placeCal(p);
     const c = calHit(x, y);
@@ -403,7 +404,8 @@ function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) =>
     if (tool === 'points') {
       const k = pointHit(x, y);
       if (k >= 0) return setHold({ kind: 'point', k, at: set0.points[k] });
-      setPoints([...(set0?.points ?? []), p]);
+      // (a press on an empty place: a click adds a point; dragged a few px, it pans instead)
+      setHold({ kind: 'press', sx: x, sy: y, ox: v.ox, oy: v.oy, at: p });
     }
   };
   const move = (e: RPointerEvent<HTMLCanvasElement>) => {
@@ -412,7 +414,11 @@ function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) =>
     if (e.shiftKey !== shift) setShift(e.shiftKey);
     if (!hold) return;
     const p = toImg(x, y);
-    if (hold.kind === 'pan') props.setView({ s: v.s, ox: hold.ox - (x - hold.sx) / v.s, oy: hold.oy - (y - hold.sy) / v.s });
+    if (hold.kind === 'press') {
+      if (Math.hypot(x - hold.sx, y - hold.sy) < 4) return;
+      setHold({ kind: 'pan', sx: hold.sx, sy: hold.sy, ox: hold.ox, oy: hold.oy });
+      props.setView({ s: v.s, ox: hold.ox - (x - hold.sx) / v.s, oy: hold.oy - (y - hold.sy) / v.s });
+    } else if (hold.kind === 'pan') props.setView({ s: v.s, ox: hold.ox - (x - hold.sx) / v.s, oy: hold.oy - (y - hold.sy) / v.s });
     else if (hold.kind === 'zoom') setHold({ ...hold, b: p });
     else if (hold.kind === 'shape') setHold({ ...hold, path: hold.tool === 'lasso' ? [...hold.path, p] : [hold.path[0], p] });
     else setHold({ ...hold, at: p });
@@ -421,6 +427,7 @@ function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) =>
     const h = hold;
     setHold(null);
     if (!h) return;
+    if (h.kind === 'press') return setPoints([...(set0?.points ?? []), h.at]);
     if (h.kind === 'zoom') {
       const [a, b] = [h.a, h.b];
       const [w, hh] = [Math.abs(b.u - a.u), Math.abs(b.v - a.v)];
@@ -468,7 +475,30 @@ function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) =>
     else if (sel.kind === 'corners') set({ corners: d.corners.map((q, k) => (k === sel.k && q ? mv(q) : q)) });
     else set({ grid: d.grid.map((q, k) => (k === sel.k ? mv(q) : q)) });
   };
-  const cursor = props.zoom === 'pan' || hold?.kind === 'pan' || shift ? 'grab' : placing || props.zoom === 'zoom' || tool !== 'none' ? 'crosshair' : 'default';
+  // Space over the image: held for a pan here (the canvas around would pan with it otherwise)
+  const over = mouse !== null;
+  useEffect(() => {
+    if (!over) return;
+    const down = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || (e.target as HTMLElement | null)?.closest?.('input, textarea, [contenteditable="true"]')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setSpace(true);
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      e.stopPropagation();
+      setSpace(false);
+    };
+    window.addEventListener('keydown', down, true);
+    window.addEventListener('keyup', up, true);
+    return () => {
+      window.removeEventListener('keydown', down, true);
+      window.removeEventListener('keyup', up, true);
+      setSpace(false);
+    };
+  }, [over]);
+  const cursor = props.zoom === 'pan' || hold?.kind === 'pan' || shift || space ? 'grab' : placing || props.zoom === 'zoom' || tool !== 'none' ? 'crosshair' : 'default';
   return (
     <canvas
       ref={cv}
