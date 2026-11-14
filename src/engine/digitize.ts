@@ -28,6 +28,10 @@ export type AutoSpec = {
   maxSize: number;
   area: Px[]; // the polygon searched (empty: the whole image)
   exclude: Px[][]; // polygons left out (text, the legend)
+  // how much is taken (absent: normal): a curve — normal, one point every `step` px of the run followed; fine, one on
+  // every column of pixels; all, every run of the colour on every column (branches, steep parts, curves of one colour);
+  // markers — fine: the smallest blobs too (from 1 px)
+  detail?: 'normal' | 'fine' | 'all';
 };
 export type DigitizerData = {
   image: string; // the image (a data URL), kept in the project
@@ -59,10 +63,13 @@ export type Calibration = { toData: (p: Px) => { x: number; y: number }; resid?:
 const lg = (v: number, log: boolean) => (log ? Math.log10(v) : v);
 const ex = (v: number, log: boolean) => (log ? 10 ** v : v);
 
+// a calibration point placed on the image (its value may be typed before it is placed: no place yet)
+export const placed = <T extends Px>(p: T | null | undefined): p is T => !!p && Number.isFinite(p.u) && Number.isFinite(p.v);
+
 // ---- the three calibrations ----
 function axesCal(d: DigitizerData): Calibration | string {
   const [p1, p2, p3, p4] = d.axes;
-  if (!p1 || !p2 || !p3 || !p4) return `Place ${['X₁', 'X₂', 'Y₁', 'Y₂'].filter((_, k) => !d.axes[k]).join(', ')} on the image (the buttons, then a click).`;
+  if (!placed(p1) || !placed(p2) || !placed(p3) || !placed(p4)) return `Place ${['X₁', 'X₂', 'Y₁', 'Y₂'].filter((_, k) => !placed(d.axes[k])).join(', ')} on the image (the buttons, then a click).`;
   // a point placed without its value: every point read would be empty
   const unvalued = ['X₁', 'X₂', 'Y₁', 'Y₂'].filter((_, k) => !Number.isFinite(d.axes[k]!.val));
   if (unvalued.length) return `Write the value of ${unvalued.join(', ')} (the number on the axis where ${unvalued.length > 1 ? 'they were' : 'it was'} placed).`;
@@ -263,7 +270,7 @@ export function autoPoints(img: { data: ArrayLike<number>; w: number; h: number 
   const mask = colorMask(img, a);
   const out: Px[] = [];
   if (a.mode === 'line') {
-    const st = Math.max(1, Math.floor(a.step) || 1);
+    const st = a.detail === 'fine' ? 1 : Math.max(1, Math.floor(a.step) || 1);
     let last: number | null = null;
     for (let u0 = 0; u0 < w; u0 += st) {
       const rows: { v: number; u: number }[] = [];
@@ -278,6 +285,11 @@ export function autoPoints(img: { data: ArrayLike<number>; w: number; h: number 
         else runs.push([p]);
       }
       const mid = (r: typeof rows) => r.reduce((s, p) => s + p.v, 0) / r.length;
+      // (all: every run of the column)
+      if (a.detail === 'all') {
+        for (const r of runs) out.push({ u: r.reduce((s, p) => s + p.u, 0) / r.length + 0.5, v: mid(r) + 0.5 });
+        continue;
+      }
       const run = last === null ? runs.reduce((b, r) => (r.length > b.length ? r : b)) : runs.reduce((b, r) => (Math.abs(mid(r) - last!) < Math.abs(mid(b) - last!) ? r : b));
       const v = mid(run);
       last = v;
@@ -310,7 +322,7 @@ export function autoPoints(img: { data: ArrayLike<number>; w: number; h: number 
           }
         }
     }
-    if (n >= a.minSize && n <= a.maxSize) out.push({ u: su / n + 0.5, v: sv / n + 0.5 });
+    if (n >= (a.detail === 'fine' ? 1 : a.minSize) && n <= a.maxSize) out.push({ u: su / n + 0.5, v: sv / n + 0.5 });
   }
   return out.sort((p, q) => p.u - q.u);
 }

@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent as RKeyboardEv
 import { createPortal } from 'react-dom';
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useNodeResult } from '../engine/engine.ts';
-import { autoPoints, calibrate, inPolygon, SET_COLORS, type AutoSpec, type CalMode, type DigiPoint, type DigitizerData, type GridFit, type Px } from '../engine/digitize.ts';
+import { autoPoints, calibrate, colorMask, inPolygon, placed, SET_COLORS, type AutoSpec, type CalMode, type DigiPoint, type DigitizerData, type GridFit, type Px } from '../engine/digitize.ts';
 import { fmtNum } from '../engine/table.ts';
 import { DIGITIZER_DEFAULTS } from '../defaults.ts';
 import type { AppNode, DigitizerNode } from '../types.ts';
@@ -33,7 +33,7 @@ const HINT: Record<Tool, string> = {
   none: 'Drag a calibration point to move it (the arrow keys: 1 px; Shift: 0.1 px). Wheel: zoom around the mouse.',
   points: 'Click on the curve: a point of the active set; drag a point to move it, double-click to remove it.',
   errbar: 'Click above or below a point: the upper or lower end of its error bar (double-click an end: removed).',
-  pipette: 'Click on the curve: its colour is the one looked for (then back to Points).',
+  pipette: 'Click on the curve (or right beside it): its colour is the one looked for — of the pixels around the click, the one that differs most from the background (then back to Points).',
   area: 'Drag a rectangle: the area searched (then back to Points).',
   lasso: 'Draw around the curve: the area searched (then back to Points).',
   exclude: 'Drag a rectangle over text, the legend, another curve: left out of the search (then back to Points).',
@@ -58,8 +58,11 @@ const loadImg = (url: string) =>
     i.src = url;
   });
 
-function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) => void; img: HTMLImageElement | null; width: number; height: number; tool: Tool; placing: Placing; onPlaced: () => void; zoom: ZoomMode; view: View | null; setView: (v: View | null) => void; pixels: () => ImageData | null; loupe: boolean; onToolDone: () => void }) {
+// mask: the pixels of the colour looked for, drawn over the image (Show matching pixels)
+function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) => void; img: HTMLImageElement | null; width: number; height: number; tool: Tool; placing: Placing; onPlaced: () => void; zoom: ZoomMode; view: View | null; setView: (v: View | null) => void; pixels: () => ImageData | null; loupe: boolean; onToolDone: () => void; mask: HTMLCanvasElement | null }) {
   const { data: d, set, img, width: W, height: H, tool, placing } = props;
+  // Shift held: a drag pans the image (as the middle button)
+  const [shift, setShift] = useState(false);
   const cv = useRef<HTMLCanvasElement>(null);
   const [hold, setHold] = useState<Hold>(null);
   const [mouse, setMouse] = useState<{ x: number; y: number } | null>(null);
@@ -114,6 +117,11 @@ function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) =>
     }
     g.imageSmoothingEnabled = v.s < 3;
     g.drawImage(img, -v.ox * v.s, -v.oy * v.s, d.w * v.s, d.h * v.s);
+    if (props.mask) {
+      g.imageSmoothingEnabled = false;
+      g.drawImage(props.mask, -v.ox * v.s, -v.oy * v.s, d.w * v.s, d.h * v.s);
+      g.imageSmoothingEnabled = v.s < 3;
+    }
     const cross = (p: Px, color: string, label: string, big = false) => {
       const [x, y] = [sx(p), sy(p)];
       g.strokeStyle = '#ffffff';
@@ -175,11 +183,29 @@ function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) =>
     // the calibration
     if (d.cal === 'axes') {
       const a = d.axes.map((p, k) => live('axes', k) ?? p);
+      // a line across the image at every X placed (vertical) and every Y (horizontal), to lay it on its tick; the one being
+      // placed follows the mouse
+      const guide = (x: number | null, y: number | null, strong: boolean) => {
+        g.strokeStyle = strong ? 'rgba(230, 126, 0, 0.9)' : 'rgba(230, 126, 0, 0.45)';
+        g.lineWidth = 1;
+        g.beginPath();
+        if (x !== null) {
+          g.moveTo(Math.round(x) + 0.5, 0);
+          g.lineTo(Math.round(x) + 0.5, H);
+        }
+        if (y !== null) {
+          g.moveTo(0, Math.round(y) + 0.5);
+          g.lineTo(W, Math.round(y) + 0.5);
+        }
+        g.stroke();
+      };
+      a.forEach((p, k) => placed(p) && guide(k < 2 ? sx(p) : null, k < 2 ? null : sy(p), sel?.kind === 'axes' && sel.k === k));
+      if (placing?.kind === 'axes' && mouse) guide(placing.k < 2 ? mouse.x : null, placing.k < 2 ? null : mouse.y, true);
       for (const [i, j] of [
         [0, 1],
         [2, 3],
       ])
-        if (a[i] && a[j]) {
+        if (placed(a[i]) && placed(a[j])) {
           g.strokeStyle = 'rgba(230, 126, 0, 0.6)';
           g.setLineDash([6, 4]);
           g.lineWidth = 1;
@@ -189,7 +215,11 @@ function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) =>
           g.stroke();
           g.setLineDash([]);
         }
-      a.forEach((p, k) => p && cross(p, CAL_COLOR, AXES[k], sel?.kind === 'axes' && sel.k === k));
+      // (each its value beside its name: X₁ = 400)
+      a.forEach((p, k) => {
+        const val = d.axes[k]?.val ?? NaN;
+        if (placed(p)) cross(p, CAL_COLOR, Number.isFinite(val) ? `${AXES[k]} = ${fmtNum(val, 6)}` : AXES[k], sel?.kind === 'axes' && sel.k === k);
+      });
     } else if (d.cal === 'corners') {
       const c = d.corners.map((p, k) => live('corners', k) ?? p);
       if (c.every(Boolean)) poly(c as Px[], CAL_COLOR, 'rgba(0, 0, 0, 0)');
@@ -245,7 +275,7 @@ function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) =>
         const ly = (q: Px) => cy + (q.v - p.v) * m;
         d.sets.forEach((s) => s.points.forEach((q) => plus(lx(q), ly(q), arms(q), s.color, mark.size * 1.6, mark.width)));
         for (const q of [...(d.cal === 'axes' ? d.axes : d.cal === 'corners' ? d.corners : d.grid)]) {
-          if (!q) continue;
+          if (!placed(q)) continue;
           g.strokeStyle = CAL_COLOR;
           g.lineWidth = 1.5;
           g.beginPath();
@@ -281,7 +311,7 @@ function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) =>
       g.fillText(txt, 9, H - 8);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [img, d, v.ox, v.oy, v.s, W, H, hold, mouse, sel, cal, props.loupe]);
+  }, [img, d, v.ox, v.oy, v.s, W, H, hold, mouse, sel, cal, props.loupe, props.mask, placing]);
 
   // the mouse
   const at = (e: { clientX: number; clientY: number }) => {
@@ -326,7 +356,8 @@ function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) =>
     } catch {
       /* a click still works */
     }
-    if (e.button === 1 || props.zoom === 'pan') return setHold({ kind: 'pan', sx: x, sy: y, ox: v.ox, oy: v.oy });
+    // pan: the middle button, Shift + drag, or the Pan tool
+    if (e.button === 1 || (e.button === 0 && e.shiftKey) || props.zoom === 'pan') return setHold({ kind: 'pan', sx: x, sy: y, ox: v.ox, oy: v.oy });
     if (props.zoom === 'zoom') return setHold({ kind: 'zoom', a: p, b: p });
     if (placing) return placeCal(p);
     const c = calHit(x, y);
@@ -337,16 +368,24 @@ function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) =>
     if (tool === 'pipette') {
       const px = props.pixels();
       if (!px) return;
+      // the colour of the curve under the click: of the pixels around it (5 × 5), the one farthest from their middle
+      // colour (the background, on a thin line) — an average would be mostly the background
       const [u0, v0] = [Math.floor(p.u), Math.floor(p.v)];
-      let [r, gg, b, n] = [0, 0, 0, 0];
-      for (let dv = -1; dv <= 1; dv++)
-        for (let du = -1; du <= 1; du++) {
+      const around: [number, number, number][] = [];
+      for (let dv = -2; dv <= 2; dv++)
+        for (let du = -2; du <= 2; du++) {
           const [u, w] = [u0 + du, v0 + dv];
           if (u < 0 || w < 0 || u >= px.width || w >= px.height) continue;
           const o = 4 * (w * px.width + u);
-          [r, gg, b, n] = [r + px.data[o], gg + px.data[o + 1], b + px.data[o + 2], n + 1];
+          around.push([px.data[o], px.data[o + 1], px.data[o + 2]]);
         }
-      if (n) set({ auto: { ...d.auto, color: [Math.round(r / n), Math.round(gg / n), Math.round(b / n)] } });
+      if (around.length) {
+        const mid = [0, 1, 2].map((c) => [...around].sort((x, y) => x[c] - y[c])[Math.floor(around.length / 2)][c]);
+        const far = (q: [number, number, number]) => (q[0] - mid[0]) ** 2 + (q[1] - mid[1]) ** 2 + (q[2] - mid[2]) ** 2;
+        const best = around.reduce((x, y) => (far(y) > far(x) ? y : x));
+        // (all alike: the colour clicked on is the middle one)
+        set({ auto: { ...d.auto, color: far(best) > 30 ** 2 ? best : (mid as [number, number, number]) } });
+      }
       props.onToolDone();
       return;
     }
@@ -370,6 +409,7 @@ function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) =>
   const move = (e: RPointerEvent<HTMLCanvasElement>) => {
     const { x, y } = at(e);
     setMouse({ x, y });
+    if (e.shiftKey !== shift) setShift(e.shiftKey);
     if (!hold) return;
     const p = toImg(x, y);
     if (hold.kind === 'pan') props.setView({ s: v.s, ox: hold.ox - (x - hold.sx) / v.s, oy: hold.oy - (y - hold.sy) / v.s });
@@ -428,7 +468,7 @@ function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) =>
     else if (sel.kind === 'corners') set({ corners: d.corners.map((q, k) => (k === sel.k && q ? mv(q) : q)) });
     else set({ grid: d.grid.map((q, k) => (k === sel.k ? mv(q) : q)) });
   };
-  const cursor = props.zoom === 'pan' || hold?.kind === 'pan' ? 'grab' : placing || props.zoom === 'zoom' || tool !== 'none' ? 'crosshair' : 'default';
+  const cursor = props.zoom === 'pan' || hold?.kind === 'pan' || shift ? 'grab' : placing || props.zoom === 'zoom' || tool !== 'none' ? 'crosshair' : 'default';
   return (
     <canvas
       ref={cv}
@@ -441,7 +481,11 @@ function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) =>
       onPointerLeave={() => setMouse(null)}
       onDoubleClick={dbl}
       onWheel={wheel}
-      onKeyDown={key}
+      onKeyDown={(e) => {
+        if (e.key === 'Shift') setShift(true);
+        key(e);
+      }}
+      onKeyUp={(e) => e.key === 'Shift' && setShift(false)}
       onContextMenu={(e) => e.preventDefault()}
     />
   );
@@ -514,6 +558,31 @@ export function DigitizerNodeView({ id, data }: NodeProps<DigitizerNode>) {
     set({ sets: d.sets.map((s, j) => (j === act ? { ...s, points: [...keep, ...found] } : s)) });
   };
   // a tool chosen (not switched off by a second click: Points is the tool to come back to)
+  // the colour looked for: the pixels it takes (drawn over the image when asked) and the points it would give
+  const [showMask, setShowMask] = useState(false);
+  const autoKey = JSON.stringify([d.auto, d.image.length, d.w, d.h, !!img]);
+  const preview = useMemo(() => {
+    if (!d.auto.color || !img) return null;
+    const px = pixels();
+    if (!px) return null;
+    const im = { data: px.data, w: px.width, h: px.height };
+    const n = autoPoints(im, d.auto).length;
+    if (!showMask) return { n, mask: null };
+    const m = colorMask(im, d.auto);
+    const c = document.createElement('canvas');
+    [c.width, c.height] = [px.width, px.height];
+    const g = c.getContext('2d')!;
+    const out = g.createImageData(px.width, px.height);
+    for (let i = 0; i < m.length; i++)
+      if (m[i]) {
+        out.data[4 * i] = 255;
+        out.data[4 * i + 2] = 255;
+        out.data[4 * i + 3] = 170;
+      }
+    g.putImageData(out, 0, 0);
+    return { n, mask: c };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoKey, showMask]);
   const pick = (t: Tool) => {
     setTool(t);
     setPlacing(null);
@@ -530,7 +599,7 @@ export function DigitizerNodeView({ id, data }: NodeProps<DigitizerNode>) {
   };
   const out = r?.outputs.out;
   const btn = (on: boolean) => `nodrag${on ? ' on' : ''}`;
-  const board = (w: number, h: number) => <Board data={d} set={set} img={img} width={w} height={h} tool={tool} placing={placing} onPlaced={() => setPlacing(placing?.kind === 'grid' ? placing : null)} onToolDone={() => setTool('points')} zoom={zoom} view={view} setView={setView} pixels={pixels} loupe={d.loupe !== false} />;
+  const board = (w: number, h: number) => <Board data={d} set={set} img={img} width={w} height={h} tool={tool} placing={placing} onPlaced={() => setPlacing(placing?.kind === 'grid' ? placing : null)} onToolDone={() => setTool('points')} zoom={zoom} view={view} setView={setView} pixels={pixels} loupe={d.loupe !== false} mask={preview?.mask ?? null} />;
   const tools = (
     <>
       <div className="row wrap">
@@ -618,8 +687,8 @@ export function DigitizerNodeView({ id, data }: NodeProps<DigitizerNode>) {
           <div className="digi-cal">
             {AXES.map((lab, k) => (
               <span key={k} className="row">
-                <button className={btn(placing?.kind === 'axes' && placing.k === k)} title={`Then click on the image: ${lab}, a point of the ${k < 2 ? 'X' : 'Y'} axis whose value you know (a tick)`} onClick={() => place({ kind: 'axes', k })}>
-                  {d.axes[k] ? `✓ ${lab}` : lab}
+                <button className={btn(placing?.kind === 'axes' && placing.k === k)} title={`Then click on the image: ${lab}, a point of the ${k < 2 ? 'X' : 'Y'} axis whose value you know (a tick): a ${k < 2 ? 'vertical' : 'horizontal'} line follows the mouse, to lay on the tick`} onClick={() => place({ kind: 'axes', k })}>
+                  {placed(d.axes[k]) ? `✓ ${lab}` : lab}
                 </button>
                 <NumInput className="short" value={d.axes[k]?.val ?? NaN} placeholder={k < 2 ? 'X value' : 'Y value'} onChange={(val) => set({ axes: d.axes.map((q, j) => (j === k ? { u: q?.u ?? NaN, v: q?.v ?? NaN, val } : q)) })} />
               </span>
@@ -744,6 +813,16 @@ export function DigitizerNodeView({ id, data }: NodeProps<DigitizerNode>) {
       </details>
       <details open={!!d.auto.color}>
         <summary>Auto (by colour)</summary>
+        <div className={`digi-auto-state${d.auto.color ? ' on' : ''}`}>
+          {d.auto.color ? (
+            <>
+              Auto: <span className="digi-swatch" style={{ background: `rgb(${d.auto.color.join(',')})` }} /> colour picked · tolerance {d.auto.tol} % ·{' '}
+              {preview ? `${preview.n} point${preview.n === 1 ? '' : 's'} would be found ${d.auto.area.length >= 3 ? 'in the area' : 'in the whole image'}` : '…'}
+            </>
+          ) : (
+            'Auto: off — pick the colour of the curve with the Pipette'
+          )}
+        </div>
         <div className="row wrap">
           <button className={btn(tool === 'pipette')} title={HINT.pipette} onClick={() => pick('pipette')}>
             Pipette
@@ -759,6 +838,23 @@ export function DigitizerNodeView({ id, data }: NodeProps<DigitizerNode>) {
               ['markers', 'markers (symbols)'],
             ]}
             onChange={(mode) => setAuto({ mode })}
+          />
+          <Select<NonNullable<AutoSpec['detail']>>
+            value={d.auto.detail ?? 'normal'}
+            title={d.auto.mode === 'line' ? 'Normal: one point every so many px, the curve followed; fine: a point on every column of pixels; all: every part of that colour on every column (branches, steep parts, several curves of one colour)' : 'Normal: the markers of the size given; fine: the smallest blobs too (from 1 px)'}
+            options={
+              d.auto.mode === 'line'
+                ? [
+                    ['normal', 'normal'],
+                    ['fine', 'fine (every px)'],
+                    ['all', 'all (every branch)'],
+                  ]
+                : [
+                    ['normal', 'normal'],
+                    ['fine', 'fine (small ones too)'],
+                  ]
+            }
+            onChange={(detail) => setAuto({ detail: detail === 'normal' ? undefined : detail })}
           />
           {d.auto.mode === 'line' ? (
             <Field label="A point every" title="Pixels of the image across">
@@ -788,9 +884,10 @@ export function DigitizerNodeView({ id, data }: NodeProps<DigitizerNode>) {
               Clear areas
             </button>
           )}
+          <Check label="Show matching pixels" title="The pixels of that colour (within the tolerance, in the area) drawn over the image in magenta: what the search sees" value={showMask} onChange={setShowMask} />
           <span className="grow" />
-          <button className="nodrag" disabled={!d.auto.color || !img} title={`The points of that colour ${d.auto.area.length >= 3 ? 'in the area' : 'in the whole image'} into the active set (its points in the area replaced)`} onClick={find}>
-            Find points
+          <button className="nodrag btn-run" disabled={!d.auto.color || !img} title={`The points of that colour ${d.auto.area.length >= 3 ? 'in the area' : 'in the whole image'} into the active set (its points in the area replaced)`} onClick={find}>
+            Find points{preview ? ` (${preview.n})` : ''}
           </button>
         </div>
       </details>

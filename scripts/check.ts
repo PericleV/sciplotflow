@@ -3211,6 +3211,9 @@ for (const ex of EXAMPLES) {
   const c2 = calibrate(D({ axes: [{ ...L(1, 0), val: 1 }, { ...L(1000, 0), val: 1000 }, { ...L(1, 2), val: 2 }, { ...L(1, 7), val: 7 }], logX: true }));
   ok(typeof c2 !== 'string' && near(c2.toData(L(37, 3)).x, 37, 1e-9) && near(c2.toData(L(37, 3)).y, 3, 1e-9), 'Digitizer: a logarithmic X axis');
   ok(typeof calibrate(D({ axes: [axes[0], axes[1], { ...T(4, 0), val: 2 }, { ...T(6, 0), val: 7 }] })) === 'string', 'Digitizer: parallel axes refused');
+  // a value typed before its point is placed: not placed (no NaN from it), said so
+  const early = calibrate(D({ axes: [{ u: NaN, v: NaN, val: 400 }, axes[1], axes[2], axes[3]] }));
+  ok(typeof early === 'string' && early.startsWith('Place X₁'), `Digitizer: an axis value typed before the point is placed asks for its place — ${early}`);
   const noVal = calibrate(D({ axes: [axes[0], { ...axes[1], val: NaN }, axes[2], { ...axes[3], val: NaN }] }));
   ok(typeof noVal === 'string' && noVal.includes('X₂, Y₂'), `Digitizer: points placed without their values — said, not read as empty points (${noVal})`);
   // a page photographed at an angle: a projective map
@@ -3275,6 +3278,18 @@ for (const ex of EXAMPLES) {
   ok(mk.length === 4 && mk.every((p, k) => p.u - 0.5 === marks[k][0] && p.v - 0.5 === marks[k][1]), 'Digitizer: markers found, their centres exact');
   const area = autoPoints(img, { ...A, area: [{ u: 0, v: 0 }, { u: 150, v: 0 }, { u: 150, v: h }, { u: 0, v: h }], exclude: [[{ u: 0, v: 0 }, { u: 50, v: 0 }, { u: 50, v: h }, { u: 0, v: h }]] });
   ok(area.length > 0 && area.every((p) => p.u > 50 && p.u < 151), 'Digitizer: only in the area, not in the part left out');
+  // more points when asked: fine — one on every column; all — every part of the colour on a column (a second curve of
+  // the same colour, 40 px under the first); markers fine — a 1 px dot too
+  const fine = autoPoints(img, { ...A, detail: 'fine' });
+  const twin = new Uint8ClampedArray(data);
+  for (let u = 0; u < w; u++) twin.set([220, 30, 30, 255], 4 * (Math.min(h - 1, Math.round(curve(u)) + 40) * w + u));
+  const one = autoPoints({ data: twin, w, h }, A);
+  const both = autoPoints({ data: twin, w, h }, { ...A, detail: 'all' });
+  const dot = new Uint8ClampedArray(data);
+  dot.set([30, 30, 220, 255], 4 * (60 * w + 160));
+  const mkN = autoPoints({ data: dot, w, h }, { ...A, mode: 'markers', color: [30, 30, 220] });
+  const mkF = autoPoints({ data: dot, w, h }, { ...A, mode: 'markers', color: [30, 30, 220], detail: 'fine' });
+  ok(fine.length === w && one.length === 30 && both.length === 60 && mkN.length === 4 && mkF.length === 5, `Digitizer: fine (${fine.length}), all (${both.length} of two curves, ${one.length} followed), small markers too (${mkF.length})`);
 }
 
 {
