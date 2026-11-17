@@ -649,8 +649,8 @@ function GenFields({ g, set, children, typed = false }: { g: GenSpec; set: (p: P
         />
       </Field>
       {g.mode === 'typed' && (
-        <Field label="Typed" title="The values in order, separated by commas (10, 20, 35), by ; when they have a decimal comma (1,5; 2,3), or one per line; an empty one between two separators: an empty cell. Numbers, or text (a column of text, e.g. the names of the samples). As many rows as typed (a column on “like”: its rows)">
-          <TextInput value={g.typed ?? ''} placeholder="10, 20, 35, 50" onChange={(v) => set({ typed: v })} />
+        <Field label="Typed" title="The values in order, separated by commas (10, 20, 35), by ; when they have a decimal comma (1,5; 2,3), or by spaces (10 20 35); cells pasted from a spreadsheet (a column or a row) come as 1; 2; 3; an empty one between two separators: an empty cell. Numbers, or text (a column of text, e.g. the names of the samples). As many rows as typed (a column on “like”: its rows)">
+          <TextInput list value={g.typed ?? ''} placeholder="10, 20, 35, 50" onChange={(v) => set({ typed: v })} />
         </Field>
       )}
       {g.mode !== 'typed' && children}
@@ -1228,8 +1228,8 @@ export function ColumnsNodeView({ id, data: nodeData }: NodeProps<ColumnsNode>) 
                   </Field>
                 )}
                 {kind === 'typed' && (
-                  <Field label="Values" title="Its values in order, separated by commas (10, 20, 35), by ; when they have a decimal comma (1,5; 2,3), or one per line; an empty one between two separators: an empty cell. Numbers, or text (a column of text, e.g. the names of the samples). As many rows as the data: those not typed stay empty">
-                    <TextInput value={c.typed ?? ''} placeholder="10, 20, 35, 50" onChange={(typed) => setComputed(c.id, { typed })} />
+                  <Field label="Values" title="Its values in order, separated by commas (10, 20, 35), by ; when they have a decimal comma (1,5; 2,3), or by spaces (10 20 35); cells pasted from a spreadsheet (a column or a row) come as 1; 2; 3; an empty one between two separators: an empty cell. Numbers, or text (a column of text, e.g. the names of the samples). As many rows as the data: those not typed stay empty">
+                    <TextInput list value={c.typed ?? ''} placeholder="10, 20, 35, 50" onChange={(typed) => setComputed(c.id, { typed })} />
                   </Field>
                 )}
                 {kind === 'typed' && line && <div className="hint">{line.rows} rows.</div>}

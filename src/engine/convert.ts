@@ -110,6 +110,12 @@ export function readCell(raw: string, r: ToNumberRules, dec: '.' | ','): Cell {
       if (!Number.isNaN(v)) return unitPart({ v, err: Number(p[2]) * 10 ** -decimals }, p[3], r);
     }
   }
+  // the exponent of Fortran: “1.0D-3”
+  const fd = /^([+\-−]?(?:\d+[.,]?\d*|[.,]\d+))[dD]([+\-−]?\d+)$/.exec(s);
+  if (fd) {
+    const v = plain(fd[1], dec, false);
+    if (!Number.isNaN(v)) return { v: v * 10 ** Number(fd[2].replace('−', '-')) };
+  }
   // a number and a unit after it: “300 K”, “1,5 eV”, “25 %”
   const u = new RegExp(`^(${NUM})\\s*([^\\d\\s].*)$`).exec(s);
   if (u) {
@@ -132,7 +138,8 @@ export function readCell(raw: string, r: ToNumberRules, dec: '.' | ','): Cell {
 function unitPart(c: { v: number; err?: number }, rest: string, r: ToNumberRules): Cell {
   const unit = rest.trim();
   if (!unit) return c;
-  if (!r.units || unit.length > 12 || /\d{2,}/.test(unit)) return r.first ? c : null;
+  // (not a unit: a sign or a number after it, “3-4”, an exponent, “1.0E-3x”)
+  if (!r.units || unit.length > 12 || /\d{2,}/.test(unit) || /^[+\-−\d.,]/.test(unit) || /^[dDeE][+\-−]?\d/.test(unit)) return r.first ? c : null;
   if (unit === '%' && r.percent === 'fraction') return { v: c.v / 100, ...(c.err !== undefined ? { err: c.err / 100 } : {}) };
   return { ...c, unit };
 }

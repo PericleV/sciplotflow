@@ -60,7 +60,9 @@ export function SciInput({ value, onChange, className, title, unit }: { value: n
 }
 
 // (the text kept as typed: useTyped, ../ui/useTyped.ts)
-export function TextInput({ value, onChange, placeholder, className, title }: { value: string; onChange: (v: string) => void; placeholder?: string; className?: string; title?: string }) {
+// list: a list of values (cells pasted from a spreadsheet, a column or a row, become “a; b; c”: one line of text would
+// drop the line breaks and join the numbers)
+export function TextInput({ value, onChange, placeholder, className, title, list }: { value: string; onChange: (v: string) => void; placeholder?: string; className?: string; title?: string; list?: boolean }) {
   const [typed, setTyped] = useTyped(value);
   return (
     <input
@@ -70,6 +72,18 @@ export function TextInput({ value, onChange, placeholder, className, title }: { 
       placeholder={placeholder}
       title={title}
       spellCheck={false}
+      onPaste={(e) => {
+        const t = e.clipboardData.getData('text/plain');
+        if (!list || !/[\n\t]/.test(t)) return;
+        e.preventDefault();
+        const cells = t.split(/\r?\n|\r|\t/).map((x) => x.trim());
+        while (cells.length && !cells[cells.length - 1]) cells.pop();
+        const el = e.currentTarget;
+        const [a, b] = [el.selectionStart ?? el.value.length, el.selectionEnd ?? el.value.length];
+        const v = el.value.slice(0, a) + cells.join('; ') + el.value.slice(b);
+        setTyped(v);
+        onChange(v);
+      }}
       onChange={(e) => {
         setTyped(e.target.value);
         onChange(e.target.value);

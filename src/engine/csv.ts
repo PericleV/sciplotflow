@@ -306,8 +306,12 @@ export function parseCsv(text: string, o: CsvOptions, name = 'data'): CsvResult 
     const guess = o.decimal === 'auto' ? detectDecimal(guessFrom.flatMap((l) => splitLine(l, noComma))) : decimal;
     const found = detectDelimiter(guessFrom, guess);
     delimiter = found.d;
-    // "1,2" with nothing else to cut the lines: comma-separated numbers rather than one column of decimal commas
-    if (o.decimal === 'auto' && guess === ',' && found.score === 0) delimiter = ',';
+    // "1,2" with nothing else to cut the lines: comma-separated numbers rather than one column of decimal commas —
+    // unless a names line above them has one name only (one column pasted from a spreadsheet in a comma locale:
+    // "Absorbance" over "0,125")
+    const head = sample.find((l) => !looksLikeData(l));
+    const oneName = head !== undefined && splitLine(head, ',').filter((c) => c.trim() !== '').length === 1 && numeric.every((l) => splitLine(l, ',').length === 2);
+    if (o.decimal === 'auto' && guess === ',' && found.score === 0 && !oneName) delimiter = ',';
     if (o.decimal === 'auto') decimal = delimiter === ',' ? '.' : guess;
   } else {
     delimiter = o.delimiter === 'custom' ? (o.custom ?? '').replace(/\\t/g, '\t') : o.delimiter;

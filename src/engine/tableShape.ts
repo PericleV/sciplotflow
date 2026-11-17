@@ -89,7 +89,8 @@ export function transposeTable(ds: Dataset, d: TransposeData): { dataset: Datase
   if (d.head !== 'none') {
     const old = data.map((c) => c.name);
     if (d.head === 'number') {
-      const r = numbersInNames(old, 'Value');
+      // (the number in the name without its unit: “I 300 K (mA)” → 300 K)
+      const r = numbersInNames(old.map(bareName), 'Value');
       if (r.failed.length) warnings.push(`No number in ${r.failed.length} name${r.failed.length === 1 ? '' : 's'}: ${r.failed.slice(0, 4).join(', ')}${r.failed.length > 4 ? ' …' : ''} (left empty).`);
       out.push({ ...column(d.headName?.trim() || r.name, Float64Array.from(r.values)), role: 'x' });
     } else out.push({ ...column(d.headName?.trim() || 'Name', new Float64Array(old.length).fill(NaN), old), role: 'label' });
@@ -114,7 +115,7 @@ export function stackColumns(ds: Dataset, d: StackData): { dataset: Dataset; war
   const ys = runs.map((r) => r.columns[1]);
   // (the numbers: the value each column keeps from where it was cut or turned, else the number in its name)
   const kept = ys.every((c) => c.key && c.key.name === ys[0].key?.name);
-  const keys = d.key !== 'number' ? null : kept ? { values: ys.map((c) => c.key!.value), name: ys[0].key!.name, failed: [] } : numbersInNames(ys.map((c) => c.name), 'Name');
+  const keys = d.key !== 'number' ? null : kept ? { values: ys.map((c) => c.key!.value), name: ys[0].key!.name, failed: [] } : numbersInNames(ys.map((c) => bareName(c.name)), 'Name');
   if (keys?.failed.length) warnings.push(`No number in ${keys.failed.length} name${keys.failed.length === 1 ? '' : 's'}: ${keys.failed.slice(0, 4).join(', ')}${keys.failed.length > 4 ? ' …' : ''} (left empty).`);
   const [kv, kt, xv, yv, ev]: [number[], string[], number[], number[], number[]] = [[], [], [], [], []];
   const xText: string[] = [];
@@ -141,7 +142,7 @@ export function stackColumns(ds: Dataset, d: StackData): { dataset: Dataset; war
   const xName = runs.every((r) => r.columns[0].name === X0.name) ? X0.name : 'X';
   // (the values: named as asked, else by the unit the columns share)
   const units = [...new Set(ys.map((c) => unitOf(c.name)))];
-  const valueName = d.valueName?.trim() || (units.length === 1 && units[0] && d.key === 'text' ? withUnit('Value', units[0]) : 'Value');
+  const valueName = d.valueName?.trim() || (units.length === 1 && units[0] ? withUnit('Value', units[0]) : 'Value');
   const cols: Column[] = [keyCol, { ...column(xName, Float64Array.from(xv), xHasText ? xText : undefined), role: 'x' }, { ...column(valueName, Float64Array.from(yv)), role: 'y' }];
   if (hasErr) cols.push({ ...column(withUnit(`${bareName(valueName)} error`, unitOf(valueName)), Float64Array.from(ev)), role: 'yerr' });
   return { dataset: { name: ds.name, columns: cols }, warnings };
@@ -156,17 +157,23 @@ export function columnsToSheets(ds: Dataset, d: ToSheetsData): { book: Workbook;
     const by = findColumn(ds.columns, d.by);
     if (!by) return `By: no column “${d.by}”.`;
     // (the rows of every value, in the order the values first come; an empty cell its own sheet, “(empty)”)
-    const groups = new Map<string, number[]>();
+    // (grouped by the value itself, not its text: 1234567 and 1234568 are two sheets; the name the short text, the
+    // full number when two would be named alike)
+    const groups = new Map<string, { name: string; num: number; rows: number[] }>();
     for (let i = 0; i < by.values.length; i++) {
       const t = by.text?.[i];
-      const key = t !== undefined && t !== '' && !Number.isFinite(by.values[i]) ? t : Number.isFinite(by.values[i]) ? fmtNum(by.values[i]) : '(empty)';
+      const v = by.values[i];
+      const [key, name] = t !== undefined && t !== '' && !Number.isFinite(v) ? [`t:${t}`, t] : Number.isFinite(v) ? [`n:${v}`, fmtNum(v)] : ['e', '(empty)'];
       const g = groups.get(key);
-      if (g) g.push(i);
-      else groups.set(key, [i]);
+      if (g) g.rows.push(i);
+      else groups.set(key, { name, num: v, rows: [i] });
     }
-    sheets = [...groups].map(([key, rows]) => ({
-      name: key,
-      columns: ds.columns.map((c) => ({ ...c, values: Float64Array.from(rows, (i) => (i < c.values.length ? c.values[i] : NaN)), ...(c.text ? { text: rows.map((i) => c.text![i] ?? '') } : {}) })),
+    const list = [...groups.values()];
+    const named = (g: { name: string; num: number }) => (Number.isFinite(g.num) && list.some((o) => o !== g && o.name === g.name) ? String(g.num) : g.name);
+    sheets = list.map((g) => ({
+      name: named(g),
+      // (the mask of every column cut with its rows)
+      columns: ds.columns.map((c) => ({ ...c, values: Float64Array.from(g.rows, (i) => (i < c.values.length ? c.values[i] : NaN)), ...(c.text ? { text: g.rows.map((i) => c.text![i] ?? '') } : {}), ...(c.mask ? { mask: Uint8Array.from(g.rows, (i) => c.mask![i] ?? 0) } : { mask: undefined }) })),
     }));
   } else {
     const runs = columnRuns(ds, d);

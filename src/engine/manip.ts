@@ -9,7 +9,9 @@ import { maxOf } from './minmax.ts';
 
 export type ManipKind = 'mask' | 'unmask' | 'delete' | 'move' | 'scale' | 'set' | 'restore';
 // rows: "3, 7-12"; move: dx, dy added; scale: × factor on `axis`; set: `axis` = value. n: the rows the input had then.
-export type ManipOp = { kind: ManipKind; rows: string; n: number; dx?: number; dy?: number; axis?: 'x' | 'y'; factor?: number; value?: number };
+// x, y (move, scale, set): the columns it was made on (x '': the row number), so it stays on them when another X or Y
+// is chosen later (absent, in older projects: the columns chosen now)
+export type ManipOp = { kind: ManipKind; rows: string; n: number; dx?: number; dy?: number; axis?: 'x' | 'y'; factor?: number; value?: number; x?: string; y?: string };
 
 // The state of every input row after the operations (for the node's graph and table).
 export const ROW_MASKED = 1;
@@ -42,9 +44,24 @@ export function applyManip(ds: Dataset, xName: string, yName: string, ops: Manip
   const inMask = maskOf(ds.columns, n);
   if (inMask) for (let i = 0; i < n; i++) if (inMask[i]) state[i] |= ROW_MASKED;
   const warnings: string[] = [];
-  let changedX = false;
-  let changedY = false;
+  // the values changed, by column (the columns of every operation its own: those it was made on)
+  const changed = new Map<number, Float64Array>();
+  const colOf = (name: string | undefined, now: number, k: number, what: string): number => {
+    if (name === undefined) return now;
+    if (name === '') return -1;
+    const j = ds.columns.indexOf(findColumn(ds.columns, name)!);
+    if (j < 0) warnings.push(`Operation ${k + 1}: its ${what} column “${name}” is no longer in the data (left out).`);
+    return j < 0 ? -2 : j;
+  };
+  const arrOf = (j: number) => {
+    let a = changed.get(j);
+    if (!a) changed.set(j, (a = j === xi ? x : j === yi ? y : Float64Array.from({ length: n }, (_, i) => (i < ds.columns[j].values.length ? ds.columns[j].values[i] : NaN))));
+    return a;
+  };
   ops.forEach((op, k) => {
+    const ox = op.kind === 'move' || op.kind === 'scale' || op.kind === 'set' ? colOf(op.x, xi, k, 'X') : xi;
+    const oy = op.kind === 'move' || op.kind === 'scale' || op.kind === 'set' ? colOf(op.y, yi, k, 'Y') : yi;
+    if (ox === -2 || oy === -2) return;
     if (op.n !== n) warnings.push(`Operation ${k + 1} was made on ${op.n} rows, the data now have ${n}: its rows may not be the same.`);
     const rows = parseRows(op.rows, n);
     if (typeof rows === 'string') {
@@ -68,24 +85,17 @@ export function applyManip(ds: Dataset, xName: string, yName: string, ops: Manip
           state[i] |= ROW_DELETED;
           break;
         case 'move':
-          if (op.dx) {
-            if (xi < 0) break;
-            x[i] += op.dx;
-            changedX = true;
-          }
-          if (op.dy) {
-            y[i] += op.dy;
-            changedY = true;
-          }
-          state[i] |= ROW_CHANGED;
+          // (X the row number: only Y moves)
+          if (op.dx && ox >= 0) arrOf(ox)[i] += op.dx;
+          if (op.dy) arrOf(oy)[i] += op.dy;
+          if ((op.dx && ox >= 0) || op.dy) state[i] |= ROW_CHANGED;
           break;
         case 'scale':
         case 'set': {
-          const arr = op.axis === 'x' ? x : y;
-          if (op.axis === 'x' && xi < 0) break;
+          const j = op.axis === 'x' ? ox : oy;
+          if (j < 0) break;
+          const arr = arrOf(j);
           arr[i] = op.kind === 'scale' ? arr[i] * (op.factor ?? 1) : (op.value ?? NaN);
-          if (op.axis === 'x') changedX = true;
-          else changedY = true;
           state[i] |= ROW_CHANGED;
           break;
         }
@@ -99,7 +109,7 @@ export function applyManip(ds: Dataset, xName: string, yName: string, ops: Manip
   let anyMask = false;
   for (let i = 0; i < n; i++) if (state[i] & ROW_MASKED && !(state[i] & ROW_DELETED)) anyMask = true;
   const columns = ds.columns.map((c, j) => {
-    const vals = j === xi && changedX ? x : j === yi && changedY ? y : c.values;
+    const vals = changed.get(j) ?? c.values;
     const values = all ? vals : Float64Array.from(keep, (i) => (i < vals.length ? vals[i] : NaN));
     const text = c.text && (all ? c.text : keep.map((i) => c.text![i] ?? ''));
     const mask = anyMask ? Uint8Array.from(keep, (i) => (state[i] & ROW_MASKED ? 1 : 0)) : undefined;

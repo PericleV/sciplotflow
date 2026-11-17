@@ -47,7 +47,7 @@ import { mathFace, mathKey, setMathSizes } from '../src/math/sizes.ts';
 import { plotMapping, stuckLines } from '../src/engine/evaluate.ts';
 import { canvasFigure, collapseGroups, evaluateGraph, legendCurves, newCache, packCells, parseRows, plotRows, shapeSpec } from '../src/engine/evaluate.ts';
 import { autoFrame, axesGeometry, turnedExtent, wrapLabel, autoTitle, axisNeeds, legendPlace, endLabels, placeLegends } from '../src/figure/axes.ts';
-import { column, curvesByRole, findColumn, fmtNum, isRepeatOf, parseSci, sciPretty, sciText, unitOf } from '../src/engine/table.ts';
+import { column, curvesByRole, findColumn, fmtNum, isRepeatOf, parseSci, sciPretty, sciText, unitOf, type Column } from '../src/engine/table.ts';
 import { autoExtract, pick } from '../src/engine/extract.ts';
 import { applyManip, renumber, ROW_CHANGED, ROW_DELETED, ROW_MASKED } from '../src/engine/manip.ts';
 import { tQuantile } from '../src/engine/lm.ts';
@@ -156,7 +156,8 @@ const SMOOTH_DEFAULTS = { ...SMOOTH_NEW, withData: true };
 const CALCULUS_DEFAULTS = { ...CALCULUS_NEW, withData: undefined };
 import { fmtPm } from '../src/engine/report.ts';
 import { looksNumeric, readCell, TO_NUMBER_DEFAULTS } from '../src/engine/convert.ts';
-import { columnsToSheets, convertTable, stackColumns, transposeTable } from '../src/engine/tableShape.ts';
+import { columnsToSheets, convertTable, stackColumns, transposeTable, type ToSheetsData } from '../src/engine/tableShape.ts';
+import { typedCells } from '../src/engine/gencol.ts';
 import { areaBetween, derivative, integrate, pointsCurve, regionRows } from '../src/engine/calculus.ts';
 import { groupText, splitRows } from '../src/engine/split.ts';
 import { autoRanges, hitAt, withRanges, zoomOutRanges } from '../src/nodes/figureRanges.ts';
@@ -7737,6 +7738,65 @@ checkPhase(ok);
   const sorted = g('filterrows', { ...FILTER_DEFAULTS, sortBy: 'Y' });
   const cleaned = g('clean', { ...CLEAN_DEFAULTS, missing: 'remove' });
   ok(sorted === 'Y: 1,3,5,9,NaN' && cleaned === 'Y: 5,3,9,1', `a column alone: sorted (Filter & sort rows), its missing value removed (Clean data) — ${sorted} | ${cleaned}`);
+  // (the column given: the first Y also when the designations are those of the place — X first)
+  const t2 = ['Wavelength (nm);Abs', '400;0.5', '500;0.25', ''].join(String.fromCharCode(10));
+  const r2 = evaluateGraph(
+    [
+      { id: 'i', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, text: t2, textId: 'oc2' } } as AppNode,
+      { id: 'n', type: 'filterrows', position: { x: 0, y: 0 }, data: { ...FILTER_DEFAULTS } } as AppNode,
+    ],
+    [{ id: '1', source: 'i', sourceHandle: 'out', target: 'n', targetHandle: 'in' }],
+  ).get('n')?.outputs.column;
+  ok(r2?.t === 'column' && r2.v.name === 'Abs', `Filter & sort rows: its column output the first Y, not the X of a plain import (${r2?.t === 'column' ? r2.v.name : '—'})`);
+}
+// ---- the audit of 2026-11-17, section Data: data read wrong or lost without a word (D1–D13) ----
+{
+  const C = (n: string, v: number[], extra: object = {}): Column => ({ ...column(n, Float64Array.from(v)), ...extra });
+  const vals = (c: Column | undefined) => (c ? Array.from(c.values).join(',') : '—');
+  const nl = String.fromCharCode(10);
+  // D1: Data manipulation — a Y chosen is drawn against its own X (the one designated for it), not the first curve's
+  const t = ['x1;y1;x2;y2', '1;10;5;1', '2;20;6;2', '3;30;7;3', ''].join(nl);
+  const dmView = evaluateGraph(
+    [
+      { id: 'i', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, text: t, textId: 'd1', edits: { cols: { 2: { role: 'x' } } } } } as AppNode,
+      { id: 'd', type: 'datamanip', position: { x: 0, y: 0 }, data: { x: '', y: 'y2', ops: [] } } as AppNode,
+    ],
+    [{ id: '1', source: 'i', sourceHandle: 'out', target: 'd', targetHandle: 'in' }],
+  ).get('d')?.view.manip as { xName: string } | undefined;
+  ok(dmView?.xName === 'x2', `Data manipulation: Y = y2 drawn against its X, x2 (${dmView?.xName})`);
+  // D2: an operation stays on the columns it was made on when another X / Y is chosen later
+  const ds = { name: 'm', columns: [C('x1', [1, 2, 3]), C('y1', [10, 20, 30]), C('x2', [5, 6, 7], { role: 'x' }), C('y2', [1, 2, 3], { role: 'y' })] };
+  const r1 = applyManip(ds, 'x1', 'y1', [{ kind: 'move', rows: '2', n: 3, dx: 0.5, dy: 5, x: 'x2', y: 'y2' }]);
+  ok(typeof r1 !== 'string' && r1.dataset.columns.map(vals).join(' | ') === '1,2,3 | 10,20,30 | 5,6.5,7 | 1,7,3', 'Data manipulation: a move made on x2 / y2 stays on them when x1 / y1 is shown');
+  // D3: X the row number — a move still moves Y
+  const r3 = applyManip({ name: 'm', columns: [C('y', [1, 2, 3])] }, '', 'y', [{ kind: 'move', rows: '2', n: 3, dx: 0.3, dy: 5 }]);
+  ok(typeof r3 !== 'string' && vals(r3.dataset.columns[0]) === '1,7,3', 'Data manipulation: X the row number, a move moves Y (dx left out)');
+  // D4: one column pasted from a spreadsheet in a comma locale — decimal commas, not two columns
+  const d4 = readTable('Absorbance\r\n0,125\r\n0,25\r\n0,5', CSV_DEFAULTS).dataset.columns;
+  const d4b = readTable('a,b\n1,2\n3,4', CSV_DEFAULTS).dataset.columns;
+  ok(d4.length === 1 && vals(d4[0]) === '0.125,0.25,0.5' && d4b.length === 2, `Import: one name over 0,125 — one column of decimal commas; a,b over 1,2 still two (${d4.map((c) => c.name).join()})`);
+  // D5: values typed — spaces and tabs separate them (a row of a spreadsheet), not joined into one number
+  ok(typedCells('1 2 3').join('|') === '1|2|3' && typedCells('1\t2\t3').join('|') === '1|2|3' && typedCells('sample A, sample B').join('|') === 'sample A|sample B' && typedCells('1,5; 2,3').join('|') === '1,5|2,3', 'Generate column: typed values split by spaces or tabs too; text with spaces kept');
+  // D6, D7: Columns to sheets per value — by the value itself, the mask cut with the rows
+  const ts = columnsToSheets({ name: 't', columns: [C('ID', [1234567, 1234568, 1234567, 1234568]), C('y', [1, 2, 3, 4], { mask: Uint8Array.from([0, 0, 0, 1]) })] }, { mode: 'values', cols: '', by: 'ID' } as ToSheetsData);
+  ok(typeof ts !== 'string' && ts.book.sheets.length === 2 && ts.book.sheets.map((s) => `${s.name}:${vals(s.columns[1])}:${Array.from(s.columns[1].mask ?? []).join('')}`).join(' ') === '1234567:1,3:00 1234568:2,4:01', `Columns to sheets: two values printed alike two sheets (full names), the mask with its rows (${typeof ts === 'string' ? ts : ts.book.sheets.map((s) => s.name).join(', ')})`);
+  // D8: Combine by name — a name twice in a table: its second column not lost
+  const cb = combine([{ name: 'A', columns: [C('x', [1, 2]), C('I', [10, 20]), C('I', [30, 40])] }, { name: 'B', columns: [C('x', [3]), C('I', [50]), C('I', [60])] }], { ...COMBINE_DEFAULTS, how: 'after', match: 'name' } as unknown as Parameters<typeof combine>[1]);
+  const cbCols = typeof cb === 'string' ? [] : 'dataset' in cb ? (cb as { dataset: Dataset }).dataset.columns : [];
+  ok(cbCols.map(vals).join(' | ') === '1,2,3 | 10,20,50 | 30,40,60', `Combine: tables one under the other by name, a name twice kept (${cbCols.map(vals).join(' | ')})`);
+  // D10: Clean data — a peak on a flat baseline (MAD 0): nothing masked, said
+  const peak = [0, 0, 0, 0, 0, 0, 1, 3, 8, 3, 1, 0, 0, 0, 0, 0];
+  const cl = cleanData({ name: 'p', columns: [C('x', peak.map((_, i) => i)), C('y', peak)] }, CLEAN_DEFAULTS);
+  ok(typeof cl !== 'string' && !cl.dataset.columns[1].mask?.some(Boolean) && cl.report.some((r) => r.includes('spread 0')), 'Clean data: a peak on a flat baseline (MAD 0) not masked; said');
+  // D11: Filter & sort, repeats merged — a masked value left out of the mean
+  const fr = filterRows({ name: 'f', columns: [C('x', [1, 1, 2]), C('y', [10, 1000, 20], { mask: Uint8Array.from([0, 1, 0]) })] }, { ...FILTER_DEFAULTS, dup: 'mean', dupCol: 'x' });
+  ok(typeof fr !== 'string' && vals(fr.dataset.columns[1]) === '10,20', `Filter & sort rows: repeats averaged without the masked value (${typeof fr === 'string' ? fr : vals(fr.dataset.columns[1])})`);
+  // D12: Stack — the number in a name with a unit; the values keep the unit
+  const st = stackColumns({ name: 's', columns: [C('t (s)', [0, 1]), C('I 300 K (mA)', [1, 2]), C('I 310 K (mA)', [3, 4])] }, { cols: '', key: 'number' });
+  ok(typeof st !== 'string' && st.dataset.columns.map((c) => c.name).join(' | ') === 'I (K) | t (s) | Value (mA)' && vals(st.dataset.columns[0]) === '300,300,310,310', `Stack columns: numbers of “I 300 K (mA)” read without the unit, the values in mA (${typeof st === 'string' ? st : st.dataset.columns.map((c) => c.name).join(' | ')})`);
+  // D13: Convert — 1.0D-3 an exponent; 3-4 not a number with the unit “-4”
+  const rc = (s: string) => readCell(s, TO_NUMBER_DEFAULTS, '.');
+  ok(rc('1.0D-3')?.v === 0.001 && !rc('1.0D-3')?.unit && rc('3-4') === null && rc('300 K')?.unit === 'K' && rc('2-3 K') === null, 'Convert: 1.0D-3 read as 0.001; 3-4 not 3 with the unit “-4”; 300 K still K');
 }
 // the numbers of an axis in E notation (1e−3, 2.5e4; a log axis as few digits as each needs)
 {

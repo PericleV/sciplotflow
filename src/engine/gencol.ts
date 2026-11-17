@@ -6,11 +6,13 @@ import { compile } from './expr.ts';
 export type GenMode = 'linspace' | 'step' | 'formula' | 'random' | 'typed';
 export type GenSpec = { mode: GenMode; start: number; stop: number; step: number; formula: string; dist: 'uniform' | 'normal'; a: number; b: number; seed: number; typed?: string };
 
-// Values typed: one per line, else separated by ; (a decimal comma: 1,5; 2,3), else by , — an empty one in between an
-// empty cell, those at the end left out
+// Values typed: one per line, else separated by ; (a decimal comma: 1,5; 2,3), else by tabs (a row of a spreadsheet),
+// else by , else by spaces when every part is a number (10 20 35) — an empty one in between an empty cell, those at the
+// end left out
 export function typedCells(t: string): string[] {
-  const sep = t.includes('\n') ? '\n' : t.includes(';') ? ';' : ',';
-  const cells = t.split(sep).map((x) => x.trim());
+  const words = t.trim().split(/\s+/);
+  const sep = t.includes('\n') ? '\n' : t.includes(';') ? ';' : t.includes('\t') ? '\t' : t.includes(',') ? ',' : words.length > 1 && words.every((w) => /^[+\-−]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(w)) ? /\s+/ : ',';
+  const cells = (sep === '\t' || sep === '\n' ? t : t.trim()).split(sep).map((x) => x.trim());
   while (cells.length && !cells[cells.length - 1]) cells.pop();
   return cells;
 }

@@ -524,12 +524,20 @@ export function combine(inputs: Dataset[], s: CombineSpec): CombineResult | stri
   const warnings: string[] = [];
   const lens = inputs.map((d) => Math.max(0, maxOf(d.columns.map((c) => c.values.length))));
   // the columns of the result: by name (all names, in the order first met) or by place
-  type Slot = { name: string; role?: ColumnRole; from: (Column | undefined)[] };
+  type Slot = { name: string; role?: ColumnRole; from: (Column | undefined)[]; occ?: number };
   const slots: Slot[] = [];
   if (s.match === 'name') {
-    for (const d of inputs)
-      for (const c of d.columns) if (!slots.some((x) => x.name === c.name)) slots.push({ name: c.name, ...(c.role ? { role: c.role } : {}), from: [] });
-    for (const sl of slots) sl.from = inputs.map((d) => d.columns.find((c) => c.name === sl.name));
+    // (a name twice in a table: its second column under the second of that name in the others, not lost)
+    const nth = (d: Dataset, name: string, k: number) => d.columns.filter((c) => c.name === name)[k];
+    for (const d of inputs) {
+      const seen = new Map<string, number>();
+      for (const c of d.columns) {
+        const k = seen.get(c.name) ?? 0;
+        seen.set(c.name, k + 1);
+        if (!slots.some((x) => x.name === c.name && (x.occ ?? 0) === k)) slots.push({ name: c.name, ...(c.role ? { role: c.role } : {}), from: [], occ: k });
+      }
+    }
+    for (const sl of slots) sl.from = inputs.map((d) => nth(d, sl.name, sl.occ ?? 0));
     if (inputs.length > 1 && slots.some((sl) => sl.from.some((c) => !c)))
       warnings.push(`Not every input has the columns ${slots.filter((sl) => sl.from.some((c) => !c)).map((sl) => `“${sl.name}”`).join(', ')}: empty cells there (or match the columns by position).`);
   } else {

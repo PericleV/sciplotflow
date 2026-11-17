@@ -433,9 +433,11 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
   };
   const added = data.added ?? [];
   const setAdded = (a: { x: number; y: number }[]) => set({ added: a });
+  // (a change of values: the columns it is made on kept with it)
+  const on = (kind: ManipOp['kind']) => (m && (kind === 'move' || kind === 'scale' || kind === 'set') ? { x: m.xName, y: m.yName } : {});
   const addOp = (op: Omit<ManipOp, 'rows' | 'n'>) => {
     if (!live.length) return;
-    set({ ops: [...data.ops, { ...op, rows: rowsText(live.map((i) => i + 1)), n }] });
+    set({ ops: [...data.ops, { ...op, ...on(op.kind), rows: rowsText(live.map((i) => i + 1)), n }] });
     if (op.kind === 'delete') setSel(new Set());
   };
   const onSelect = (rows: number[], how: 'set' | 'add' | 'remove') =>
@@ -476,7 +478,7 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
     const ops: ManipOp[] = [];
     for (const axis of ['x', 'y'] as const) {
       const v = typed[axis];
-      if (Number.isFinite(v) && v !== (axis === 'x' ? m.x[cur] : m.y[cur])) ops.push({ kind: 'set', axis, value: v, rows: String(cur + 1), n });
+      if (Number.isFinite(v) && v !== (axis === 'x' ? m.x[cur] : m.y[cur])) ops.push({ kind: 'set', axis, value: v, ...on('set'), rows: String(cur + 1), n });
     }
     if (ops.length) set({ ops: [...data.ops, ...ops] });
   };
@@ -723,7 +725,7 @@ export function DataManipNodeView({ id, data }: NodeProps<DataManipNode>) {
           <Select value={m ? m.xName || '-' : data.x} options={[['-', 'row number'], ...names.map((nm): [string, string] => [nm, nm])]} onChange={(x) => set({ x, y: data.y || m?.yName || '' })} />
         </Field>
         <Field label="Y">
-          <Select value={m?.yName ?? data.y} options={names.map((nm): [string, string] => [nm, nm])} onChange={(y) => set({ y, x: data.x || m?.xName || '-' })} />
+          <Select value={m?.yName ?? data.y} options={names.map((nm): [string, string] => [nm, nm])} onChange={(y) => set({ y })} />
         </Field>
       </div>
       </NodeOptions>

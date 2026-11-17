@@ -3875,7 +3875,7 @@ function fitNode(d: FitNodeData, v: Value | undefined, id: string, irfIn?: Value
 // first Y of the result (designated), else its first column
 const oneTable = (v: Value | undefined): Value | undefined => (v?.t === 'column' ? { t: 'dataset', v: { name: v.v.name, columns: [{ ...v.v, role: v.v.role && v.v.role !== 'none' ? v.v.role : 'y' }] } } : v);
 const mainColumn = (ds: Dataset): Record<string, Value> => {
-  const c = ds.columns.find((q) => q.role === 'y') ?? ds.columns[0];
+  const c = ds.columns.find((_, j) => roleOf(ds.columns, j) === 'y') ?? ds.columns[0];
   return c ? { column: { t: 'column', v: c } } : {};
 };
 
@@ -5071,7 +5071,10 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset (Import, Sheets to columns …).' } };
       const available = v.v.columns.map(colInfo);
       // the columns of the graph: chosen, else from the designations (the first Y and its X)
-      const byRole = curvesByRole(v.v.columns).curves[0];
+      // (a Y chosen: its own X, the one designated for it)
+      const curves = curvesByRole(v.v.columns).curves;
+      const yCol = n.data.y ? findColumn(v.v.columns, n.data.y) : undefined;
+      const byRole = (yCol && curves.find((c) => c.y === yCol.name)) || curves[0];
       const yName = n.data.y || byRole?.y || v.v.columns[1]?.name || v.v.columns[0]?.name || '';
       // '-': the row number
       const xName = n.data.x === '-' ? '' : n.data.x || byRole?.x || (yName === v.v.columns[0]?.name ? '' : (v.v.columns[0]?.name ?? ''));

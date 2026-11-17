@@ -200,15 +200,19 @@ export function filterRows(ds: Dataset, d: FilterData): { dataset: Dataset; repo
       const keep = firsts.map((g) => g[0]).sort((a, b) => a - b);
       cols = cols.map((c) => ({ ...c, values: Float64Array.from(keep, (i) => c.values[i]), ...(c.text ? { text: keep.map((i) => c.text![i]) } : {}), ...(c.mask ? { mask: Uint8Array.from(keep, (i) => c.mask![i]) } : {}) }));
     } else {
-      // merged: every numeric column averaged over the rows of the group (the text of the first)
+      // merged: every numeric column averaged over the rows of the group (the text of the first); a masked row (in
+      // any column) left out of the mean, the group masked only when all its rows are
+      const masked = (i: number) => cols.some((c) => c.mask?.[i]);
+      const anyMask = cols.some((c) => c.mask);
+      const live = firsts.map((g) => (g.some((i) => !masked(i)) ? g.filter((i) => !masked(i)) : g));
       cols = cols.map((c) => ({
         ...c,
-        values: Float64Array.from(firsts, (g) => {
+        values: Float64Array.from(live, (g) => {
           const v = g.map((i) => c.values[i]).filter(Number.isFinite);
           return v.length ? v.reduce((a, b) => a + b, 0) / v.length : NaN;
         }),
-        ...(c.text ? { text: firsts.map((g) => c.text![g[0]]) } : {}),
-        ...(c.mask ? { mask: Uint8Array.from(firsts, (g) => (g.every((i) => c.mask![i]) ? 1 : 0)) } : {}),
+        ...(c.text ? { text: live.map((g) => c.text![g[0]]) } : {}),
+        ...(anyMask ? { mask: Uint8Array.from(firsts, (g) => (g.every(masked) ? 1 : 0)) } : {}),
       }));
     }
     rows = firsts.map((g) => g[0]);
@@ -264,13 +268,16 @@ const quantile = (s: number[], p: number) => {
   const h = (s.length - 1) * p;
   return s[Math.floor(h)] + (h - Math.floor(h)) * (s[Math.ceil(h)] - s[Math.floor(h)]);
 };
-// the outliers of v (only its finite values): their indices, and the bounds (for clipping)
-export function findOutliers(v: number[], how: CleanData['outliers'], k: number, alpha: number, window: number): { out: Set<number>; lo: number[]; hi: number[] } {
+// the outliers of v (only its finite values): their indices, and the bounds (for clipping); flat: the values not
+// judged because their spread was 0 (more than half of them equal: a MAD or an IQR of 0 would make every other value
+// an outlier — a peak on a flat baseline)
+export function findOutliers(v: number[], how: CleanData['outliers'], k: number, alpha: number, window: number): { out: Set<number>; lo: number[]; hi: number[]; flat: number } {
   const n = v.length;
   const ok = v.map((_, i) => i).filter((i) => Number.isFinite(v[i]));
   const out = new Set<number>();
   let lo = new Array<number>(n).fill(-Infinity);
   let hi = new Array<number>(n).fill(Infinity);
+  let flat = 0;
   if (how === 'median' || how === 'quartiles') {
     const vals = ok.map((i) => v[i]);
     let a: number;
@@ -284,6 +291,10 @@ export function findOutliers(v: number[], how: CleanData['outliers'], k: number,
       const [q1, q3] = [quantile(s, 0.25), quantile(s, 0.75)];
       [a, b] = [q1 - k * (q3 - q1), q3 + k * (q3 - q1)];
     }
+    if (a === b) {
+      flat = vals.filter((x) => x !== a).length;
+      [a, b] = [-Infinity, Infinity];
+    }
     lo = lo.map(() => a);
     hi = hi.map(() => b);
   } else if (how === 'movmedian') {
@@ -292,7 +303,8 @@ export function findOutliers(v: number[], how: CleanData['outliers'], k: number,
       const win = ok.slice(Math.max(0, p - h), Math.min(ok.length, p + h + 1)).map((i) => v[i]);
       const m = med(win);
       const s = 1.4826 * med(win.map((x) => Math.abs(x - m)));
-      [lo[ok[p]], hi[ok[p]]] = [m - k * s, m + k * s];
+      if (s > 0) [lo[ok[p]], hi[ok[p]]] = [m - k * s, m + k * s];
+      else if (v[ok[p]] !== m) flat++;
     }
   } else if (how === 'grubbs' || how === 'gesd') {
     // Grubbs repeated while it finds one; GESD (Rosner 1983) up to 10 % of the values
@@ -327,10 +339,10 @@ export function findOutliers(v: number[], how: CleanData['outliers'], k: number,
     const kept = ok.filter((j) => !out.has(j)).map((j) => v[j]);
     lo = lo.map(() => minOf(kept));
     hi = hi.map(() => maxOf(kept));
-    return { out, lo, hi };
+    return { out, lo, hi, flat };
   }
   if (how !== 'none') for (const i of ok) if (v[i] < lo[i] || v[i] > hi[i]) out.add(i);
-  return { out, lo, hi };
+  return { out, lo, hi, flat };
 }
 
 export function cleanData(ds: Dataset, d: CleanData): { dataset: Dataset; changes: Change[]; report: string[] } | string {
@@ -380,7 +392,8 @@ export function cleanData(ds: Dataset, d: CleanData): { dataset: Dataset; change
     }
     // outliers
     if (d.outliers !== 'none') {
-      const { out, lo, hi } = findOutliers(v, d.outliers, d.k, d.alpha, d.window);
+      const { out, lo, hi, flat } = findOutliers(v, d.outliers, d.k, d.alpha, d.window);
+      if (flat) report.push(`${c.name}: more than half of the values${d.outliers === 'movmedian' ? ' in a window' : ''} are equal (spread 0): ${flat} value${flat > 1 ? 's' : ''} not judged — try Grubbs or GESD, or ${d.outliers === 'quartiles' ? 'the median' : 'quartiles'}.`);
       const idx = [...out].sort((a, b) => a - b);
       if (idx.length) {
         const mask = new Uint8Array(n);
