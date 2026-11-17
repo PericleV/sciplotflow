@@ -2,9 +2,9 @@
 // the frame, and the frame placed automatically inside its area (margins made just large enough). Pure: the drawing
 // and the evaluation (also in the scripts) use the same measures.
 import { compile } from '../engine/expr.ts';
-import { bareName, titleOf, unitOf } from '../engine/table.ts';
+import { bareName, fmtNum, titleOf, unitOf } from '../engine/table.ts';
 import { richMetrics } from './draw.ts';
-import { axisRange, formatLabels, inBreak, logitT, logitTi, parseBreaks, probT, probTi, probValid, symT, symTi, ticks, ticksMode } from './ticks.ts';
+import { axisRange, formatLabels, inBreak, limitValid, logitT, logitTi, parseBreaks, probT, probTi, probValid, rangeSwapped, symT, symTi, ticks, ticksMode } from './ticks.ts';
 import { legendLayout } from './legendLayout.ts';
 import { barReach, barTitle } from './colorbar.ts';
 import { axisKind, resolveText, type Anchor, type LegendSpec, type AxesFig, type AxisSpec, type Curve, type Placement, type Side, type SideStyle, type TextDefaults } from './spec.ts';
@@ -16,11 +16,14 @@ export type Box = { x: number; y: number; w: number; h: number };
 // f: value → position (pt); seg: which visible piece of a broken axis a value is on; gaps: the breaks, as position
 // intervals along the axis.
 export type Scale = { f: (v: number) => number; inv: (p: number) => number; lo: number; hi: number; spec: AxisSpec; seg: (v: number) => number; gaps: [number, number][] };
+// a value in the units the axis is even in (log10 v on a log axis, the transformed value on the other non-linear ones)
+export const axisT = (spec: AxisSpec) => (v: number) => (spec.scale === 'log' ? Math.log10(v) : spec.scale === 'reciprocal' ? 1 / v : spec.scale === 'probability' ? probT(spec.prob, v) : spec.scale === 'symlog' ? symT(spec, v) : spec.scale === 'logit' ? logitT(v) : v);
 export function makeScale(spec: AxisSpec, lo: number, hi: number, p0: number, p1: number): Scale {
-  const t = (v: number) => (spec.scale === 'log' ? Math.log10(v) : spec.scale === 'reciprocal' ? 1 / v : spec.scale === 'probability' ? probT(spec.prob, v) : spec.scale === 'symlog' ? symT(spec, v) : spec.scale === 'logit' ? logitT(v) : v);
+  const t = axisT(spec);
   const ti = (u: number) => (spec.scale === 'log' ? 10 ** u : spec.scale === 'reciprocal' ? 1 / u : spec.scale === 'probability' ? probTi(spec.prob, u) : spec.scale === 'symlog' ? symTi(spec, u) : spec.scale === 'logit' ? logitTi(u) : u);
   const [a, b] = [t(lo), t(hi)];
-  const [s0, s1] = spec.reverse ? [p1, p0] : [p0, p1];
+  // (Start typed above End: from Start to End, i.e. reversed — as Origin; with Reversed ticked too, the two cancel)
+  const [s0, s1] = spec.reverse !== rangeSwapped(spec) ? [p1, p0] : [p0, p1];
   const brk = spec.scale === 'reciprocal' || spec.scale === 'probability' || spec.scale === 'logit' ? [] : parseBreaks(spec.breaks).filter(([u, w]) => u > Math.min(lo, hi) && w < Math.max(lo, hi));
   if (!brk.length) return { lo, hi, spec, f: (v) => s0 + ((t(v) - a) / (b - a || 1)) * (s1 - s0), inv: (p) => ti(a + ((p - s0) / (s1 - s0 || 1)) * (b - a)), seg: () => 0, gaps: [] };
   // the visible pieces, each as long as its share of the range; a gap between two pieces
@@ -64,7 +67,19 @@ export function makeScale(spec: AxisSpec, lo: number, hi: number, p0: number, p1
   };
   return { lo, hi, spec, f, inv, seg, gaps };
 }
-export const validFor = (spec: AxisSpec, v: number) => Number.isFinite(v) && (spec.scale !== 'log' || v > 0) && (spec.scale !== 'reciprocal' || v !== 0) && (spec.scale !== 'probability' || probValid(v)) && (spec.scale !== 'logit' || (v > 0 && v < 1)) && !inBreak(spec, v);
+// An error bar from a point at p (pt along its axis) to its end: where it starts, r away from the point toward the end
+// (stopped at the symbol), or null when the end is within r — whichever way the axis grows (reversed: down, left).
+export const barFrom = (p: number, end: number, r: number): number | null => (Math.abs(end - p) > r ? p + Math.sign(end - p) * r : null);
+// The step of θ (degrees) from one point of a polar curve to the next, the short way round (350° → 10°: +20°, not −340°;
+// exactly half a turn: as it is).
+export const thetaStep = (t0: number, t1: number) => {
+  let d = (t1 - t0) % 360;
+  if (d > 180) d -= 360;
+  else if (d < -180) d += 360;
+  return d;
+};
+
+export const validFor =(spec: AxisSpec, v: number) => Number.isFinite(v) && (spec.scale !== 'log' || v > 0) && (spec.scale !== 'reciprocal' || v !== 0) && (spec.scale !== 'probability' || probValid(v)) && (spec.scale !== 'logit' || (v > 0 && v < 1)) && !inBreak(spec, v);
 
 // The range of the data of the curves on an axis (with their errors). Kept per curve: the automatic margins and the
 // drawing ask for it several times (the curve objects change when their data or style do).
@@ -122,8 +137,10 @@ function curveExtent(c: Curve, axis: 'x' | 'y', spec: AxisSpec): [number, number
       if (w < lo) lo = w;
       if (w > hi) hi = w;
     };
+    // the masked points not drawn (Masked points: Hidden) do not stretch the axes; drawn grey, they do
+    const hidden = c.style.masked === 'hidden' ? c.mask : undefined;
     for (let i = 0; i < v.length; i++) {
-      if (!Number.isFinite(xs[i]) || !Number.isFinite(ys[i])) continue;
+      if (!Number.isFinite(xs[i]) || !Number.isFinite(ys[i]) || hidden?.[i]) continue;
       if (!e && !eLo) {
         take(v[i]);
         continue;
@@ -193,7 +210,15 @@ export const turnedExtent = (w: number, h: number, deg: number, horiz: boolean) 
 function sideTicks(scale: Scale, side: SideStyle, count: number): SideTicks {
   const [a, b] = [Math.min(scale.lo, scale.hi), Math.max(scale.lo, scale.hi)];
   const tk = ticks(scale.spec, a, b, count);
-  const inside = (v: number) => v >= a - 1e-9 * (b - a) && v <= b + 1e-9 * (b - a) && !inBreak(scale.spec, v);
+  // inside the ends, by a hair, in the axis' own units (on a log axis of 9 decades, 1e-9 of the linear span is 1e-3:
+  // a tick at 1e-4 under an end at 1e-3 was kept, its number drawn past the frame)
+  const T = axisT(scale.spec);
+  const [ta, tb] = [Math.min(T(a), T(b)), Math.max(T(a), T(b))];
+  const tol = 1e-9 * (tb - ta);
+  const inside = (v: number) => {
+    const tv = T(v);
+    return tv >= ta - tol && tv <= tb + tol && !inBreak(scale.spec, v);
+  };
   const keep = tk.major.map((v, k) => ({ v, k })).filter((o) => inside(o.v));
   const major = keep.map((o) => o.v);
   const fmt = formatLabels(major, scale.spec.scale === 'log', side);
@@ -267,17 +292,63 @@ export function autoTitle(curves: Curve[], axis: 'x' | 'y'): string {
 // cross: where its line is (pt) when it crosses the frame at a value of the other axis
 export type DrawnAxis = { key: string; side: Side; s: SideStyle; pos: SideTicks; f: (v: number) => number; title: string; cross?: number };
 
-// The scales of an Axes in a frame (pt), the axis each curve is on, and every axis as drawn.
-export function axesGeometry(ax: AxesFig, frame: Box, defaults: TextDefaults) {
+// The axes of an Axes that have their own scale, and the curves on each (an axis that does not exist: the bottom / left one).
+function axisOwners(ax: AxesFig) {
   const st = ax.style;
   const topOwn = st.top.mode === 'own';
   const rightOwn = st.right.mode === 'own';
   const extraX = st.extra.filter((e) => axisKind(e.side) === 'x');
   const extraY = st.extra.filter((e) => axisKind(e.side) === 'y');
-  // the axis each curve is on (an axis that does not exist: the bottom / left one)
   const xOf = (c: Curve) => (c.style.axisX === 'top' && topOwn ? 'top' : extraX.some((e) => e.id === c.style.axisX) ? c.style.axisX : 'bottom');
   const yOf = (c: Curve) => (c.style.axisY === 'right' && rightOwn ? 'right' : extraY.some((e) => e.id === c.style.axisY) ? c.style.axisY : 'left');
   const on = (id: string, axis: 'x' | 'y') => ax.curves.filter((c) => c.style.show !== false && (axis === 'x' ? xOf(c) : yOf(c)) === id);
+  return { topOwn, rightOwn, extraX, extraY, xOf, yOf, on };
+}
+
+// What became of the Start / End typed on the axes of an Axes, when it is not what the fields show: a limit a log (logit,
+// probability …) axis cannot have, Start above End (drawn reversed), Start = End, a range with no data in it. One line
+// each (for the node's warnings).
+export function axesRangeNotes(ax: AxesFig): string[] {
+  if (ax.drawing || ax.curves.some((c) => c.polar || c.smith || c.ternary || c.three || c.wedges)) return [];
+  const st = ax.style;
+  const { topOwn, rightOwn, extraX, extraY, on } = axisOwners(ax);
+  const list: [string, AxisSpec, string, 'x' | 'y'][] = [
+    ['X1 bottom', st.x, 'bottom', 'x'],
+    ['Y1 left', st.y, 'left', 'y'],
+    ...(topOwn ? [['X2 top', st.top.scale, 'top', 'x'] as [string, AxisSpec, string, 'x']] : []),
+    ...(rightOwn ? [['Y2 right', st.right.scale, 'right', 'y'] as [string, AxisSpec, string, 'y']] : []),
+    ...extraX.map((e): [string, AxisSpec, string, 'x'] => [`${e.id.toUpperCase()} ${e.side}`, e.scale, e.id, 'x']),
+    ...extraY.map((e): [string, AxisSpec, string, 'y'] => [`${e.id.toUpperCase()} ${e.side}`, e.scale, e.id, 'y']),
+  ];
+  const out: string[] = [];
+  for (const [name, spec, id, kind] of list) {
+    if (spec.cats?.length || spec.time) continue;
+    const typed = (v: number) => Number.isFinite(v);
+    const [s, e] = [spec.min, spec.max];
+    if (!typed(s) && !typed(e)) continue;
+    const what = spec.scale === 'log' ? 'a log axis' : spec.scale === 'logit' ? 'a logit axis' : spec.scale === 'probability' ? 'a probability axis' : spec.scale === 'reciprocal' ? 'a reciprocal axis' : 'this axis';
+    const bad = [typed(s) && !limitValid(spec, s) ? `Start ${fmtNum(s)}` : '', typed(e) && !limitValid(spec, e) ? `End ${fmtNum(e)}` : ''].filter(Boolean);
+    if (bad.length) out.push(`${name} axis: ${bad.join(' and ')} cannot be on ${what}: ${bad.length > 1 ? 'they are' : 'it is'} automatic.`);
+    if (rangeSwapped(spec)) out.push(spec.reverse ? `${name} axis: Start (${fmtNum(s)}) is above End (${fmtNum(e)}) and Reversed is ticked: the two cancel, the axis runs from ${fmtNum(e)} to ${fmtNum(s)} as usual.` : `${name} axis: Start (${fmtNum(s)}) is above End (${fmtNum(e)}): the axis is drawn reversed, from ${fmtNum(s)} to ${fmtNum(e)}.`);
+    else if (limitValid(spec, s) && limitValid(spec, e) && s === e) out.push(`${name} axis: Start and End are both ${fmtNum(s)}: automatic limits used.`);
+    const [lo, hi] = extent(on(id, kind), kind, spec);
+    const [a, b] = axisRange(spec, lo, hi);
+    // one limit typed, past the other (automatic) one: not used
+    if (!rangeSwapped(spec) && !(limitValid(spec, s) && limitValid(spec, e))) {
+      if (limitValid(spec, s) && s !== a) out.push(`${name} axis: Start ${fmtNum(s)} is not below the automatic End (${fmtNum(b)}): not used, type an End too.`);
+      if (limitValid(spec, e) && e !== b) out.push(`${name} axis: End ${fmtNum(e)} is not above the automatic Start (${fmtNum(a)}): not used, type a Start too.`);
+    }
+    // the data on the axis all outside the limits drawn
+    if (hi >= lo && (hi < a || lo > b)) out.push(`${name} axis: no data between ${fmtNum(a)} and ${fmtNum(b)} (the data run from ${fmtNum(lo)} to ${fmtNum(hi)}).`);
+  }
+  return out;
+}
+
+// The scales of an Axes in a frame (pt), the axis each curve is on, and every axis as drawn.
+export function axesGeometry(ax: AxesFig, frame: Box, defaults: TextDefaults) {
+  const st = ax.style;
+  // the axis each curve is on (an axis that does not exist: the bottom / left one)
+  const { topOwn, rightOwn, extraX, extraY, xOf, yOf, on } = axisOwners(ax);
   const range = (spec: AxisSpec, cs: Curve[], axis: 'x' | 'y') => axisRange(spec, ...extent(cs, axis, spec));
   const horiz = (spec: AxisSpec, cs: Curve[]) => makeScale(spec, ...range(spec, cs, 'x'), frame.x, frame.x + frame.w);
   const vert = (spec: AxisSpec, cs: Curve[]) => makeScale(spec, ...range(spec, cs, 'y'), frame.y + frame.h, frame.y);

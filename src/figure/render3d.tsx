@@ -13,8 +13,12 @@ import { resolveText, SIDE_DEFAULTS, type Curve, type P3, type TextDefaults, typ
 import { sceneCamera } from './camera3d.ts';
 import { formatLabels, niceStep } from './ticks.ts';
 
+// (a coordinate that is not a number is 0 here: the elements whose places are not all numbers are left out before, see
+// `seen`, so none is drawn to the page's corner)
 const n2 = (v: number) => (Number.isFinite(v) ? +v.toFixed(2) : 0);
 type V = [number, number, number];
+// every point of an element projected to a place (a value ≤ 0 on a log axis: not)
+const seen = (qs: V[]) => qs.every((q) => Number.isFinite(q[0]) && Number.isFinite(q[1]) && Number.isFinite(q[2]));
 const dot = (a: V, b: V) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const unit = (a: V): V => {
   const l = Math.hypot(a[0], a[1], a[2]) || 1;
@@ -155,12 +159,16 @@ export function ThreeView({ c, frame, defaults }: { c: Curve; frame: Box; defaul
     if (pr?.cells)
       parts.push(
         <g key={key} opacity={projOp}>
-          {pr.cells.map((q, k) => (
-            <path key={k} d={poly([P([q.x0, q.y0, z]), P([q.x1, q.y0, z]), P([q.x1, q.y1, z]), P([q.x0, q.y1, z])])} fill={q.color} stroke={q.color} strokeWidth={0.2} />
-          ))}
+          {pr.cells.map((q, k) => {
+            const qs = [P([q.x0, q.y0, z]), P([q.x1, q.y0, z]), P([q.x1, q.y1, z]), P([q.x0, q.y1, z])];
+            return seen(qs) ? <path key={k} d={poly(qs)} fill={q.color} stroke={q.color} strokeWidth={0.2} /> : null;
+          })}
         </g>,
       );
-    if (pr?.lines) parts.push(<g key={`${key}l`} opacity={projOp}>{pr.lines.map((l, k) => <path key={k} d={`M${l.pts.map((q) => pt(P([q[0], q[1], z]))).join('L')}`} stroke={l.color} strokeWidth={0.6} fill="none" />)}</g>);
+    if (pr?.lines) parts.push(<g key={`${key}l`} opacity={projOp}>{pr.lines.map((l, k) => {
+            const qs = l.pts.map((q) => P([q[0], q[1], z])).filter((q) => seen([q]));
+            return qs.length > 1 ? <path key={k} d={`M${qs.map(pt).join('L')}`} stroke={l.color} strokeWidth={0.6} fill="none" /> : null;
+          })}</g>);
   };
   plane(S.floor, fz, 'floor');
   plane(S.ceiling, S.range.z[1], 'ceiling');
@@ -301,6 +309,7 @@ export function ThreeView({ c, frame, defaults }: { c: Curve; frame: Box; defaul
         if (!zs.every(Number.isFinite)) continue;
         const ps: P3[] = [[sf.xs[i], sf.ys[j], zs[0]], [sf.xs[i + 1], sf.ys[j], zs[1]], [sf.xs[i + 1], sf.ys[j + 1], zs[2]], [sf.xs[i], sf.ys[j + 1], zs[3]]];
         const q = ps.map(P);
+        if (!seen(q)) continue;
         const d = (q[0][2] + q[1][2] + q[2][2] + q[3][2]) / 4;
         let fill = sf.fill[j * (nx - 1) + i] ?? '';
         const b = ps.map(toBox);
@@ -346,6 +355,8 @@ export function ThreeView({ c, frame, defaults }: { c: Curve; frame: Box; defaul
       { n: [0, -1, 0], ps: [[xa, ya, b.z0], [xb, ya, b.z0], [xb, ya, b.z1], [xa, ya, b.z1]] },
       { n: [0, 1, 0], ps: [[xa, yb, b.z0], [xb, yb, b.z0], [xb, yb, b.z1], [xa, yb, b.z1]] },
     ];
+    // (a bar whose corners are not all places: left out whole)
+    if (!faces.every((f) => seen(f.ps.map(P)))) return;
     faces.forEach((f, fi) => {
       if (dot(f.n, e3) <= 1e-9) return;
       const q = f.ps.map(P);

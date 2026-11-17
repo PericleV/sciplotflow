@@ -484,7 +484,12 @@ export function histogram(series: HistSeries[], d: HistSpec, xName: string): His
   const w0 = even ? widths[0] : widths.reduce((a, b) => a + b, 0) / nb;
   if (!d.cumulative)
     series.forEach((s, j) => {
-      const vAll = s.values.filter(Number.isFinite);
+      // the values the bars count (inside the bins: the values outside the bins' range from – to are not fitted)
+      const [e0, eN] = [edges[0], edges[nb]];
+      const finite = s.values.filter(Number.isFinite);
+      const vAll = finite.filter((x) => x >= e0 && x <= eN);
+      const outside = finite.length - vAll.length;
+      if (outside && d.fits.length) warnings.push(`${s.name}: the fits take the ${vAll.length} values inside the bins (${fmtR(e0)} – ${fmtR(eN)}); ${outside} value${outside > 1 ? 's' : ''} outside left out${d.fits.some((f) => f.kind === 'normal' || f.kind === 'lorentz') ? ' (Normal and Lorentz fitted to the values cut to the bins)' : ''}.`);
       const inBins = counts[j].reduce((a, b) => a + b, 0) || 1;
       // a count expected from a probability → the height drawn
       const conv = d.norm === 'count' ? 1 : d.norm === 'percent' ? 100 / inBins : d.norm === 'probability' ? 1 / inBins : 1 / (inBins * w0);
@@ -505,6 +510,10 @@ export function histogram(series: HistSeries[], d: HistSpec, xName: string): His
         const [a, b] = ranged ? [Math.min(...ivs.map((q) => q[0])), Math.max(...ivs.map((q) => q[1]))] : [-Infinity, Infinity];
         const v = ranged ? vAll.filter(inR) : vAll;
         const N = v.length;
+        // values left outside the bins: a normal or a Cauchy by the likelihood of the values cut to the bins (and its ranges)
+        const cut = outside > 0;
+        const fitIvs: [number, number][] = cut ? (ranged ? ivs : [[-Infinity, Infinity] as [number, number]]).map(([u, w]): [number, number] => [Math.max(u, e0), Math.min(w, eN)]).filter(([u, w]) => u < w) : ivs;
+        const truncated = ranged || cut;
         const binsIn = centers.map((c) => inR(c));
         const span: [number, number] | undefined = ranged && !f.drawAll ? [Math.max(edges[0], a), Math.min(edges[nb], b)] : undefined;
         const base = { series: s.name, fit: name, range, ...look, ...(span ? { span } : {}) };
@@ -533,7 +542,7 @@ export function histogram(series: HistSeries[], d: HistSpec, xName: string): His
           // the values the whole peak holds (more than those in the range when its tails go past it)
           let total = N;
           if (f.kind === 'normal') {
-            const r = ranged ? truncatedFit(v, ivs, 'normal') : null;
+            const r = truncated ? truncatedFit(v, fitIvs, 'normal') : null;
             const n0 = r ? null : normalFit(v);
             const [mu, sd, seMu, seSd] = r ? [r.loc, r.scale, r.seLoc, r.seScale] : [n0!.mu, n0!.sd, n0!.seMu, n0!.seSd];
             pdf = (x) => Math.exp(-((x - mu) ** 2) / (2 * sd * sd)) / (sd * SQ2PI);
@@ -546,7 +555,7 @@ export function histogram(series: HistSeries[], d: HistSpec, xName: string): His
             if (r) total = N / r.mass;
             [loglik, nPar] = [r ? r.loglik : n0!.loglik, 2];
           } else if (f.kind === 'lorentz') {
-            const r = ranged ? truncatedFit(v, ivs, 'cauchy') : null;
+            const r = truncated ? truncatedFit(v, fitIvs, 'cauchy') : null;
             const c0 = r ? null : cauchyFit(v);
             const [x0, g, seX0, seG] = r ? [r.loc, r.scale, r.seLoc, r.seScale] : [c0!.x0, c0!.g, c0!.seX0, c0!.seG];
             pdf = (x) => g / (Math.PI * (g * g + (x - x0) ** 2));
@@ -597,6 +606,7 @@ export function histogram(series: HistSeries[], d: HistSpec, xName: string): His
             nPar = 0;
           }
           if (ranged) params.push({ name: 'n (in the range)', value: N, error: NaN });
+          else if (cut) params.push({ name: 'n (in the bins)', value: N, error: NaN });
           const chi = chiOf((bi) => total * (cdf(edges[bi + 1]) - cdf(edges[bi])), nPar + 1);
           fits.push({ ...base, method: f.kind === 'kernel' ? 'kernel' : 'from the data', params, ...chi, r2: NaN, aic: f.kind === 'kernel' ? NaN : 2 * nPar - 2 * loglik, curve: (x) => total * w0 * conv * pdf(x) });
           return;

@@ -16,7 +16,7 @@ import { ThreeView } from './render3d.tsx';
 import { aboveOf, arcPath, piePath, turnPt, boxHandleAt, resizeBox, type Box4, bendPoints, bendText, bentLine, bentPoints, bracketBase, bracketPath, bracketTextPlace, elbowCorners, endAngles, lineLength, niceLength, offsetLine, pointAlong, pointsD, pointsPath, roundedCorners, starPoints, taperOutline, throughLine, throughPoints, trimLine, waveLine, type Pt } from './shapes.ts';
 import { compile } from '../engine/expr.ts';
 import { gradAttrs, inBox, linearEnds, radialPlace } from './gradient.ts';
-import { axesGeometry, axisNeeds, endLabels, labelReach, legendPlace, turnedExtent, validFor, type Box, type DrawnAxis, type Scale } from './axes.ts';
+import { axesGeometry, axisNeeds, barFrom, endLabels, labelReach, legendPlace, thetaStep, turnedExtent, validFor, type Box, type DrawnAxis, type Scale } from './axes.ts';
 import {
   AUTO_BAR,
   resolveText,
@@ -976,8 +976,10 @@ function PolarView({ c, frame, defaults }: { c: Curve; frame: Box; defaults: Tex
             continue;
           }
           const k = seq[q - 1];
-          let [t0, t1] = [s.theta[k], s.theta[i]];
-          if (q === seq.length - 1 && s.close && Math.abs(t1 + 360 - t0) < Math.abs(t1 - t0)) t1 += 360;
+          // (a full circle: the short way round, 350° to 10° across 0°, not back over 340°; a sector: inside it, as θ
+          // goes; a radar: straight between its spokes)
+          const t0 = s.theta[k];
+          const t1 = P.spokes || !full ? s.theta[i] : t0 + thetaStep(t0, s.theta[i]);
           const n = P.spokes ? 1 : Math.max(1, Math.ceil(Math.abs(t1 - t0) / 2));
           for (let m = 1; m <= n; m++) {
             const f = m / n;
@@ -1465,21 +1467,38 @@ function CurveView({ c, sx, sy, frame, defaults, below, others = [], gid = 'c' }
   if (below) {
     // the fill under the curve and the error band go under every line
     if (st.fill !== 'none' && !st.fillOver) drawFill();
-    if (yErr && st.errStyle === 'band')
-      runs.forEach((r, k) => {
-        const good = r.filter((i) => Number.isFinite(yErr.values[i]));
+    if (yErr && st.errStyle === 'band') {
+      const e = (i: number) => Math.abs(yErr.values[i]);
+      const eLo = (i: number) => Math.abs((c.series.yErrLo ?? yErr).values[i]);
+      // the band broken where a point has no ±Y (as the line at a missing point), not drawn across it
+      const known = (i: number) => (st.errDir === 'minus' || Number.isFinite(e(i))) && (st.errDir === 'plus' || Number.isFinite(eLo(i)));
+      const pieces = runs.flatMap((r) => {
+        const out: number[][] = [];
+        let cur: number[] = [];
+        for (const i of r) {
+          if (known(i)) cur.push(i);
+          else if (cur.length) {
+            out.push(cur);
+            cur = [];
+          }
+        }
+        if (cur.length) out.push(cur);
+        return out;
+      });
+      // (a lower edge the axis cannot show: the frame's edge where the low values are; a reversed axis: the top)
+      const lowY = sy.f(sy.lo) < sy.f(sy.hi) ? frame.y : frame.y + frame.h;
+      pieces.forEach((good, k) => {
         if (good.length < 2) return;
-        const e = (i: number) => Math.abs(yErr.values[i]);
-        const eLo = (i: number) => Math.abs((c.series.yErrLo ?? yErr).values[i]);
         const lowOf = (i: number) => {
           const v = y.values[i] - (st.errDir === 'plus' ? 0 : eLo(i));
-          return validFor(sy.spec, v) ? sy.f(v) : frame.y + frame.h;
+          return validFor(sy.spec, v) ? sy.f(v) : lowY;
         };
         const up = good.map((i) => `${n2(sx.f(x.values[i]))},${n2(sy.f(y.values[i] + (st.errDir === 'minus' ? 0 : e(i))))}`);
         const dn = good.map((i) => `${n2(sx.f(x.values[i]))},${n2(lowOf(i))}`).reverse();
         parts.push(<polygon key={`b${k}`} points={[...up, ...dn].join(' ')} fill={errC} fillOpacity={st.fillOpacity} stroke="none" />);
         if (st.errBandEdge > 0) parts.push(<path key={`be${k}`} d={`M${up.join('L')}M${dn.join('L')}`} fill="none" stroke={errC} strokeWidth={st.errBandEdge} strokeDasharray={dashArray(st.errDash, st.errBandEdge)} strokeOpacity={st.errOpacity} />);
       });
+    }
     return <g>{parts}</g>;
   }
   // a rug: every value a tick from the frame's edge inward (whatever the other coordinate)
@@ -1536,33 +1555,42 @@ function CurveView({ c, sx, sy, frame, defaults, below, others = [], gid = 'c' }
     const xc: string[] = [];
     const cy = st.errCap / 2;
     const cx = ex.cap / 2;
+    // a lower end the axis cannot show (≤ 0 on a log axis): the bar out past the frame's edge where the low values are
+    // (the bottom / left; a reversed axis: the top / right)
+    const lowY = sy.f(sy.lo) < sy.f(sy.hi) ? frame.y - 2 : frame.y + frame.h + 2;
+    const lowX = sx.f(sx.lo) > sx.f(sx.hi) ? frame.x + frame.w + 2 : frame.x - 2;
     idx.forEach((i, k) => {
       if (k % every) return;
       const [px, py] = [sx.f(x.values[i]), sy.f(y.values[i])];
       const up = yErr && st.errStyle === 'bars' ? Math.abs(yErr.values[i]) : NaN;
       const down = yErr && st.errStyle === 'bars' ? Math.abs((c.series.yErrLo ?? yErr).values[i]) : NaN;
+      // (each bar from r off the point toward its end, whichever way the axis grows)
       if (Number.isFinite(up) && st.errDir !== 'minus' && up > 0) {
         const hi = sy.f(y.values[i] + up);
-        if (py - hi > r) yb.push(`M${n2(px)},${n2(py - r)}V${n2(hi)}`);
+        const from = barFrom(py, hi, r);
+        if (from !== null) yb.push(`M${n2(px)},${n2(from)}V${n2(hi)}`);
         if (cy > 0) yc.push(`M${n2(px - cy)},${n2(hi)}h${n2(2 * cy)}`);
       }
       if (Number.isFinite(down) && st.errDir !== 'plus' && down > 0) {
         const loV = y.values[i] - down;
-        const lo = validFor(sy.spec, loV) ? sy.f(loV) : frame.y + frame.h + 2;
-        if (lo - py > r) yb.push(`M${n2(px)},${n2(py + r)}V${n2(lo)}`);
+        const lo = validFor(sy.spec, loV) ? sy.f(loV) : lowY;
+        const from = barFrom(py, lo, r);
+        if (from !== null) yb.push(`M${n2(px)},${n2(from)}V${n2(lo)}`);
         if (cy > 0 && validFor(sy.spec, loV)) yc.push(`M${n2(px - cy)},${n2(lo)}h${n2(2 * cy)}`);
       }
       const e = xErr ? Math.abs(xErr.values[i]) : NaN;
       if (Number.isFinite(e) && e > 0) {
         if (ex.dir !== 'minus') {
           const rr = sx.f(x.values[i] + e);
-          if (rr - px > r) xb.push(`M${n2(px + r)},${n2(py)}H${n2(rr)}`);
+          const from = barFrom(px, rr, r);
+          if (from !== null) xb.push(`M${n2(from)},${n2(py)}H${n2(rr)}`);
           if (cx > 0) xc.push(`M${n2(rr)},${n2(py - cx)}v${n2(2 * cx)}`);
         }
         if (ex.dir !== 'plus') {
           const lV = x.values[i] - e;
-          const l = validFor(sx.spec, lV) ? sx.f(lV) : frame.x - 2;
-          if (px - l > r) xb.push(`M${n2(px - r)},${n2(py)}H${n2(l)}`);
+          const l = validFor(sx.spec, lV) ? sx.f(lV) : lowX;
+          const from = barFrom(px, l, r);
+          if (from !== null) xb.push(`M${n2(from)},${n2(py)}H${n2(l)}`);
           if (cx > 0 && validFor(sx.spec, lV)) xc.push(`M${n2(l)},${n2(py - cx)}v${n2(2 * cx)}`);
         }
       }

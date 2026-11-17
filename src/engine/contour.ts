@@ -83,11 +83,15 @@ export type ContourSpec = {
   fastCells?: number;
 };
 
-// a grid: X (nx) and Y (ny) increasing, Z row by row (z[j·nx + i] at xs[i], ys[j]), NaN where nothing is known
-export type Grid = { xs: number[]; ys: number[]; z: Float64Array };
+// a grid: X (nx) and Y (ny) increasing, Z row by row (z[j·nx + i] at xs[i], ys[j]), NaN where nothing is known; note:
+// what the data left out of it (the cells empty, masked), said by the node that draws it
+export type Grid = { xs: number[]; ys: number[]; z: Float64Array; note?: string };
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 // ---- the grid from the data ----
-// X, Y, Z: a grid when every X with every Y is there once (in any order); else null
+// X, Y, Z: a grid when every X with every Y is there once (in any order); else null. The places count with or without
+// their Z (a Z missing, NaN or masked given as NaN: a hole, its cell left empty, said in the note)
 export function asGrid(x: ArrayLike<number>, y: ArrayLike<number>, z: ArrayLike<number>): Grid | null {
   const n = Math.min(x.length, y.length, z.length);
   const ux = [...new Set(Array.from({ length: n }, (_, i) => x[i]).filter(Number.isFinite))].sort((a, b) => a - b);
@@ -96,14 +100,37 @@ export function asGrid(x: ArrayLike<number>, y: ArrayLike<number>, z: ArrayLike<
   const ix = new Map(ux.map((v, i) => [v, i]));
   const iy = new Map(uy.map((v, j) => [v, j]));
   const g = new Float64Array(ux.length * uy.length).fill(NaN);
+  const seen = new Uint8Array(g.length);
   let filled = 0;
   for (let k = 0; k < n; k++) {
     const [i, j] = [ix.get(x[k]), iy.get(y[k])];
     if (i === undefined || j === undefined) continue;
-    if (Number.isNaN(g[j * ux.length + i])) filled++;
-    g[j * ux.length + i] = z[k];
+    const c = j * ux.length + i;
+    if (!seen[c]) filled++;
+    seen[c] = 1;
+    // (a place given twice: the last value it has)
+    if (!Number.isNaN(z[k]) || Number.isNaN(g[c])) g[c] = z[k];
   }
-  return filled >= 0.9 * ux.length * uy.length ? { xs: ux, ys: uy, z: g } : null;
+  if (filled < 0.9 * g.length) return null;
+  const empty = g.reduce((s, v) => s + (Number.isFinite(v) ? 0 : 1), 0);
+  return { xs: ux, ys: uy, z: g, ...(empty ? { note: `Grid of ${ux.length} × ${uy.length}: ${plural(empty, 'cell')} with no Z (missing, NaN or masked) left empty.` } : {}) };
+}
+
+// X, Y, Z columns to a grid: on a grid (in any row order; a Z missing, NaN or masked: its cell left empty), else scattered
+// points (the masked rows and those without Z left out) interpolated linearly on their triangles to a size × size grid
+export function gridOfPoints(X: Column, Y: Column, Z: Column, size: number): { g: Grid; note?: string } | string {
+  const nr = Math.min(X.values.length, Y.values.length, Z.values.length);
+  const masked = (i: number) => !!(X.mask?.[i] || Y.mask?.[i] || Z.mask?.[i]);
+  // every place (X, Y) with its Z, NaN where it is missing or masked
+  const at = Array.from({ length: nr }, (_, i) => i).filter((i) => Number.isFinite(X.values[i]) && Number.isFinite(Y.values[i]));
+  const zOf = (i: number) => (masked(i) || !Number.isFinite(Z.values[i]) ? NaN : Z.values[i]);
+  const keep = at.filter((i) => Number.isFinite(zOf(i)));
+  if (keep.length < 3) return 'Fewer than 3 points with X, Y and Z.';
+  const onGrid = asGrid(at.map((i) => X.values[i]), at.map((i) => Y.values[i]), at.map(zOf));
+  if (onGrid) return { g: onGrid };
+  if (keep.length > 20000) return `${keep.length} scattered points: too many to triangulate here (20 000 at most); put them on a grid first.`;
+  const sg = gridFromScatter(keep.map((i) => X.values[i]), keep.map((i) => Y.values[i]), keep.map((i) => Z.values[i]), size);
+  return { g: sg, note: `Scattered points: Z interpolated linearly on their triangles to a ${sg.xs.length} × ${sg.ys.length} grid (outside the points: left empty).` };
 }
 
 // Delaunay triangles of points (Bowyer–Watson): index triples
@@ -377,23 +404,38 @@ export function cellEdges(v: number[]): number[] {
 // opts.edges: the map's extent (the axes' limits) out to the cells' edges, not their centres (a matrix)
 export function contourPlot(g: Grid, d: ContourSpec, names: { x: string; y: string; z: string }, opts?: { edges?: boolean }): ContourResult | string {
   const warnings: string[] = [];
+  // what the data left out of the grid (cells empty, masked)
+  if (g.note) warnings.push(g.note);
+  // a log Z: the values ≤ 0 left out of the map, its range and its lines (drawn as missing, as the values hidden); the
+  // outputs keep them
+  const nonPos = d.log ? g.z.reduce((s, v) => s + (v <= 0 ? 1 : 0), 0) : 0;
+  const gl = nonPos ? { ...g, z: Float64Array.from(g.z, (v) => (v <= 0 ? NaN : v)) } : g;
   // the values hidden (below / above a threshold, equal to values written) left out of the map, its range and its lines,
   // drawn as missing (the NaN colour, else nothing); the outputs keep them
   const hid = hiddenBy(d.hide);
-  let gm = hid ? { ...g, z: Float64Array.from(g.z, (v) => (hid(v) ? NaN : v)) } : g;
-  const fin = Array.from(gm.z).filter((v) => Number.isFinite(v) && (!d.log || v > 0));
-  if (!fin.length) return hid && Array.from(g.z).some(Number.isFinite) ? 'Every value is hidden (Hide values).' : 'No Z values on the grid.';
-  if (d.log && fin.length < Array.from(gm.z).filter(Number.isFinite).length) warnings.push('Log Z: values ≤ 0 are left out.');
-  let lo = Number.isFinite(d.zMin) ? d.zMin : minOf(fin);
-  let hi = Number.isFinite(d.zMax) ? d.zMax : maxOf(fin);
-  if (!(hi > lo)) [lo, hi] = [lo - 0.5, hi + 0.5];
+  let gm = hid ? { ...gl, z: Float64Array.from(gl.z, (v) => (hid(v) ? NaN : v)) } : gl;
+  const fin = Array.from(gm.z).filter(Number.isFinite);
+  if (!fin.length) return nonPos && !Array.from(gl.z).some(Number.isFinite) ? 'Log Z: no value above 0 to draw.' : hid && Array.from(gl.z).some(Number.isFinite) ? 'Every value is hidden (Hide values).' : 'No Z values on the grid.';
+  if (nonPos) warnings.push(`Log Z: ${plural(nonPos, 'value')} ≤ 0 left out (drawn empty).`);
+  // (a log Z: a Z min or max ≤ 0 typed cannot be on it: the data's used, said)
+  const typed = (v: number, what: string) => {
+    if (!Number.isFinite(v)) return false;
+    if (!d.log || v > 0) return true;
+    warnings.push(`Log Z: the Z ${what} typed (${v}) is not above 0: the data's used.`);
+    return false;
+  };
+  let lo = typed(d.zMin, 'min') ? d.zMin : minOf(fin);
+  let hi = typed(d.zMax, 'max') ? d.zMax : maxOf(fin);
+  if (!(hi > lo)) [lo, hi] = d.log && lo > 0 ? [lo / Math.SQRT2, hi * Math.SQRT2] : [lo - 0.5, hi + 0.5];
+  // (more than 500 levels by the step: automatic levels, said)
+  if (!d.log && d.levels === 'step' && d.step > 0 && (hi - lo) / d.step > 500) warnings.push(`Levels: a step of ${d.step} gives more than 500 levels over ${+lo.toPrecision(4)} … ${+hi.toPrecision(4)}: automatic levels drawn.`);
   // outside the colour range: hidden too (else in the map's end colours)
   const out = d.hide?.outside === 'hide';
   if (out) gm = { ...gm, z: Float64Array.from(gm.z, (v) => (v < lo || v > hi ? NaN : v)) };
   // the map: only the values written left out of its grid, the thresholds and the range a cut tested when drawn (so the
   // edge of what is hidden follows the threshold between the cells of a smooth map, not the cells)
   const eq = hiddenBy({ values: d.hide?.values });
-  const gEq = eq ? { ...g, z: Float64Array.from(g.z, (v) => (eq(v) ? NaN : v)) } : g;
+  const gEq = eq ? { ...gl, z: Float64Array.from(gl.z, (v) => (eq(v) ? NaN : v)) } : gl;
   const below = d.hide?.below ?? NaN;
   const above = d.hide?.above ?? NaN;
   const cutLo = Math.max(Number.isFinite(below) ? below : -Infinity, out ? lo : -Infinity);
@@ -514,13 +556,25 @@ export function matrixNames(zCols: Column[]): { x: string; z: string } {
   const unit = same(3).replace(/^[([]\s*|\s*[)\]]$/g, '');
   return { x: unit ? `X (${unit})` : 'X', z: same(1).replace(/[\s([]+$/, '') || 'Z' };
 }
+// (a masked cell — its Z column's, or its row's in the Y column —: NaN, left out of the map and its range, said)
 export function gridFromMatrix(yCol: Column, zCols: Column[]): Grid | string {
   const xv = zCols.map((c) => Number(/[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?/.exec(c.name)?.[0]));
   if (xv.some((v) => !Number.isFinite(v))) return `Matrix: every Z column's name must hold its X (a number): ${zCols.filter((_, k) => !Number.isFinite(xv[k])).map((c) => `“${c.name}”`).join(', ')}.`;
+  // (two Z columns at the same X: cells of no width)
+  const twice = zCols.filter((_, k) => xv.indexOf(xv[k]) !== k || xv.lastIndexOf(xv[k]) !== k);
+  if (twice.length) return `Matrix: the X of the Z columns (the numbers in their names): each a different one (${twice.map((c) => `“${c.name}”`).join(', ')} have the same X).`;
   const rows = Array.from({ length: yCol.values.length }, (_, j) => j).filter((j) => Number.isFinite(yCol.values[j]));
   const ox = xv.map((v, k) => ({ v, k })).sort((a, b) => a.v - b.v);
   const oy = rows.sort((a, b) => yCol.values[a] - yCol.values[b]);
   const z = new Float64Array(ox.length * oy.length);
-  oy.forEach((r, j) => ox.forEach((o, i) => (z[j * ox.length + i] = zCols[o.k].values[r])));
-  return { xs: ox.map((o) => o.v), ys: oy.map((r) => yCol.values[r]), z };
+  let masked = 0;
+  oy.forEach((r, j) =>
+    ox.forEach((o, i) => {
+      const c = zCols[o.k];
+      const off = !!(yCol.mask?.[r] || c.mask?.[r]);
+      if (off && Number.isFinite(c.values[r])) masked++;
+      z[j * ox.length + i] = off ? NaN : c.values[r];
+    }),
+  );
+  return { xs: ox.map((o) => o.v), ys: oy.map((r) => yCol.values[r]), z, ...(masked ? { note: `Matrix: ${plural(masked, 'masked cell')} left out (drawn empty).` } : {}) };
 }

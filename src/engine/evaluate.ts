@@ -16,8 +16,8 @@ import { withColumnFunctions } from './colfns.ts';
 export { withColumnFunctions };
 import type { Edge } from '@xyflow/react';
 import type { AnnotationItem, AppNode, BookSheet, CurveColors, CalculusData, ColumnsData, PeakData, PeakWidthData, PickData, CanvasData, DrawingData, DrawingComponent, CanvasItem, CanvasLayout, CurveRow, MathColData, PythonData, RowRule, FitNodeData, GenColData, PageData, Plot1DData, StatsData, HistogramData, BarChartData, BoxViolinData, ProbPlotData, BlandAltmanData, PieData, ContourData, PolarData, SmithData, ScatterMatrixData, TernaryData, WaterfallData, Plot3DData } from '../types.ts';
-import { axisRange } from '../figure/ticks.ts';
-import { autoFrame, axesGeometry, placeAuto, placeInsets, placeLegends } from '../figure/axes.ts';
+import { axisRange, rangeSwapped } from '../figure/ticks.ts';
+import { autoFrame, axesGeometry, axesRangeNotes, placeAuto, placeInsets, placeLegends } from '../figure/axes.ts';
 import { legendLayout } from '../figure/legendLayout.ts';
 import { columnLetter, readTable, type CsvResult } from './csv.ts';
 import { curveColumns, digest, figPort, outValue, toPy, type PyJob, type PyModule, type PyResult, type PyValue } from './python.ts';
@@ -49,7 +49,7 @@ import { colKey, colLabel, drawCircuit, type EisRangeSpec, fitCurve, guessColumn
 import { histogram, type FitResult } from './histogram.ts';
 import { axisValues, placeColumn, type AxisValues } from './axiskinds.ts';
 import { countGrid, densityGrid, streamlines, vectorArrows } from './fields2d.ts';
-import { barChart, rawTable, sortTable, wideTable } from './barchart.ts';
+import { barChart, maskedNote, rawTable, sortTable, wideTable } from './barchart.ts';
 import { boxGroups, boxViolin, keyOf } from './boxviolin.ts';
 import { probPlot, type ProbGroup, type ProbRow } from './probplot.ts';
 import { blandAltman, type BAGroup, type BAStats } from './blandaltman.ts';
@@ -61,7 +61,7 @@ import { scatterMatrix } from './scattermatrix.ts';
 import { ternaryChart } from './ternary.ts';
 import { waterfallChart, waterfallZ } from './waterfall.ts';
 import { plot3d, type LayerInput, type LayerSpec, type Plot3DInput } from './plot3d.ts';
-import { asGrid, contourPlot, gridFromMatrix, gridFromScatter, matrixNames, type Grid } from './contour.ts';
+import { asGrid, contourPlot, gridFromMatrix, gridFromScatter, gridOfPoints, matrixNames, type Grid } from './contour.ts';
 import { fromColumn, makeMatrix, matrixDataset, matrixSheet, partHandle, runSteps, type MatCompData, type Matrix } from './matrix.ts';
 import { cellCurves, matrixAxes, matrixGrid, type MatrixPlotSpec } from './matrixplot.ts';
 import { bracketCurves, bracketTable, SIG_DEFAULTS, significance, type SigElement, type SigSpec } from './signif.ts';
@@ -714,6 +714,8 @@ function plot(n: { id: string; data: Plot1DData }, inputs: Inputs): Out {
   const { figure, legendCurves } = plotFigure(nFig, curves, warnings, insetFigs);
   const ax0 = figure.axes.find((q) => !q.inset) ?? figure.axes[0];
   if (ax0) ax0.annotations.push(...qf.regions);
+  // (a typed Start / End that does not fit — above End: drawn reversed —, a limit the scale cannot have: said)
+  if (ax0) warnings.push(...axesRangeNotes(ax0));
   outputs.figure = { t: 'figure', v: figure };
   return { outputs, warnings: [...new Set(warnings)], errors, view: { curves, legendCurves, available, rowAvail, figure, ...(qf.view.length ? { quickFits: qf.view } : {}), ...(colorGroups ? { colorGroups } : {}), ...sheetView } };
 }
@@ -881,7 +883,8 @@ function stackCurves(found: { s: Series; style: CurveStyle }[], how: 'stack' | '
   found.forEach((f, k) => {
     for (let i = 0; i < X.length; i++) acc[i] += parts[k][i];
     const y = Float64Array.from(acc, (v, i) => (how === 'percent' ? (total[i] ? (100 * v) / total[i] : NaN) : v));
-    f.s = { name: f.s.name, x: found[0].s.x, y: { ...f.s.y, values: y, text: undefined } };
+    // (a share of the sum: in %, not in the column's unit — the axis title says so)
+    f.s = { name: f.s.name, x: found[0].s.x, y: { ...f.s.y, ...(how === 'percent' ? { name: `${bareName(f.s.y.name)} (%)` } : {}), values: y, text: undefined } };
     if (f.style.fill === 'none') f.style = { ...f.style, fill: k === 0 ? 'zero' : 'curve', fillCurve: k, fillOpacity: f.style.fillOpacity > 0 ? f.style.fillOpacity : 0.4 };
   });
 }
@@ -1270,7 +1273,13 @@ function blandAltmanNode(n: { id: string; data: BlandAltmanData }, inputs: Input
   }
   const r = blandAltman([...by.values()], d, A.name, B.name);
   if (typeof r === 'string') return { errors: [r], view: { available } };
-  const axes = r.logY ? { ...d.axes, y: { ...AXIS_DEFAULTS, ...d.axes?.y, scale: 'log' as const } } : d.axes;
+  // (ratios on a log axis: within a decade — 0.97 … 1.11 — limits rounded out to whole decades would squeeze them into a
+  // strip; the data ± 5 % instead, unless limits are typed)
+  const rys = r.curves.flatMap((c) => Array.from(c.series.y.values).filter((v) => v > 0));
+  const narrow = rys.length > 0 && maxOf(rys) / minOf(rys) < 10;
+  const yOwn = d.axes?.y;
+  const yRange = narrow && (!yOwn?.range || yOwn.range === 'nice') && !Number.isFinite(yOwn?.min) && !Number.isFinite(yOwn?.max) ? { range: 'padded' as const } : {};
+  const axes = r.logY ? { ...d.axes, y: { ...AXIS_DEFAULTS, ...d.axes?.y, scale: 'log' as const, ...yRange } } : d.axes;
   const warnings = [...r.warnings];
   const insetFigs = (inputs.get('insets') ?? []).flatMap((i) => (i.value?.t === 'figure' ? [i.value.v] : []));
   const { figure, legendCurves } = plotFigure({ id: n.id, data: { label: '', style: {}, axes, legend: d.legend, annotations: d.annotations, page: d.page, insets: d.insets } }, r.curves, warnings, insetFigs);
@@ -1363,22 +1372,8 @@ function readGrid(d: GridInput, all: Column[]): { g: Grid; names: { x: string; y
     let made: { g: Grid; note?: string } | string;
     if (hit && hit.key.length === memoKey.length && hit.key.every((v, k) => v === memoKey[k])) made = hit.made;
     else {
-      const nr = Math.min(X.values.length, Y.values.length, Z.values.length);
-      const mask = maskOf([X, Y, Z], nr);
-      const keep = Array.from({ length: nr }, (_, i) => i).filter((i) => !mask?.[i] && Number.isFinite(X.values[i]) && Number.isFinite(Y.values[i]) && Number.isFinite(Z.values[i]));
-      const [px, py, pz] = [keep.map((i) => X.values[i]), keep.map((i) => Y.values[i]), keep.map((i) => Z.values[i])];
-      const onGrid = px.length < 3 ? null : asGrid(px, py, pz);
-      made =
-        px.length < 3
-          ? 'Fewer than 3 points with X, Y and Z.'
-          : onGrid
-            ? { g: onGrid }
-            : px.length > 20000
-              ? `${px.length} scattered points: too many to triangulate here (20 000 at most); put them on a grid first.`
-              : (() => {
-                  const sg = gridFromScatter(px, py, pz, memoKey[5] as number);
-                  return { g: sg, note: `Scattered points: Z interpolated linearly on their triangles to a ${sg.xs.length} × ${sg.ys.length} grid.` };
-                })();
+      // (a grid with cells missing — empty, NaN, masked — stays a grid, those cells empty; scattered points triangulated)
+      made = gridOfPoints(X, Y, Z, memoKey[5] as number);
       gridMemo.set(Z.values, { key: memoKey, made });
     }
     if (typeof made === 'string') return { error: made };
@@ -1635,9 +1630,12 @@ function polarNode(n: { id: string; data: PolarData }, inputs: Inputs): Out {
     const vals = list(d.ys, ys.length ? ys : numeric.filter((c) => c !== cat));
     if (typeof vals === 'string') return { errors: [vals], view: { available } };
     if (!vals.length) return { view: { available, waiting: 'Choose the value columns (a polygon each).' } };
-    const { spokes, series } = radarSeries(wideTable(cat, vals, vals.map(() => undefined)));
+    // (the masked values: out of the polygons, said)
+    const wt = wideTable(cat, vals, vals.map(() => undefined));
+    const { spokes, series } = radarSeries(wt);
     if (spokes.length < 3) return { errors: ['A radar needs 3 categories (spokes) or more.'], view: { available } };
     r = polarChart(series, d, spokes);
+    if (typeof r !== 'string') r.warnings.push(...maskedNote(wt.masked));
   } else {
     const th = by(d.theta) ?? all.find((_, j) => roleOf(all, j) === 'x') ?? numeric[0];
     if (d.theta && !by(d.theta)) return { errors: [`No column “${d.theta}”.`], view: { available } };
@@ -1648,7 +1646,7 @@ function polarNode(n: { id: string; data: PolarData }, inputs: Inputs): Out {
     r = polarChart(
       rs.map((c) => {
         const mask = maskOf([th, c], c.values.length);
-        return { name: c.name, theta: theta.map((v, i) => (mask?.[i] ? NaN : v)), r: Array.from(c.values) };
+        return { name: c.name, theta: theta.map((v, i) => (mask?.[i] ? NaN : v)), r: Array.from(c.values, (v, i) => (mask?.[i] ? NaN : v)) };
       }),
       d,
     );
@@ -1777,7 +1775,7 @@ function waterfallNode(n: { id: string; data: WaterfallData }, inputs: Inputs): 
     if (!X) return [];
     const m = Math.min(X.values.length, y.values.length);
     const mask = maskOf([X, y], m);
-    return [{ y, X, x: Array.from(X.values.subarray(0, m), (v, i) => (mask?.[i] ? NaN : v)), v: Array.from(y.values.subarray(0, m)) }];
+    return [{ y, X, x: Array.from(X.values.subarray(0, m), (v, i) => (mask?.[i] ? NaN : v)), v: Array.from(y.values.subarray(0, m), (v, i) => (mask?.[i] ? NaN : v)) }];
   });
   if (!runsIn.length) return { view: { available, waiting: 'Choose the X of the curves.' } };
   const zz = waterfallZ(runsIn.map((q) => q.y), d.z);
@@ -2351,6 +2349,18 @@ export function annotationsOf(items: AnnotationItem[] | undefined, node: string,
 
 // A Plot's figure: its page, one frame (placed by its margins or by hand) with the curves, its legend, its annotations.
 function plotFigure(n: { id: string; data: Plot1DData }, curves: Curve[], warnings: string[], insetFigs: Figure[] = []): { figure: Figure; legendCurves: Curve[] } {
+  // (a logarithmic X or Y axis cannot show values ≤ 0: they are not drawn — said, per axis, with their count)
+  for (const k of ['x', 'y'] as const) {
+    if (n.data.axes?.[k]?.scale !== 'log') continue;
+    let bad = 0;
+    for (const c of curves) {
+      // (the curves on the main axes: left, bottom)
+      if (!c.style.show || (k === 'y' ? c.style.axisY && c.style.axisY !== 'left' : c.style.axisX && c.style.axisX !== 'bottom')) continue;
+      const v = k === 'x' ? c.series.x.values : c.series.y.values;
+      for (let i = 0; i < v.length; i++) if (v[i] <= 0 && !c.mask?.[i]) bad++;
+    }
+    if (bad) warnings.push(`${bad} value${bad > 1 ? 's' : ''} ≤ 0 not drawn on the logarithmic ${k.toUpperCase()} axis (Symmetric log shows them).`);
+  }
   const d = n.data;
   const page = { ...PLOT_PAGE_DEFAULTS, ...d.page };
   const text = pageText(page);
@@ -2965,6 +2975,10 @@ export function canvasFigure(id: string, d: CanvasData, figsUnordered: Figure[],
   const at = (sizes: number[], k: number, gap: number, start: number) => start + sizes.slice(0, k).reduce((a, b) => a + b, 0) + k * gap;
   const boxes: FigureBox[] = [];
   let axes: AxesFig[] = [];
+  // what a panel's page has besides its axes — its title, its texts and shapes on the page, its own (common) legends,
+  // those of a Merge inside this one —: carried into its box (% of the page → % of this page), not lost
+  const carried: Annotation[] = [];
+  const carriedLegends: LegendSpec[] = [];
   figs.forEach((f, k) => {
     const c = cells[k];
     let box: Placement;
@@ -2980,6 +2994,16 @@ export function canvasFigure(id: string, d: CanvasData, figsUnordered: Figure[],
     // its page, so the drawing stays on its data
     const pictured = f.axes.some((a) => a.overlay);
     if (pictured) box = keepAspect(box, W, H, toPt(f.width, f.unit) / toPt(f.height, f.unit));
+    {
+      const bx = (v: number) => box.x + (v / 100) * box.w;
+      const by = (v: number) => box.y + (v / 100) * box.h;
+      for (const n of f.annotations) {
+        if (n.kind === 'text' && n.text.coords === 'percent') carried.push({ ...n, key: `${f.key ?? k}:${n.key}`, text: { ...n.text, x: bx(n.text.x), y: by(n.text.y) } });
+        else if (n.kind === 'shape' && n.shape.coords === 'percent' && !n.shape.points?.trim())
+          carried.push({ ...n, key: `${f.key ?? k}:${n.key}`, shape: { ...n.shape, x1: bx(n.shape.x1), y1: by(n.shape.y1), x2: bx(n.shape.x2), y2: by(n.shape.y2) } });
+      }
+      for (const lg of f.legends) carriedLegends.push({ ...lg, key: `${f.key ?? k}:${lg.key}`, x: bx(lg.x), y: by(lg.y) });
+    }
     boxes.push({ key: f.key ?? String(k), box, free: !c, ...(!c && f.background && f.background !== 'none' ? { background: f.background, ...(f.backgroundGrad ? { backgroundGrad: f.backgroundGrad } : {}) } : {}), ...(f.border > 0 ? { border: { width: f.border, color: f.borderColor, dash: f.borderDash ?? 'solid', radius: f.borderRadius ?? 0, opacity: f.borderOpacity ?? 1, inset: f.borderInset ?? 0 } } : {}) });
     for (const ax of f.axes) {
       // a frame placed by hand keeps its place in its page, now the box
@@ -3014,7 +3038,7 @@ export function canvasFigure(id: string, d: CanvasData, figsUnordered: Figure[],
       const [a, b] = axisRange(spec, lo, hi);
       for (const k of ks) {
         const st = axes[k].style;
-        axes[k] = { ...axes[k], style: { ...st, [axis]: { ...(axis === 'x' ? st.x : st.y), min: a, max: b } } };
+        axes[k] = { ...axes[k], style: { ...st, [axis]: { ...(axis === 'x' ? st.x : st.y), ...(rangeSwapped(spec) ? { min: b, max: a } : { min: a, max: b }) } } };
       }
     }
   };
@@ -3023,11 +3047,18 @@ export function canvasFigure(id: string, d: CanvasData, figsUnordered: Figure[],
   // one colour scale: the curves coloured by a map (not by categories) given the range of them all
   if (L.oneColorScale) {
     // (3D stacked maps: their layers coloured when drawn, by this range)
-    const mapped = (c: Curve) => ((c.style.colorBy !== 'none' && !c.style.categorical) || !!c.three?.planes) && !!c.colorRange;
+    // (a heatmap / contour map: its grid's range too; the colour bars of the panels follow the curve they show)
+    const rangeOf = (c: Curve): [number, number] | undefined => c.colorRange ?? c.grid?.range;
+    const mapped = (c: Curve) => (((c.style.colorBy !== 'none' && !c.style.categorical) || !!c.three?.planes) && !!c.colorRange) || !!c.grid;
     const all = axes.flatMap((a) => a.curves.filter(mapped));
     if (all.length > 1) {
-      const range: [number, number] = [minOf(all.map((c) => c.colorRange![0])), maxOf(all.map((c) => c.colorRange![1]))];
-      axes = axes.map((a) => ({ ...a, curves: a.curves.map((c) => (mapped(c) ? { ...c, colorRange: range } : c)) }));
+      const range: [number, number] = [minOf(all.map((c) => rangeOf(c)![0])), maxOf(all.map((c) => rangeOf(c)![1]))];
+      const one = (c: Curve): Curve => (mapped(c) ? { ...c, colorRange: range, ...(c.grid ? { grid: { ...c.grid, range } } : {}) } : c);
+      axes = axes.map((a) => {
+        const curves = a.curves.map(one);
+        const byKey = new Map(curves.map((c) => [c.key, c]));
+        return { ...a, curves, annotations: a.annotations.map((n) => (n.kind === 'colorbar' && n.curve && byKey.has(n.curve.key) ? { ...n, curve: byKey.get(n.curve.key)! } : n)) };
+      });
     }
   }
   // inner panels without numbers and titles on the shared axes
@@ -3072,8 +3103,8 @@ export function canvasFigure(id: string, d: CanvasData, figsUnordered: Figure[],
   }
   axes = placeInsets(axes, Wpt, Hpt, pageText(d));
   // the common titles and legend: by the frames of the panels, in the room kept for them
-  const annotations = annotationsOf(d.annotations, id, axes.flatMap((a) => a.curves), warnings);
-  const legends: LegendSpec[] = [];
+  const annotations = [...carried, ...annotationsOf(d.annotations, id, axes.flatMap((a) => a.curves), warnings)];
+  const legends: LegendSpec[] = [...carriedLegends];
   const frames = axes.filter((a, k) => !a.inset && !a.drawing && cellOf(k)).map((a) => a.style.pos);
   if (frames.length) {
     const [x0, x1] = [minOf(frames.map((p) => p.x)), maxOf(frames.map((p) => p.x + p.w))];

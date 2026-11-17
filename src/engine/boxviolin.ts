@@ -11,6 +11,7 @@ import type { SigElement, SigSpec } from './signif.ts';
 import { column, fmtNum, type Column, type Dataset } from './table.ts';
 import { curveStyle, PALETTE, withLook, type BarLook, type BoxItem, type Curve, type ElementLook } from '../figure/spec.ts';
 import { maxOf, minOf } from './minmax.ts';
+import { maskOf } from './manip.ts';
 
 export type Whisker = 'iqr' | 'p5' | 'p10' | 'minmax' | 'sd';
 export type BoxSpec = {
@@ -86,33 +87,54 @@ export function violinStats(values: number[], bandwidth: BoxSpec['bandwidth'], b
 // span: the values' range drawn
 export type BoxResult = { curves: Curve[]; table: Dataset; categoryTicks: string; catLo: number; catHi: number; elements: SigElement[]; span: [number, number]; warnings: string[] };
 
-type Group = { cat: string; series: string; values: number[] };
+// masked: the values of the group left out because they are masked (Data manipulation)
+type Group = { cat: string; series: string; values: number[]; masked?: number };
 
 export const keyOf = (c: Column, i: number) => (c.text?.[i]?.trim() ? c.text[i].trim() : Number.isFinite(c.values[i]) ? fmtNum(c.values[i], 10) : '');
-// the groups: every column of a table, or the raw values by group and subgroup (in the order met)
-export function boxGroups(d: BoxSpec, cols: Column[], value?: Column, group?: Column, sub?: Column): { cats: string[]; series: string[]; groups: Group[] } {
+// the groups: every column of a table, or the raw values by group and subgroup (in the order met); the masked values left
+// out (a table: masked in their own column; raw: the value, its group or its subgroup masked) and counted
+export function boxGroups(d: BoxSpec, cols: Column[], value?: Column, group?: Column, sub?: Column): { cats: string[]; series: string[]; groups: Group[]; masked: number } {
   if (d.mode === 'table') {
     const series = ['values'];
-    return { cats: cols.map((c) => c.name), series, groups: cols.map((c) => ({ cat: c.name, series: series[0], values: Array.from(c.values).filter(Number.isFinite) })) };
+    const groups = cols.map((c) => {
+      const values = Array.from(c.values).filter((v, i) => Number.isFinite(v) && !c.mask?.[i]);
+      const masked = Array.from(c.values).filter((v, i) => Number.isFinite(v) && c.mask?.[i]).length;
+      return { cat: c.name, series: series[0], values, ...(masked ? { masked } : {}) };
+    });
+    return { cats: cols.map((c) => c.name), series, groups, masked: groups.reduce((t, g) => t + (g.masked ?? 0), 0) };
   }
   const cats: string[] = [];
   const series: string[] = [];
   const cells = new Map<string, number[]>();
-  for (let i = 0; i < (value?.values.length ?? 0); i++) {
+  const n = value?.values.length ?? 0;
+  const mask = maskOf([value, group, sub], n);
+  const hidden: string[] = []; // the cells of the masked values
+  for (let i = 0; i < n; i++) {
     const v = value!.values[i];
     const g = group ? keyOf(group, i) : '';
     const s = sub ? keyOf(sub, i) : value!.name;
     if (!Number.isFinite(v) || !g || !s) continue;
+    if (mask?.[i]) {
+      hidden.push(`${g}\u0000${s}`);
+      continue;
+    }
     if (!cats.includes(g)) cats.push(g);
     if (!series.includes(s)) series.push(s);
     const k = `${g}\u0000${s}`;
     cells.set(k, [...(cells.get(k) ?? []), v]);
   }
-  return { cats, series, groups: cats.flatMap((c) => series.map((s) => ({ cat: c, series: s, values: cells.get(`${c}\u0000${s}`) ?? [] }))) };
+  const groups: Group[] = cats.flatMap((c) => series.map((s) => ({ cat: c, series: s, values: cells.get(`${c}\u0000${s}`) ?? [] })));
+  // every masked value counted on its group (one wholly masked: on the first group, to be said all the same)
+  for (const k of hidden) {
+    const g = groups.find((q) => `${q.cat}\u0000${q.series}` === k) ?? groups[0];
+    if (g) g.masked = (g.masked ?? 0) + 1;
+  }
+  return { cats, series, groups, masked: hidden.length };
 }
 
 export function boxViolin(cats: string[], seriesNames: string[], groups: Group[], d: BoxSpec): BoxResult | string {
-  const warnings: string[] = [];
+  const masked = groups.reduce((t, g) => t + (g.masked ?? 0), 0);
+  const warnings: string[] = masked ? [`${masked} masked value${masked > 1 ? 's' : ''} left out.`] : [];
   const k = seriesNames.length;
   if (!cats.length || !groups.some((g) => g.values.length)) return 'No values: choose the columns (or the values and their groups).';
   const split = d.split && k === 2 && d.kind !== 'box';

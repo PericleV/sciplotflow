@@ -6,7 +6,7 @@
 // is small), the total or a text in the centre; every category its colour and its own look (opacity, edge, hatching,
 // moved out). The angles from the start, counterclockwise. Pure.
 import { column, fmtNum, type Column, type Dataset } from './table.ts';
-import type { BarTable } from './barchart.ts';
+import { maskedNote, type BarTable } from './barchart.ts';
 import { curveStyle, PALETTE, type Curve, type ElementLook, type TextStyle, type WedgeItem } from '../figure/spec.ts';
 
 export type PieSpec = {
@@ -61,7 +61,7 @@ export function pieAngles(values: number[], start: number, clockwise: boolean): 
 }
 
 export function pieChart(t: BarTable, d: PieSpec): PieResult | string {
-  const warnings: string[] = [];
+  const warnings: string[] = [...maskedNote(t.masked)];
   let cats = t.categories.map((c) => c.label);
   // the rings: a value per category, negative and missing ones as 0
   let rings = t.series.map((s) => ({ name: s.name, values: cats.map((_, i) => (Number.isFinite(s.values[i]) && s.values[i] > 0 ? s.values[i] : 0)) }));

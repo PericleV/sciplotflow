@@ -339,6 +339,8 @@ export function plot3d(data: Plot3DInput, d: Plot3DSpec): { curves: Curve[]; col
   const empty = () => ({ name: '', x: column('x', new Float64Array(0)), y: column('y', new Float64Array(0)) });
   if (data.kind === 'grid') {
     const g0 = data.g;
+    // (what the data left out of the grid: cells empty, masked)
+    if (g0.note) warnings.push(g0.note);
     const g = coarsen(g0, Math.max(4, Math.min(200, Math.round(d.resolution) || 50)));
     if (g !== g0) warnings.push(`Drawn on ${g.xs.length} × ${g.ys.length} cells (the data averaged; Resolution sets it).`);
     const zs = Array.from(g.z);
@@ -357,7 +359,8 @@ export function plot3d(data: Plot3DInput, d: Plot3DSpec): { curves: Curve[]; col
     if (d.kind === 'bars') {
       const step = (a: number[]) => (a.length > 1 ? Math.abs(a[a.length - 1] - a[0]) / (a.length - 1) : 1);
       const w = Math.max(0.05, Math.min(1, d.barWidth || 0.8));
-      const base = lo <= 0 && hi >= 0 ? 0 : lo > 0 ? Math.min(0, lo) : hi;
+      // (every bar from 0: up, or down when the values are below 0)
+      const base = 0;
       for (let j = 0; j < ny; j++)
         for (let i = 0; i < nx; i++) {
           const v = g.z[j * nx + i];
@@ -548,7 +551,10 @@ export function plot3d(data: Plot3DInput, d: Plot3DSpec): { curves: Curve[]; col
   // the lines and rectangles marked (cut at the layers' heights)
   scene.lines.push(...markLines(d.marks, scene.range.z, (scene.planes ?? []).map((p) => p.z), scene));
   // a log axis: everything on it as log10 of the values (the limits and the cuts were on the values)
+  const nBars = scene.bars.items.length;
   logScene(scene, [d.axis3?.x?.scale === 'log', d.axis3?.y?.scale === 'log', d.axis3?.z?.scale === 'log']);
+  const lost = nBars - scene.bars.items.length;
+  if (lost) warnings.push(`Log axis: ${lost} bar${lost === 1 ? '' : 's'} at a value ≤ 0 left out.`);
   // a reversed axis: its range from the highest to the lowest (the box drawn the other way along it)
   if (d.axis3?.x?.reverse) scene.range.x = [scene.range.x[1], scene.range.x[0]];
   if (d.axis3?.y?.reverse) scene.range.y = [scene.range.y[1], scene.range.y[0]];
@@ -589,14 +595,17 @@ export function logScene(S: ThreeScene, log: [boolean, boolean, boolean]) {
   S.surfaces = S.surfaces.map((sf) => ({ ...sf, xs: sf.xs.map((v) => see(0, fx(v))), ys: sf.ys.map((v) => see(1, fy(v))), z: log[2] ? Float64Array.from(sf.z, (v) => see(2, lg(v))) : sf.z }));
   S.bars = {
     ...S.bars,
-    items: S.bars.items.map((b) => {
+    // (a bar whose top or sides are not on a log axis — a value ≤ 0 — left out, not drawn to the page's corner)
+    items: S.bars.items.flatMap((b) => {
       const [x0, x1] = [fx(b.x - b.dx / 2), fx(b.x + b.dx / 2)];
       const [y0, y1] = [fy(b.y - b.dy / 2), fy(b.y + b.dy / 2)];
+      const z1 = fz(b.z1);
+      if (![x0, x1, y0, y1, z1].every(Number.isFinite)) return [];
       for (const v of [x0, x1]) see(0, v);
       for (const v of [y0, y1]) see(1, v);
+      see(2, z1);
       // (a foot at 0 or below on a log Z: at the floor, set once the box is known)
-      const z1 = see(2, fz(b.z1));
-      return { ...b, x: (x0 + x1) / 2, dx: x1 - x0, y: (y0 + y1) / 2, dy: y1 - y0, z0: log[2] && !(b.z0 > 0) ? -Infinity : see(2, fz(b.z0)), z1 };
+      return [{ ...b, x: (x0 + x1) / 2, dx: x1 - x0, y: (y0 + y1) / 2, dy: y1 - y0, z0: log[2] && !(b.z0 > 0) ? -Infinity : see(2, fz(b.z0)), z1 }];
     }),
   };
   S.lines = S.lines.map((l) => ({ ...l, pts: l.pts.map(seeP) }));

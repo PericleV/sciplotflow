@@ -394,6 +394,12 @@ export function probPlot(groups: ProbGroup[], d: ProbSpec, valueName: string): P
       warnings.push(`${gr.name}: ${items.filter((q) => q.v <= 0).length} value(s) ≤ 0 left out (${DIST_NAMES[d.dist]} is for positive values).`);
       items = items.filter((q) => q.v > 0);
     }
+    // Uniform takes no suspended values: they are left out (the positions then of the failures alone)
+    if (d.dist === 'uniform' && items.some((q) => q.s)) {
+      const k = items.filter((q) => q.s).length;
+      warnings.push(`${gr.name}: Uniform takes no suspended values; ${k} suspended value${k > 1 ? 's' : ''} left out (the positions of the failures alone).`);
+      items = items.filter((q) => !q.s);
+    }
     items.sort((a, b) => a.v - b.v || Number(a.s) - Number(b.s));
     const all = items.map((q) => q.v);
     const susp = items.map((q) => q.s);
@@ -408,10 +414,6 @@ export function probPlot(groups: ProbGroup[], d: ProbSpec, valueName: string): P
     if (x[0] === x[n - 1]) {
       warnings.push(`${gr.name}: every value is the same, left out.`);
       return;
-    }
-    if (censored && d.dist === 'uniform') {
-      warnings.push(`${gr.name}: Uniform takes no suspended values; they are left out.`);
-      susp.fill(false);
     }
     // the positions of the failures (Johnson's adjusted ranks with suspensions)
     const posAll = adjustedPositions(all, susp, d.positions);
@@ -488,7 +490,9 @@ export function probPlot(groups: ProbGroup[], d: ProbSpec, valueName: string): P
     if (kind === 'qq' || kind === 'prob') {
       // Probability: the probabilities on their axis (in %), or Gamma's quantiles
       const yOf = (p: number) => (kind === 'qq' ? NaN : PROB_AXIS[d.dist] || d.dist === 'uniform' ? 100 * p : lin.h(p));
-      const xy = (vv: number, xx: number, p: number): [number, number] => (kind === 'qq' ? [vv, xx] : [xx, yOf(p)]);
+      // Q-Q in the data's units: the theoretical quantiles with the threshold γ added back, as the data
+      const shift = kind === 'qq' && d.qqAxis === 'data' ? gamma : 0;
+      const xy = (vv: number, xx: number, p: number): [number, number] => (kind === 'qq' ? [vv + shift, xx] : [xx, yOf(p)]);
       const [xn, yn] = kind === 'qq' ? names : [valueName, pctName];
       const P = x.map((xx, i) => xy(v[i], xx, pos[i]));
       curves.push({ key, label: gr.name, series: series(xn, yn, P.map((q) => q[0]), P.map((q) => q[1])), style: pointStyle });
@@ -545,7 +549,7 @@ export function probPlot(groups: ProbGroup[], d: ProbSpec, valueName: string): P
     } else if (kind === 'pp') {
       const xn = `${DIST_NAMES[d.dist]} probability`;
       const yn = 'Empirical probability';
-      curves.push({ key, label: gr.name, series: series(xn, yn, x.map(D.cdf), pos), style: pointStyle });
+      curves.push({ key, label: gr.name, series: series(xn, yn, xs.map(D.cdf), pos), style: pointStyle });
       if (lineOn && (one || j === 0)) curves.push(extra({ key: `${key}:line`, label: 'y = x', series: series(xn, yn, [0, 1], [0, 1]), style: one ? lineStyle : { ...lineStyle, color: '#000000' } }));
       if (bandOn) {
         const e = Math.sqrt(Math.log(2 / (1 - level / 100)) / (2 * n));

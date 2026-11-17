@@ -187,8 +187,15 @@ function powersPlan(spec: AxisSpec, base: number, lo: number, hi: number, k0: nu
   return { every: auto, from: k0, asked: false };
 }
 
-// Data extent → axis limits. Manual limits win; NaN ones are automatic.
+// A limit typed that the axis can have (a log axis: > 0; logit: 0 … 1; probability: 0 … 100 %; reciprocal: not 0).
+export const limitValid = (spec: AxisSpec, v: number) => Number.isFinite(v) && (spec.scale !== 'log' || v > 0) && (spec.scale !== 'logit' || (v > 0 && v < 1)) && (spec.scale !== 'reciprocal' || v !== 0) && (spec.scale !== 'probability' || probValid(v));
+// Start typed above End (both ones the axis can have): the axis runs from Start to End, i.e. reversed (as Origin).
+export const rangeSwapped = (spec: AxisSpec) => limitValid(spec, spec.min) && limitValid(spec, spec.max) && spec.min > spec.max;
+
+// Data extent → axis limits, in increasing order. Manual limits win; NaN ones are automatic (Start above End: the two
+// limits, the scale drawing it reversed).
 export function axisRange(spec: AxisSpec, lo: number, hi: number): [number, number] {
+  if (rangeSwapped(spec)) spec = { ...spec, min: spec.max, max: spec.min };
   const auto = ((): [number, number] | null => {
     // categories: half a place beyond the first and the last
     if (spec.cats?.length) return [0.5, spec.cats.length + 0.5];

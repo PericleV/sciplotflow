@@ -7,8 +7,9 @@ import { tInv } from './dist.ts';
 
 export type TrendKind = 'linear' | 'poly' | 'exp' | 'power' | 'log' | 'movavg';
 export type TrendSpec = { kind: TrendKind; degree?: number; window?: number; origin?: boolean; band?: boolean; level?: number; equation?: boolean };
-// se: the standard errors of coef (exponential, power: A from that of ln A); dof: n − the coefficients
-export type TrendResult = { xs: number[]; ys: number[]; lo?: number[]; hi?: number[]; coef: number[]; se: number[]; r2: number; n: number; dof: number; equation: string };
+// se: the standard errors of coef (exponential, power: A from that of ln A); dof: n − the coefficients; note: the points
+// left out (y ≤ 0 of an exponential, x ≤ 0 or y ≤ 0 of a power, x ≤ 0 of a logarithm), to be shown with the result
+export type TrendResult = { xs: number[]; ys: number[]; lo?: number[]; hi?: number[]; coef: number[]; se: number[]; r2: number; n: number; dof: number; equation: string; note?: string };
 
 // least squares of y on the columns of X (n × p): the coefficients, the residual sum of squares, (XᵀX)⁻¹
 export function leastSquares(X: number[][], y: number[]): { beta: number[]; sse: number; inv: number[][] } | null {
@@ -106,6 +107,9 @@ export function trendFit(xIn: ArrayLike<number>, yIn: ArrayLike<number>, t: Tren
   const logY = t.kind === 'exp' || t.kind === 'power';
   const used = pts.filter(([x, y]) => (!logX || x > 0) && (!logY || y > 0));
   if (used.length < pts.length && !used.length) return `${t.kind === 'log' ? 'a logarithm needs x > 0' : t.kind === 'exp' ? 'an exponential needs y > 0' : 'a power needs x > 0 and y > 0'}`;
+  // the points left out (said: the fit is of fewer points than the curve has)
+  const out = pts.length - used.length;
+  const note = out ? `${out} point${out > 1 ? 's' : ''} with ${t.kind === 'exp' ? 'y ≤ 0' : t.kind === 'log' ? 'x ≤ 0' : 'x ≤ 0 or y ≤ 0'} left out of the ${t.kind === 'exp' ? 'exponential' : t.kind === 'log' ? 'logarithm' : 'power'} fit` : '';
   const u = used.map(([x]) => (logX ? Math.log(x) : x));
   const v = used.map(([, y]) => (logY ? Math.log(y) : y));
   const deg = t.kind === 'poly' ? Math.min(6, Math.max(2, Math.floor(t.degree ?? 2))) : 1;
@@ -160,5 +164,5 @@ export function trendFit(xIn: ArrayLike<number>, yIn: ArrayLike<number>, t: Tren
   const s2e = n > p ? sse / (n - p) : NaN;
   const seB = beta.map((_, k) => Math.sqrt(Math.max(0, s2e * inv[k][k])));
   const se = t.kind === 'exp' || t.kind === 'power' ? [coef[0] * seB[0], seB[1]] : seB;
-  return { xs, ys, ...(lo ? { lo, hi } : {}), coef, se, r2, n, dof: n - p, equation };
+  return { xs, ys, ...(lo ? { lo, hi } : {}), coef, se, r2, n, dof: n - p, equation, ...(note ? { note } : {}) };
 }

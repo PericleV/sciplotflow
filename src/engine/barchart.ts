@@ -9,6 +9,7 @@ import type { SigElement, SigSpec } from './signif.ts';
 import { column, fmtNum, type Column, type Dataset } from './table.ts';
 import { curveStyle, PALETTE, withLook, type BarLook, type Curve, type ElementLook, type TextStyle } from '../figure/spec.ts';
 import { maxOf, minOf } from './minmax.ts';
+import { maskOf } from './manip.ts';
 
 export type BarStat = 'mean' | 'median' | 'sum' | 'count';
 export type BarErr = 'none' | 'sd' | 'se' | 'ci95' | 'minmax' | 'q1q3';
@@ -50,7 +51,9 @@ export type BarSpec = {
   sort?: 'none' | 'desc' | 'asc'; // the categories by their value (stacked: their total), largest or smallest first
 };
 
-export type BarTable = { name: string; categories: { pos: number; label: string }[]; series: { name: string; values: number[]; plus: number[]; minus: number[]; n?: number[]; raw?: number[][] }[]; textCats: boolean };
+// masked: the values left out because they are masked (Data manipulation), to be said
+export type BarTable = { name: string; categories: { pos: number; label: string }[]; series: { name: string; values: number[]; plus: number[]; minus: number[]; n?: number[]; raw?: number[][] }[]; textCats: boolean; masked?: number };
+export const maskedNote = (m: number | undefined) => (m ? [`${m} masked value${m > 1 ? 's' : ''} left out.`] : []);
 
 // the categories in the order of their value — the first series', or the total of all when stacked — largest first
 // (desc) or smallest first (asc); placed again at 1, 2, 3 … (categories of text only: numbers keep their places)
@@ -79,12 +82,22 @@ const sd = (v: number[]) => {
 };
 const keyOf = (c: Column, i: number) => (c.text?.[i]?.trim() ? c.text[i].trim() : Number.isFinite(c.values[i]) ? fmtNum(c.values[i], 10) : '');
 
+// the errors a statistic can take: a count none (the spread of the values says nothing of it); a sum the error of a
+// total of n values (SD or SE: SD·√n; 95 % CI: n times the mean's), not min – max or the quartiles
+export const errApplies = (stat: BarStat, err: BarErr) => err === 'none' || (stat !== 'count' && (stat !== 'sum' || err === 'sd' || err === 'se' || err === 'ci95'));
+
 // a statistic of the values and its error below / above it
 export function barStat(v: number[], stat: BarStat, err: BarErr): { value: number; minus: number; plus: number } {
   const s = [...v].sort((a, b) => a - b);
   const value = !v.length ? NaN : stat === 'mean' ? mean(v) : stat === 'median' ? percentile(s, 0.5) : stat === 'sum' ? v.reduce((a, b) => a + b, 0) : v.length;
   let e = NaN;
   let [lo, hi] = [NaN, NaN];
+  if (!errApplies(stat, err)) return { value, minus: NaN, plus: NaN };
+  if (stat === 'sum') {
+    // the error of a total: the SD of a sum of n values alike (SD·√n, also n times the mean's SE), its 95 % CI n times the mean's
+    e = err === 'ci95' ? (v.length > 1 ? tInv(0.975, v.length - 1) * sd(v) * Math.sqrt(v.length) : NaN) : sd(v) * Math.sqrt(v.length);
+    return { value, minus: e, plus: e };
+  }
   if (err === 'sd') e = sd(v);
   else if (err === 'se') e = sd(v) / Math.sqrt(v.length);
   else if (err === 'ci95') e = v.length > 1 ? (tInv(0.975, v.length - 1) * sd(v)) / Math.sqrt(v.length) : NaN;
@@ -94,18 +107,25 @@ export function barStat(v: number[], stat: BarStat, err: BarErr): { value: numbe
   return { value, minus: e, plus: e };
 }
 
-// the bars of the raw values: a category for every group (in the order met), a series for every subgroup
+// the bars of the raw values: a category for every group (in the order met), a series for every subgroup; the rows
+// masked (the value, its group or its subgroup) left out
 export function rawTable(values: Column, groups: Column, subs: Column | undefined, stat: BarStat, err: BarErr, name: string): BarTable {
   const cats: string[] = [];
   const series: string[] = [];
   const cells = new Map<string, number[]>();
   const n = values.values.length;
+  const mask = maskOf([values, groups, subs], n);
+  let masked = 0;
   for (let i = 0; i < n; i++) {
     const v = values.values[i];
     const g = keyOf(groups, i);
     if (!Number.isFinite(v) || !g) continue;
     const s = subs ? keyOf(subs, i) : name;
     if (!s) continue;
+    if (mask?.[i]) {
+      masked++;
+      continue;
+    }
     if (!cats.includes(g)) cats.push(g);
     if (!series.includes(s)) series.push(s);
     const k = `${g}\u0000${s}`;
@@ -114,6 +134,7 @@ export function rawTable(values: Column, groups: Column, subs: Column | undefine
   return {
     name,
     textCats: true,
+    ...(masked ? { masked } : {}),
     categories: cats.map((label, j) => ({ pos: j + 1, label })),
     series: series.map((s) => {
       const st = cats.map((g) => barStat(cells.get(`${g}\u0000${s}`) ?? [], stat, err));
@@ -122,21 +143,25 @@ export function rawTable(values: Column, groups: Column, subs: Column | undefine
   };
 }
 
-// the bars of a table: the categories (text, numbers, else the row number) and every value column with its errors
+// the bars of a table: the categories (text, numbers, else the row number) and every value column with its errors; a
+// value masked in its own column left out (no bar), a masked error none
 export function wideTable(cat: Column | undefined, ys: Column[], errs: (Column | undefined)[]): BarTable {
   const n = Math.max(0, maxOf(ys.map((c) => c.values.length)));
   const numeric = !!cat && !cat.text?.some((t) => t?.trim()) && Array.from({ length: n }, (_, i) => cat.values[i]).every(Number.isFinite);
   const categories = Array.from({ length: n }, (_, i) => (numeric ? { pos: cat!.values[i], label: fmtNum(cat!.values[i], 6) } : { pos: i + 1, label: cat ? keyOf(cat, i) : String(i + 1) }));
-  return {
-    name: ys.map((c) => c.name).join(', '),
-    textCats: !numeric,
-    categories,
-    series: ys.map((y, j) => {
-      const e = errs[j];
-      const err = Array.from({ length: n }, (_, i) => (e && Number.isFinite(e.values[i]) ? Math.abs(e.values[i]) : NaN));
-      return { name: y.name, values: Array.from({ length: n }, (_, i) => y.values[i] ?? NaN), plus: err, minus: err };
-    }),
-  };
+  let masked = 0;
+  const series = ys.map((y, j) => {
+    const e = errs[j];
+    const err = Array.from({ length: n }, (_, i) => (e && Number.isFinite(e.values[i]) && !e.mask?.[i] ? Math.abs(e.values[i]) : NaN));
+    const values = Array.from({ length: n }, (_, i) => {
+      const v = y.values[i] ?? NaN;
+      if (!y.mask?.[i]) return v;
+      if (Number.isFinite(v)) masked++;
+      return NaN;
+    });
+    return { name: y.name, values, plus: err, minus: err };
+  });
+  return { name: ys.map((c) => c.name).join(', '), textCats: !numeric, ...(masked ? { masked } : {}), categories, series };
 }
 
 // elements: every bar as a group the significance brackets compare (its place, its top with its error, its values)
@@ -215,13 +240,14 @@ function waterfall(t: BarTable, d: BarSpec): BarResult | string {
     catHi: cats[cats.length - 1].pos + W / 2,
     elements: steps.map((q) => ({ name: q.c.label, cat: q.c.label, series: s.name, pos: q.c.pos, top: Math.max(q.base, q.top) })),
     span: [Math.min(0, minOf(tops)), maxOf(tops)],
-    warnings: t.series.length > 1 ? ['A waterfall shows the first value column only.'] : [],
+    warnings: [...(t.series.length > 1 ? ['A waterfall shows the first value column only.'] : []), ...maskedNote(t.masked)],
   };
 }
 
 // The bars drawn: their place across (by the category and the series), from where to where along, their look.
 export function barChart(t: BarTable, d: BarSpec): BarResult | string {
-  const warnings: string[] = [];
+  const warnings: string[] = [...maskedNote(t.masked)];
+  if (d.mode === 'raw' && !errApplies(d.stat, d.err)) warnings.push(d.stat === 'count' ? 'A count has no error bar: the spread of the values says nothing of it (Error: none).' : 'A sum takes SD, SE or 95 % CI as its error (of a total of n values), not min – max or the quartiles: no error bar.');
   if (d.arrange === 'waterfall') return t.series.length && t.categories.length ? waterfall(t, d) : 'No bars: choose the columns.';
   const k = t.series.length;
   const nc = t.categories.length;
@@ -286,7 +312,7 @@ export function barChart(t: BarTable, d: BarSpec): BarResult | string {
     const rel = (i: number) => (100 * Math.abs(b.value[i])) / ((d.arrange === 'stacked' || d.arrange === 'percent' ? catTotal[i] : largest) || 1);
     const text = d.labels === 'none' ? undefined : b.value.map((v, i) => (Number.isFinite(v) && rel(i) >= (d.hideBelow || 0) ? `${fmt(v)}${d.arrange === 'percent' ? ' %' : ''}` : ''));
     const centers = b.lo.map((l, i) => (l + b.hi[i]) / 2);
-    const hasErr = d.mode === 'raw' ? d.err !== 'none' : b.plus.some(Number.isFinite);
+    const hasErr = d.mode === 'raw' ? errApplies(d.stat, d.err) && d.err !== 'none' : b.plus.some(Number.isFinite);
     // a series' own look (coloured by series); by category every bar takes its category's
     const own = withLook(curveStyle({ mode: 'line', color, lineWidth: d.edgeWidth, fillColor: color, fillOpacity: d.opacity, edgeColor: d.edgeColor }), d.barLook, byCat ? null : d.looks?.[j]);
     return {

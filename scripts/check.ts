@@ -118,6 +118,9 @@ import { checkSigpack } from './check-sigpack.ts';
 import { checkAuditSignalCurves } from './check-audit-curves.ts';
 import { checkAuditSignalMeasure } from './check-audit-measure.ts';
 import { checkAuditSignalFrac } from './check-audit-frac.ts';
+import { checkAuditGraphPlot } from './check-audit-graph-plot.ts';
+import { checkAuditGraphStat } from './check-audit-graph-stat.ts';
+import { checkAuditGraphSurf } from './check-audit-graph-surf.ts';
 import { checkPhase } from './check-phase.ts';
 import { armsOf, closestOnSeg, cornersOf as boundaryCorners, createCalMapper, detectRegions, followFrame, evalLeverPoint, frameOf, phaseFaces, regionFills, regionPhases, runPhaseDigitizer, sampleSpline, snapPoint, totalOfUnit, type PhaseDigitizerData } from '../src/engine/phasedigitize.ts';
 import { PHASE_DIGITIZER_DEFAULTS } from '../src/defaults.ts';
@@ -2690,6 +2693,7 @@ for (const ex of EXAMPLES) {
   const a0 = p0.view.figure!.axes[0];
   const ps = pl({ stack: 'stack', join: { show: true } }).view.figure!.axes[0];
   const pp = pl({ stack: 'percent' }).view.figure!.axes[0];
+  ok(pp.curves.filter((c) => !c.key.endsWith(':join')).every((c) => c.series.y.name.endsWith('(%)')), `Plot: curves stacked as a % of their sum named in % (${pp.curves.map((c) => c.series.y.name).join(', ')})`);
   ok(a0.style.x.cats?.join() === 'x,y,z' && Array.from(a0.curves[0].series.x.values).join() === '1,2,3' && Array.from(ps.curves[2].series.y.values).join() === '4,7,8.5' && ps.curves[0].key.endsWith(':join') && ps.curves[2].style.fill === 'curve' && near(pp.curves[1].series.y.values[0], 100, 1e-9), `1D plot: names on X, curves stacked (as % too), joined at every X (${a0.style.x.cats?.join()})`);
   // points counted, their density, vectors as arrows and streamlines
   const q = Array.from({ length: 400 }, (_, i) => [Math.cos(i) * (i % 7), Math.sin(i * 1.3) * (i % 5)]);
@@ -3386,7 +3390,8 @@ for (const ex of EXAMPLES) {
   const subs = txt('sub', R.sub);
   // every statistic and its error, per group and subgroup
   const errsOk = (['sd', 'se', 'ci95', 'minmax', 'q1q3'] as const).every((err) =>
-    (['mean', 'median', 'sum', 'count'] as const).every((stat) => {
+    // (sum and count: their own errors — the V9 check of the audit)
+    (['mean', 'median'] as const).every((stat) => {
       const tb = rawTable(values, groups, subs, stat, err, 'value');
       return tb.categories.every((c, i) =>
         tb.series.every((s) => {
@@ -6774,6 +6779,9 @@ checkSigpack(ok);
 checkAuditSignalCurves(ok);
 checkAuditSignalMeasure(ok);
 checkAuditSignalFrac(ok);
+checkAuditGraphPlot(ok);
+checkAuditGraphStat(ok);
+checkAuditGraphSurf(ok);
 
 // ---- Phase diagram: against closed forms ----
 checkPhase(ok);
@@ -8006,6 +8014,25 @@ checkPhase(ok);
   const zg = generate({ ...SIGGEN_DEFAULTS, kind: 'eis', drift: 0.01, spikes: 3, clean: true, noise: { ...SIGGEN_DEFAULTS.noise, kind: 'white', by: 'sigma', sigma: 1 } } as Parameters<typeof generate>[0]);
   const zre = typeof zg === 'string' ? undefined : zg.dataset.columns.find((c) => c.name === "Z' (Ω)")?.values;
   ok(typeof zg !== 'string' && zg.warnings.some((w) => w.includes('drift and the spikes are not added')) && !!zre && Math.max(...Array.from(zre).filter(Number.isFinite)) < 200 && zg.dataset.columns.some((c) => c.name === "Z' clean (Ω)"), `Signal generator: an impedance without a drift per hertz (Z′ at most ${zre ? fmtNum(Math.max(...Array.from(zre).filter(Number.isFinite)), 4) : '—'} Ω), its clean columns`);
+}
+// ---- the audit of 2026-11-17, section Graph: V4 log ≤ 0 said, V11 Waterfall, V12 Polar masks, V14 Bland–Altman ratio ----
+{
+  const nl = String.fromCharCode(10);
+  const imp = (text: string, id: string) => ({ id: 'i', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, text, textId: id } }) as AppNode;
+  // V4: values ≤ 0 on a log Y axis: not drawn, said
+  const pl = evaluateGraph([imp(['x;y', '1;-1', '2;0', '3;10', '4;100', ''].join(nl), 'v4'), { id: 'p', type: 'plot1d', position: { x: 0, y: 0 }, data: { ...structuredClone(PLOT1D_DEFAULTS), cols: { x: 'x', y: 'y' }, axes: { y: { ...AXIS_DEFAULTS, scale: 'log' } } } } as AppNode], [{ id: '1', source: 'i', sourceHandle: 'out', target: 'p', targetHandle: 'dataset' }]).get('p');
+  ok(!!pl?.warnings?.some((w) => w.startsWith('2 values ≤ 0 not drawn on the logarithmic Y axis')), `Plot: values ≤ 0 on a log Y axis said (${pl?.warnings?.join(' ') ?? pl?.errors?.join(' ')})`);
+  // V11: Waterfall — a masked point's value out of the range and the offsets
+  const wf = evaluateGraph(
+    [
+      imp(['x;a;b', '1;1;2', '2;2;3', '3;50;2.5', '4;1.5;2', ''].join(nl), 'v11'),
+      { id: 'm', type: 'datamanip', position: { x: 0, y: 0 }, data: { x: 'x', y: 'a', ops: [{ kind: 'mask', rows: '3', n: 4 }] } } as AppNode,
+      { id: 'w', type: 'waterfall', position: { x: 0, y: 0 }, data: { ...WATERFALL_DEFAULTS } } as AppNode,
+    ],
+    [{ id: '1', source: 'i', sourceHandle: 'out', target: 'm', targetHandle: 'in' }, { id: '2', source: 'm', sourceHandle: 'out', target: 'w', targetHandle: 'dataset' }],
+  ).get('w');
+  const wy = (wf?.view.figure?.axes[0].curves ?? []).filter((c) => /^wf:\d$/.test(c.key)).flatMap((c) => Array.from(c.series.y.values).filter(Number.isFinite));
+  ok(wy.length > 0 && Math.max(...wy) < 20, `Waterfall: a masked 50 neither drawn nor setting the offsets (largest drawn ${wy.length ? fmtNum(Math.max(...wy), 4) : '—'})`);
 }
 // the numbers of an axis in E notation (1e−3, 2.5e4; a log axis as few digits as each needs)
 {

@@ -195,6 +195,8 @@ export function quickFit(xIn: ArrayLike<number>, yIn: ArrayLike<number>, q: Quic
         warnings.push(`${job.text ? `Range ${job.text}: ` : ''}${t}.`);
         continue;
       }
+      // (points the model cannot take — y ≤ 0 for an exponential … — left out: said)
+      if (t.note) warnings.push(`${job.text ? `Range ${job.text}: ` : ''}${t.note}.`);
       const names = trendNames(q);
       results.push({
         range: job.text,

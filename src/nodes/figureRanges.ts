@@ -37,7 +37,12 @@ const clean = (v: number) => +v.toPrecision(7);
 // The axes of a Plot with new limits (NaN: automatic) on the scales named.
 export function withRanges(axes: Partial<AxesStyle> | undefined, r: Ranges): Partial<AxesStyle> {
   const st = axesStyle(axes);
-  const lim = <T extends { min: number; max: number }>(spec: T, key: string): T => (r[key] ? { ...spec, min: clean(r[key][0]), max: clean(r[key][1]) } : spec);
+  // (an axis typed Start > End — drawn reversed — keeps its order when zoomed or panned)
+  const lim = <T extends { min: number; max: number }>(spec: T, key: string): T => {
+    if (!r[key]) return spec;
+    const [lo, hi] = [clean(r[key][0]), clean(r[key][1])];
+    return spec.min > spec.max ? { ...spec, min: Math.max(lo, hi), max: Math.min(lo, hi) } : { ...spec, min: lo, max: hi };
+  };
   return {
     ...axes,
     x: lim(st.x, 'bottom'),
