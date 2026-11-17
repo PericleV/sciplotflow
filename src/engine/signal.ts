@@ -114,17 +114,27 @@ export function savgol(y: ArrayLike<number>, points: number, order: number, mode
   const h = (m - 1) / 2;
   const n = y.length;
   if (n < m) return Array.from(y);
-  // the weights at the centre: row 0 of the pseudo-inverse of the Vandermonde matrix
-  const t = Array.from({ length: m }, (_, i) => i - h);
-  const w = t.map((_, j) => {
-    const e = t.map((__, i) => (i === j ? 1 : 0));
-    return polyfit(t, e, p)[0];
-  });
+  // the least-squares polynomial as a projection on an orthonormal basis of the polynomials over the window (modified
+  // Gram–Schmidt on t scaled to −1 … 1, as SciPy's lstsq): the normal equations of a high degree over a wide window lose
+  // every digit (degree 10 over 101 points was wrong by 1.3)
+  const t = Array.from({ length: m }, (_, i) => (i - h) / h);
+  const Q: number[][] = [];
+  for (let k = 0; k <= p; k++) {
+    const v = t.map((x) => x ** k);
+    for (let pass = 0; pass < 2; pass++)
+      for (const q of Q) {
+        const d = q.reduce((s, x, i) => s + x * v[i], 0);
+        for (let i = 0; i < m; i++) v[i] -= d * q[i];
+      }
+    const nv = Math.sqrt(v.reduce((s, x) => s + x * x, 0));
+    if (nv > 1e-12) Q.push(v.map((x) => x / nv));
+  }
+  const w = t.map((_, j) => Q.reduce((s, q) => s + q[h] * q[j], 0));
   if (mode !== 'interp') return filter(y, w, mode);
   const out = filter(y, w, 'nearest');
   const ends = (from: number) => {
-    const c = polyfit(t, Array.from({ length: m }, (_, i) => y[from + i]), p);
-    return (i: number) => polyval(c, i - from - h);
+    const a = Q.map((q) => q.reduce((s, x, j) => s + x * y[from + j], 0));
+    return (i: number) => Q.reduce((s, q, k) => s + a[k] * q[i - from], 0);
   };
   const a = ends(0);
   const b = ends(n - m);
@@ -313,13 +323,16 @@ export function spectrum(y: number[], dx: number, win: Window, detrend: 'none' |
 export type FilterKind = 'low' | 'high' | 'band' | 'stop';
 // the gain of the filter by the FFT at a frequency (its response: real, no shift of phase)
 export function fftGain(kind: FilterKind, f1: number, f2: number, order: number): (f: number) => number {
+  // (the Butterworth magnitudes: low 1/√(1 + (f/fc)^2n), high 1/√(1 + (fc/f)^2n) — 1/√2 at the cut-off for both, not
+  // 1 − low, which is 0.29 there; a band: low at the upper edge × high at the lower one; a stop: their power complement)
   const lowpass = (f: number, fc: number) => (order > 0 ? 1 / Math.sqrt(1 + (f / fc) ** (2 * order)) : f <= fc ? 1 : 0);
+  const highpass = (f: number, fc: number) => (order > 0 ? (f > 0 ? 1 / Math.sqrt(1 + (fc / f) ** (2 * order)) : 0) : f >= fc ? 1 : 0);
   return (f: number) => {
     if (kind === 'low') return lowpass(f, f1);
-    if (kind === 'high') return 1 - lowpass(f, f1);
+    if (kind === 'high') return highpass(f, f1);
     const [a, b] = [Math.min(f1, f2), Math.max(f1, f2)];
-    const band = lowpass(f, b) * (1 - lowpass(f, a));
-    return kind === 'band' ? band : 1 - band;
+    const band = lowpass(f, b) * highpass(f, a);
+    return kind === 'band' ? band : order > 0 ? Math.sqrt(Math.max(0, 1 - band * band)) : 1 - band;
   };
 }
 export function fftFilter(y: number[], dx: number, kind: FilterKind, f1: number, f2: number, order: number, mirror: boolean): number[] {

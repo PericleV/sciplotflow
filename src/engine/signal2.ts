@@ -35,21 +35,54 @@ export function stateLevels(y: number[], how: 'histogram' | 'minmax', bins = 100
   return { base: mean(inBin(bl)), top: mean(inBin(bh)) };
 }
 
+// ---- gaps ----
+// The gaps of a record (x ascending): the steps (x[i − 1], x[i]) more than 3 × the median step and 3 × the steps on
+// both sides of it (rows missing or masked, or the recording stopped), their i; a part only sampled more sparsely
+// (its steps alike) is not one
+export function gapsOf(x: number[]): number[] {
+  const d = x.slice(1).map((v, i) => v - x[i]);
+  if (d.length < 2) return [];
+  const med = medianOf(d);
+  const out: number[] = [];
+  for (let j = 0; j < d.length; j++) {
+    const side = Math.max(j > 0 ? d[j - 1] : 0, j + 1 < d.length ? d[j + 1] : 0);
+    if (d[j] > 3 * med && d[j] > 3 * side) out.push(j + 1);
+  }
+  return out;
+}
+// whether a gap lies between samples a and b (a < b): one of the steps a → a + 1 … b − 1 → b
+const gapTest = (n: number, gaps: number[]) => {
+  const cum = new Int32Array(n + 1);
+  for (const g of gaps) cum[g]++;
+  for (let i = 1; i <= n; i++) cum[i] += cum[i - 1];
+  return (a: number, b: number) => cum[Math.min(n, Math.max(0, b))] - cum[Math.min(n, Math.max(0, a))] > 0;
+};
+
 export type Edge = { kind: 'rise' | 'fall'; t: number; i: number; tLo: number; tHi: number; dur: number; overshoot: number; settle: number };
-export type Wave = { base: number; top: number; amp: number; edges: Edge[]; period: number; posWidth: number; negWidth: number; duty: number; mean: number; rms: number; acRms: number; pp: number; crest: number; crossings: number };
+// gaps: the gaps found in the record (the edges, periods and widths across them left out, and their steps from the
+// mean and the RMS)
+export type Wave = { base: number; top: number; amp: number; edges: Edge[]; period: number; posWidth: number; negWidth: number; duty: number; mean: number; rms: number; acRms: number; pp: number; crest: number; crossings: number; gaps: number };
 // The crossings of `level` between samples i − 1 and i (linear between them)
 const at = (x: number[], y: number[], i: number, level: number) => x[i - 1] + ((level - y[i - 1]) * (x[i] - x[i - 1])) / (y[i] - y[i - 1] || 1);
 // The measurements of a waveform (x ascending): the mid-level crossings with a hysteresis (h, a fraction of the
 // amplitude) are its edges; every edge its 10–90 % time (the reference levels lo, hi as fractions), its overshoot (%
 // of the amplitude past the level it goes to, until the next edge) and its settling time (from the mid crossing until
-// it stays within tol of that level)
+// it stays within tol of that level). The gaps of the record (gapsOf: what was there is not known): an edge whose
+// crossing is across one is not measured, and no period or width spans one; the mean, the RMS: averages over X (the
+// trapezoids of y and y², divided by the span), the steps of the gaps left out
 export function waveform(x: number[], y: number[], lv: { base: number; top: number }, lo = 0.1, hi = 0.9, h = 0.05, tol = 0.02): Wave {
   const n = x.length;
   const { base, top } = lv;
   const amp = top - base;
   const L = (f: number) => base + f * amp;
   const mid = L(0.5);
-  const edges: Edge[] = [];
+  const gaps = gapsOf(x);
+  const isGap = new Uint8Array(n);
+  for (const g of gaps) isGap[g] = 1;
+  const across = gapTest(n, gaps);
+  // (every edge found, those across a gap marked: their times only guessed, not given, but no interval spans them)
+  const all: Edge[] = [];
+  const guessed = new Set<Edge>();
   // (the state: high above mid + h, low below mid − h; an edge where it changes, at the last crossing of mid before)
   let state = 0;
   let lastCross = -1;
@@ -66,16 +99,20 @@ export function waveform(x: number[], y: number[], lv: { base: number; top: numb
         while (a > 1 && (kind === 'rise' ? y[a - 1] > first : y[a - 1] < first)) a--;
         let b = lastCross;
         while (b < n - 1 && (kind === 'rise' ? y[b] < last : y[b] > last)) b++;
-        const tLo = a > 0 ? at(x, y, a, first) : NaN;
-        const tHi = b > 0 && b < n ? at(x, y, b, last) : NaN;
-        edges.push({ kind, t, i: lastCross, tLo, tHi, dur: tHi - tLo, overshoot: NaN, settle: NaN });
+        // (the 10–90 % time not measured across a gap)
+        const cut = across(a - 1, b);
+        const tLo = a > 0 && !cut ? at(x, y, a, first) : NaN;
+        const tHi = b > 0 && b < n && !cut ? at(x, y, b, last) : NaN;
+        const e: Edge = { kind, t, i: lastCross, tLo, tHi, dur: tHi - tLo, overshoot: NaN, settle: NaN };
+        all.push(e);
+        if (across(lastCross - 1, i)) guessed.add(e);
       }
       state = s;
     }
   }
   // (the overshoot and the settling: on the part to the next edge)
-  edges.forEach((e, k) => {
-    const end = k + 1 < edges.length ? edges[k + 1].i : n;
+  all.forEach((e, k) => {
+    const end = k + 1 < all.length ? all[k + 1].i : n;
     const target = e.kind === 'rise' ? top : base;
     let ext = target;
     let settledFrom = -1;
@@ -85,28 +122,45 @@ export function waveform(x: number[], y: number[], lv: { base: number; top: numb
       else if (settledFrom < 0) settledFrom = i;
     }
     e.overshoot = (100 * Math.abs(ext - target)) / Math.abs(amp);
-    e.settle = settledFrom >= 0 && k + 1 < edges.length ? x[settledFrom] - e.t : settledFrom >= 0 ? x[settledFrom] - e.t : NaN;
+    e.settle = settledFrom >= 0 && k + 1 < all.length ? x[settledFrom] - e.t : settledFrom >= 0 ? x[settledFrom] - e.t : NaN;
   });
-  // (the period from the edges of a kind; the widths from a rise to the next fall and back)
+  // (an interval between two edges: none across a gap, nor from an edge across one; the edges missed in a gap would
+  // make it two periods)
+  const spans = (p: Edge, q: Edge) => guessed.has(p) || guessed.has(q) || across(p.i, q.i);
+  // (the period from the edges of a kind; the widths from a rise to the next fall and back; the means of the intervals,
+  // as before: those across a gap are left out, so every one kept is a whole period or width)
   const diffs = (kind: 'rise' | 'fall') => {
-    const t = edges.filter((e) => e.kind === kind).map((e) => e.t);
-    return t.slice(1).map((v, j) => v - t[j]);
+    const es = all.filter((e) => e.kind === kind);
+    return es.slice(1).flatMap((e, j) => (spans(es[j], e) ? [] : [e.t - es[j].t]));
   };
   const per = [...diffs('rise'), ...diffs('fall')];
   const period = per.length ? per.reduce((s, v) => s + v, 0) / per.length : NaN;
   const pos: number[] = [];
   const neg: number[] = [];
-  for (let k = 0; k + 1 < edges.length; k++) (edges[k].kind === 'rise' ? pos : neg).push(edges[k + 1].t - edges[k].t);
+  for (let k = 0; k + 1 < all.length; k++) if (!spans(all[k], all[k + 1])) (all[k].kind === 'rise' ? pos : neg).push(all[k + 1].t - all[k].t);
   const posWidth = pos.length ? pos.reduce((s, v) => s + v, 0) / pos.length : NaN;
   const negWidth = neg.length ? neg.reduce((s, v) => s + v, 0) / neg.length : NaN;
-  const mean = y.reduce((s, v) => s + v, 0) / n;
-  const rms = Math.sqrt(y.reduce((s, v) => s + v * v, 0) / n);
-  const acRms = Math.sqrt(y.reduce((s, v) => s + (v - mean) ** 2, 0) / n);
+  // (the averages over X: the trapezoids over the steps but those of the gaps, divided by their span; one point: itself)
+  let [S, A, B] = [0, 0, 0];
+  for (let i = 1; i < n; i++) {
+    if (isGap[i]) continue;
+    const w = x[i] - x[i - 1];
+    S += w;
+    A += (w * (y[i] + y[i - 1])) / 2;
+    B += (w * (y[i] * y[i] + y[i - 1] * y[i - 1])) / 2;
+  }
+  const byX = S > 0;
+  const mean = byX ? A / S : y.reduce((s, v) => s + v, 0) / n;
+  const rms = Math.sqrt(byX ? B / S : y.reduce((s, v) => s + v * v, 0) / n);
+  let C = 0;
+  if (byX) for (let i = 1; i < n; i++) if (!isGap[i]) C += ((x[i] - x[i - 1]) * ((y[i] - mean) ** 2 + (y[i - 1] - mean) ** 2)) / 2;
+  const acRms = Math.sqrt(byX ? C / S : y.reduce((s, v) => s + (v - mean) ** 2, 0) / n);
   let [mn, mx] = [Infinity, -Infinity];
   for (const v of y) [mn, mx] = [Math.min(mn, v), Math.max(mx, v)];
   let crossings = 0;
-  for (let i = 1; i < n; i++) if ((y[i - 1] - mean) * (y[i] - mean) < 0) crossings++;
-  return { base, top, amp, edges, period, posWidth, negWidth, duty: (100 * posWidth) / period, mean, rms, acRms, pp: mx - mn, crest: Math.max(Math.abs(mn), Math.abs(mx)) / rms, crossings };
+  for (let i = 1; i < n; i++) if (!isGap[i] && (y[i - 1] - mean) * (y[i] - mean) < 0) crossings++;
+  const edges = all.filter((e) => !guessed.has(e));
+  return { base, top, amp, edges, period, posWidth, negWidth, duty: (100 * posWidth) / period, mean, rms, acRms, pp: mx - mn, crest: Math.max(Math.abs(mn), Math.abs(mx)) / rms, crossings, gaps: gaps.length };
 }
 
 // ---- change points ----
@@ -186,31 +240,62 @@ export function binseg(y: number[], kind: CostKind, pen: number, minSize = 2, co
   }
   return cps.sort((p, q) => p - q);
 }
-// the noise σ from the differences of neighbours (their MAD / 0.6745 / √2): not raised by the steps themselves
-export function noiseSigma(y: number[]): number {
-  const d = y.slice(1).map((v, i) => v - y[i]);
+// the noise σ from the differences of neighbours (their MAD / 0.6745 / √2): not raised by the steps themselves. On
+// quantised data (counts of an ADC: most differences 0) that MAD is 0, or less than the rounding of a quantum (q/√12, q
+// the least difference other than 0): then the SD of the differences / √2 (`quantised`), which counts the flicker
+// between neighbouring counts as it is; the differences more than 5 such SD and more than a quantum (the steps) left
+// out, so that big steps do not raise it. 0 only when the differences are all 0 (a constant signal)
+export function noiseEstimate(y: number[]): { sigma: number; quantised: boolean } {
+  const d = y.slice(1).map((v, i) => v - y[i]).filter(Number.isFinite);
+  if (!d.length) return { sigma: NaN, quantised: false };
   const m = medianOf(d);
-  return medianOf(d.map((v) => Math.abs(v - m))) / 0.6744897501960817 / Math.SQRT2;
+  const mad = medianOf(d.map((v) => Math.abs(v - m))) / 0.6744897501960817 / Math.SQRT2;
+  let q = Infinity;
+  for (const v of d) if (v !== 0 && Math.abs(v) < q) q = Math.abs(v);
+  if (!Number.isFinite(q) || (mad > 0 && mad >= q / Math.sqrt(12))) return { sigma: mad, quantised: false };
+  const sdOf = (a: number[]) => Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / Math.max(1, a.length)) / Math.SQRT2;
+  const s0 = sdOf(d);
+  const cut = Math.max(5 * s0 * Math.SQRT2, q);
+  return { sigma: sdOf(d.filter((v) => Math.abs(v - m) <= cut)), quantised: true };
 }
+export const noiseSigma = (y: number[]): number => noiseEstimate(y).sigma;
 
 // ---- triggers and averaging ----
-// The crossings of a level (rising or falling), at least `gap` apart in X; linear between the samples
-export function crossingsOf(x: number[], y: number[], level: number, dir: 'rising' | 'falling', gap = 0): number[] {
+// The crossings of a level (rising or falling), at least `gap` apart in X; linear between the samples. With a
+// hysteresis h > 0 as the edges of waveform: a crossing counts only once the signal, from below level − h, gets above
+// level + h (rising; falling the other way), at the last crossing of the level before; so noise on a slow edge gives
+// one crossing, and none on the edge back
+export function crossingsOf(x: number[], y: number[], level: number, dir: 'rising' | 'falling', gap = 0, h = 0): number[] {
   const out: number[] = [];
+  const push = (t: number) => {
+    if (!out.length || t - out[out.length - 1] >= gap) out.push(t);
+  };
+  if (h > 0) {
+    const sg = dir === 'rising' ? 1 : -1;
+    let state = 0;
+    let last = -1;
+    for (let i = 0; i < x.length; i++) {
+      if (i > 0 && sg * (y[i - 1] - level) < 0 && sg * (y[i] - level) >= 0) last = i;
+      const s = sg * (y[i] - level) > h ? 1 : sg * (y[i] - level) < -h ? -1 : 0;
+      if (!s || s === state) continue;
+      if (s > 0 && state < 0 && last > 0) push(at(x, y, last, level));
+      state = s;
+    }
+    return out;
+  }
   for (let i = 1; i < x.length; i++) {
     const up = y[i - 1] < level && y[i] >= level;
     const down = y[i - 1] > level && y[i] <= level;
     if ((dir === 'rising' && up) || (dir === 'falling' && down)) {
-      const t = at(x, y, i, level);
-      if (!out.length || t - out[out.length - 1] >= gap) out.push(t);
+      push(at(x, y, i, level));
     }
   }
   return out;
 }
 // The segments of a signal around every trigger, read on a common lag (−before … after, every `step`) by straight lines
-// (a segment that does not reach both ends left out); a baseline of each (its mean before 0) subtracted if asked; the
-// mean, SD, SE, N at every lag
-export function averageAround(x: number[], y: number[], triggers: number[], before: number, after: number, step: number, base: boolean): { lag: number[]; segs: number[][]; used: number[]; mean: number[]; sd: number[]; se: number[]; n: number[] } {
+// (a segment that does not reach both ends left out, and one whose window holds a gap of the data, gapsOf: `gapped`);
+// a baseline of each (its mean before 0) subtracted if asked; the mean, SD, SE, N at every lag
+export function averageAround(x: number[], y: number[], triggers: number[], before: number, after: number, step: number, base: boolean): { lag: number[]; segs: number[][]; used: number[]; gapped: number[]; mean: number[]; sd: number[]; se: number[]; n: number[] } {
   const m = Math.max(2, Math.round((before + after) / step) + 1);
   const lag = Array.from({ length: m }, (_, k) => -before + (k * (before + after)) / (m - 1));
   const read = (t: number) => {
@@ -225,8 +310,15 @@ export function averageAround(x: number[], y: number[], triggers: number[], befo
   };
   const segs: number[][] = [];
   const used: number[] = [];
+  const gapped: number[] = [];
+  const gaps = gapsOf(x);
   for (const t of triggers) {
     if (t - before < x[0] || t + after > x[x.length - 1]) continue;
+    // (a gap of the data inside the window: it would be read on a straight line across it)
+    if (gaps.some((g) => x[g - 1] < t + after && x[g] > t - before)) {
+      gapped.push(t);
+      continue;
+    }
     let s = lag.map((l) => read(t + l));
     if (base) {
       const pre = s.filter((_, k) => lag[k] < 0);
@@ -239,7 +331,7 @@ export function averageAround(x: number[], y: number[], triggers: number[], befo
   const N = segs.length;
   const mean = lag.map((_, k) => segs.reduce((a, s) => a + s[k], 0) / N);
   const sd = lag.map((_, k) => (N > 1 ? Math.sqrt(segs.reduce((a, s) => a + (s[k] - mean[k]) ** 2, 0) / (N - 1)) : NaN));
-  return { lag, segs, used, mean, sd, se: sd.map((v) => v / Math.sqrt(N)), n: lag.map(() => N) };
+  return { lag, segs, used, gapped, mean, sd, se: sd.map((v) => v / Math.sqrt(N)), n: lag.map(() => N) };
 }
 
 // ---- the Hampel filter ----

@@ -350,7 +350,7 @@ function semiIntegralExample(): Project {
   link(b, cv, cvp, 'dataset');
   const fr = add(b, 'fraccalc', 'cv-semi', 680, 0, { ...FRAC_DEFAULTS, withData: true, orders: '-0.5, 0.5', along: 'rows', rate: 0.1, semi: true, electrons: 1, area: 0.0707, conc: 1, unit: 'µA' });
   link(b, cv, fr, 'in');
-  const mp = add(b, 'plot1d', 'cv-mplot', 1400, 0, plot({ label: 'semi-integral', style: curve(1, { mode: 'line', lineWidth: 1.4 }), cols: { x: 'Potential (V)', y: 'D^-0.5 Current (µA)' } }, { axes: titled('Potential (V)', 'm (µA s^½)'), page: { name: 'semi_integral' } }));
+  const mp = add(b, 'plot1d', 'cv-mplot', 1400, 0, plot({ label: 'semi-integral', style: curve(1, { mode: 'line', lineWidth: 1.4 }), cols: { x: 'Potential (V)', y: 'D^-0.5 Current (µA·s^½)' } }, { axes: titled('Potential (V)', 'm (µA s^½)'), page: { name: 'semi_integral' } }));
   link(b, fr, mp, 'dataset');
   return project(b, 'Electrochemistry: semi-integral (convolution) voltammetry');
 }

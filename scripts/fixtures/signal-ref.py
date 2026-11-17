@@ -63,7 +63,9 @@ def fft_filter(v, dx, H):
 dx = x[1] - x[0]
 out['lowpass'] = fft_filter(y, dx, lambda f: (f <= 1.0).astype(float)).tolist()
 lp = lambda f, fc, o: 1 / np.sqrt(1 + (f / fc) ** (2 * o))
-out['bandstop'] = fft_filter(y, dx, lambda f: 1 - lp(f, 1.2, 3) * (1 - lp(f, 0.6, 3))).tolist()
+# (the Butterworth high pass 1/sqrt(1 + (fc/f)^2n); the band stop the power complement of the band pass)
+hp = lambda f, fc, o: np.where(f > 0, 1 / np.sqrt(1 + (fc / np.where(f > 0, f, 1)) ** (2 * o)), 0.0)
+out['bandstop'] = fft_filter(y, dx, lambda f: np.sqrt(np.maximum(0, 1 - (lp(f, 1.2, 3) * hp(f, 0.6, 3)) ** 2))).tolist()
 
 # interpolation (scipy), inside and outside the data
 xi = np.array([0.0, 0.7, 1.5, 2.2, 3.9, 4.0, 5.3, 6.1, 7.7, 9.0])

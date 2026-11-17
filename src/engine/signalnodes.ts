@@ -265,11 +265,16 @@ export function interpNode(ds: Dataset, d: InterpData, at: number[] | undefined)
     if (c.x.length < (d.method === 'spline' || d.method === 'akima' || d.method === 'pchip' ? 3 : 2)) warnings.push(`${c.Y.name}: too few points for this method.`);
     const f = S.interpolator(c.x, c.y, d.method, d.extrap);
     const v = X.map(f);
+    // the new X outside this curve's own data (a curve shorter than the others, an “at” beyond it): left empty, said
+    if (d.extrap === 'none') {
+      const [x0, x1] = [c.x[0], c.x[c.x.length - 1]];
+      const out = X.filter((u, i) => (u < x0 || u > x1) && !Number.isFinite(v[i])).length;
+      if (out) warnings.push(`${c.Y.name}: ${out} point${out > 1 ? 's' : ''} of the new X outside its data (${fmtNum(x0, 5)} … ${fmtNum(x1, 5)}) left empty (Outside: choose an extrapolation to fill ${out > 1 ? 'them' : 'it'}).`);
+    }
     const c0 = all.find((q) => q.Y === c.Y) ?? c;
     plots.push({ data: { x: c0.x, y: c0.y }, result: { x: X, y: v }, xName: c.X?.name ?? 'row', yName: c.Y.name, ranges: true, run: c.Y.name });
     return { xName: c.X?.name ?? 'X', x: X, cols: [{ ...yCol(c.Y.name, v), ...(c.Y.key ? { key: c.Y.key } : {}) }] };
   });
-  if (d.extrap === 'none' && (a < lo || b > hi)) warnings.push('Part of the new X is outside the data: left empty (Extrapolate to fill it).');
   return { dataset: { name: `${ds.name} interpolated`, columns: layout(items) }, plots, labels: cs.map((c) => c.Y.name), warnings };
 }
 
@@ -291,7 +296,18 @@ export function normalizeNode(ds: Dataset, d: NormalizeData, by: number[] | unde
     else if (d.method === 'max') scale = maxOf(ys);
     else if (d.method === 'maxabs') scale = maxOf(ys.map(Math.abs));
     else if (d.method === 'minmax') [offset, scale] = [minOf(ys), maxOf(ys) - minOf(ys)];
-    else if (d.method === 'first') scale = ys[0];
+    else if (d.method === 'first') {
+      // the first point as measured: the first row (in the data's order) with both numbers, between From and To — not
+      // the smallest X (a spectrum from 2000 to 400 cm⁻¹ starts at 2000)
+      const X = c.X?.values;
+      const Yv = c.Y.values;
+      let i0 = -1;
+      for (let i = 0; i < Yv.length && i0 < 0; i++) {
+        const xv = X ? X[i] : i + 1;
+        if (Number.isFinite(Yv[i]) && Number.isFinite(xv) && (!Number.isFinite(d.from) || xv >= d.from) && (!Number.isFinite(d.to) || xv <= d.to)) i0 = i;
+      }
+      scale = i0 >= 0 ? Yv[i0] : ys[0];
+    }
     else if (d.method === 'value') scale = d.value;
     else if (d.method === 'atx') scale = S.interpolator(c.x, c.y, 'linear', 'none')(d.at);
     else if (d.method === 'area') {
@@ -309,9 +325,17 @@ export function normalizeNode(ds: Dataset, d: NormalizeData, by: number[] | unde
       const byRow = Array.from({ length: rows }, (_, i) => by![i]);
       const order = Array.from({ length: rows }, (_, i) => i).filter((i) => Number.isFinite(c.Y.values[i]) && (!c.X || Number.isFinite(c.X.values[i])));
       if (c.X) order.sort((p, q) => c.X!.values[p] - c.X!.values[q]);
-      v = c.y.map((u, k) => u / byRow[order[k]]);
+      // (a row without a finite, non-zero divisor — the column shorter, a 0, a gap — left empty, and counted)
+      let bad = 0;
+      v = c.y.map((u, k) => {
+        const q = byRow[order[k]];
+        if (!Number.isFinite(q) || q === 0) return (bad++, NaN);
+        return u / q;
+      });
+      if (bad) warnings.push(`${c.Y.name}: ${bad} point${bad > 1 ? 's' : ''} without a finite, non-zero value of “by” on ${bad > 1 ? 'their rows' : 'its row'} (the column shorter, a 0, a gap): left empty.`);
     } else v = c.y.map((u) => (u - offset) / scale);
-    if (!Number.isFinite(scale) || scale === 0) warnings.push(`${c.Y.name}: the factor is ${scale}; the result is not defined.`);
+    if (d.method === 'max' && ys.length && scale <= 0) warnings.push(`${c.Y.name}: its maximum is ${fmtNum(scale, 4)} (≤ 0): divided by a negative or zero value, the curve turned over or not defined; choose “largest |value| = 1”.`);
+    else if (!Number.isFinite(scale) || scale === 0) warnings.push(`${c.Y.name}: the factor is ${scale}; the result is not defined.`);
     factors.push({ name: c.Y.name, offset, scale });
     plots.push({ data: { x: c.x, y: c.y }, result: { x: c.x, y: v }, xName: c.X?.name ?? 'row', yName: c.Y.name, ownAxis: true, ranges: true, run: c.Y.name });
     return { xName: c.X?.name ?? 'row', x: c.x, cols: [{ ...yCol(`${c.Y.name} (normalized)`, v), ...(c.Y.key ? { key: c.Y.key } : {}) }] };
@@ -405,16 +429,25 @@ function fftModes(ds: Dataset, d: FFTData, cs: Curve[], xUnit: (name: string) =>
     if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced; read on an even grid for the FFT.`);
     const sp = S.spectrum(e.y, e.dx, d.window, d.detrend, d.pad);
     const name = c.Y.name;
+    // the scale of the amplitude, bin by bin: ÷ N, ÷ the window's coherent gain, × 2 on one side (not the DC bin, nor the
+    // Nyquist one of an even length) — the real and imaginary parts scaled alike (a sine of 2: |re + i·im| = 2 at its bin)
+    const n0 = e.y.length;
+    const nf = d.pad ? 1 << Math.ceil(Math.log2(n0)) : n0;
+    const gain = S.windowOf(d.window, n0).reduce((a, b) => a + b, 0) / n0;
+    const twoSided = (k: number) => k === 0 || (nf % 2 === 0 && k === nf / 2);
+    const scale = sp.re.map((_, k) => (twoSided(k) ? 1 : 2) / n0 / gain);
+    // the power of every bin as SciPy's “spectrum” scaling: A²/2 for a sine of amplitude A (its mean square), the DC and
+    // Nyquist bins amp² (not doubled): Σ power = the mean square of the data (no window, no padding)
     const cols: Column[] =
       d.output === 'amp'
         ? [yCol(`${name} amplitude`, sp.amp)]
         : d.output === 'power'
-          ? [yCol(`${name} power`, sp.amp.map((a) => a * a))]
+          ? [yCol(`${name} power`, sp.amp.map((a, k) => (twoSided(k) ? a * a : (a * a) / 2)))]
           : d.output === 'db'
             ? [yCol(`${name} (dB)`, sp.amp.map((a) => 20 * Math.log10(a)))]
             : d.output === 'phase'
               ? [yCol(`${name} phase (°)`, sp.phase)]
-              : [yCol(`${name} real`, sp.re), yCol(`${name} imaginary`, sp.im)];
+              : [yCol(`${name} real`, sp.re.map((v, k) => v * scale[k])), yCol(`${name} imaginary`, sp.im.map((v, k) => v * scale[k]))];
     plots.push({ result: { x: sp.f, y: Array.from(cols[0].values) }, xName: 'frequency', yName: cols[0].name });
     const u = xUnit(c.X?.name ?? '');
     return { xName: u ? `Frequency (1/${u})` : 'Frequency', x: sp.f, cols };
@@ -494,15 +527,26 @@ function harmonicsNode(ds: Dataset, d: FFTData, cs: Curve[], xUnit: (name: strin
 export function convNode(ds: Dataset, d: ConvData, kernelValues: number[] | undefined): SignalOut {
   const cs = signalCurves(ds, d);
   if (typeof cs === 'string') return cs;
-  if (d.shape === 'port' && d.op !== 'corr' && !kernelValues?.length) return 'Connect the response (a column, or a dataset: its first Y) to the “kernel” port, on the same step of X as the data.';
+  if (d.shape === 'port' && d.op !== 'corr' && !kernelValues?.some(Number.isFinite)) return 'Connect the response (a column, or a dataset: its first Y) to the “kernel” port, on the same step of X as the data.';
   const warnings: string[] = [];
   const plots: SignalPlot[] = [];
   if (d.op === 'corr') return corrNode(ds, d, cs, kernelValues);
+  // the kernel of the port: the empty cells at its ends cut off (a column shorter than its dataset), one inside taken as 0
+  // (it keeps the step of X: the points after it stay in their place), said — a NaN would make the whole result NaN
+  let kernel: number[] | undefined;
+  if (d.shape === 'port') {
+    const kv = kernelValues!;
+    const [i0, i1] = [kv.findIndex(Number.isFinite), kv.length - 1 - [...kv].reverse().findIndex(Number.isFinite)];
+    const inner = kv.slice(i0, i1 + 1);
+    const holes = inner.filter((v) => !Number.isFinite(v)).length;
+    if (holes) warnings.push(`The kernel has ${holes} empty or non-numeric value${holes > 1 ? 's' : ''} inside: taken as 0.`);
+    kernel = S.kernelFrom(inner.map((v) => (Number.isFinite(v) ? v : 0)));
+  }
   const items = cs.map((c) => {
     const out = byRanges(c, rangesOf(d, c.Y.name), d.outside, warnings, (p) => {
       const e = evenly(p);
       if (e.resampled) warnings.push(`${c.Y.name}: X not evenly spaced; read on an even grid.`);
-      const k = d.shape === 'port' ? S.kernelFrom(kernelValues!) : S.kernelOf(d.shape, d.fwhm, e.dx, e.y.length);
+      const k = d.shape === 'port' ? kernel! : S.kernelOf(d.shape, d.fwhm, e.dx, e.y.length);
       if (k.length < 2) warnings.push(`${c.Y.name}: the kernel is narrower than one step of X; nothing changes.`);
       let r: number[];
       if (d.op === 'conv') r = S.convolve(e.y, k, d.edge);
@@ -742,7 +786,36 @@ export function averageNode(sets: Dataset[], d: AverageData): SignalOut {
     const p = Math.max(2, Math.min(1e6, Math.floor(d.points) || 200));
     X = Array.from({ length: p }, (_, k) => a + ((b - a) * k) / (p - 1));
   }
-  const fs = usable.map((c) => S.interpolator(c.x, c.y, d.method, 'none'));
+  // every curve read at an X, not across its gaps: an X between two of its points with a missing value (a row with its X
+  // but no Y) between them gets nothing from it — the gap is not bridged nor counted in N
+  const fs = usable.map((c) => {
+    const f = S.interpolator(c.x, c.y, d.method, 'none');
+    const gaps: number[] = [];
+    for (let i = 0; i < c.Y.values.length; i++) {
+      const xv = c.X ? c.X.values[i] : i + 1;
+      if (!Number.isFinite(c.Y.values[i]) && Number.isFinite(xv)) gaps.push(xv);
+    }
+    if (!gaps.length) return f;
+    gaps.sort((p, q) => p - q);
+    // the first index of a sorted list whose value is > v (or ≥ v)
+    const above = (a: number[], v: number, eq: boolean) => {
+      let [lo, hi] = [0, a.length];
+      while (lo < hi) {
+        const m = (lo + hi) >> 1;
+        if (a[m] > v || (eq && a[m] === v)) hi = m;
+        else lo = m + 1;
+      }
+      return lo;
+    };
+    return (x: number) => {
+      const r = above(c.x, x, true);
+      if (r < c.x.length && c.x[r] === x) return f(x);
+      if (r === 0 || r === c.x.length) return f(x);
+      const [xl, xr] = [c.x[r - 1], c.x[r]];
+      const g = above(gaps, xl, false);
+      return g < gaps.length && gaps[g] < xr ? NaN : f(x);
+    };
+  });
   const rs = d.regions ?? [];
   if (rs.length) X = X.filter((v) => within(v, rs));
   const rows: { x: number; v: number[] }[] = [];
@@ -766,7 +839,7 @@ export function averageNode(sets: Dataset[], d: AverageData): SignalOut {
   }
   if (d.grid !== 'uniform' && need === m) {
     const out = X.length - rows.length;
-    if (out) warnings.push(`${out} X value${out > 1 ? 's' : ''} outside some of the curves: left out (only where all ${m} curves have a value).`);
+    if (out) warnings.push(`${out} X value${out > 1 ? 's' : ''} outside some of the curves (or in a gap of one): left out (only where all ${m} curves have a value).`);
   }
   const plot: SignalPlot = {
     result: { x, y: mean },

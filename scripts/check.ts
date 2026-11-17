@@ -115,6 +115,9 @@ import { callSite, writeValidation, type CheckRecord } from './validation.ts';
 import { checkStat2 } from './check-stat2.ts';
 import { checkStat3 } from './check-stat3.ts';
 import { checkSigpack } from './check-sigpack.ts';
+import { checkAuditSignalCurves } from './check-audit-curves.ts';
+import { checkAuditSignalMeasure } from './check-audit-measure.ts';
+import { checkAuditSignalFrac } from './check-audit-frac.ts';
 import { checkPhase } from './check-phase.ts';
 import { armsOf, closestOnSeg, cornersOf as boundaryCorners, createCalMapper, detectRegions, followFrame, evalLeverPoint, frameOf, phaseFaces, regionFills, regionPhases, runPhaseDigitizer, sampleSpline, snapPoint, totalOfUnit, type PhaseDigitizerData } from '../src/engine/phasedigitize.ts';
 import { PHASE_DIGITIZER_DEFAULTS } from '../src/defaults.ts';
@@ -205,6 +208,7 @@ import { contingencyNode, pAdjustNode, regressNode, rocNode, survivalNode } from
 import { agreeNode, distFitNode, logisticNode, resampleNode } from '../src/engine/statnodes3.ts';
 import { effectFor } from '../src/engine/stat3.ts';
 import { AGREE_DEFAULTS as AGREE_D, CONTINGENCY_DEFAULTS as CONTINGENCY_D, DISTFIT_DEFAULTS as DISTFIT_D, LOGISTIC_DEFAULTS as LOGISTIC_D, NONPAR_DEFAULTS as NONPAR_D, NORM_DEFAULTS as NORM_D, PADJUST_DEFAULTS as PADJUST_D, REGRESS_DEFAULTS as REGRESS_D, RESAMPLE_DEFAULTS as RESAMPLE_D, ROC_DEFAULTS as ROC_D, SURVIVAL_DEFAULTS as SURVIVAL_D } from '../src/defaults.ts';
+import { fftGain } from '../src/engine/signal.ts';
 import { curveOf as curveOfCM } from '../src/engine/curvemath.ts';
 import { eisPoints } from '../src/engine/eis.ts';
 import { measurePeaks } from '../src/engine/peaks.ts';
@@ -6767,6 +6771,9 @@ checkImage(ok);
 checkStat2(ok);
 checkStat3(ok);
 checkSigpack(ok);
+checkAuditSignalCurves(ok);
+checkAuditSignalMeasure(ok);
+checkAuditSignalFrac(ok);
 
 // ---- Phase diagram: against closed forms ----
 checkPhase(ok);
@@ -7962,6 +7969,43 @@ checkPhase(ok);
   const flat = pickPoints(mx, [0, 1, 1, 1, 0], mx, [{ kind: 'max', value: '' }], { interp: 'linear', outside: 'empty' }).points[0];
   const flatW = extremum({ x: mx, y: [0, 1, 1, 1, 0] }, 'max');
   ok(inRange.x === 2 && inRange.y === 3 && flat.x === 2 && flat.y === 1 && flatW.x === 2 && flatW.y === 1, `Pick points: the max of 0 – 2 at 2 (${inRange.x}, ${inRange.y}); a flat top 1 at its middle (${flat.x}, ${flat.y}; Peak width ${flatW.x}, ${flatW.y})`);
+}
+// ---- the audit of 2026-11-17, section Signal: G1 masks, G3 the baseline column, G4 the FFT filter, G20 an impedance ----
+{
+  const nl = String.fromCharCode(10);
+  // G1: Normalize (and Smooth, Interpolate, FFT, Convolution, Average) leave a masked point out, said
+  const g = evaluateGraph(
+    [
+      { id: 'i', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, text: ['x;A', '1;1', '2;2', '3;100', '4;4', '5;5', ''].join(nl), textId: 'g1' } } as AppNode,
+      { id: 'm', type: 'datamanip', position: { x: 0, y: 0 }, data: { x: 'x', y: 'A', ops: [{ kind: 'mask', rows: '3', n: 5 }] } } as AppNode,
+      { id: 'n', type: 'normalize', position: { x: 0, y: 0 }, data: { ...NORMALIZE_DEFAULTS, method: 'max' } } as AppNode,
+    ],
+    [{ id: '1', source: 'i', sourceHandle: 'out', target: 'm', targetHandle: 'in' }, { id: '2', source: 'm', sourceHandle: 'out', target: 'n', targetHandle: 'in' }],
+  ).get('n');
+  const nv = g?.outputs.out?.t === 'dataset' ? g.outputs.out.v.columns[1].values : undefined;
+  const top = nv ? Math.max(...Array.from(nv).filter(Number.isFinite)) : NaN;
+  ok(near(top, 1, 1e-12) && !!g?.warnings?.some((w) => w.startsWith('1 masked point left out')), `Normalize: a masked 100 left out — the maximum 5 is 1 (${top}), said`);
+  // G3: a column on the baseline port is the baseline of every row, on the data's X (not on the row numbers)
+  const bx = Array.from({ length: 101 }, (_, i) => 400 + 4 * i);
+  const bb = bx.map((_, i) => 1 + 0.008 * i);
+  const bl = evaluateGraph(
+    [
+      { id: 'i', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, text: ['Wavelength (nm);A;B', ...bx.map((x, i) => `${x};${2 + bb[i]};${bb[i]}`), ''].join(nl), textId: 'g3' } } as AppNode,
+      { id: 'e', type: 'extract', position: { x: 0, y: 0 }, data: { ...EXTRACT_DEFAULTS, column: 'B', index: 2 } } as AppNode,
+      { id: 'b', type: 'baseline', position: { x: 0, y: 0 }, data: { ...BASELINE_DEFAULTS, ys: 'A', method: 'curve', baseFrom: 'port' } } as AppNode,
+    ],
+    [{ id: '1', source: 'i', sourceHandle: 'out', target: 'b', targetHandle: 'in' }, { id: '2', source: 'i', sourceHandle: 'out', target: 'e', targetHandle: 'in' }, { id: '3', source: 'e', sourceHandle: 'out', target: 'b', targetHandle: 'base' }],
+  ).get('b');
+  const corr = bl?.outputs.out?.t === 'dataset' ? bl.outputs.out.v.columns.find((c) => /baseline/.test(c.name) && c.role !== 'x')?.values : undefined;
+  ok(!!corr && [0, 50, 100].every((i) => near(corr[i], 2, 1e-9)), `Baseline correction: a column on the port taken row by row on the data's X — A − baseline = 2 everywhere (${corr ? [corr[0], corr[50], corr[100]].join(', ') : bl?.errors?.join(' ')})`);
+  // G4: the FFT filter's high and band pass at their cut-off: 1/√2, as the low pass
+  const hp = fftGain('high', 10, 0, 4);
+  const bp = fftGain('band', 10, 1000, 4);
+  ok(near(hp(10), Math.SQRT1_2, 1e-12) && near(fftGain('low', 10, 0, 4)(10), Math.SQRT1_2, 1e-12) && near(bp(10), Math.SQRT1_2, 1e-3) && hp(1000) > 0.999 && hp(0.1) < 1e-6, `FFT filter: the high pass 1/√2 at its cut-off (${fmtNum(hp(10), 6)}), the band pass too (${fmtNum(bp(10), 6)})`);
+  // G20: an impedance — no drift nor spikes added on the frequency, said; its clean columns given
+  const zg = generate({ ...SIGGEN_DEFAULTS, kind: 'eis', drift: 0.01, spikes: 3, clean: true, noise: { ...SIGGEN_DEFAULTS.noise, kind: 'white', by: 'sigma', sigma: 1 } } as Parameters<typeof generate>[0]);
+  const zre = typeof zg === 'string' ? undefined : zg.dataset.columns.find((c) => c.name === "Z' (Ω)")?.values;
+  ok(typeof zg !== 'string' && zg.warnings.some((w) => w.includes('drift and the spikes are not added')) && !!zre && Math.max(...Array.from(zre).filter(Number.isFinite)) < 200 && zg.dataset.columns.some((c) => c.name === "Z' clean (Ω)"), `Signal generator: an impedance without a drift per hertz (Z′ at most ${zre ? fmtNum(Math.max(...Array.from(zre).filter(Number.isFinite)), 4) : '—'} Ω), its clean columns`);
 }
 // the numbers of an axis in E notation (1e−3, 2.5e4; a log axis as few digits as each needs)
 {

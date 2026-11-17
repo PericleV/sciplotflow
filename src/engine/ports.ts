@@ -291,12 +291,13 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
     case 'filterrows':
       // a workbook: the sheet chosen in the node, or every sheet; a column: a table of that one column
       return handle === 'in' ? ['dataset', 'workbook', 'column'] : [];
+    // (in: a column too — a table of that one column, X its row number)
     case 'interp':
-      return handle === 'in' ? ['dataset'] : handle === 'at' ? ['column', 'dataset'] : [];
+      return handle === 'in' ? ['dataset', 'column'] : handle === 'at' ? ['column', 'dataset'] : [];
     case 'normalize':
-      return handle === 'in' ? ['dataset'] : handle === 'by' ? ['column', 'dataset'] : [];
+      return handle === 'in' ? ['dataset', 'column'] : handle === 'by' ? ['column', 'dataset'] : [];
     case 'convolve':
-      return handle === 'in' ? ['dataset'] : handle === 'kernel' ? ['column', 'dataset'] : [];
+      return handle === 'in' ? ['dataset', 'column'] : handle === 'kernel' ? ['column', 'dataset'] : [];
     case 'kk':
       return handle === 'in' ? ['dataset'] : [];
     case 'translate':

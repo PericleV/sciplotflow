@@ -4923,7 +4923,9 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       const available = v.v.columns.map(colInfo);
       const b = one('base');
       const rc = b?.t === 'dataset' ? curvesByRole(b.v.columns).curves[0] : undefined;
-      const port = b?.t === 'dataset' && rc ? { x: findColumn(b.v.columns, rc.x)?.values ?? [], y: findColumn(b.v.columns, rc.y)?.values ?? [] } : b?.t === 'column' ? { x: Float64Array.from(b.v.values, (_, i) => i + 1), y: b.v.values } : undefined;
+      // (a column on the port: the baseline of every row of the data — on the data's X, not on the row numbers)
+      const inX = (n.data.x && n.data.x !== '-' ? findColumn(v.v.columns, n.data.x) : findColumn(v.v.columns, curvesByRole(v.v.columns).curves[0]?.x ?? '')) ?? undefined;
+      const port = b?.t === 'dataset' && rc ? { x: findColumn(b.v.columns, rc.x)?.values ?? [], y: findColumn(b.v.columns, rc.y)?.values ?? [] } : b?.t === 'column' ? { x: inX && n.data.x !== '-' ? inX.values : Float64Array.from(b.v.values, (_, i) => i + 1), y: b.v.values } : undefined;
       const r = baselineNode(v.v, n.data, port);
       if ('error' in r) return { errors: [r.error], view: { available } };
       if ('waiting' in r) return { view: { available, waiting: r.waiting } };
@@ -4936,9 +4938,13 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
     case 'normalize':
     case 'fft':
     case 'convolve': {
-      const v = one('in');
-      if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset: X and the Y columns (designated, or chosen).' } };
-      const available = v.v.columns.map(colInfo);
+      // (a column alone: a table of it; the masked points left out, said)
+      const v0 = oneTable(one('in'));
+      if (v0?.t !== 'dataset') return { view: { waiting: 'Connect a dataset: X and the Y columns (designated, or chosen).' } };
+      const available = v0.v.columns.map(colInfo);
+      const um = unmaskedCells(v0.v);
+      const v = { t: 'dataset' as const, v: um.ds };
+      const masked = um.rows ? [`${um.rows} masked point${um.rows > 1 ? 's' : ''} left out.`] : [];
       const r: SignalOut =
         n.type === 'smooth'
           ? smoothNode(v.v, n.data)
@@ -4952,7 +4958,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       if (typeof r === 'string') return { errors: [r], view: { available } };
       const outputs: Record<string, Value> = { out: { t: 'dataset', v: r.dataset } };
       for (const [k, t] of Object.entries(r.extra ?? {})) outputs[k] = { t: 'dataset', v: t };
-      return { outputs, warnings: r.warnings, view: { available, signal: { labels: r.labels, plots: r.plots }, ...(r.report ? { report: r.report } : {}) } };
+      return { outputs, warnings: [...masked, ...r.warnings], view: { available, signal: { labels: r.labels, plots: r.plots }, ...(r.report ? { report: r.report } : {}) } };
     }
     case 'kk': {
       const v = one('in');
@@ -4974,9 +4980,12 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       sets.sort((a, b) => a.port - b.port);
       if (!sets.length) return { view: { waiting: 'Connect the datasets of the curves to A, B, C … (or one dataset with several Y).' } };
       const available = sets.flatMap((s) => s.v.columns).filter((c, j, a) => a.findIndex((o) => o.name === c.name) === j).map(colInfo);
-      const r = averageNode(sets.map((s) => s.v), n.data);
+      // (the masked points of every curve left out, said)
+      const ums = sets.map((s) => unmaskedCells(s.v));
+      const mrows = ums.reduce((a, u) => a + u.rows, 0);
+      const r = averageNode(ums.map((u) => u.ds), n.data);
       if (typeof r === 'string') return { errors: [r], view: { available } };
-      return { outputs: { out: { t: 'dataset', v: r.dataset } }, warnings: r.warnings, view: { available, signal: { labels: r.labels, plots: r.plots } } };
+      return { outputs: { out: { t: 'dataset', v: r.dataset } }, warnings: [...(mrows ? [`${mrows} masked point${mrows > 1 ? 's' : ''} left out.`] : []), ...r.warnings], view: { available, signal: { labels: r.labels, plots: r.plots } } };
     }
     case 'digitizer': {
       const r = digitized(n.data);

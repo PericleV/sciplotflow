@@ -283,7 +283,8 @@ export function generate(d: SigGenSpec): { dataset: Dataset; warnings: string[];
   const r = rng(d.seed);
   const cols: Column[] = [];
   // the noise and the rest on a column of values (its clean copy kept for the “without noise” column)
-  const spoil = (y: number[], x: number[], rel?: number[]): number[] => {
+  // (onlyNoise: no drift nor spikes — on an impedance x is the frequency: a drift per hertz would swamp Z)
+  const spoil = (y: number[], x: number[], rel?: number[], onlyNoise = false): number[] => {
     const out = y.slice();
     const fin = y.filter(Number.isFinite);
     if (d.noise.kind !== 'none') {
@@ -298,6 +299,7 @@ export function generate(d: SigGenSpec): { dataset: Dataset; warnings: string[];
       }
       for (let i = 0; i < out.length; i++) out[i] += nz[i] * s * (rel ? rel[i] : 1);
     }
+    if (onlyNoise) return out;
     if (d.drift) for (let i = 0; i < out.length; i++) out[i] += d.drift * (x[i] - x[0]);
     if (d.spikes && d.spikes > 0 && fin.length) {
       const span = maxOf(fin) - minOf(fin) || 1;
@@ -413,9 +415,10 @@ export function generate(d: SigGenSpec): { dataset: Dataset; warnings: string[];
     const ps = startParams(parsed.elems, parsed.tree, e.params, null);
     const z = simulate(parsed.tree, Object.fromEntries(ps.map((q) => [q.name, q.value])), e.fMin, e.fMax, Math.max(1, Math.min(200, e.per || 10)));
     const mod = z.re.map((a, i) => Math.hypot(a, z.im[i]));
-    // (noise as a part of |Z| on both parts)
-    const re = spoil(z.re, z.f, mod);
-    const im = spoil(z.im, z.f, mod);
+    // (noise as a part of |Z| on both parts; no drift nor spikes on an impedance — said)
+    if (d.drift || d.spikes) warnings.push('Impedance: the drift and the spikes are not added (x is the frequency); the noise only.');
+    const re = spoil(z.re, z.f, mod, true);
+    const im = spoil(z.im, z.f, mod, true);
     const empty = hole(z.f.length);
     const em = (v: number[]) => Float64Array.from(v, (q, i) => (empty.has(i) ? NaN : q));
     cols.push({ ...column('f (Hz)', Float64Array.from(z.f)), role: 'x' });
@@ -425,6 +428,11 @@ export function generate(d: SigGenSpec): { dataset: Dataset; warnings: string[];
     cols.push({ ...column('Phase (°)', em(re.map((a, i) => (Math.atan2(im[i], a) * 180) / Math.PI))), role: 'y' });
     // (with noise: the points made as dots, the clean curve as a line)
     const noisy = d.noise.kind !== 'none';
+    // (the impedance without the noise, as asked — columns of its own, named as those of the data)
+    if (d.clean && noisy) {
+      cols.push({ ...column("Z' clean (Ω)", Float64Array.from(z.re)), role: 'none' });
+      cols.push({ ...column("-Z'' clean (Ω)", Float64Array.from(z.im, (v) => -v)), role: 'none' });
+    }
     const col = (j: number) => Array.from(cols[j].values);
     const both = (x: number[], y: number[], clean: { x: number[]; y: number[] }) => (noisy ? { data: { x, y }, result: clean, legend: ['made', 'clean'] } : { result: { x, y } });
     plots.push({ ...both(col(1), col(2), { x: z.re, y: z.im.map((v) => -v) }), xName: "Z' (Ω)", yName: "-Z'' (Ω)" });

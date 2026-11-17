@@ -134,12 +134,17 @@ function weyl(f: number[], h: number, alpha: number): number[] {
 
 // ---- the discrete fractional Fourier transform ----
 // the eigenvalues and eigenvectors of a symmetric tridiagonal matrix (diagonal d, below it e; the QL method of
-// JAMA's tql2, public domain): V's columns
-function tql2(d0: number[], e0: number[]): { d: number[]; V: number[][] } {
+// JAMA's tql2, public domain): the eigenvectors, V[i] the i-th (kept by columns, so that a rotation runs along two
+// arrays: the same sums as JAMA's, several times faster)
+function tql2(d0: number[], e0: number[]): { d: number[]; V: Float64Array[] } {
   const n = d0.length;
   const d = d0.slice();
   const e = [...e0, 0];
-  const V: number[][] = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? 1 : 0)));
+  const V: Float64Array[] = Array.from({ length: n }, (_, i) => {
+    const v = new Float64Array(n);
+    v[i] = 1;
+    return v;
+  });
   let f = 0;
   let tst1 = 0;
   const eps = 2 ** -52;
@@ -181,10 +186,11 @@ function tql2(d0: number[], e0: number[]): { d: number[]; V: number[][] } {
           c = p / r;
           p = c * d[i] - s * g;
           d[i + 1] = h + s * (c * g + s * d[i]);
+          const [Vi, Vj] = [V[i], V[i + 1]];
           for (let k = 0; k < n; k++) {
-            h = V[k][i + 1];
-            V[k][i + 1] = s * V[k][i] + c * h;
-            V[k][i] = c * V[k][i] - s * h;
+            h = Vj[k];
+            Vj[k] = s * Vi[k] + c * h;
+            Vi[k] = c * Vi[k] - s * h;
           }
         }
         p = (-s * s2 * c3 * el1 * e[l]) / dl1;
@@ -219,26 +225,32 @@ export function frftBasis(N: number): number[][] {
     P[i][i] = -Math.SQRT1_2;
     P[i][N - i] = Math.SQRT1_2;
   }
-  // (CS = P S Pᵀ: S applied to the rows of P by its band)
+  // (CS = P S Pᵀ: S applied to the rows of P by its band; only its two tridiagonal blocks are needed, so only their
+  // diagonals and the entries below them: O(N²) instead of the whole product's O(N³))
   const Sx = (v: number[]) => v.map((q, k) => diag(k) * q + v[(k + 1) % N] + v[(k - 1 + N) % N]);
-  const PS = P.map((row) => Sx(row));
-  const CS = PS.map((row) => P.map((col) => row.reduce((a, q, k) => a + q * col[k], 0)));
+  const cs = (i: number, j: number) => Sx(P[i]).reduce((a, q, k) => a + q * P[j][k], 0);
   const ne = r + 1;
   const no = N - ne;
   const ev = tql2(
-    Array.from({ length: ne }, (_, i) => CS[i][i]),
-    Array.from({ length: ne - 1 }, (_, i) => CS[i + 1][i]),
+    Array.from({ length: ne }, (_, i) => cs(i, i)),
+    Array.from({ length: ne - 1 }, (_, i) => cs(i + 1, i)),
   );
   const od = no > 0 ? tql2(
-    Array.from({ length: no }, (_, i) => CS[ne + i][ne + i]),
-    Array.from({ length: no - 1 }, (_, i) => CS[ne + i + 1][ne + i]),
+    Array.from({ length: no }, (_, i) => cs(ne + i, ne + i)),
+    Array.from({ length: no - 1 }, (_, i) => cs(ne + i + 1, ne + i)),
   ) : { d: [], V: [] };
-  // (every eigenvector back by Pᵀ; the even ones and the odd ones by their eigenvalues, the largest first, interleaved)
-  const back = (vec: number[], off: number) => Array.from({ length: N }, (_, k) => vec.reduce((a, q, i) => a + P[off + i][k] * q, 0));
+  // (every eigenvector back by Pᵀ — P has at most two entries in a row, so by them alone; the even ones and the odd
+  // ones by their eigenvalues, the largest first, interleaved)
+  const nz = P.map((row) => row.flatMap((q, k) => (q !== 0 ? [[k, q] as const] : [])));
+  const back = (vec: ArrayLike<number>, off: number) => {
+    const out = new Array<number>(N).fill(0);
+    for (let i = 0; i < vec.length; i++) for (const [k, q] of nz[off + i]) out[k] += q * vec[i];
+    return out;
+  };
   const evIdx = ev.d.map((_, i) => i).sort((a, b) => ev.d[b] - ev.d[a]);
   const odIdx = od.d.map((_, i) => i).sort((a, b) => od.d[b] - od.d[a]);
-  const evVecs = evIdx.map((i) => back(ev.V.map((row) => row[i]), 0));
-  const odVecs = odIdx.map((i) => back(od.V.map((row) => row[i]), ne));
+  const evVecs = evIdx.map((i) => back(ev.V[i], 0));
+  const odVecs = odIdx.map((i) => back(od.V[i], ne));
   const E: number[][] = [];
   for (let k = 0; E.length < N; k++) {
     if (k % 2 === 0) {
@@ -328,16 +340,52 @@ function fconv(ar: number[], ai: number[], br: number[], bi: number[], from = 0,
 }
 const sincF = (x: number) => (x === 0 ? 1 : Math.sin(Math.PI * x) / (Math.PI * x));
 // The fast fractional Fourier transform of order a (their fracF, N even): the order brought into 0.5 … 1.5 by a DFT,
-// the signal sinc-interpolated to twice the rate, a chirp before, a chirp convolution, a chirp after, every second sample
+// the signal sinc-interpolated to twice the rate, a chirp before, a chirp convolution, a chirp after, every second sample.
+// As published: its DFT steps centred at the sample N/2, its core (the chirps) and its reversal at (N − 1)/2 — so the
+// orders outside 0.5 … 1.5 are off by half a sample per step (a pulse back from F^0.1 F^−0.1 off by some %)
 export function fracFast(re0: number[], im0: number[], a0: number): [number[], number[]] {
+  return fracFastWith(re0, im0, a0, false);
+}
+// The same, its DFT steps centred at (N − 1)/2 as its core and its reversal: F·F = the reversal exactly, the orders adding
+// up at every order (what the nodes use)
+export function fracFastC(re0: number[], im0: number[], a0: number): [number[], number[]] {
+  return fracFastWith(re0, im0, a0, true);
+}
+function fracFastWith(re0: number[], im0: number[], a0: number, half: boolean): [number[], number[]] {
   const N = re0.length;
   const sh = (k: number) => (k + Math.floor(N / 2)) % N;
   const sN = Math.sqrt(N);
   let a = ((a0 % 4) + 4) % 4;
   let re = re0.slice();
   let im = im0.slice();
+  // (the centred DFT and its inverse: (1/√N) Σ f_k e^(∓2πi (k − c)(m − c)/N), c = (N − 1)/2 — by the FFT between two
+  // modulations)
+  const hdft = (r: number[], i: number[], inverse: boolean): [number[], number[]] => {
+    const c = (N - 1) / 2;
+    const s = inverse ? 1 : -1;
+    const pr = new Array<number>(N);
+    const pi = new Array<number>(N);
+    for (let k = 0; k < N; k++) {
+      const ph = (-s * 2 * Math.PI * c * k) / N;
+      const [cs, sn] = [Math.cos(ph), Math.sin(ph)];
+      pr[k] = r[k] * cs - i[k] * sn;
+      pi[k] = r[k] * sn + i[k] * cs;
+    }
+    const [Fr, Fi] = fft(pr, pi, inverse);
+    const f = inverse ? sN : 1 / sN;
+    const or = new Array<number>(N);
+    const oi = new Array<number>(N);
+    for (let m = 0; m < N; m++) {
+      const ph = (-s * 2 * Math.PI * c * (m - c)) / N;
+      const [cs, sn] = [Math.cos(ph), Math.sin(ph)];
+      or[m] = (Fr[m] * cs - Fi[m] * sn) * f;
+      oi[m] = (Fr[m] * sn + Fi[m] * cs) * f;
+    }
+    return [or, oi];
+  };
   // (the centred DFT and its inverse)
   const dft = (r: number[], i: number[], inverse: boolean): [number[], number[]] => {
+    if (half) return hdft(r, i, inverse);
     const xr = Array.from({ length: N }, (_, k) => r[sh(k)]);
     const xi = Array.from({ length: N }, (_, k) => i[sh(k)]);
     const [Fr, Fi] = fft(xr, xi, inverse);
