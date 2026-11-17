@@ -3242,6 +3242,15 @@ for (const ex of EXAMPLES) {
   const worst = typeof bad === 'string' ? -1 : bad.resid!.reduce((b, r, k, a) => (Math.abs(r.dx) > Math.abs(a[b].dx) ? k : b), 0);
   ok(worst === 13, 'Digitizer: a reference point typed wrong shows the largest error');
   ok(typeof calibrate(D({ cal: 'grid', grid: grid.slice(0, 5) })) === 'string', 'Digitizer: a curved page needs six points at least');
+  // reference points only on the two axes: a polynomial of degree 2 not fixed by them (refused, not read wrong); the
+  // spline through them reads a straight page right
+  const onAxes = [[0, 0], [5, 0], [10, 0], [2, 0], [0, 4], [0, 8]].map(([x, y]) => ({ ...T(x, y), x, y }));
+  const p2axes = calibrate(D({ cal: 'grid', grid: onAxes, gridFit: 'poly2' }));
+  const tpsAxes = calibrate(D({ cal: 'grid', grid: onAxes, gridFit: 'tps' }));
+  ok(typeof p2axes === 'string' && typeof tpsAxes !== 'string' && test.every(([x, y]) => near(tpsAxes.toData(T(x, y)).x, x, 1e-6) && near(tpsAxes.toData(T(x, y)).y, y, 1e-6)), `Digitizer: reference points on the axes only — degree 2 refused (${typeof p2axes === 'string' ? p2axes.slice(0, 40) : 'read'} …), the spline exact`);
+  // a click meant for the curve made a reference point (its values those of the one before): said, not a folded map
+  const stray = calibrate(D({ cal: 'grid', grid: [...grid, { ...B(5, 5), x: grid[grid.length - 1].x, y: grid[grid.length - 1].y }], gridFit: 'tps' }));
+  ok(typeof stray === 'string' && stray.startsWith(`Reference points ${grid.length}, ${grid.length + 1} have the same X and Y`), `Digitizer: two reference points apart with the same X and Y — said (${stray})`);
   // the dataset: two sets, error bars, in the order of X
   const ds = digitized(
     D({

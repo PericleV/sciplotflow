@@ -59,7 +59,7 @@ const loadImg = (url: string) =>
   });
 
 // mask: the pixels of the colour looked for, drawn over the image (Show matching pixels)
-function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) => void; img: HTMLImageElement | null; width: number; height: number; tool: Tool; placing: Placing; onPlaced: () => void; zoom: ZoomMode; view: View | null; setView: (v: View | null) => void; pixels: () => ImageData | null; loupe: boolean; onToolDone: () => void; mask: HTMLCanvasElement | null }) {
+function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) => void; img: HTMLImageElement | null; width: number; height: number; tool: Tool; placing: Placing; onPlaced: () => void; onEndPlacing: () => void; zoom: ZoomMode; view: View | null; setView: (v: View | null) => void; pixels: () => ImageData | null; loupe: boolean; onToolDone: () => void; mask: HTMLCanvasElement | null }) {
   const { data: d, set, img, width: W, height: H, tool, placing } = props;
   // Shift or Space held: a drag pans the image (as the middle button), with any tool
   const [shift, setShift] = useState(false);
@@ -465,6 +465,12 @@ function Board(props: { data: DigitizerData; set: (p: Partial<DigitizerData>) =>
   };
   // the arrow keys move the calibration point chosen (1 px; Shift: 0.1 px)
   const key = (e: RKeyboardEvent) => {
+    // Esc: the reference points (a calibration point) placed, back to the tool
+    if (e.key === 'Escape' && placing) {
+      e.preventDefault();
+      e.stopPropagation();
+      return props.onEndPlacing();
+    }
     const dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
     if (!dir || !sel) return;
     e.preventDefault();
@@ -629,14 +635,14 @@ export function DigitizerNodeView({ id, data }: NodeProps<DigitizerNode>) {
   };
   const out = r?.outputs.out;
   const btn = (on: boolean) => `nodrag${on ? ' on' : ''}`;
-  const board = (w: number, h: number) => <Board data={d} set={set} img={img} width={w} height={h} tool={tool} placing={placing} onPlaced={() => setPlacing(placing?.kind === 'grid' ? placing : null)} onToolDone={() => setTool('points')} zoom={zoom} view={view} setView={setView} pixels={pixels} loupe={d.loupe !== false} mask={preview?.mask ?? null} />;
+  const board = (w: number, h: number) => <Board data={d} set={set} img={img} width={w} height={h} tool={tool} placing={placing} onPlaced={() => setPlacing(placing?.kind === 'grid' ? placing : null)} onEndPlacing={() => setPlacing(null)} onToolDone={() => setTool('points')} zoom={zoom} view={view} setView={setView} pixels={pixels} loupe={d.loupe !== false} mask={preview?.mask ?? null} />;
   const tools = (
     <>
       <div className="row wrap">
-        <button className={btn(tool === 'points')} title={HINT.points} onClick={() => pick('points')}>
+        <button className={btn(!placing && tool === 'points')} title={HINT.points} onClick={() => pick('points')}>
           Points
         </button>
-        <button className={btn(tool === 'errbar')} title={HINT.errbar} onClick={() => pick('errbar')}>
+        <button className={btn(!placing && tool === 'errbar')} title={HINT.errbar} onClick={() => pick('errbar')}>
           Error bars
         </button>
         <button className={btn(d.loupe !== false)} title="A magnifier beside the cursor: the pixels under it, enlarged" onClick={() => set({ loupe: d.loupe === false })}>
@@ -650,7 +656,7 @@ export function DigitizerNodeView({ id, data }: NodeProps<DigitizerNode>) {
           <Maximize2 {...IC} /> Large
         </button>
       </div>
-      <div className="hint digi-hint">{placing ? (placing.kind === 'grid' ? 'Click on a tick or a crossing of the grid: a reference point (then write its X and Y); again for the next one.' : `Click on the image: ${placing.kind === 'axes' ? AXES[placing.k] : `the ${CORNERS[placing.k]} corner`}.`) : zoom !== 'none' ? 'Zoom: drag a rectangle · Pan: drag the image (also the middle button, at any time).' : HINT[tool]}</div>
+      <div className="hint digi-hint">{placing ? (placing.kind === 'grid' ? 'Click on a tick or a crossing of the grid: a reference point (then write its X and Y); again for the next one. Done: Points (or Esc), then click on the curve.' : `Click on the image: ${placing.kind === 'axes' ? AXES[placing.k] : `the ${CORNERS[placing.k]} corner`}.`) : zoom !== 'none' ? 'Zoom: drag a rectangle · Pan: drag the image (also the middle button, at any time).' : HINT[tool]}</div>
     </>
   );
   return (

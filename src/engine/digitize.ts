@@ -142,8 +142,29 @@ function polyFit(pts: { u: number; v: number; z: number }[], deg: number): ((u: 
       for (let j = 0; j < m; j++) A[i][j] += t[i] * t[j];
     }
   }
+  // points that do not fix every term (all on the two axes, on one line …): no map — a solution would still pass
+  // through them, and be wrong everywhere else
+  if (!fullRank(A)) return null;
   const c = solve(A, r);
   return c && c.every(Number.isFinite) ? (u, v) => terms(u, v, deg).reduce((s, t, i) => s + t * c[i], 0) : null;
+}
+// a square matrix of full rank (its pivots, of the elimination, above 1e-10 of the largest element)
+function fullRank(A: number[][]): boolean {
+  const M = A.map((row) => [...row]);
+  const n = M.length;
+  const big = Math.max(...M.flat().map(Math.abs));
+  if (!(big > 0)) return false;
+  for (let c = 0; c < n; c++) {
+    let piv = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+    if (!(Math.abs(M[piv][c]) > 1e-10 * big)) return false;
+    [M[c], M[piv]] = [M[piv], M[c]];
+    for (let r = c + 1; r < n; r++) {
+      const f = M[r][c] / M[c][c];
+      for (let k = c; k < n; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  return true;
 }
 // a thin-plate spline through the points: z = a0 + a1·u + a2·v + Σ wᵢ·φ(|p − pᵢ|), φ(r) = r²·ln r
 function tpsFit(pts: { u: number; v: number; z: number }[]): ((u: number, v: number) => number) | null {
@@ -166,6 +187,14 @@ function gridCal(d: DigitizerData): Calibration | string {
   const need = d.gridFit === 'poly3' ? 10 : 6;
   if (pts.length < need) return `${need} points at least with their X and Y (${pts.length} now): ticks on the axes, crossings of the grid, the corners.`;
   if ((d.logX && pts.some((p) => p.x <= 0)) || (d.logY && pts.some((p) => p.y <= 0))) return 'A logarithmic axis needs values above 0.';
+  // the same X and Y at two places apart (a click meant for the curve, its values copied from the point before): the
+  // map would fold there
+  for (let i = 0; i < d.grid.length; i++) {
+    const p = d.grid[i];
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+    const same = d.grid.flatMap((q, j) => (j !== i && q.x === p.x && q.y === p.y && Math.hypot(q.u - p.u, q.v - p.v) > 3 ? [j + 1] : []));
+    if (same.length) return `Reference points ${[i + 1, ...same].join(', ')} have the same X and Y (${p.x}, ${p.y}) but lie apart: write their values, or remove the extra ones (×).`;
+  }
   // the pixels scaled to about −1 … 1 (a well conditioned system)
   const cu = (minOf(pts.map((p) => p.u)) + maxOf(pts.map((p) => p.u))) / 2;
   const cv = (minOf(pts.map((p) => p.v)) + maxOf(pts.map((p) => p.v))) / 2;
@@ -178,7 +207,7 @@ function gridCal(d: DigitizerData): Calibration | string {
     return fx && fy ? (p: Px) => ({ x: ex(fx(n(p).u, n(p).v), d.logX), y: ex(fy(n(p).u, n(p).v), d.logY) }) : null;
   };
   const f = fit(pts);
-  if (!f) return 'The points do not fix a map (too many on one line?): add points spread over the graph.';
+  if (!f) return `The points do not fix a map${d.gridFit === 'tps' ? '' : ' of this degree'} (all on the axes, or on one line?): add points inside the graph too — crossings of the grid, the far corner${d.gridFit === 'tps' ? '' : ' — or choose the thin-plate spline'}.`;
   // the error of every point: off the map (polynomial), or the map made without it (the spline passes through all)
   const spanX = Math.abs(lg(maxOf(pts.map((p) => p.x)), d.logX) - lg(minOf(pts.map((p) => p.x)), d.logX)) || 1;
   const spanY = Math.abs(lg(maxOf(pts.map((p) => p.y)), d.logY) - lg(minOf(pts.map((p) => p.y)), d.logY)) || 1;
