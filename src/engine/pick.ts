@@ -55,9 +55,16 @@ function dedupe(p: { x: number; y: number }[]) {
 
 // Every point the rules pick on one curve (x, y: its columns; rows: its rows, in the order measured; cols: the columns
 // a condition can name, by letter).
-export function pickPoints(x: ArrayLike<number>, y: ArrayLike<number>, rows: number[], rules: PickRule[], o: PickOptions, cols: Record<string, ArrayLike<number>> = {}): { points: Picked[]; errors: string[] } {
+export function pickPoints(x: ArrayLike<number>, y: ArrayLike<number>, rows0: number[], rules: PickRule[], o: PickOptions, cols: Record<string, ArrayLike<number>> = {}): { points: Picked[]; errors: string[]; warnings: string[] } {
   const points: Picked[] = [];
   const errors: string[] = [];
+  const warnings: string[] = [];
+  // X in no order (it turns back more than twice: not a scan that goes and comes back): read in the order of X, said —
+  // the rows one after another would make crossings between points far apart
+  let turns = 0;
+  for (let j = 2; j < rows0.length; j++) if ((x[rows0[j]] - x[rows0[j - 1]]) * (x[rows0[j - 1]] - x[rows0[j - 2]]) < 0) turns++;
+  const rows = turns > 2 ? [...rows0].sort((p, q) => x[p] - x[q]) : rows0;
+  if (turns > 2) warnings.push(`X is not in order (it turns back ${turns} times): the points read in the order of X.`);
   let asked = NaN;
   let curKind: PickKind = 'x';
   const at = (rule: string, a: number, b: number, t: number, xv?: number, yv?: number, kind?: PickKind) => points.push({ rule, a, b, t, x: xv ?? lerp(x[a], x[b], t), y: yv ?? lerp(y[a], y[b], t), at: asked, kind: kind ?? curKind });
@@ -108,9 +115,20 @@ export function pickPoints(x: ArrayLike<number>, y: ArrayLike<number>, rows: num
       });
       if (pos < 0) return;
       const best = rows[pos];
-      // the top of a parabola through the point and its two neighbours (in the order measured)
+      // the top of a parabola through the point and its two neighbours (in the order measured) — both inside the range
+      // asked (the top found there), and not on a flat top (a plateau: its middle, at its value)
       const [pa, pb] = [rows[pos - 1], rows[pos + 1]];
-      if (o.interp !== 'nearest' && pa !== undefined && pb !== undefined) {
+      const inside = (i: number | undefined) => i !== undefined && x[i] >= Math.min(lo, hi) && x[i] <= Math.max(lo, hi);
+      if (o.interp !== 'nearest' && pa !== undefined && pb !== undefined && (y[pa] === y[best] || y[pb] === y[best])) {
+        let [a, b] = [pos, pos];
+        while (a > 0 && y[rows[a - 1]] === y[best] && inside(rows[a - 1])) a--;
+        while (b < rows.length - 1 && y[rows[b + 1]] === y[best] && inside(rows[b + 1])) b++;
+        const xm = (x[rows[a]] + x[rows[b]]) / 2;
+        const [ia, ib] = [rows[a], rows[b]];
+        at(name, ia, ib, x[ib] !== x[ia] ? (xm - x[ia]) / (x[ib] - x[ia]) : 0, xm, y[best]);
+        return;
+      }
+      if (o.interp !== 'nearest' && inside(pa) && inside(pb)) {
         const [x0, x1, x2, y0, y1, y2] = [x[pa], x[best], x[pb], y[pa], y[best], y[pb]];
         const den = (x0 - x1) * (x0 - x2) * (x1 - x2);
         const A = (x2 * (y1 - y0) + x1 * (y0 - y2) + x0 * (y2 - y1)) / den;
@@ -141,5 +159,5 @@ export function pickPoints(x: ArrayLike<number>, y: ArrayLike<number>, rows: num
       }
     }
   });
-  return { points, errors };
+  return { points, errors, warnings };
 }

@@ -92,7 +92,7 @@ export function yorkRuns(runs: (FitRunData & { sx: number[] })[], band: FitBand,
     const x = Float64Array.from({ length: m }, (_, k) => lo + ((hi - lo) * k) / (m - 1));
     const t = tInv(0.975, dof);
     const C = r.cov;
-    const bandOf = (v: number) => t * Math.sqrt(Math.max(0, C[0][0] + 2 * v * C[0][1] + v * v * C[1][1] + (band === 'prediction' ? stats.redChi2 : 0)));
+    const bandOf = (v: number) => t * Math.sqrt(Math.max(0, C[0][0] + 2 * v * C[0][1] + v * v * C[1][1] + (band === 'prediction' ? ssr / dof : 0)));
     out.push({
       label: run.label,
       value: run.value,

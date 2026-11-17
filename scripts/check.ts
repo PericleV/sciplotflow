@@ -205,6 +205,9 @@ import { contingencyNode, pAdjustNode, regressNode, rocNode, survivalNode } from
 import { agreeNode, distFitNode, logisticNode, resampleNode } from '../src/engine/statnodes3.ts';
 import { effectFor } from '../src/engine/stat3.ts';
 import { AGREE_DEFAULTS as AGREE_D, CONTINGENCY_DEFAULTS as CONTINGENCY_D, DISTFIT_DEFAULTS as DISTFIT_D, LOGISTIC_DEFAULTS as LOGISTIC_D, NONPAR_DEFAULTS as NONPAR_D, NORM_DEFAULTS as NORM_D, PADJUST_DEFAULTS as PADJUST_D, REGRESS_DEFAULTS as REGRESS_D, RESAMPLE_DEFAULTS as RESAMPLE_D, ROC_DEFAULTS as ROC_D, SURVIVAL_DEFAULTS as SURVIVAL_D } from '../src/defaults.ts';
+import { curveOf as curveOfCM } from '../src/engine/curvemath.ts';
+import { eisPoints } from '../src/engine/eis.ts';
+import { measurePeaks } from '../src/engine/peaks.ts';
 
 let failed = 0;
 const canConnectBook = (t: 'column' | 'workbook') => targetAccepts({ id: 'w', type: 'book', position: { x: 0, y: 0 }, data: WORKBOOK_DEFAULTS } as AppNode, 'in-2').includes(t);
@@ -7897,6 +7900,68 @@ checkPhase(ok);
   // S20: two proportions — the smallest effect looked for below p1 too
   const p2 = effectFor({ test: 'prop', alt: 'two-sided', alpha: 0.05, ratio: 1, k: 3, p1: 0.9, events: 0.6 }, 30, 0.8);
   ok(near(p2, 0.6, 0.02), `Power: p1 = 0.9, n = 30 — the effect found below p1 (p2 = ${fmtNum(p2, 4)}; statsmodels 0.601)`);
+}
+// ---- the audit of 2026-11-17, section Analysis: results wrong without a word (A1–A20) ----
+{
+  const fctx = { energy: false, xref: 0 };
+  // A1: the prediction band of a weighted fit — the scatter of a new point in y² (SSR / dof), not the reduced χ²
+  const wx = Array.from({ length: 20 }, (_, i) => i / 2);
+  const noise = [0.02, -0.03, 0.01, 0.04, -0.02, 0.0, -0.01, 0.03, -0.04, 0.02, 0.01, -0.02, 0.03, -0.01, 0.0, 0.02, -0.03, 0.01, -0.02, 0.03];
+  const wy = wx.map((x, i) => 1 + 2 * x + noise[i]);
+  const lin = buildModel({ kind: 'library', model: 'linear', degree: 1, formula: '', shape: 'gauss', count: 1, baseline: 'none' });
+  const fitW = typeof lin === 'string' ? null : runFitsT(lin, [], [{ label: 'w', value: 1, xs: wx, ys: wy, sig: wx.map(() => 0.002) }], { global: false, band: 'prediction', points: 11, ctx: fctx }).runs[0];
+  const pb = fitW?.curve.band?.[5] ?? NaN;
+  ok(pb > 0.02 && pb < 0.1, `Fit: the prediction band of a weighted fit in the units of y (±${fmtNum(pb, 4)}, the scatter 0.024; was ±0.5 and more)`);
+  // A2: a model that gives no value at its start values: nothing fitted, said
+  const sq = buildModel({ kind: 'formula', model: '', degree: 1, formula: 'a + b*sqrt(x)', shape: 'gauss', count: 1, baseline: 'none' });
+  const sx = [-2, -1, 0, 1, 2, 3, 4];
+  const bad = typeof sq === 'string' ? null : runFitsT(sq, [], [{ label: 's', value: 1, xs: sx, ys: sx.map((x) => 1 + Math.sqrt(Math.abs(x))), sig: sx.map(() => 1) }], { global: false, band: 'none', points: 2, ctx: fctx });
+  ok(!!bad && bad.warnings.some((w) => w.includes('gives no value at 2 points')) && bad.runs[0].params.every((q) => Number.isNaN(q.value)), `Fit: a model with no value at its start values — nothing fitted, said (${bad?.warnings.join(' ')})`);
+  // A7: the derivative on uneven X — exact for a parabola (numpy's gradient, ends of second order)
+  const ux = [0, 1, 3, 4, 7];
+  const dv = derivative(ux, ux.map((v) => v * v), [0, 1, 2, 3, 4], 1, 'central');
+  const d2 = derivative(ux, ux.map((v) => v * v), [0, 1, 2, 3, 4], 2, 'central');
+  ok([0, 1, 2, 3, 4].every((i) => near(dv.get(i)!, 2 * ux[i], 1e-9) && near(d2.get(i)!, 2, 1e-9)), `Differentiate: x² on uneven X — 2x and 2 everywhere (${[...dv.values()].map((v) => fmtNum(v, 4)).join(', ')})`);
+  // A8: a region whose limits fall between samples — the pieces to them counted; one between two samples alone
+  const ix = Array.from({ length: 11 }, (_, i) => i);
+  const ones = ix.map(() => 1);
+  const iopt = { area: 'signed' as const, baseline: 'none' as const, base: 0 };
+  const inner = ix.filter((v) => v >= 0.5 && v <= 9.5);
+  const a1 = integrate(ix, ones, inner, iopt, 0, { lo: 0.5, hi: 9.5, idx: ix }).area;
+  const a2 = integrate(ix, ones, [], iopt, 0, { lo: 0.2, hi: 0.8, idx: ix }).area;
+  ok(near(a1, 9, 1e-12) && near(a2, 0.6, 1e-12), `Integrate: y = 1 over 0.5 – 9.5 is 9 (${a1}), over 0.2 – 0.8 is 0.6 (${a2})`);
+  // A9: Curve math leaves a masked point out of its curve
+  const cm = curveOfCM({ name: 'c', columns: [{ ...column('x', Float64Array.from([1, 2, 3])), role: 'x' }, { ...column('y', Float64Array.from([1, 100, 3])), role: 'y', mask: Uint8Array.from([0, 1, 0]) }] }, 'y');
+  ok(typeof cm !== 'string' && cm.y.join() === '1,3', 'Curve math: a masked point left out of the curve');
+  // A12, A13: Kramers–Kronig — R in % by its unit; a tail of zero for R not used, said
+  const ex = Array.from({ length: 60 }, (_, i) => 1 + i * 0.1);
+  const rr = ex.map((e) => 0.4 + 0.5 / (1 + (e - 4) ** 2));
+  const kpct = kkNode({ name: 'r', columns: [{ ...column('E (eV)', Float64Array.from(ex)), role: 'x' }, { ...column('R (%)', Float64Array.from(rr)), role: 'y' }] }, { ...KK_DEFAULTS, mode: 'optical' });
+  const kzero = kkNode({ name: 'r', columns: [{ ...column('E (eV)', Float64Array.from(ex)), role: 'x' }, { ...column('R', Float64Array.from(rr)), role: 'y' }] }, { ...KK_DEFAULTS, mode: 'optical', high: 'zero' });
+  ok(typeof kpct !== 'string' && kpct.report[0].includes('in %') && typeof kzero !== 'string' && kzero.warnings.some((w) => w.includes('above “zero”')) && kzero.report[0].includes('above R constant'), 'Kramers–Kronig: R (%) read in % by its unit; a tail of zero for R replaced by R constant, said');
+  // A14: EIS — Z in kΩ read in Ω
+  const ez = eisPoints({ name: 'e', columns: [{ ...column('f (Hz)', Float64Array.from([1, 10, 100, 1000])), role: 'x' }, { ...column("Z' (kΩ)", Float64Array.from([2, 1.5, 1.1, 1])), role: 'y' }, { ...column("-Z'' (kΩ)", Float64Array.from([0.3, 0.5, 0.2, 0.05])), role: 'y' }] }, { ...EIS_DEFAULTS, freq: 'f (Hz)', re: "Z' (kΩ)", im: "-Z'' (kΩ)" });
+  ok(typeof ez !== 'string' && ez.pts.re[0] === 2000 && !!ez.zNote?.includes('kΩ'), `EIS: Z in kΩ read in Ω, said (${typeof ez === 'string' ? ez : ez.zNote})`);
+  // A15, A16: a peak measured on noisy data — its whole area, not the few points to the first wiggle; at an edge, no FWHM
+  const px = Array.from({ length: 251 }, (_, i) => 30 + i * 0.2);
+  const g = (x: number, c: number, w: number) => Math.exp((-4 * Math.LN2 * (x - c) ** 2) / (w * w));
+  let sd = 7;
+  const rnd = () => ((sd = (sd * 16807) % 2147483647) / 2147483647 - 0.5) * 0.04;
+  const pz = px.map((x) => g(x, 50, 8) + rnd());
+  const pm = measurePeaks(px, pz, [50])[0];
+  const exact = 8 * Math.sqrt(Math.PI / (4 * Math.LN2));
+  const edge = measurePeaks(px, px.map((x) => g(x, 30.4, 8)), [30.4])[0];
+  ok(Math.abs(pm.area - exact) < 0.6 && Number.isNaN(edge.fwhm), `Peak analyzer, measured: a noisy peak's area ${fmtNum(pm.area, 4)} (exact ${fmtNum(exact, 4)}); at an edge no FWHM (${edge.fwhm})`);
+  // A18: Pick points on X in no order — read in the order of X, said
+  const ux2 = [0, 3, 1, 4, 2];
+  const pk = pickPoints(ux2, ux2.map((v) => v * v), [0, 1, 2, 3, 4], [{ kind: 'x', value: '2.5' }], { interp: 'linear', outside: 'empty' });
+  ok(pk.points.length === 1 && near(pk.points[0].y, 6.5, 1e-12) && pk.warnings.length === 1, `Pick points: X in no order — one point at 2.5 (y 6.5), said (${pk.points.map((p) => p.y).join(', ')})`);
+  // A19, A20: the top refined inside the range asked; a flat top its middle at its value
+  const mx = [0, 1, 2, 3, 4];
+  const inRange = pickPoints(mx, [0, 1, 3, 3.5, 0], mx, [{ kind: 'max', value: '', from: 0, to: 2 }], { interp: 'linear', outside: 'empty' }).points[0];
+  const flat = pickPoints(mx, [0, 1, 1, 1, 0], mx, [{ kind: 'max', value: '' }], { interp: 'linear', outside: 'empty' }).points[0];
+  const flatW = extremum({ x: mx, y: [0, 1, 1, 1, 0] }, 'max');
+  ok(inRange.x === 2 && inRange.y === 3 && flat.x === 2 && flat.y === 1 && flatW.x === 2 && flatW.y === 1, `Pick points: the max of 0 – 2 at 2 (${inRange.x}, ${inRange.y}); a flat top 1 at its middle (${flat.x}, ${flat.y}; Peak width ${flatW.x}, ${flatW.y})`);
 }
 // the numbers of an axis in E notation (1e−3, 2.5e4; a log axis as few digits as each needs)
 {

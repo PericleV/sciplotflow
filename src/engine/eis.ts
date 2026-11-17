@@ -10,7 +10,7 @@
 import type { AnnotationItem } from '../types.ts';
 import { levenbergMarquardt } from './lm.ts';
 import { columnLetter } from './csv.ts';
-import { column, findColumn, fmtNum, type Column, type Dataset } from './table.ts';
+import { column, findColumn, fmtNum, unitOf, type Column, type Dataset } from './table.ts';
 import { maxOf, minOf } from './minmax.ts';
 
 export type EisElemKind = 'R' | 'C' | 'L' | 'Q' | 'W' | 'Wo' | 'Ws';
@@ -525,7 +525,13 @@ export const colLabel = (cols: Column[], c: Column) => {
 };
 export const colKey = (cols: Column[], c: Column) => (c.name.trim() && cols.filter((q) => q.name === c.name).length === 1 ? c.name : `#${cols.indexOf(c)}`);
 export type EisPoints = { f: number[]; w: number[]; re: number[]; im: number[]; rows: number[] }; // im: Z″ (negative for a capacitive arc)
-export function eisPoints(ds: Dataset, d: EisData): { pts: EisPoints; cols: { freq: Column; a: Column; b: Column }; signNote: string } | string {
+// the multiples of Ω in a column's unit (Z in kΩ: the fit in Ω, its parameters in Ω, F …)
+const PREFIX: Record<string, number> = { '': 1, µ: 1e-6, μ: 1e-6, u: 1e-6, m: 1e-3, k: 1e3, M: 1e6, G: 1e9 };
+function ohmsOf(unit: string): number | null {
+  const m = /^(µ|μ|u|m|k|M|G)?(Ω|Ω|[Oo]hms?)$/.exec(unit.trim());
+  return m ? PREFIX[m[1] ?? ''] : null;
+}
+export function eisPoints(ds: Dataset, d: EisData): { pts: EisPoints; cols: { freq: Column; a: Column; b: Column }; signNote: string; zNote?: string } | string {
   const cols = ds.columns;
   const g = guessColumns(cols, d.form);
   const pick = (name: string, guess?: Column) => (/^#\d+$/.test(name) ? cols[Number(name.slice(1))] : name ? findColumn(cols, name) : guess);
@@ -536,11 +542,16 @@ export function eisPoints(ds: Dataset, d: EisData): { pts: EisPoints; cols: { fr
   const miss = [freq, a, b].map((c, k) => (c ? '' : need[k])).filter(Boolean);
   if (miss.length) return `Choose the columns: ${miss.join(', ')}.`;
   const pts: EisPoints = { f: [], w: [], re: [], im: [], rows: [] };
+  // (Z in another multiple of Ω — kΩ, MΩ, mΩ —: read in Ω, said; another unit: taken as Ω, said)
+  const zu = unitOf(a!.name);
+  const zs = zu ? ohmsOf(zu) : 1;
+  const scale = zs ?? 1;
+  const zNote = !zu || zs === 1 ? undefined : zs ? `Z in ${zu}: read in Ω (the parameters in Ω, F, H).` : `Z in ${zu}: taken as Ω (the parameters in its units).`;
   for (let i = 0; i < freq!.values.length; i++) {
     const [fv, av, bv] = [freq!.values[i], a!.values[i], b!.values[i]];
     if (!Number.isFinite(fv) || !Number.isFinite(av) || !Number.isFinite(bv) || fv <= 0) continue;
     const f = d.freqUnit === 'rad/s' ? fv / (2 * Math.PI) : fv;
-    const [re, im] = d.form === 'polar' ? [av * Math.cos((bv * Math.PI) / 180), av * Math.sin((bv * Math.PI) / 180)] : [av, bv];
+    const [re, im] = d.form === 'polar' ? [scale * av * Math.cos((bv * Math.PI) / 180), scale * av * Math.sin((bv * Math.PI) / 180)] : [scale * av, scale * bv];
     pts.f.push(f);
     pts.w.push(2 * Math.PI * f);
     pts.re.push(re);
@@ -556,7 +567,7 @@ export function eisPoints(ds: Dataset, d: EisData): { pts: EisPoints; cols: { fr
     pts.im = pts.im.map((v) => -v);
     signNote = d.form === 'polar' ? 'the phase taken as that of −Z (mostly positive)' : `“${colLabel(cols, b!)}” taken as −Z″ (mostly positive)`;
   } else signNote = d.form === 'polar' ? '' : `“${colLabel(cols, b!)}” taken as Z″`;
-  return { pts, cols: { freq: freq!, a: a!, b: b! }, signNote };
+  return { pts, cols: { freq: freq!, a: a!, b: b! }, signNote, ...(zNote ? { zNote } : {}) };
 }
 
 // ---- the starting values guessed from the data: R₀ the high-frequency intercept, the arcs' resistances share the
@@ -922,7 +933,7 @@ export function runEis(ds: Dataset, d0: EisData): EisOut | string {
     ['points', result.n],
   ];
   const withStats = parameters.columns.map((c, k) => (k === 0 ? { ...txt(c.name, [...(c.text ?? []), ...stats.map((s) => s[0])]), role: c.role } : k === 1 ? num(c.name, [...c.values, ...stats.map((s) => r6(s[1]))]) : c.text ? txt(c.name, [...c.text, ...stats.map(() => '')]) : num(c.name, [...c.values, ...stats.map(() => NaN)])));
-  const warnings = only ? [] : fitWarnings(result, pts, use);
+  const warnings = [...(shown.zNote ? [shown.zNote] : []), ...(only ? [] : fitWarnings(result, pts, use))];
   if (only) summary.unshift('Not fitted yet: Start fit fits the circuit (it is drawn with its starts).');
   if (outdated) warnings.push('The settings changed since the last fit: Start fit fits again.');
   for (const rf of rangeFits) {

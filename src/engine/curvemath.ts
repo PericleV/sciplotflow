@@ -125,7 +125,8 @@ export function curveFormulas(curves: Curve2[], text: string): { names: string[]
 }
 export type Curve2 = { name: string; xName: string; x: number[]; y: number[]; rows?: number[] }; // rows: of the dataset (from 0)
 
-// a curve of a dataset: the Y named (else the k-th Y) with its X, the points with both numbers, in the order measured
+// a curve of a dataset: the Y named (else the k-th Y) with its X, the points with both numbers (a masked one left out),
+// in the order measured
 // xName: the X chosen (else the designated one on the left of the Y)
 export function curveOf(ds: Dataset, yName: string, k = 0, xName?: string): Curve2 | string {
   const roles = curvesByRole(ds.columns).curves;
@@ -139,7 +140,7 @@ export function curveOf(ds: Dataset, yName: string, k = 0, xName?: string): Curv
   const rows: number[] = [];
   for (let i = 0; i < y.values.length; i++) {
     const xv = x ? x.values[i] : i + 1;
-    if (Number.isFinite(xv) && Number.isFinite(y.values[i])) {
+    if (Number.isFinite(xv) && Number.isFinite(y.values[i]) && !y.mask?.[i] && !x?.mask?.[i]) {
       xs.push(xv);
       ys.push(y.values[i]);
       rows.push(i);

@@ -1300,11 +1300,18 @@ export function KramersKronigNodeView({ id, data: given }: NodeProps<KKNode>) {
                 <Select<KKData['high']>
                   value={data.high}
                   title="How the curve goes on above the range measured (an assumption: drawn dashed)"
-                  options={[
-                    ['power', 'a power law'],
-                    ['constant', 'constant'],
-                    ['zero', 'zero'],
-                  ]}
+                  options={
+                    data.mode === 'optical'
+                      ? [
+                          ['power', 'a power law'],
+                          ['constant', 'R constant'],
+                        ]
+                      : [
+                          ['power', 'a power law'],
+                          ['constant', 'constant'],
+                          ['zero', 'zero'],
+                        ]
+                  }
                   onChange={(high) => set({ high })}
                 />
                 {data.high === 'power' && (

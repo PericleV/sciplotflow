@@ -70,7 +70,9 @@ export function derivative(x: ArrayLike<number>, y: ArrayLike<number>, idx: numb
       // the window: half points each side, moved inward at the ends
       const a = Math.max(0, Math.min(k - half, n - 1 - 2 * half));
       const b = Math.min(n - 1, a + 2 * half);
-      const c = polyAt(x, y, idx.slice(a, b + 1), x[idx[k]], p);
+      // (fewer points than the window: the degree at most their number − 1)
+      const pk = Math.min(p, b - a);
+      const c = pk >= order ? polyAt(x, y, idx.slice(a, b + 1), x[idx[k]], pk) : null;
       out.set(idx[k], c ? (order === 1 ? c[1] : 2 * (c[2] ?? 0)) : NaN);
     }
     return out;
@@ -78,12 +80,23 @@ export function derivative(x: ArrayLike<number>, y: ArrayLike<number>, idx: numb
   const first = (vals: ArrayLike<number> | Map<number, number>): Map<number, number> => {
     const v = (i: number) => (vals instanceof Map ? (vals.get(i) ?? NaN) : vals[i]);
     const d = new Map<number, number>();
+    // the three-point formula on uneven X too (exact for a parabola, as numpy's gradient), the ends of second order
+    // (edge_order = 2); two points: their slope
+    if (n === 2) {
+      const s = (v(idx[1]) - v(idx[0])) / (x[idx[1]] - x[idx[0]]);
+      d.set(idx[0], s).set(idx[1], s);
+      return d;
+    }
+    const three = (a: number, b: number, c: number, at: number) => {
+      // the derivative at x[at] of the parabola through the points a, b, c
+      const [xa, xb, xc] = [x[a], x[b], x[c]];
+      const t = x[at];
+      return (v(a) * (2 * t - xb - xc)) / ((xa - xb) * (xa - xc)) + (v(b) * (2 * t - xa - xc)) / ((xb - xa) * (xb - xc)) + (v(c) * (2 * t - xa - xb)) / ((xc - xa) * (xc - xb));
+    };
     for (let k = 0; k < n; k++) {
       const i = idx[k];
-      const s = (j0: number, j1: number) => (v(j1) - v(j0)) / (x[j1] - x[j0]);
-      const left = k > 0 ? s(idx[k - 1], i) : NaN;
-      const right = k < n - 1 ? s(i, idx[k + 1]) : NaN;
-      d.set(i, k === 0 ? right : k === n - 1 ? left : (left + right) / 2);
+      const [a, b, c] = k === 0 ? [idx[0], idx[1], idx[2]] : k === n - 1 ? [idx[n - 3], idx[n - 2], idx[n - 1]] : [idx[k - 1], i, idx[k + 1]];
+      d.set(i, three(a, b, c, i));
     }
     return d;
   };
@@ -131,9 +144,23 @@ function polyAt(x: ArrayLike<number>, y: ArrayLike<number>, rows: number[], x0: 
 export type IntegralOptions = { area: 'signed' | 'abs'; baseline: Baseline; base: number; curve?: ((x: number) => number) | null; opts?: BaseOptions };
 // The cumulative integral over the rows of one region (in X order) starting from `start`, and the area of the region.
 // baseAt: the baseline under a row of the region.
-export function integrate(x: ArrayLike<number>, y: ArrayLike<number>, rows: number[], o: IntegralOptions, start = 0): { cum: Map<number, number>; area: number; baseAt: (i: number) => number } {
+// edges: the region's limits and all the rows of the curve in X order — a limit between two samples: the piece from it to
+// the first (last) row inside, the curve read there on the straight line between its neighbours (the baseline at it that
+// of the nearest row); a region between two samples, no row inside: that piece alone
+export function integrate(x: ArrayLike<number>, y: ArrayLike<number>, rows: number[], o: IntegralOptions, start = 0, edges?: { lo: number; hi: number; idx: number[] }): { cum: Map<number, number>; area: number; baseAt: (i: number) => number } {
   const cum = new Map<number, number>();
-  if (!rows.length) return { cum, area: 0, baseAt: () => NaN };
+  const yAt = (v: number, i: number, j: number) => y[i] + ((y[j] - y[i]) * (v - x[i])) / (x[j] - x[i]);
+  if (!rows.length) {
+    if (!edges || !(edges.hi > edges.lo)) return { cum, area: 0, baseAt: () => NaN };
+    const k = edges.idx.findIndex((i) => x[i] > edges.hi);
+    if (k < 1 || !(x[edges.idx[k - 1]] < edges.lo)) return { cum, area: 0, baseAt: () => NaN };
+    const [i, j] = [edges.idx[k - 1], edges.idx[k]];
+    const [ya, yb] = [yAt(edges.lo, i, j), yAt(edges.hi, i, j)];
+    const bl = baselineOf(o.baseline, [edges.lo, edges.hi], [ya, yb], { ...o.opts, ends: o.opts?.ends ?? (o.baseline === 'line' ? 1 : undefined) }, { value: o.base, curve: o.curve });
+    const [ha, hb] = [ya - bl[0], yb - bl[1]];
+    const area = o.area === 'abs' ? ((Math.abs(ha) + Math.abs(hb)) / 2) * (edges.hi - edges.lo) : ((ha + hb) / 2) * (edges.hi - edges.lo);
+    return { cum, area, baseAt: () => NaN };
+  }
   // the baseline under every point of the region (the line: between its first and last points, unless more are averaged)
   const arr = baselineOf(o.baseline, rows.map((i) => x[i]), rows.map((i) => y[i]), { ...o.opts, ends: o.opts?.ends ?? (o.baseline === 'line' ? 1 : undefined) }, { value: o.base, curve: o.curve });
   const at = new Map(rows.map((i, k) => [i, arr[k]]));
@@ -156,6 +183,21 @@ export function integrate(x: ArrayLike<number>, y: ArrayLike<number>, rows: numb
       s += (dx * (fa * fa + fb * fb)) / (2 * (fa + fb));
     } else s += (dx * (ha + hb)) / 2;
     cum.set(b, s);
+  }
+  // the pieces from the region's limits to its first and last rows (a limit between two samples)
+  if (edges) {
+    const piece = (i: number, j: number, v: number) => {
+      if (j < 0 || !(Math.abs(x[i] - v) > 0)) return 0;
+      const hv = yAt(v, j, i) - base(i);
+      const [p, q] = o.area === 'abs' ? [Math.abs(hv), Math.abs(h(i))] : [hv, h(i)];
+      return ((p + q) / 2) * Math.abs(x[i] - v);
+    };
+    const k0 = edges.idx.indexOf(rows[0]);
+    const k1 = edges.idx.indexOf(rows[rows.length - 1]);
+    const before = k0 > 0 && x[rows[0]] > edges.lo ? piece(rows[0], edges.idx[k0 - 1], edges.lo) : 0;
+    const after = k1 >= 0 && k1 < edges.idx.length - 1 && x[rows[rows.length - 1]] < edges.hi ? piece(rows[rows.length - 1], edges.idx[k1 + 1], edges.hi) : 0;
+    if (before) for (const [i, v] of cum) cum.set(i, v + before);
+    return { cum, area: s - start + before + after, baseAt: base };
   }
   return { cum, area: s - start, baseAt: base };
 }

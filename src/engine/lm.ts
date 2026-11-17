@@ -8,6 +8,8 @@ export type LmResult = {
   cov: number[][] | null; // covariance of the parameters (scaled by the reduced χ²)
   sigma: number[]; // standard errors: √diag(cov)
   iterations: number;
+  bad?: number; // the residuals not finite at the start values (the model cannot be evaluated there: nothing fitted)
+  maxed?: boolean; // stopped at the iteration limit, not converged
 };
 
 // Solves A x = b by Gaussian elimination with partial pivoting (A is n×n).
@@ -55,6 +57,9 @@ export function levenbergMarquardt(residual: (p: number[]) => Float64Array, p0: 
   let p = constrain(p0.slice());
   let r = residual(p);
   let ssr = ssq(r);
+  let bad = 0;
+  if (!Number.isFinite(ssr)) for (let i = 0; i < r.length; i++) if (!Number.isFinite(r[i])) bad++;
+  let maxed = false;
   const n = p.length;
   const m = r.length;
   let lambda = 1e-3;
@@ -105,6 +110,7 @@ export function levenbergMarquardt(residual: (p: number[]) => Float64Array, p0: 
         lambda *= 4;
       }
       if (!improved) break;
+      if (iterations === maxIter - 1) maxed = true;
     }
   }
   let cov: number[][] | null = null;
@@ -118,7 +124,7 @@ export function levenbergMarquardt(residual: (p: number[]) => Float64Array, p0: 
       sigma = cov.map((row, j) => Math.sqrt(Math.abs(row[j])));
     }
   }
-  return { p, ssr, cov, sigma, iterations };
+  return { p, ssr, cov, sigma, iterations, ...(bad ? { bad } : {}), ...(maxed ? { maxed } : {}) };
 }
 
 // ---- Student's t: the quantile for confidence bands (the regularized incomplete beta of dist.ts) ----

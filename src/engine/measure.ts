@@ -20,6 +20,13 @@ export function inRange(c: Pts, from = NaN, to = NaN): { x: number[]; y: number[
 // the vertex of the parabola through three points (x of the middle one when it is not a turning point)
 function vertex(x: number[], y: number[], i: number): { x: number; y: number } {
   if (i <= 0 || i >= x.length - 1) return { x: x[i], y: y[i] };
+  // a flat top (a plateau, saturated data): its middle at its value — a parabola would rise above every point
+  if (y[i - 1] === y[i] || y[i + 1] === y[i]) {
+    let [a, b] = [i, i];
+    while (a > 0 && y[a - 1] === y[i]) a--;
+    while (b < y.length - 1 && y[b + 1] === y[i]) b++;
+    return { x: (x[a] + x[b]) / 2, y: y[i] };
+  }
   const [x0, x1, x2] = [x[i - 1], x[i], x[i + 1]];
   const [y0, y1, y2] = [y[i - 1], y[i], y[i + 1]];
   const d = (x0 - x1) * (x0 - x2) * (x1 - x2);

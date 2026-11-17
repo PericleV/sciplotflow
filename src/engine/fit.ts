@@ -2,7 +2,7 @@
 // fit). Points masked or outside the fit ranges are left out; weights 1/σ² from the ±Y column (instrumental), from √|y|
 // (statistical) or none. Results: parameters ± standard errors (covariance scaled by the reduced χ²), χ², R²,
 // the model on a fine grid with its 95 % confidence or prediction band, and the residuals.
-import { levenbergMarquardt, tQuantile } from './lm.ts';
+import { levenbergMarquardt, tQuantile, type LmResult } from './lm.ts';
 import { etaToMu, keep, type Model, type ModelCtx, type ParamKind, type Run } from './fitModels.ts';
 import { maxOf, minOf } from './minmax.ts';
 import { compile } from './expr.ts';
@@ -147,6 +147,9 @@ function linkedErrors(plan: { j: number }[], pOf: (q: number[]) => number[], q: 
   });
 }
 
+// the scatter of a new measurement: the residual variance SSR / dof (y² units)
+const scatterOf = (st: FitStats) => (st.dof > 0 ? (st.rmse * st.rmse * st.n) / st.dof : NaN);
+
 function stats(model: Model, p: number[], run: FitRunData, c: ModelCtx, nFree: number, iterations: number): FitStats {
   let chi2 = 0;
   let ssr = 0;
@@ -166,8 +169,10 @@ function stats(model: Model, p: number[], run: FitRunData, c: ModelCtx, nFree: n
   return { n, dof, chi2, redChi2: dof ? chi2 / dof : NaN, r2, adjR2: dof && n > 1 ? 1 - ((1 - r2) * (n - 1)) / dof : NaN, rmse: Math.sqrt(ssr / (n || 1)), iterations };
 }
 
-// The model on a grid over the run's x range, with its band: t·√(gᵀ C g) (+ the scatter σ² for a prediction band).
-function curveOf(model: Model, p: number[], free: number[], cov: number[][] | null, run: FitRunData, c: ModelCtx, points: number, band: 'none' | 'confidence' | 'prediction', redChi2: number, dof: number, relink: (p: number[]) => number[] = (q) => q, span?: [number, number]) {
+// The model on a grid over the run's x range, with its band: t·√(gᵀ C g) (+ s2, the scatter of a new measurement in
+// y² — the residual variance SSR / dof, as “Y at X” —, for a prediction band; not the reduced χ², which has no unit in a
+// weighted fit).
+function curveOf(model: Model, p: number[], free: number[], cov: number[][] | null, run: FitRunData, c: ModelCtx, points: number, band: 'none' | 'confidence' | 'prediction', s2: number, dof: number, relink: (p: number[]) => number[] = (q) => q, span?: [number, number]) {
   const [lo, hi] = span && span[1] > span[0] ? span : [minOf(run.xs), maxOf(run.xs)];
   const m = Math.max(2, Math.min(20000, Math.floor(points) || 400));
   const x = Float64Array.from({ length: m }, (_, k) => lo + ((hi - lo) * k) / (m - 1));
@@ -185,7 +190,7 @@ function curveOf(model: Model, p: number[], free: number[], cov: number[][] | nu
       });
       let v = 0;
       for (let a = 0; a < g.length; a++) for (let bb = 0; bb < g.length; bb++) v += g[a] * cov[a][bb] * g[bb];
-      if (band === 'prediction') v += Number.isFinite(redChi2) ? redChi2 : 0;
+      if (band === 'prediction') v += Number.isFinite(s2) ? s2 : 0;
       b[k] = t * Math.sqrt(Math.max(0, v));
     }
   }
@@ -274,7 +279,7 @@ export function runFits(model: Model, specs: FitParamSpec[], runs: FitRunData[],
         warnings.push(`${run.label}: ${run.xs.length} points for ${free.length} free parameters.`);
         return;
       }
-      let best: { p: number[]; ssr: number; cov: number[][] | null; sigma: number[]; iterations: number } | null = null;
+      let best: LmResult | null = null;
       for (const s0 of starts(model, pStart, sp.map((s) => s.fixed))) {
         const full = (q: number[]) => {
           const p = s0.slice();
@@ -292,6 +297,11 @@ export function runFits(model: Model, specs: FitParamSpec[], runs: FitRunData[],
         if (!best || res.ssr < best.ssr) best = { ...res, p: full(res.p) };
       }
       const b = best!;
+      // (the model gives no value at the start values: nothing was fitted — no values, said; the iteration limit: said)
+      if (b.bad) {
+        warnings.push(`${run.label}: the model gives no value at ${b.bad} point${b.bad > 1 ? 's' : ''} with the start values (a root or a log of a negative number?): nothing fitted — change the start values or the model.`);
+        free.forEach((j) => (b.p[j] = NaN));
+      } else if (b.maxed) warnings.push(`${run.label}: stopped after ${b.iterations} iterations, not converged: the values may be off — better start values, or fewer free parameters.`);
       const err = new Array<number>(P).fill(0);
       free.forEach((j, i) => (err[j] = b.sigma[i]));
       const pOfQ = (q: number[]) => {
@@ -310,7 +320,7 @@ export function runFits(model: Model, specs: FitParamSpec[], runs: FitRunData[],
         value: run.value,
         params: sp.map((s, j) => ({ name: s.name, value: b.p[j], error: s.fixed && !isLinked[j] ? NaN : err[j], fixed: s.fixed && !isLinked[j], shared: false, ...(isLinked[j] ? { linked: true } : {}) })),
         stats: st,
-        curve: curveOf(model, b.p, free, cov ?? (order ? reorderCov(b.cov, free, order) : null), run, c, opts.points, opts.band, st.redChi2, st.dof, relink, opts.span),
+        curve: curveOf(model, b.p, free, cov ?? (order ? reorderCov(b.cov, free, order) : null), run, c, opts.points, opts.band, scatterOf(st), st.dof, relink, opts.span),
         resid: { x: run.xs, r: run.xs.map((x, i) => run.ys[i] - model.f(x, b.p, c)) },
         // (the peaks renumbered: the covariance in their new order)
         cov: fullCov(P, pOfQ, free.map((j) => b.p[j]), order ? reorderCov(b.cov, free, order) : b.cov),
@@ -346,6 +356,10 @@ export function runFits(model: Model, specs: FitParamSpec[], runs: FitRunData[],
   const idx = (r: number) => [...shared, ...own.map((j) => j)].map((j, i) => [j, i < shared.length ? i : shared.length + r * own.length + (i - shared.length)] as const);
   const res = levenbergMarquardt(residual, q0, (q) => q.map((v, i) => clamp(i < shared.length ? shared[i] : own[(i - shared.length) % Math.max(1, own.length)], v)));
   const nFree = q0.length;
+  if (res.bad) {
+    warnings.push(`The model gives no value at ${res.bad} point${res.bad > 1 ? 's' : ''} with the start values (a root or a log of a negative number?): nothing fitted — change the start values or the model.`);
+    res.p = res.p.map(() => NaN);
+  } else if (res.maxed) warnings.push(`Stopped after ${res.iterations} iterations, not converged: the values may be off — better start values, or fewer free parameters.`);
   usable.forEach((run, r) => {
     const p = pOf(res.p, r);
     const c = ctxOf(runs.indexOf(run));
@@ -361,7 +375,7 @@ export function runFits(model: Model, specs: FitParamSpec[], runs: FitRunData[],
       value: run.value,
       params: sp.map((s, j) => ({ name: s.name, value: p[j], error: s.fixed && !isLinked[j] ? NaN : err[j], fixed: s.fixed && !isLinked[j], shared: s.shared && !off(j), ...(isLinked[j] ? { linked: true } : {}) })),
       stats: st,
-      curve: curveOf(model, p, map.map(([j]) => j), cov, run, c, opts.points, opts.band, st.redChi2, st.dof, relink, opts.span),
+      curve: curveOf(model, p, map.map(([j]) => j), cov, run, c, opts.points, opts.band, scatterOf(st), st.dof, relink, opts.span),
       resid: { x: run.xs, r: run.xs.map((x, i) => run.ys[i] - model.f(x, p, c)) },
       cov: fullCov(P, (q) => pOf(q, r), res.p, res.cov),
     });

@@ -83,7 +83,7 @@ import { columnsOf, type ColumnLine, type ColumnsSpec } from './columns.ts';
 import { baseUnder, extremum, inRange, peakWidth, type Baseline as MBaseline, type Width } from './measure.ts';
 import { selectRows } from './rowsel.ts';
 import { applyManip, maskOf } from './manip.ts';
-import { baseParams, buildModel, peakAt, peaksModel, percentResults, shapeSize, shapeStarts, SHAPE_NAMES, type Model, type ModelCtx, type PeakShape } from './fitModels.ts';
+import { baseParams, buildModel, peakAt, peaksModel, percentResults, shapeSize, shapeStarts, SHAPE_NAMES, type Model, type ModelCtx, type ModelSpec, type PeakShape } from './fitModels.ts';
 import { findSpec, runFits, totalStats, type FitParamSpec, type FitRunData, type RunResult, parseLinks } from './fit.ts';
 import { compare, compareTable, modelName, yorkRuns, type Scored } from './fitcompare.ts';
 import { parseRowHandle, rowHandle } from './ports.ts';
@@ -2103,7 +2103,7 @@ function curveMathNode(d: CurveMathData, inputs: Inputs): Out {
     const rows: number[] = [];
     for (let i = 0; i < y.values.length; i++) {
       const xv = cx ? cx.values[i] : i + 1;
-      if (!Number.isFinite(xv) || !Number.isFinite(y.values[i])) continue;
+      if (!Number.isFinite(xv) || !Number.isFinite(y.values[i]) || y.mask?.[i] || cx?.mask?.[i]) continue;
       xs.push(xv);
       ys.push(y.values[i]);
       rows.push(i);
@@ -3411,6 +3411,12 @@ function statsRows(d: { cols: string; x: string; rows?: StatsData['rows']; err: 
 }
 
 // ---- Fit ----
+// one model a special case of the other (the F-test applies): the same library model, a line or polynomials, peaks of
+// one shape and baseline in different numbers
+function nestedModels(a: ModelSpec, b: ModelSpec): boolean {
+  const fam = (s: ModelSpec) => (s.kind === 'library' ? (s.model === 'poly' || s.model === 'linear' ? 'poly' : `lib:${s.model}`) : s.kind === 'peaks' ? `peaks:${s.shape}:${s.baseline}` : null);
+  return fam(a) !== null && fam(a) === fam(b);
+}
 // The comparisons of a Fit: a second model on the same runs, and (several runs) the same parameters for all against a
 // fit each. The separate fits of the model: the results when the fit was not global, else fitted again.
 function compareFits(d: FitNodeData, model: Model, specs0: FitParamSpec[], runs: FitRunData[], res: RunResult[], ctx: Omit<ModelCtx, 'run'>, warnings: string[]) {
@@ -3434,7 +3440,9 @@ function compareFits(d: FitNodeData, model: Model, specs0: FitParamSpec[], runs:
       for (const a of sep) {
         const b = r2.runs.find((q) => q.label === a.label);
         if (!b) continue;
-        const c = compare([score(a, a1), score(b, a2)], true);
+        // (the F-test only when one model is the other with parameters added: a polynomial and one of higher degree, a
+        // line and a polynomial, more peaks of the same shape; else AIC only)
+        const c = compare([score(a, a1), score(b, a2)], nestedModels(d.model, d.model2));
         rows.push(...c.rows);
         report.push(...c.report);
       }
@@ -3689,6 +3697,8 @@ function fitNode(d: FitNodeData, v: Value | undefined, id: string, irfIn?: Value
   const rk = runsKey(Ys);
   // the data run of every fitted run (its Y column and the value of its block), and its range (a fit per range)
   const parts: { of: string; ofValue: number; range?: number }[] = [];
+  // (points left out for their σ ≤ 0 — a count of 0 with statistical weights, a ±Y of 0 —: counted, said)
+  let noSigma = 0;
   const addRun = (label: string, value: number, y: Column, rows: number[], slot: number, ranges: { lo: number; hi: number }[], range?: number) => {
     const r: FitRunData = { label, value, xs: [], ys: [], sig: [], ...(withX ? { sx: [] } : {}) };
     const xc = XsOk[slot];
@@ -3703,6 +3713,7 @@ function fitNode(d: FitNodeData, v: Value | undefined, id: string, irfIn?: Value
       runOf[o] = slot;
       const s = sigma(y, e, i);
       const sx = withX ? (ex ? Math.abs(ex.values[i]) : york ? NaN : 0) : 0;
+      if (Number.isFinite(xv[i]) && Number.isFinite(y.values[i]) && !mask?.[i] && inRanges(ranges, xv[i]) && !(s > 0)) noSigma++;
       if (!Number.isFinite(xv[i]) || !Number.isFinite(y.values[i]) || mask?.[i] || !inRanges(ranges, xv[i]) || !(s > 0) || !Number.isFinite(s) || !Number.isFinite(sx)) continue;
       used[o] = 1;
       r.xs.push(xv[i]);
@@ -3730,7 +3741,7 @@ function fitNode(d: FitNodeData, v: Value | undefined, id: string, irfIn?: Value
   let lo = Infinity;
   let hi = -Infinity;
   for (const r of runs) for (const x of r.xs) [lo, hi] = [Math.min(lo, x), Math.max(hi, x)];
-  if (!Number.isFinite(lo)) return { errors: ['No point to fit (all masked, missing, or outside the fit ranges).'], view: { available } };
+  if (!Number.isFinite(lo)) return { errors: [noSigma ? `No point to fit: ${noSigma} point${noSigma > 1 ? 's have' : ' has'} a σ of 0 (the weights: a count of 0, a ±Y of 0) — choose other weights.` : 'No point to fit (all masked, missing, or outside the fit ranges).'], view: { available } };
   // on a wavelength axis (nm) the coupled-oscillator models work in energy
   // reconvolution: the model convolved with the IRF (a column of the data on its X, or the curve on the port)
   if (d.reconv) {
@@ -3757,13 +3768,17 @@ function fitNode(d: FitNodeData, v: Value | undefined, id: string, irfIn?: Value
   }
   const unit = unitOf(model.joint ? Ys[0].name : X.name);
   const ctx = { energy: unit === 'nm', xref: (lo + hi) / 2 };
-  if (york && d.global && runs.length > 1) warnings.push('York: every run fitted on its own (no global fit).');
+  if (noSigma) warnings.push(`${noSigma} point${noSigma > 1 ? 's' : ''} left out: a σ of 0 (the weights: a count of 0, a ±Y of 0).`);
+  // (a global fit only where its switch is shown: several Y columns — a value kept from before is not applied to the
+  // ranges of one Y)
+  const global = !!d.global && Ys.length > 1 && !model.joint;
+  if (york && global && runs.length > 1) warnings.push('York: every run fitted on its own (no global fit).');
   // the constraints: the linked parameters given by the others
   const pl = parseLinks(d.links, model.params.map((q) => q.name));
   warnings.push(...pl.errors);
   if (york && Object.keys(pl.links).length) warnings.push('York: no constraints (a straight line).');
   const specs: FitParamSpec[] = model.params.map((q) => ({ ...findSpec(d.params, q.name, q.kind), ...(pl.links[q.name] ? { link: pl.links[q.name] } : {}) }));
-  const res = york ? yorkRuns(runs.map((q) => ({ ...q, sx: q.sx ?? [] })), d.band, d.points) : runFits(model, specs, runs, { global: d.global, band: d.band, points: d.points, ctx, xerr: withX && !york });
+  const res = york ? yorkRuns(runs.map((q) => ({ ...q, sx: q.sx ?? [] })), d.band, d.points) : runFits(model, specs, runs, { global, band: d.band, points: d.points, ctx, xerr: withX && !york });
   warnings.push(...res.warnings);
   const cmp = york || model.joint ? null : compareFits(d, model, specs, runs, res.runs, ctx, warnings);
   const rr = res.runs.map((r) => ({ ...r, ...parts[runs.findIndex((q) => q.label === r.label)] }));
@@ -4014,7 +4029,8 @@ function calculusNode(d: CalculusData, v: Value | undefined, baseIn: Value | und
         pushAll(by, r.b).push(NaN);
         runFills.push({ index: part.index, x: r.x, y: r.y, b: r.b });
       } else {
-        const r = integrate(xv, yv, part.rows, opt, d.join === 'combined' ? carried : 0);
+        // (a region's limits between samples: the pieces to them counted — no regions: the data's ends)
+        const r = integrate(xv, yv, part.rows, opt, d.join === 'combined' ? carried : 0, part.index >= 0 ? { lo: part.region.lo, hi: part.region.hi, idx } : undefined);
         for (const [i, val] of r.cum) out[i] = val;
         carried += r.area;
         areaRows.push({ run: run.label, value: k + 1, region: regionName(part.index), index: part.index, lo: part.region.lo, hi: part.region.hi, area: r.area });
@@ -4233,12 +4249,24 @@ function peakNode(d0: PeakData, v: Value | undefined): Out {
         r2 = rr.stats.r2;
         const ms = shapes.map((sh, j) => fittedPeak(sh, p, offs[j], X));
         const total = ms.reduce((a, q) => a + Math.abs(q.area), 0) || 1;
+        // (a fit that says nothing: a peak with (almost) nothing under it, outside the data or of the wrong sign; the errors
+        // lost when the parameters are not all fixed by the data — said, as the Fit node does)
+        const step = X.length > 1 ? Math.abs(X[X.length - 1] - X[0]) / (X.length - 1) : 0;
+        const [xLo, xHi] = [Math.min(X[0], X[X.length - 1]), Math.max(X[0], X[X.length - 1])];
+        const sign = d.find?.sign ?? 'peaks';
+        ms.forEach((q, j) => {
+          const why = !(q.x >= xLo && q.x <= xHi) ? 'its centre outside the data' : (sign === 'peaks' && q.height < 0) || (sign === 'dips' && q.height > 0) ? `a ${q.height < 0 ? 'dip' : 'peak'} where ${sign} are looked for` : Math.abs(q.area) < 0.01 * total || q.fwhm < step ? 'almost nothing under it' : '';
+          if (why) warnings.push(`${y.name}, peak ${j + 1} (at ${fmtNum(q.x, 5)}): ${why} — remove it or its region, or change its start.`);
+        });
+        if (rr.params.some((q) => !q.fixed && !q.linked && !Number.isFinite(q.error))) warnings.push(`${y.name}: no errors — the data do not fix every parameter (a peak with nothing under it, two peaks on one place, more peaks than the data show).`);
         ms.forEach((q, j) => runRows.push({ run: k, label: y.name, k: j + 1, of: parts[j].of !== undefined ? parts[j].of! + 1 : NaN, shape: shapes[j], center: q.x, centerErr: err[offs[j] + 1], height: q.height, fwhm: q.fwhm, fwhmErr: shapes[j] === 'fano' || shapes[j] === 'ds' || shapes[j] === 'voigtx' ? NaN : err[offs[j] + 2], area: q.area, pct: (100 * Math.abs(q.area)) / total, gauss: shapes[j] === 'voigt' ? 100 * (1 - p[offs[j] + 3]) : NaN, gaussErr: shapes[j] === 'voigt' ? 100 * err[offs[j] + 3] : NaN, centroid: NaN, from: NaN, to: NaN, r2 }));
       }
     } else if (parts.length) {
       // measured on the data over its baseline
       const z = Y.map((v, i) => v - base[i]);
       const ms = measurePeaks(X, z, parts.map((q) => q.x));
+      const edge = ms.filter((q) => !Number.isFinite(q.fwhm)).map((q) => fmtNum(q.x, 5));
+      if (edge.length) warnings.push(`${y.name}: the half height of the peak${edge.length > 1 ? 's' : ''} at ${edge.join(', ')} is not reached inside the data: no FWHM (fit it to have one).`);
       const total = ms.reduce((a, q) => a + Math.abs(q.area), 0) || 1;
       ms.forEach((q, j) => runRows.push({ run: k, label: y.name, k: j + 1, of: parts[j].of !== undefined ? parts[j].of! + 1 : NaN, shape: '', center: q.x, centerErr: NaN, height: q.height, fwhm: q.fwhm, fwhmErr: NaN, area: q.area, pct: (100 * Math.abs(q.area)) / total, gauss: NaN, gaussErr: NaN, centroid: q.centroid, from: q.from, to: q.to, r2: NaN }));
     }
@@ -4362,6 +4390,7 @@ function pickNode(d: PickData, v: Value | undefined): Out {
     const rows = run.rows.filter((i) => Number.isFinite(xv[i]) && Number.isFinite(yv[i]) && !mask?.[i]);
     const r = pickPoints(xv, yv, rows, d.rules, d, letters);
     errors.push(...r.errors);
+    warnings.push(...r.warnings.map((w) => (runs.length > 1 ? `${run.y.name}: ${w}` : w)));
     for (const p of r.points) {
       const k: PickKind = p.kind ?? (p.rule.startsWith('x =') ? 'x' : p.rule.startsWith('y =') ? 'y' : p.rule.startsWith('max') ? 'max' : p.rule.startsWith('min') ? 'min' : 'where');
       got.push({ run, p, kind: k });
@@ -4498,10 +4527,12 @@ export type EisView = {
 function eisNode(id: string, d: EisData, v: Value | undefined): Out {
   if (v?.t !== 'dataset') return { view: { waiting: 'Connect the impedance spectrum: a dataset (or a sheet of a workbook) with the frequency, Z′ and Z″ (or |Z| and the phase).' } };
   const available = v.v.columns.map(colInfo);
-  const r = runEis(v.v, d);
+  // (the masked points left out of the fit, said)
+  const um = unmaskedCells(v.v);
+  const r = runEis(um.ds, d);
   if (typeof r === 'string') return { errors: [r], view: { available } };
   const { pts, curve } = r;
-  const warnings: string[] = [...r.warnings];
+  const warnings: string[] = [...(um.rows ? [`${um.rows} masked point${um.rows > 1 ? 's' : ''} left out.`] : []), ...r.warnings];
   // the circuit drawn, on a white or transparent page of its own size
   const values = Object.fromEntries(r.result.params.map((q) => [q.name, q.value]));
   const dr = drawCircuit(r.result.tree, d.circuitValues ? values : undefined);
@@ -4927,9 +4958,11 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       const v = one('in');
       if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset: the frequency, Z′ and Z″ (impedance); X and R (optical); X and the part to transform (general).' } };
       const available = v.v.columns.map(colInfo);
-      const r = kkNode(v.v, { ...KK_DEFAULTS, ...n.data });
+      // (the masked points left out of the transform, said)
+      const um = unmaskedCells(v.v);
+      const r = kkNode(um.ds, { ...KK_DEFAULTS, ...n.data });
       if (typeof r === 'string') return { errors: [r], view: { available } };
-      return { outputs: { out: { t: 'dataset', v: r.dataset } }, warnings: r.warnings, view: { available, signal: { labels: r.labels, plots: r.plots }, report: r.report } };
+      return { outputs: { out: { t: 'dataset', v: r.dataset } }, warnings: [...(um.rows ? [`${um.rows} masked point${um.rows > 1 ? 's' : ''} left out.`] : []), ...r.warnings], view: { available, signal: { labels: r.labels, plots: r.plots }, report: r.report } };
     }
     case 'average': {
       const sets: { port: number; v: Dataset }[] = [];

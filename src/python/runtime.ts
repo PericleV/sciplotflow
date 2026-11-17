@@ -132,6 +132,9 @@ def _out(name, v):
     if isinstance(v, np.ndarray):
         if v.ndim == 0:
             return {'name': name, 'kind': 'value', 'value': float(v)}
+        if v.ndim == 1 and v.dtype.kind == 'c':
+            # a complex column (np.fft.fft …): its real and imaginary parts, both kept
+            return {'name': name, 'kind': 'dataset', 'columns': [_col_out('Re ' + str(name), v.real), _col_out('Im ' + str(name), v.imag)]}
         if v.ndim == 1:
             return {'name': name, 'kind': 'column', 'col': _col_out(name, v)}
         if v.ndim == 2 and v.dtype.kind in 'biuf':

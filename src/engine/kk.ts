@@ -274,11 +274,16 @@ export function kkNode(ds: Dataset, d: KKData): KKOut {
   if (wave) warnings.push(`X read as a wavelength (${unit} in its name): the integrals on 1/λ.`);
   else if (!unit) warnings.push('X has no unit in its name: read as proportional to the frequency (an energy, a wavenumber); a wavelength: say it in the options.');
   if (d.mode === 'optical') {
-    const pct = maxOf(ys) > 1.5;
+    // (R in %: by the unit in its name, else when a value is above 1.5)
+    const pct = unitOf(yc.name) === '%' || maxOf(ys) > 1.5;
+    // (the tails R can have: R of 0 has no logarithm — a value kept from the general mode taken as R constant)
+    const low = d.low === 'hagen' ? 'hagen' : 'constant';
+    const high = d.high === 'power' ? 'power' : 'constant';
+    if (low !== d.low || high !== d.high) warnings.push(`The tails of R: ${[low !== d.low ? `below “${d.low}”` : '', high !== d.high ? `above “${d.high}”` : ''].filter(Boolean).join(', ')} not for a reflectance (R of 0 has no logarithm): R constant instead.`);
     const R = ys.map((v) => (pct ? v / 100 : v));
     if (R.some((v) => v <= 0 || v >= 1)) warnings.push('R must be between 0 and 1 (or 0 and 100 %): the points outside are clipped.');
     const Rc = R.map((v) => Math.min(0.9999, Math.max(1e-6, v)));
-    const o = opticalKK(xs, Rc, d);
+    const o = opticalKK(xs, Rc, { ...d, low, high });
     const [th, n, k, e1, e2] = [o.theta, o.n, o.k, o.e1, o.e2].map(back);
     const Rb = back(Rc);
     // α = 4πk/λ, in cm⁻¹, when X's unit says what λ is
@@ -296,7 +301,7 @@ export function kkNode(ds: Dataset, d: KKData): KKOut {
       { result: { x: X0, y: e1 }, xName, yName: 'ε₁, ε₂', series: [{ name: 'ε₂', x: X0, y: e2, color: '#1f6fd6', line: true }], marks, legend: ['ε₁'] },
       { result: { x: X0, y: th }, xName, yName: 'Phase (rad)', marks, legend: ['phase'] },
     ];
-    return { dataset, plots, labels: ['R and its tails', 'n and k', 'ε₁ and ε₂', 'phase'], warnings, report: [`From R (${pts.length} points${pct ? ', in %' : ''}): below the data ${d.low === 'hagen' ? 'Hagen–Rubens' : 'R constant'}, above ${d.high === 'power' ? `R ∝ ω^−${d.power}` : 'R constant'}; n, k, ε₁, ε₂${alpha.every(Number.isFinite) ? ', α' : ''}.`] };
+    return { dataset, plots, labels: ['R and its tails', 'n and k', 'ε₁ and ε₂', 'phase'], warnings, report: [`From R (${pts.length} points${pct ? ', in %' : ''}): below the data ${low === 'hagen' ? 'Hagen–Rubens' : 'R constant'}, above ${high === 'power' ? `R ∝ ω^−${d.power}` : 'R constant'}; n, k, ε₁, ε₂${alpha.every(Number.isFinite) ? ', α' : ''}.`] };
   }
   const o = generalKK(xs, ys, d);
   const out = back(o.out);

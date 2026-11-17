@@ -72,8 +72,9 @@ function smooth(z: number[], half: number): number[] {
   });
 }
 
-// The full width at half height of z (above 0) around i, from the crossings found between the points.
-export function fwhmAt(X: number[], z: number[], i: number): number {
+// The full width at half height of z (above 0) around i, from the crossings found between the points; strict: NaN when
+// the half height is not reached inside the data (a peak at an edge), else up to the edge (a start for a fit)
+export function fwhmAt(X: number[], z: number[], i: number, strict = false): number {
   const h = z[i] / 2;
   if (!(Math.abs(h) > 0)) return NaN;
   const s = Math.sign(z[i]);
@@ -82,8 +83,11 @@ export function fwhmAt(X: number[], z: number[], i: number): number {
   let b = i;
   while (b < z.length - 1 && s * z[b] > s * h) b++;
   const cross = (p: number, q: number) => (z[q] === z[p] ? X[p] : X[p] + ((h - z[p]) * (X[q] - X[p])) / (z[q] - z[p]));
-  const xl = a < i && s * z[a] <= s * h ? cross(a, a + 1) : X[a];
-  const xr = b > i && s * z[b] <= s * h ? cross(b - 1, b) : X[b];
+  const okL = a < i && s * z[a] <= s * h;
+  const okR = b > i && s * z[b] <= s * h;
+  if (strict && (!okL || !okR)) return NaN;
+  const xl = okL ? cross(a, a + 1) : X[a];
+  const xr = okR ? cross(b - 1, b) : X[b];
   return Math.abs(xr - xl);
 }
 
@@ -145,18 +149,28 @@ export function measurePeaks(X: number[], z: number[], at: number[]): Measured[]
     const s = Math.sign(z[i]) || 1;
     const lo = k > 0 ? idx[k - 1] : 0;
     const hi = k < idx.length - 1 ? idx[k + 1] : X.length - 1;
-    // the limits: back to the baseline, or the lowest point before the next peak
-    let a = i;
-    while (a > lo && s * z[a - 1] > 0 && !(s * z[a - 1] > s * z[a] && a < i)) a--;
-    let b = i;
-    while (b < hi && s * z[b + 1] > 0 && !(s * z[b + 1] > s * z[b] && b > i)) b++;
+    // the limits: down to the baseline (where z meets 0), else the valley before the next peak — the lowest point once
+    // the curve rises again by more than a tenth of the height (another peak, listed or not); a smaller rise is noise,
+    // not a limit (the first point that rises would cut a noisy peak to a few points)
+    const tol = 0.1 * Math.abs(z[i]);
+    const limit = (dir: -1 | 1, end: number) => {
+      let low = i;
+      for (let j = i + dir; dir < 0 ? j >= end : j <= end; j += dir) {
+        if (!(s * z[j] > 0)) return j;
+        if (s * z[j] < s * z[low]) low = j;
+        else if (s * z[j] > s * z[low] + tol) return low;
+      }
+      return low;
+    };
+    const a = limit(-1, lo);
+    const b = limit(1, hi);
     let [area, mx] = [0, 0];
     for (let j = a; j < b; j++) {
       const d = X[j + 1] - X[j];
       area += ((z[j] + z[j + 1]) / 2) * d;
       mx += ((X[j] * z[j] + X[j + 1] * z[j + 1]) / 2) * d;
     }
-    return { x: X[i], height: z[i], fwhm: fwhmAt(X, z, i), area, centroid: area ? mx / area : NaN, from: X[a], to: X[b] };
+    return { x: X[i], height: z[i], fwhm: fwhmAt(X, z, i, true), area, centroid: area ? mx / area : NaN, from: X[a], to: X[b] };
   });
 }
 
