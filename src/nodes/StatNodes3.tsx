@@ -5,7 +5,7 @@ import { Fragment } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import { DIST_LABEL, EFFECT_NAMES, perGroup, type AgreeData, type DistFitData, type FitDist, type LogisticData, type MethCompData, type PowerData, type ResampleData } from '../engine/statnodes3.ts';
 import type { AgreeNode, DistFitNode, LogisticNode, MethCompNode, PowerNode, ResampleNode } from '../types.ts';
-import { Check, InPort, NumInput, OutPort, Select } from './ui.tsx';
+import { Check, InPort, NumInput, OutPort, Select, TextInput } from './ui.tsx';
 import { NodeOptions } from './NodeOptions.tsx';
 import { ColumnsPicker } from './ColumnsPicker.tsx';
 import { Main } from './TestNodes.tsx';
@@ -299,6 +299,12 @@ export function AgreeNodeView({ id, data }: NodeProps<AgreeNode>) {
                 ]}
                 onChange={(weights) => set({ weights })}
               />
+              {data.weights !== 'none' && (
+                <>
+                  <span>Order</span>
+                  <TextInput value={data.order ?? ''} placeholder="none, mild, moderate, severe" title="Text ratings: the categories from the lowest to the highest, separated by commas (numbers need none: they are in order)" onChange={(order) => set({ order })} />
+                </>
+              )}
             </>
           )}
           <Level value={data.level} set={(level) => set({ level })} />

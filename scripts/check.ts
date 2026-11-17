@@ -45,7 +45,7 @@ import { BUILTIN_STYLES, styledData } from '../src/nodes/styles.ts';
 import { fontRatio, innerPath, parseRich, plainText, richMetrics } from '../src/figure/draw.ts';
 import { mathFace, mathKey, setMathSizes } from '../src/math/sizes.ts';
 import { plotMapping, stuckLines } from '../src/engine/evaluate.ts';
-import { canvasFigure, collapseGroups, evaluateGraph, legendCurves, newCache, packCells, parseRows, plotRows, shapeSpec } from '../src/engine/evaluate.ts';
+import { canvasFigure, collapseGroups, evaluateGraph, unmaskedCells, legendCurves, newCache, packCells, parseRows, plotRows, shapeSpec } from '../src/engine/evaluate.ts';
 import { autoFrame, axesGeometry, turnedExtent, wrapLabel, autoTitle, axisNeeds, legendPlace, endLabels, placeLegends } from '../src/figure/axes.ts';
 import { column, curvesByRole, findColumn, fmtNum, isRepeatOf, parseSci, sciPretty, sciText, unitOf, type Column } from '../src/engine/table.ts';
 import { autoExtract, pick } from '../src/engine/extract.ts';
@@ -200,6 +200,11 @@ import { autoPoints, calibrate, digitized, type DigitizerData, type Px } from '.
 import { CLEAN_DEFAULTS, FILTER_DEFAULTS } from '../src/defaults.ts';
 import * as Mx from '../src/engine/matrix.ts';
 import { MATRIX_CONTOUR_DEFAULTS, MATRIX_DEFAULTS } from '../src/defaults.ts';
+import { corrNode, nonparNode, positiveOf, tTestNode } from '../src/engine/statnodes.ts';
+import { contingencyNode, pAdjustNode, regressNode, rocNode, survivalNode } from '../src/engine/statnodes2.ts';
+import { agreeNode, distFitNode, logisticNode, resampleNode } from '../src/engine/statnodes3.ts';
+import { effectFor } from '../src/engine/stat3.ts';
+import { AGREE_DEFAULTS as AGREE_D, CONTINGENCY_DEFAULTS as CONTINGENCY_D, DISTFIT_DEFAULTS as DISTFIT_D, LOGISTIC_DEFAULTS as LOGISTIC_D, NONPAR_DEFAULTS as NONPAR_D, NORM_DEFAULTS as NORM_D, PADJUST_DEFAULTS as PADJUST_D, REGRESS_DEFAULTS as REGRESS_D, RESAMPLE_DEFAULTS as RESAMPLE_D, ROC_DEFAULTS as ROC_D, SURVIVAL_DEFAULTS as SURVIVAL_D } from '../src/defaults.ts';
 
 let failed = 0;
 const canConnectBook = (t: 'column' | 'workbook') => targetAccepts({ id: 'w', type: 'book', position: { x: 0, y: 0 }, data: WORKBOOK_DEFAULTS } as AppNode, 'in-2').includes(t);
@@ -7797,6 +7802,101 @@ checkPhase(ok);
   // D13: Convert — 1.0D-3 an exponent; 3-4 not a number with the unit “-4”
   const rc = (s: string) => readCell(s, TO_NUMBER_DEFAULTS, '.');
   ok(rc('1.0D-3')?.v === 0.001 && !rc('1.0D-3')?.unit && rc('3-4') === null && rc('300 K')?.unit === 'K' && rc('2-3 K') === null, 'Convert: 1.0D-3 read as 0.001; 3-4 not 3 with the unit “-4”; 300 K still K');
+}
+// ---- the audit of 2026-11-17, section Statistics: results wrong without a word (S1–S20) ----
+{
+  const C = (n: string, v: number[], extra: object = {}): Column => ({ ...column(n, Float64Array.from(v)), ...extra });
+  const T = (n: string, t: string[]): Column => ({ ...column(n, new Float64Array(t.length).fill(NaN), t), role: 'label' });
+  const D = (...columns: Column[]): Dataset => ({ name: 'd', columns });
+  const tval = (ds: Dataset | undefined, row: string, col = 'Value') => {
+    const k = ds?.columns[0].text?.findIndex((t) => t === row) ?? -1;
+    return k < 0 ? NaN : (ds!.columns.find((c) => c.name === col)?.values[k] ?? NaN);
+  };
+  const nl = String.fromCharCode(10);
+  // S1: masked values left out of every statistics node (Distribution fit here: μ of 1..7 without the 100 masked)
+  const g = evaluateGraph(
+    [
+      { id: 'i', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, text: ['n;y', '1;1', '2;2', '3;3', '4;4', '5;5', '6;6', '7;7', '8;100', ''].join(nl), textId: 's1' } } as AppNode,
+      { id: 'm', type: 'datamanip', position: { x: 0, y: 0 }, data: { x: 'n', y: 'y', ops: [{ kind: 'mask', rows: '8', n: 8 }] } } as AppNode,
+      { id: 't', type: 'normality', position: { x: 0, y: 0 }, data: { ...NORM_D, cols: 'y' } } as AppNode,
+    ],
+    [{ id: '1', source: 'i', sourceHandle: 'out', target: 'm', targetHandle: 'in' }, { id: '2', source: 'm', sourceHandle: 'out', target: 't', targetHandle: 'in' }],
+  ).get('t');
+  const nGrp = g?.outputs.groups?.t === 'dataset' ? g.outputs.groups.v.columns.find((c) => c.name === 'N')?.values[0] : NaN;
+  ok(nGrp === 7 && !!g?.warnings?.some((w) => w.startsWith('1 masked row left out')), `statistics: a masked value left out of the test, said (N = ${nGrp}; ${g?.warnings?.join(' ')})`);
+  const um = unmaskedCells(D(C('a', [1, 2, 3], { mask: Uint8Array.from([0, 1, 0]) }), C('b', [4, 5, 6])));
+  ok(um.n === 1 && Number.isNaN(um.ds.columns[0].values[1]) && um.ds.columns[1].values[1] === 5 && !um.ds.columns[0].mask, 'statistics: only the masked cell of its own column emptied');
+  // S2: an undefined statistic (no spread) is not p = 0, “the means differ”
+  const tt = tTestNode(D(C('A', [1, 1, 1]), C('B', [1, 1, 1])), { ...TTEST_DEFAULTS });
+  ok(Number.isNaN(Di.tCdf(NaN, 5)) && !tt.report.some((r) => /the means differ/.test(r)) && tt.report.some((r) => r.includes('cannot be tested')), `t-test: two constant equal groups — no p of 0, “cannot be tested” (${tt.report.join(' ')})`);
+  // S3: a predictor that depends on the others: the coefficients of the model without it
+  const x = [1, 2, 3, 4, 5, 6, 7, 8];
+  const z = [2, 1, 4, 3, 6, 5, 8, 9];
+  const y = x.map((v, i) => 1 + 1.6 * v + 0.85 * z[i] + [0.1, -0.2, 0.05, 0.3, -0.1, 0.2, -0.15, 0.02][i]);
+  const coefOf = (ds: Dataset, xs: string) => regressNode(ds, { ...REGRESS_D, y: 'y', xs }).tables.out;
+  const full = coefOf(D(C('x', x), C('x2', x.map((v) => 2 * v)), C('z', z), C('y', y)), 'x, x2, z');
+  const ref = coefOf(D(C('x', x), C('z', z), C('y', y)), 'x, z');
+  const est = (t: Dataset | undefined, term: string) => tval(t, term, 'Estimate');
+  ok(near(est(full, 'x'), est(ref, 'x'), 1e-9) && near(est(full, 'z'), est(ref, 'z'), 1e-9), `Linear regression: x, 2x, z — the coefficients of x, z as without 2x (${fmtNum(est(full, 'x'), 6)} vs ${fmtNum(est(ref, 'x'), 6)})`);
+  // S4: Pearson's interval at the level asked
+  const cr = corrNode(D(C('a', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]), C('b', [2, 1, 4, 3, 7, 5, 8, 6, 10, 9])), { ...CORR_DEFAULTS, alpha: 0.01 }).tables.out;
+  const lo99 = cr?.columns.find((c) => c.name === 'CI 99 % low')?.values[0] ?? NaN;
+  const r = Di.normInv(0.995) / Math.sqrt(7);
+  const zr = Math.atanh(Hy.pearson([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], [2, 1, 4, 3, 7, 5, 8, 6, 10, 9]).r);
+  ok(near(lo99, Math.tanh(zr - r), 1e-9), `Correlation: the Pearson interval at 99 % when α = 0.01 (${fmtNum(lo99, 6)})`);
+  // S5: a correlation of a constant column: no p from the permutations
+  const rs = resampleNode(D(C('a', [1, 2, 3, 4, 5]), C('b', [3, 3, 3, 3, 3])), { ...RESAMPLE_D, mode: 'permutation', stat: 'pearson', cols: 'a, b' });
+  ok(rs.errors.length === 1 && rs.errors[0].includes('undefined'), `Bootstrap & permutation: an undefined statistic gives no p (${rs.errors.join(' ')})`);
+  // S6: weighted κ on text ratings — in the order written, not the alphabet's
+  const r1 = ['none', 'mild', 'moderate', 'severe', 'none', 'mild', 'moderate', 'severe', 'mild', 'none'];
+  const r2 = ['none', 'mild', 'severe', 'severe', 'mild', 'mild', 'moderate', 'moderate', 'mild', 'none'];
+  const noOrder = agreeNode(D(T('A', r1), T('B', r2)), { ...AGREE_D, mode: 'kappa', cols: 'A, B', weights: 'quadratic' });
+  const inOrder = agreeNode(D(T('A', r1), T('B', r2)), { ...AGREE_D, mode: 'kappa', cols: 'A, B', weights: 'quadratic', order: 'none, mild, moderate, severe' });
+  const kNum = agreeNode(D(C('A', r1.map((v) => ['none', 'mild', 'moderate', 'severe'].indexOf(v))), C('B', r2.map((v) => ['none', 'mild', 'moderate', 'severe'].indexOf(v)))), { ...AGREE_D, mode: 'kappa', cols: 'A, B', weights: 'quadratic' });
+  ok(noOrder.errors.length === 1 && near(tval(inOrder.tables.out, 'Cohen’s κ, quadratic weights', 'Value'), tval(kNum.tables.out, 'Cohen’s κ, quadratic weights', 'Value'), 1e-12), 'Agreement: weighted κ on text asks for the order; given, the same κ as the numbers 0 … 3');
+  // S7, S18: a status coded 1 / 2 (R) — 2 the event; S(t) past the last time followed unknown
+  const sv = survivalNode(D(C('t', [1, 2, 3, 4, 5, 6, 7, 9]), C('s', [2, 1, 2, 2, 1, 2, 1, 1])), { ...SURVIVAL_D, time: 't', event: 's', at: '5, 100' });
+  const svOut = sv.tables.out;
+  const sAt = (col: string) => svOut?.columns.find((c) => c.name === col)?.values[0] ?? NaN;
+  ok(sv.warnings.some((w) => w.includes('2 taken as the event')) && sv.report.join(' ').includes('4 events of 8') && Number.isFinite(sAt('S(5)')) && Number.isNaN(sAt('S(100)')), `Survival: 1 / 2 read as R does (2 the event), said; S past the last time unknown (${sv.warnings.join(' ')}; S(100) ${sAt('S(100)')})`);
+  // S8: a table of counts with a numeric id designated X — the names of the rows, not counts
+  const ct = contingencyNode(D(C('Group', [1, 2], { role: 'x' }), C('yes', [10, 4], { role: 'y' }), C('no', [5, 12], { role: 'y' })), { ...CONTINGENCY_D, layout: 'table' });
+  const fisherP = tval(ct.tables.out, 'Fisher’s exact test', 'p');
+  ok(near(fisherP, 0.03198, 2e-4) || ct.report[0].includes('2 × 2'), `Contingency: a numeric id designated X is the rows' names, the table 2 × 2 (${ct.report[0]})`);
+  // S17: negative counts refused; a row of zeros left out, said
+  ok(contingencyNode(D(T('g', ['a', 'b']), C('yes', [-2, 6]), C('no', [5, 2])), { ...CONTINGENCY_D, layout: 'table' }).errors.length === 1, 'Contingency: a negative count refused');
+  const cz = contingencyNode(D(T('g', ['T', 'C', 'Z']), C('yes', [3, 6, 0]), C('no', [5, 2, 0])), { ...CONTINGENCY_D, layout: 'table' });
+  ok(cz.warnings.some((w) => w.includes('row “Z”')) && cz.report[0].includes('2 × 2'), `Contingency: a row of zeros left out, said (${cz.report[0]})`);
+  // S9: life times in order with a censoring column: the times fitted, not the status
+  const df = distFitNode(D(C('Life (h)', [12, 15, 20, 26, 31, 38, 45, 52, 60], { role: 'x' }), C('Status', [1, 1, 0, 1, 1, 0, 1, 1, 1], { role: 'y' })), { ...DISTFIT_D, censor: 'Status', dists: ['weibull'] });
+  ok(!df.errors.length && df.report[0].startsWith('9 values (2 suspended)'), `Distribution fit: the times in order fitted with their censoring, not the status column (${df.report[0] ?? df.errors[0]})`);
+  // S10: p-values adjusted already are not taken on auto
+  const pa = pAdjustNode(D(T('pair', ['a', 'b']), C('p (adjusted)', [0.01, 0.02])), { ...PADJUST_D });
+  ok(pa.errors.length === 1, 'Adjust p-values: a column of adjusted p not adjusted again on auto');
+  // S11: logistic regression — a collinear predictor left out (df and AIC of the model without it)
+  const lx = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  const ly = ['0', '0', '0', '1', '0', '1', '0', '1', '1', '0', '1', '1'];
+  const lg1 = logisticNode(D(C('x', lx), C('x2', lx.map((v) => 2 * v)), T('y', ly)), { ...LOGISTIC_D, y: 'y', xs: 'x, x2' });
+  const lg0 = logisticNode(D(C('x', lx), T('y', ly)), { ...LOGISTIC_D, y: 'y', xs: 'x' });
+  ok(tval(lg1.tables.model, 'df') === 1 && near(tval(lg1.tables.model, 'AIC'), tval(lg0.tables.model, 'AIC'), 1e-9) && lg1.warnings.some((w) => w.includes('x2 left out')), `Logistic regression: x, 2x — 2x left out, df 1 (${tval(lg1.tables.model, 'df')})`);
+  // S12, S13: no intercept — a factor gives every level its mean; Breusch–Pagan not negative
+  const gy = [5, 5.2, 4.9, 10.1, 10.4, 10.2, 17.8, 18, 17.7];
+  const gr = regressNode(D(T('g', ['a', 'a', 'a', 'b', 'b', 'b', 'c', 'c', 'c']), C('y', gy)), { ...REGRESS_D, y: 'y', xs: 'g', factors: 'g', intercept: false });
+  const bp = tval(gr.tables.model, 'Breusch–Pagan LM') ;
+  ok(near(est(gr.tables.out, 'g [a]'), (5 + 5.2 + 4.9) / 3, 1e-9) && near(est(gr.tables.out, 'g [c]'), (17.8 + 18 + 17.7) / 3, 1e-9) && !(bp < 0), `Linear regression without an intercept: a mean for every level of g; Breusch–Pagan ${fmtNum(bp, 4)} not negative`);
+  // S14, S15: ROC — “event” over “no event”; a specificity no threshold reaches said
+  const roc = rocNode(D(T('truth', ['event', 'no event', 'event', 'no event', 'event', 'no event', 'event', 'no event']), C('score', [9, 1, 7, 3, 8, 2, 4, 6])), { ...ROC_D, truth: 'truth', scores: 'score', cutoff: 'spec', target: 1.01 });
+  ok(roc.report.some((t) => t.startsWith('Positive class: event')) && roc.warnings.some((w) => w.includes('no threshold reaches')), `ROC: the positive class “event”, not “no event”; an unreachable specificity said (${roc.report[0]})`);
+  ok(positiveOf(['no event', 'event']) === 'event' && positiveOf(['healthy', 'not healthy']) === 'healthy' && positiveOf(['A', 'B']) === 'B', 'the positive class of two: by its name, the negated one the other');
+  // S16: an empty group refused (Mann–Whitney, Kruskal–Wallis)
+  const np = nonparNode(D(C('A', [1, 2, 3]), C('E', [NaN, NaN, NaN])), { ...NONPAR_D, test: 'mw' });
+  ok(np.errors.length === 1, `Nonparametric tests: an empty group refused (${np.errors[0]})`);
+  // S19: Mann–Whitney exact up to 8 values (SciPy 0.000392 for 8 against 20)
+  const mw = Hy.mannWhitney([1, 2, 3, 4, 5, 6, 7, 8], Array.from({ length: 20 }, (_, i) => 6.5 + i), 'two-sided');
+  ok(mw.note === 'exact', `Mann–Whitney: exact with 8 values in the smaller group, as SciPy (${mw.note}, p = ${fmtNum(mw.p, 4)})`);
+  // S20: two proportions — the smallest effect looked for below p1 too
+  const p2 = effectFor({ test: 'prop', alt: 'two-sided', alpha: 0.05, ratio: 1, k: 3, p1: 0.9, events: 0.6 }, 30, 0.8);
+  ok(near(p2, 0.6, 0.02), `Power: p1 = 0.9, n = 30 — the effect found below p1 (p2 = ${fmtNum(p2, 4)}; statsmodels 0.601)`);
 }
 // the numbers of an axis in E notation (1e−3, 2.5e4; a log axis as few digits as each needs)
 {

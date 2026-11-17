@@ -119,7 +119,20 @@ export function table(name: string, rows: Row[], roles: Record<string, Column['r
   });
   return { name, columns };
 }
+// The positive class of two (ROC, Logistic regression): the one chosen; else 1, yes, positive, event, dead …; else of
+// “event” and “no event” (not, non-, un-) the one without the negation; else the second in natural order
+export function positiveOf(levels: string[], chosen?: string): string {
+  if (chosen && levels.includes(chosen)) return chosen;
+  const word = levels.find((l) => /^(1|yes|true|y|pos|positive|case|event|success|died|dead|death|deceased|disease|diseased|sick|ill|failed|failure|fail)$/i.test(l.trim()));
+  if (word) return word;
+  const neg = (l: string, o: string) => l.trim().toLowerCase().replace(/^(not|non|no|un)[\s_-]*/, '') === o.trim().toLowerCase() && l.trim().toLowerCase() !== o.trim().toLowerCase();
+  if (levels.length === 2 && neg(levels[0], levels[1])) return levels[1];
+  if (levels.length === 2 && neg(levels[1], levels[0])) return levels[0];
+  return [...levels].sort((x, y) => x.localeCompare(y, undefined, { numeric: true }))[1];
+}
 export const sig = (p: number, a: number) => (Number.isFinite(p) ? (p < a ? 'yes' : 'no') : '');
+// a verdict on p: an undefined statistic (no spread in the data, a column constant …) said, not read as “no difference”
+export const says = (p: number, a: number, yes: string, no: string) => (Number.isFinite(p) ? (p < a ? yes : no) : 'cannot be tested (the statistic is undefined: no spread in the data?)');
 export const fp = (p: number) => (!Number.isFinite(p) ? '—' : p < 0.0001 ? 'p < 0.0001' : `p = ${fmtNum(p, 3)}`);
 export const f3 = (v: number) => fmtNum(v, 4);
 // the groups: the group (a number with its name) as X, the mean as Y, the SE as ±Y — ready for a Plot
@@ -189,7 +202,7 @@ export function tTestNode(ds: Dataset, d: TTestData): StatOut {
     const [x, y] = [s.m.map((r) => r[0]), s.m.map((r) => r[1])];
     const r = H.tPaired(x, y, d.alt, lvl);
     rows.push(testRow(r, a, est(r)));
-    report.push(`${say(r)}: the mean difference ${s.names[0]} − ${s.names[1]} = ${f3(r.diff)} [${f3(r.lo)}, ${f3(r.hi)}] ${r.p < a ? 'differs' : 'does not differ'} from 0 at α = ${a}.`);
+    report.push(`${say(r)}: the mean difference ${s.names[0]} − ${s.names[1]} = ${f3(r.diff)} [${f3(r.lo)}, ${f3(r.hi)}] ${says(r.p, a, 'differs', 'does not differ')} from 0 at α = ${a}.`);
     const pw = d.power ? tPower(r.d, x.length, null, d, report) : null;
     return { tables: { out: table('t-test', rows), groups: groupTable(s.names, [x, y], lvl), ...(pw ? { power: pw } : {}) }, report, warnings, errors: [] };
   }
@@ -201,7 +214,7 @@ export function tTestNode(ds: Dataset, d: TTestData): StatOut {
     if (g.groups.length > 1) warnings.push(`One-sample: only the first group (${g.names[0]}) is tested.`);
     const r = H.tOne(x, d.mu, d.alt, lvl);
     rows.push(testRow(r, a, est(r)));
-    report.push(`${say(r)}: the mean of ${g.names[0]} (${f3(H.mean(x))}) ${r.p < a ? 'differs' : 'does not differ'} from ${d.mu} at α = ${a}.`);
+    report.push(`${say(r)}: the mean of ${g.names[0]} (${f3(H.mean(x))}) ${says(r.p, a, 'differs', 'does not differ')} from ${d.mu} at α = ${a}.`);
     const pw = d.power ? tPower(r.d, x.length, null, d, report) : null;
     return { tables: { out: table('t-test', rows), groups: groupTable(g.names.slice(0, 1), [x], lvl), ...(pw ? { power: pw } : {}) }, report, warnings, errors: [] };
   }
@@ -214,7 +227,7 @@ export function tTestNode(ds: Dataset, d: TTestData): StatOut {
   const f = H.fTest(x, y);
   const lv = H.levene([x, y], 'median');
   rows.push(testRow(f, a), testRow(lv, a));
-  report.push(`${say(r)}: ${g.names[0]} − ${g.names[1]} = ${f3(r.diff)} [${f3(r.lo)}, ${f3(r.hi)}], the means ${r.p < a ? 'differ' : 'do not differ'} at α = ${a}.`);
+  report.push(`${say(r)}: ${g.names[0]} − ${g.names[1]} = ${f3(r.diff)} [${f3(r.lo)}, ${f3(r.hi)}], the means ${says(r.p, a, 'differ', 'do not differ')} at α = ${a}.`);
   if (d.equalVar && lv.p < a) report.push(`The variances differ (Brown–Forsythe ${fp(lv.p)}): Welch's test (unequal variances) is the safer one.`);
   const pw = d.power ? tPower(r.d, x.length, y.length, d, report) : null;
   return { tables: { out: table('t-test', rows), groups: groupTable(g.names, g.groups, lvl), ...(pw ? { power: pw } : {}) }, report, warnings, errors: [] };
@@ -321,7 +334,7 @@ export function anovaNode(ds: Dataset, d: AnovaData): StatOut {
     r.rows[0].source = fa.name;
     r.rows[1].source = fb.name;
     r.rows[2].source = `${fa.name} × ${fb.name}`;
-    r.rows.slice(0, 3).forEach((q) => report.push(`${q.source}: F(${q.df}, ${r.dfE}) = ${f3(q.F)}, ${fp(q.p)}, partial η² = ${f3(q.eta2p)}: ${q.p < a ? 'significant' : 'not significant'}.`));
+    r.rows.slice(0, 3).forEach((q) => report.push(`${q.source}: F(${q.df}, ${r.dfE}) = ${f3(q.F)}, ${fp(q.p)}, partial η² = ${f3(q.eta2p)}: ${says(q.p, a, 'significant', 'not significant')}.`));
     // the cells (every combination) as groups
     const names: string[] = [];
     const cells: number[][] = [];
@@ -361,7 +374,7 @@ export function anovaNode(ds: Dataset, d: AnovaData): StatOut {
     { source: 'Within groups (error)', ss: r.ssw, df: r.df2, ms: r.mse, F: NaN, p: NaN, eta2p: NaN },
     { source: 'Total (corrected)', ss: r.ssb + r.ssw, df: r.df1 + r.df2, ms: NaN, F: NaN, p: NaN, eta2p: NaN },
   ];
-  report.push(`One-way ANOVA: F(${r.df1}, ${r.df2}) = ${f3(r.F)}, ${fp(r.p)}, η² = ${f3(r.eta2)}, ω² = ${f3(r.omega2)}: the means ${r.p < a ? 'differ' : 'do not differ'} at α = ${a}.`);
+  report.push(`One-way ANOVA: F(${r.df1}, ${r.df2}) = ${f3(r.F)}, ${fp(r.p)}, η² = ${f3(r.eta2)}, ω² = ${f3(r.omega2)}: the means ${says(r.p, a, 'differ', 'do not differ')} at α = ${a}.`);
   const lv = H.levene(g.groups, 'median');
   const res = g.groups.flatMap((x) => {
     const m = H.mean(x);
@@ -438,7 +451,7 @@ function rmAnova(ds: Dataset, d: AnovaData): StatOut {
     }
     const fit = mixedModel(rows.map((r) => r.y), rows.map((r) => r.is), terms);
     if (typeof fit === 'string') return fail(`Mixed model: ${fit}.`);
-    fit.tests.forEach((t) => report.push(`${t.source}: F(${t.df1}, ${fmtNum(t.df2, 4)}) = ${f3(t.F)}, ${fp(t.p)}: ${t.p < a ? 'significant' : 'not significant'}.`));
+    fit.tests.forEach((t) => report.push(`${t.source}: F(${t.df1}, ${fmtNum(t.df2, 4)}) = ${f3(t.F)}, ${fp(t.p)}: ${says(t.p, a, 'significant', 'not significant')}.`));
     report.push(`Subjects: σ² = ${f3(fit.sigmaU2)} (ICC ${f3(fit.icc)}), residual σ² = ${f3(fit.sigmaE2)}; ${fit.N} values of ${fit.subjects} subjects (REML; the df by Satterthwaite).`);
     return {
       tables: {
@@ -544,13 +557,13 @@ export function nonparNode(ds: Dataset, d: NonparData): StatOut {
     if (d.test === 'friedman') {
       if (cols.length < 3 || s.m.length < 2) return { tables: {}, report: [], warnings: [], errors: ['Friedman: 3 conditions (columns) or more and 2 complete subjects or more.'] };
       const r = H.friedman(s.m);
-      report.push(`${say(r)}: the conditions ${r.p < a ? 'differ' : 'do not differ'} at α = ${a}.`);
+      report.push(`${say(r)}: the conditions ${says(r.p, a, 'differ', 'do not differ')} at α = ${a}.`);
       return { tables: { out: table('test', [testRow(r, a)]), groups: medians(s.names, cols) }, report, warnings, errors: [] };
     }
     if (cols.length !== 2) return { tables: {}, report: [], warnings: [], errors: ['Paired: two columns (before, after).'] };
     const diff = s.m.map((r) => r[0] - r[1]);
     const r = d.test === 'sign' ? H.signTest(diff) : H.wilcoxon(diff, d.alt);
-    report.push(`${say(r)}: ${s.names[0]} and ${s.names[1]} ${r.p < a ? 'differ' : 'do not differ'} at α = ${a}${r.note ? ` (${r.note})` : ''}.`);
+    report.push(`${say(r)}: ${s.names[0]} and ${s.names[1]} ${says(r.p, a, 'differ', 'do not differ')} at α = ${a}${r.note ? ` (${r.note})` : ''}.`);
     return { tables: { out: table('test', [testRow(r, a)]), groups: medians(s.names, cols) }, report, warnings, errors: [] };
   }
   const g = groupsOf(ds, d);
@@ -560,18 +573,23 @@ export function nonparNode(ds: Dataset, d: NonparData): StatOut {
     const x = g.groups[0];
     if (!x?.length) return { tables: {}, report: [], warnings: [], errors: ['No values.'] };
     const r = d.test === 'sign' ? H.signTest(x.map((v) => v - d.mu)) : H.wilcoxon(x.map((v) => v - d.mu), d.alt);
-    report.push(`${say(r)}: the median of ${g.names[0]} ${r.p < a ? 'differs' : 'does not differ'} from ${d.mu} at α = ${a}.`);
+    report.push(`${say(r)}: the median of ${g.names[0]} ${says(r.p, a, 'differs', 'does not differ')} from ${d.mu} at α = ${a}.`);
     return { tables: { out: table('test', [testRow(r, a)]), groups: medians(g.names.slice(0, 1), [x]) }, report, warnings, errors: [] };
   }
   if (d.test === 'mw') {
     if (g.groups.length !== 2) return { tables: {}, report: [], warnings: [], errors: [`Mann–Whitney compares 2 groups: ${g.groups.length} found.`] };
+    // (an empty group: nothing to compare — not “do not differ”)
+    const few = tooFew(g.groups, g.names, 1);
+    if (few) return { tables: {}, report: [], warnings: [], errors: [few] };
     const r = H.mannWhitney(g.groups[0], g.groups[1], d.alt);
-    report.push(`${say(r)}: ${g.names[0]} and ${g.names[1]} ${r.p < a ? 'differ' : 'do not differ'} at α = ${a} (${r.note}).`);
+    report.push(`${say(r)}: ${g.names[0]} and ${g.names[1]} ${says(r.p, a, 'differ', 'do not differ')} at α = ${a} (${r.note}).`);
     return { tables: { out: table('test', [testRow(r, a)]), groups: medians(g.names, g.groups) }, report, warnings, errors: [] };
   }
   if (g.groups.length < 2) return { tables: {}, report: [], warnings: [], errors: ['Kruskal–Wallis: 2 groups or more.'] };
+  const fewK = tooFew(g.groups, g.names, 1);
+  if (fewK) return { tables: {}, report: [], warnings: [], errors: [fewK] };
   const r = H.kruskal(g.groups);
-  report.push(`${say(r)}: the groups ${r.p < a ? 'differ' : 'do not differ'} at α = ${a}.`);
+  report.push(`${say(r)}: the groups ${says(r.p, a, 'differ', 'do not differ')} at α = ${a}.`);
   const tables: Record<string, Dataset> = { out: table('test', [testRow(r, a)]), groups: medians(g.names, g.groups, r.meanRanks) };
   if (d.post !== 'none') {
     const pairs = H.dunn(g.groups, d.post);
@@ -594,6 +612,7 @@ export function corrNode(ds: Dataset, d: CorrData): StatOut {
   const rows: Row[] = [];
   const report: string[] = [];
   const mat = cols.map(() => cols.map(() => NaN));
+  const few: string[] = [];
   for (let i = 0; i < cols.length; i++)
     for (let j = i; j < cols.length; j++) {
       if (i === j) {
@@ -601,14 +620,19 @@ export function corrNode(ds: Dataset, d: CorrData): StatOut {
         continue;
       }
       const ok = Array.from(cols[i].values.keys()).filter((q) => Number.isFinite(cols[i].values[q]) && Number.isFinite(cols[j].values[q]));
-      if (ok.length < 3) continue;
-      const c = f(ok.map((q) => cols[i].values[q]), ok.map((q) => cols[j].values[q]));
+      if (ok.length < 3) {
+        few.push(`${cols[i].name} – ${cols[j].name}`);
+        continue;
+      }
+      const [xs, ys] = [ok.map((q) => cols[i].values[q]), ok.map((q) => cols[j].values[q])];
+      // (Pearson's interval at the level asked, 1 − α)
+      const c = d.method === 'pearson' ? H.pearson(xs, ys, 1 - a) : f(xs, ys);
       mat[i][j] = mat[j][i] = c.r;
       rows.push({ X: cols[i].name, Y: cols[j].name, [name]: c.r, p: c.p, N: c.n, ...(d.method === 'pearson' ? { [`CI ${Math.round((1 - a) * 100)} % low`]: c.lo, [`CI ${Math.round((1 - a) * 100)} % high`]: c.hi } : {}), [`significant (α = ${a})`]: sig(c.p, a) });
-      report.push(`${cols[i].name}: ${cols[j].name}: ${name} = ${f3(c.r)}, ${fp(c.p)}, N = ${c.n}`);
+      report.push(`${cols[i].name} – ${cols[j].name}: ${name} = ${f3(c.r)}, ${fp(c.p)}, N = ${c.n}`);
     }
   // the order of the columns: as given, or by a clustering of 1 − |r| (related ones together)
-  const warnings: string[] = [];
+  const warnings: string[] = few.length ? [`Fewer than 3 rows with both values: ${few.slice(0, 6).join(', ')}${few.length > 6 ? ' …' : ''} (left out).`] : [];
   let ord = cols.map((_, i) => i);
   if (d.order === 'cluster') {
     if (mat.some((r) => r.some((v) => !Number.isFinite(v)))) warnings.push('Clustered order: a pair without enough values; the order as given.');

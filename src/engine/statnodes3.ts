@@ -9,8 +9,9 @@ import { andersonDarling, betaCdf, betaLogPdf, cohenKappa, cronbach, deming, eff
 import { fitMLE, fisherCov, logLik, paramCI, suspendedOf } from './reliability.ts';
 import { makeDist, PARAM_NAMES, type ProbDist } from './probplot.ts';
 import { nelderMead } from './reliability.ts';
-import { byName, chosen, fp, f3, isText, levelOf, sig, table, type Row, type StatOut } from './statnodes.ts';
+import { byName, chosen, fp, f3, isText, levelOf, positiveOf, sig, table, type Row, type StatOut } from './statnodes.ts';
 import { designOf } from './statnodes2.ts';
+import { leastSquares } from './stat2.ts';
 import { maxOf, minOf } from './minmax.ts';
 
 // solve: what is found from the others; effect: d, f, r, w, the hazard ratio, or (prop) p2 with p1; n: per group for
@@ -22,7 +23,8 @@ export type ResampleData = { mode: 'bootstrap' | 'permutation'; layout: 'columns
 export type FitDist = ProbDist | 'beta';
 // censor: a column of the status (failed 1, suspended 0: the life data); dists: those fitted
 export type DistFitData = { col: string; censor: string; dists: FitDist[]; level: number };
-export type AgreeData = { mode: 'kappa' | 'icc' | 'alpha' | 'ccc'; cols: string; weights: 'none' | 'linear' | 'quadratic'; level: number; alpha: number };
+// order: the categories in order, for weights on text ratings (“none, mild, moderate, severe”; numbers are in order)
+export type AgreeData = { mode: 'kappa' | 'icc' | 'alpha' | 'ccc'; cols: string; weights: 'none' | 'linear' | 'quadratic'; level: number; alpha: number; order?: string };
 // x: the reference method, y: the other; lambda: the ratio of their error variances (Deming)
 export type MethCompData = { x: string; y: string; method: 'pb' | 'deming' | 'both'; lambda: number; level: number };
 export type LogisticData = { y: string; positive: string; xs: string; factors: string; refs?: Record<string, string>; interact: boolean; intercept: boolean; threshold: number; alpha: number };
@@ -86,6 +88,8 @@ export function resampleNode(ds: Dataset, d: ResampleData): StatOut {
   let b: number[] = [];
   let names: string[] = [];
   if (d.layout === 'indexed') {
+    // (a correlation pairs the values of a row: two groups of a factor are not pairs)
+    if (paired) return err(`${STAT_NAMES[d.stat]} pairs two columns row by row: choose the layout “each group a column”.`);
     const v = byName(ds, d.value);
     const f = byName(ds, d.factor);
     if (!v) return err(d.value ? `No column “${d.value}”.` : 'Choose the value column.');
@@ -96,7 +100,8 @@ export function resampleNode(ds: Dataset, d: ResampleData): StatOut {
     names = lv;
     for (let i = 0; i < v.values.length; i++) if (Number.isFinite(v.values[i])) (levelOf(f, i) === lv[0] ? a : levelOf(f, i) === lv[1] ? b : []).push(v.values[i]);
   } else {
-    const cs = chosen(ds, d.cols, true);
+    // (a correlation: an X axis is one of its two columns, not left out)
+    const cs = chosen(ds, d.cols, !paired);
     if (typeof cs === 'string') return err(cs);
     const num = cs.filter((c) => !isText(c));
     const need = two || paired ? 2 : 1;
@@ -119,6 +124,8 @@ export function resampleNode(ds: Dataset, d: ResampleData): StatOut {
   const what = `${STAT_NAMES[d.stat]}${d.stat === 'pct' ? ` (${fmtNum(100 * d.q, 4)} %)` : ''}${two ? ` (${names[0]} − ${names[1]})`.replace('−', d.stat === 'ratiomean' ? '/' : '−') : paired ? ` (${names[0]}, ${names[1]})` : ` of ${names[0]}`}`;
   if (d.mode === 'permutation') {
     const r = permutation(d.stat, a, b, B, d.alt, d.seed);
+    // (an undefined statistic — a constant column for a correlation, a mean of 0 for a ratio — has no p)
+    if (!Number.isFinite(r.est)) return err(`The ${what} is undefined on these data (a column constant, or 0 in a ratio): no test.`);
     report.push(`Permutation test of the ${what}: ${fmtNum(r.est, 5)}, ${fp(r.p)} (${r.exact ? `exact, every one of ${r.dist.length} arrangements` : `${r.dist.length} at random`}).`);
     return {
       tables: { out: table('permutation', [{ Statistic: what, Estimate: r.est, p: r.p, Alternative: d.alt, Arrangements: r.dist.length, Kind: r.exact ? 'exact' : 'Monte Carlo' }]), distribution: { name: 'permutations', columns: [{ ...column(`Permuted ${STAT_NAMES[d.stat]}`, Float64Array.from(r.dist)), role: 'y' }] } },
@@ -128,6 +135,7 @@ export function resampleNode(ds: Dataset, d: ResampleData): StatOut {
     };
   }
   const r = bootstrap(d.stat, a, b, B, d.level, d.ci, d.seed, d.q);
+  if (!Number.isFinite(r.est)) return err(`The ${what} is undefined on these data (a column constant, or 0 in a ratio): no interval.`);
   const CI: Record<ResampleData['ci'], string> = { percentile: 'percentile', basic: 'basic', bca: 'BCa' };
   report.push(`Bootstrap of the ${what}: ${fmtNum(r.est, 5)}, ${Math.round(100 * d.level)} % CI ${fmtNum(r.lo, 5)} to ${fmtNum(r.hi, 5)} (${CI[d.ci]}, ${B} resamples); SE ${fmtNum(r.se, 4)}, bias ${fmtNum(r.bias, 3)}.`);
   if (!Number.isFinite(r.lo) || !Number.isFinite(r.hi)) warnings.push('The interval could not be found (too few distinct resamples).');
@@ -171,11 +179,16 @@ function fitBeta(x: number[], level: number): Fitted {
 export function distFitNode(ds: Dataset, d: DistFitData): StatOut {
   const report: string[] = [];
   const warnings: string[] = [];
-  const c = d.col ? byName(ds, d.col) : chosen(ds, '', true);
-  const col = Array.isArray(c) ? c.find((q) => !isText(q)) : c;
-  if (!col || typeof col === 'string') return err(d.col ? `No column “${d.col}”.` : 'Choose the column of the values.');
   const sc = d.censor ? byName(ds, d.censor) : undefined;
   if (d.censor && !sc) return err(`No column “${d.censor}”.`);
+  // (auto: the first numeric column but the censoring one; life times in order look like an X axis — with a censoring
+  // column chosen they are the values, not left out)
+  const numeric = (axisOut: boolean) => {
+    const cs = chosen(ds, '', axisOut);
+    return typeof cs === 'string' ? undefined : cs.find((q) => !isText(q) && q !== sc);
+  };
+  const col = d.col ? byName(ds, d.col) : sc ? numeric(false) : (numeric(true) ?? numeric(false));
+  if (!col) return err(d.col ? `No column “${d.col}”.` : 'Choose the column of the values.');
   const fail: number[] = [];
   const susp: number[] = [];
   for (let i = 0; i < col.values.length; i++) {
@@ -257,8 +270,16 @@ export function agreeNode(ds: Dataset, d: AgreeData): StatOut {
       if (r.every(Boolean)) rows.push(r);
     }
     if (rows.length < 2) return err('At least 2 subjects rated by every rater.');
-    const cats = [...new Set(rows.flat())].sort(natural);
+    let cats = [...new Set(rows.flat())].sort(natural);
     if (cats.length < 2) return err('Every rating is the same: κ cannot be found.');
+    // (weights need the order of the categories: numbers have theirs; text has the one written, never the alphabet's)
+    if (d.weights !== 'none' && !cats.every((c) => Number.isFinite(Number(c)))) {
+      const order = (d.order ?? '').split(/[,;\n]/).map((t) => t.trim()).filter(Boolean);
+      if (!order.length) return err(`Weighted κ on text ratings needs their order: write it in Order (e.g. ${cats.join(', ')}, from the lowest).`);
+      const missing = cats.filter((c) => !order.includes(c));
+      if (missing.length) return err(`Order: ${missing.map((m) => `“${m}”`).join(', ')} not in the list (${cats.length} categories rated).`);
+      cats = order.filter((c) => cats.includes(c));
+    }
     if (cs.length === 2) {
       const t = cats.map((r) => cats.map((c) => rows.filter((q) => q[0] === r && q[1] === c).length));
       const k = cohenKappa(t, d.weights, lvl);
@@ -368,10 +389,16 @@ export function logisticNode(ds: Dataset, d: LogisticData): StatOut {
   if (!yc) return err(d.y ? `No column “${d.y}”.` : 'Choose the outcome (Y: two values, yes / no, 1 / 0 …).');
   const levels = [...new Set(Array.from(yc.values, (_, i) => levelOf(yc, i)).filter(Boolean))];
   if (levels.length !== 2) return err(`${yc.name}: two outcomes are needed, ${levels.length} found.`);
-  const posName = d.positive && levels.includes(d.positive) ? d.positive : (levels.find((l) => /^(1|yes|true|pos|positive|case|event|success|died|dead)$/i.test(l)) ?? [...levels].sort(natural)[1]);
+  const posName = positiveOf(levels, d.positive);
   const dz = designOf(ds, { ...d, intercept: d.intercept }, yc, (i) => !!levelOf(yc, i));
   if (typeof dz === 'string') return err(dz);
-  const { xs, rowsUsed, names, cols } = dz;
+  const { xs, rowsUsed } = dz;
+  // (a predictor that depends on the others — collinear — left out, said: it would keep an estimate of 0 and count in
+  // the degrees of freedom)
+  const al = leastSquares(rowsUsed.map((_, r) => dz.cols.map((c) => c[r])), rowsUsed.map(() => 0)).aliased;
+  if (al.some(Boolean)) warnings.push(`${dz.names.filter((_, j) => al[j]).join(', ')} left out: it depends on the other predictors (collinear).`);
+  const names = dz.names.filter((_, j) => !al[j]);
+  const cols = dz.cols.filter((_, j) => !al[j]);
   const n = rowsUsed.length;
   const k = cols.length;
   if (n <= k + 1) return err(`${n} complete rows for ${k} coefficients: more rows are needed.`);
@@ -417,7 +444,7 @@ export function logisticNode(ds: Dataset, d: LogisticData): StatOut {
     { Statistic: 'Hosmer–Lemeshow χ²', Value: hl.chi2 },
     { Statistic: 'Hosmer–Lemeshow df', Value: hl.df },
     { Statistic: 'p (Hosmer–Lemeshow)', Value: hl.p },
-    { Statistic: 'Iterations', Value: L.iter + 1 },
+    { Statistic: 'Iterations', Value: Math.min(L.iter + 1, 100) },
   ];
   const classification = table('classification', [
     { '': `Observed ${posName}`, [`Predicted ${posName}`]: tp, 'Predicted other': fn, '% correct': (100 * tp) / (tp + fn) },

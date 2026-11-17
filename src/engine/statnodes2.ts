@@ -2,11 +2,12 @@
 // and Linear regression. Each reads its dataset, runs the methods of stat2.ts and gives its tables and a report in
 // words (as the other statistics nodes: statnodes.ts).
 import { pick } from './extract.ts';
-import { column, fmtNum, type Column, type Dataset } from './table.ts';
+import { column, fmtNum, roleOf, type Column, type Dataset } from './table.ts';
 import * as H from './hypo.ts';
 import { chiSquare, gTest, fisherExact, mcnemar, association, twoByTwo, expected, padjust, aucDeLong, delongTest, rocPoints, kaplanMeier, survivalAt, logRank, leastSquares, type PAdjust, type KM } from './stat2.ts';
 import { chi2Sf, normInv, tInv, tP2, fSf } from './dist.ts';
-import { byName, chosen, fp, f3, isText, levelOf, sig, table, type Row, type StatOut } from './statnodes.ts';
+import { suspendedOf } from './reliability.ts';
+import { byName, chosen, fp, f3, isText, levelOf, positiveOf, says, sig, table, type Row, type StatOut } from './statnodes.ts';
 import { maxOf } from './minmax.ts';
 
 export type PAdjustData = { col: string; method: PAdjust; alpha: number };
@@ -36,7 +37,7 @@ const named = (v: number) => (Number.isFinite(v) ? f3(v) : 'n/a');
 const P_NAMES: Record<PAdjust, string> = { bonferroni: 'Bonferroni', holm: 'Holm', hochberg: 'Hochberg', hommel: 'Hommel', bh: 'Benjamini–Hochberg (FDR)', by: 'Benjamini–Yekutieli (FDR)' };
 export function pAdjustNode(ds: Dataset, d: PAdjustData): StatOut {
   // (the column: chosen, else one named p, else the first whose name has a p in it)
-  const c = d.col ? byName(ds, d.col) : (ds.columns.find((q) => /^p$/i.test(q.name.trim())) ?? ds.columns.find((q) => /(^|[\s(_-])p([\s)_-]|$)|p-?value/i.test(q.name)));
+  const c = d.col ? byName(ds, d.col) : (ds.columns.find((q) => /^p$/i.test(q.name.trim())) ?? ds.columns.find((q) => /(^|[\s(_-])p([\s)_-]|$)|p-?value/i.test(q.name) && !/adjust/i.test(q.name)));
   if (!c) return err(d.col ? `No column “${d.col}”.` : 'Choose the column of the p-values.');
   const p = Array.from(c.values);
   if (p.some((v) => Number.isFinite(v) && (v < 0 || v > 1))) return err(`${c.name}: p-values are between 0 and 1.`);
@@ -59,20 +60,24 @@ function crosstab(ds: Dataset, d: ContingencyData, one: boolean): Crosstab | str
   if (d.layout === 'table') {
     const counts = chosen(ds, d.cols);
     if (typeof counts === 'string') return counts;
-    const nameCol = d.rowCol ? byName(ds, d.rowCol) : ds.columns.find(isText);
+    // (the names of the rows: chosen, else a column of text, else the column designated X — a row number or an id, not
+    // counts)
+    const nameCol = d.rowCol ? byName(ds, d.rowCol) : (ds.columns.find(isText) ?? (d.cols.trim() ? undefined : ds.columns.find((_, j) => roleOf(ds.columns, j) === 'x' && ds.columns.some((_q, k) => k !== j && roleOf(ds.columns, k) !== 'x'))));
     const cs = counts.filter((c) => c !== nameCol && !isText(c));
     const use = one ? cs.slice(0, 1) : cs;
     if (!use.length) return 'Choose the columns of the counts.';
     const n = use[0].values.length;
     const rows: string[] = [];
     const t: number[][] = [];
+    const first: number[] = [];
     for (let i = 0; i < n; i++) {
       const v = use.map((c) => c.values[i]);
       if (v.every((x) => !Number.isFinite(x))) continue;
       rows.push(nameCol ? levelOf(nameCol, i) || `${i + 1}` : `${i + 1}`);
       t.push(v.map((x) => (Number.isFinite(x) ? x : 0)));
+      first.push(i);
     }
-    return { rows, cols: use.map((c) => c.name), t };
+    return { rows, cols: use.map((c) => c.name), t, first };
   }
   const rc = need(d.rowCol, 'the column of the rows’ categories');
   if (typeof rc === 'string') return rc;
@@ -105,10 +110,25 @@ export function contingencyNode(ds: Dataset, d: ContingencyData): StatOut {
   const warnings: string[] = [];
   const ct = crosstab(ds, d, d.test === 'gof');
   if (typeof ct === 'string') return err(ct);
+  if (ct.t.flat().some((v) => v < 0)) return err('A count below 0: counts are 0 or more.');
+  // (a row or a column of zeros only: no expected count there — left out, said; a goodness of fit keeps its categories)
+  if (d.test !== 'gof') {
+    const zr = ct.rows.filter((_, i) => ct.t[i].every((v) => v === 0));
+    const keepC = ct.cols.map((_, j) => ct.t.some((r) => r[j] !== 0));
+    const zc = ct.cols.filter((_, j) => !keepC[j]);
+    if (zr.length || zc.length) {
+      warnings.push(`Left out, all zeros: ${[...zr.map((r) => `row “${r}”`), ...zc.map((c) => `column “${c}”`)].join(', ')}.`);
+      const keepR = ct.t.map((r) => r.some((v) => v !== 0));
+      ct.first = ct.first?.filter((_, i) => keepR[i]);
+      ct.rows = ct.rows.filter((_, i) => keepR[i]);
+      ct.t = ct.t.filter((_, i) => keepR[i]).map((r) => r.filter((_, j) => keepC[j]));
+      ct.cols = ct.cols.filter((_, j) => keepC[j]);
+    }
+  }
   const { rows, cols, t } = ct;
   const n = t.flat().reduce((x, y) => x + y, 0);
   if (!(n > 0)) return err('No counts.');
-  if (t.flat().some((v) => v < 0 || Math.abs(v - Math.round(v)) > 1e-9)) warnings.push('Some counts are not whole numbers: the exact tests take them rounded.');
+  if (t.flat().some((v) => Math.abs(v - Math.round(v)) > 1e-9)) warnings.push('Some counts are not whole numbers: the exact tests take them rounded.');
   // ---- a goodness of fit ----
   if (d.test === 'gof') {
     const obs = t.map((r) => r[0]);
@@ -117,7 +137,7 @@ export function contingencyNode(ds: Dataset, d: ContingencyData): StatOut {
     if (d.expected) {
       const ec = byName(ds, d.expected);
       if (!ec) return err(`No column “${d.expected}”.`);
-      const raw = obs.map((_, k) => ec.values[d.layout === 'table' ? k : (ct.first?.[k] ?? k)]);
+      const raw = obs.map((_, k) => ec.values[ct.first?.[k] ?? k]);
       if (raw.some((v) => !(v >= 0))) return err(`${d.expected}: an expected proportion (or count) for every category.`);
       const s = raw.reduce((x, y) => x + y, 0);
       prop = raw.map((v) => v / s);
@@ -131,7 +151,7 @@ export function contingencyNode(ds: Dataset, d: ContingencyData): StatOut {
       { Test: 'G-test of fit', Statistic: g2, df, p: chi2Sf(g2, df), [`Significant (α = ${a})`]: sig(chi2Sf(g2, df), a) },
     ];
     if (e.some((v) => v < 5)) warnings.push('Some expected counts are under 5: the χ² p is only approximate.');
-    report.push(`χ²(${df}) = ${f3(x2)}, ${fp(chi2Sf(x2, df))}: the counts ${chi2Sf(x2, df) < a ? 'differ from' : 'do not differ from'} the proportions expected at α = ${a}.`);
+    report.push(`χ²(${df}) = ${f3(x2)}, ${fp(chi2Sf(x2, df))}: the counts ${says(chi2Sf(x2, df), a, 'differ from', 'do not differ from')} the proportions expected at α = ${a}.`);
     const cells = table(
       'cells',
       rows.map((r, k) => ({ Category: r, Observed: obs[k], Expected: e[k], 'Observed %': (100 * obs[k]) / n, 'Expected %': 100 * prop[k], Residual: (obs[k] - e[k]) / Math.sqrt(e[k]) })),
@@ -153,7 +173,7 @@ export function contingencyNode(ds: Dataset, d: ContingencyData): StatOut {
       { Test: 'McNemar exact (binomial)', Statistic: NaN, df: NaN, p: m.exactP, [`Significant (α = ${a})`]: sig(m.exactP, a) },
     ];
     const [b, c] = [t[0][1], t[1][0]];
-    report.push(`McNemar: ${b} pairs ${rows[0]} → ${cols[1]} against ${c} ${rows[1]} → ${cols[0]}; χ²(1) = ${f3(m.stat)}, ${fp(m.p)} (exact ${fp(m.exactP)}): the two answers ${m.exactP < a ? 'differ' : 'do not differ'} at α = ${a}.`);
+    report.push(`McNemar: ${b} pairs ${rows[0]} → ${cols[1]} against ${c} ${rows[1]} → ${cols[0]}; χ²(1) = ${f3(m.stat)}, ${fp(m.p)} (exact ${fp(m.exactP)}): the two answers ${says(m.exactP, a, 'differ', 'do not differ')} at α = ${a}.`);
     const measures = table('measures', [{ Measure: 'Paired odds ratio (b / c)', Value: c > 0 ? b / c : NaN }]);
     return { tables: { out: table('tests', tests), measures, table: wide }, report, warnings, errors: [] };
   }
@@ -185,7 +205,7 @@ export function contingencyNode(ds: Dataset, d: ContingencyData): StatOut {
     report.push(`Odds ratio ${f3(q.or)} (${Math.round(lvl * 100)} % CI ${f3(q.orLo)} to ${f3(q.orHi)}); the risk of ${cols[0]} in ${rows[0]} ${f3(q.rr)} times that in ${rows[1]}.`);
   } else meas.push({ Measure: 'Contingency coefficient', Value: as.C, 'CI low': NaN, 'CI high': NaN });
   const main = small ? fi : x2;
-  report.unshift(`${small ? `Fisher’s exact test, ${fp(fi.p)}` : `χ²(${x2.df}) = ${f3(x2.stat)}, ${fp(x2.p)}`}: ${rows.length} × ${cols.length}, N = ${fmtNum(n, 6)}; the rows and the columns ${main.p < a ? 'are' : 'are not'} associated at α = ${a} (Cramér’s V = ${f3(as.V)}).`);
+  report.unshift(`${small ? `Fisher’s exact test, ${fp(fi.p)}` : `χ²(${x2.df}) = ${f3(x2.stat)}, ${fp(x2.p)}`}: ${rows.length} × ${cols.length}, N = ${fmtNum(n, 6)}; the rows and the columns ${says(main.p, a, 'are', 'are not')} associated at α = ${a} (Cramér’s V = ${f3(as.V)}).`);
   const cells = table(
     'cells',
     rows.flatMap((r, i) =>
@@ -215,8 +235,9 @@ export function rocNode(ds: Dataset, d: RocData): StatOut {
   if (!tc) return err(d.truth ? `No column “${d.truth}”.` : 'Choose the column of the true class (diseased or not, 1 or 0 …).');
   const levels = [...new Set(Array.from(tc.values, (_, i) => levelOf(tc, i)).filter(Boolean))];
   if (levels.length !== 2) return err(`${tc.name}: two classes are needed, ${levels.length} found${levels.length > 2 ? ` (${levels.slice(0, 5).join(', ')} …): filter the rows first` : ''}.`);
-  // (positive: the value chosen, else 1, yes, positive … else the second in order)
-  const posName = d.positive && levels.includes(d.positive) ? d.positive : (levels.find((l) => /^(1|yes|true|pos|positive|case|disease|diseased|sick|ill)$/i.test(l)) ?? [...levels].sort()[1]);
+  // (positive: the value chosen, else by the rule of Logistic regression — said when it was guessed)
+  const posName = positiveOf(levels, d.positive);
+  if (!(d.positive && levels.includes(d.positive))) report.push(`Positive class: ${posName} (taken by its name; choose Positive to change it).`);
   const negName = levels.find((l) => l !== posName)!;
   const sc = chosen(ds, d.scores);
   if (typeof sc === 'string') return err(sc);
@@ -251,8 +272,17 @@ export function rocNode(ds: Dataset, d: RocData): StatOut {
     // (the best threshold by the rule chosen)
     const pickBest = () => {
       if (d.cutoff === 'closest') return rowsT.reduce((x, y) => ((1 - y.q.sens) ** 2 + (1 - y.q.spec) ** 2 < (1 - x.q.sens) ** 2 + (1 - x.q.spec) ** 2 ? y : x));
-      if (d.cutoff === 'sens') return rowsT.filter((r2) => r2.q.sens >= d.target).reduce((x, y) => (y.q.spec > x.q.spec ? y : x), rowsT[rowsT.length - 1]);
-      if (d.cutoff === 'spec') return [...rowsT].reverse().filter((r2) => r2.q.spec >= d.target).reduce((x, y) => (y.q.sens > x.q.sens ? y : x), rowsT[0]);
+      // (a target no threshold reaches: the nearest one, said)
+      if (d.cutoff === 'sens') {
+        const ok = rowsT.filter((r2) => r2.q.sens >= d.target);
+        if (!ok.length) warnings.push(`${c.name}: no threshold reaches a sensitivity of ${fmtNum(d.target, 4)}: the nearest is given.`);
+        return ok.reduce((x, y) => (y.q.spec > x.q.spec ? y : x), rowsT.reduce((x, y) => (y.q.sens > x.q.sens ? y : x)));
+      }
+      if (d.cutoff === 'spec') {
+        const ok = rowsT.filter((r2) => r2.q.spec >= d.target);
+        if (!ok.length) warnings.push(`${c.name}: no threshold reaches a specificity of ${fmtNum(d.target, 4)}: the nearest is given.`);
+        return ok.reduce((x, y) => (y.q.sens > x.q.sens ? y : x), rowsT.reduce((x, y) => (y.q.spec > x.q.spec ? y : x)));
+      }
       return rowsT.reduce((x, y) => (y.j > x.j ? y : x));
     };
     const b = pickBest();
@@ -301,7 +331,20 @@ export function survivalNode(ds: Dataset, d: SurvivalData): StatOut {
   if (!ec) return err(d.event ? `No column “${d.event}”.` : 'Choose the column that says if the event happened (1) or the time is censored (0).');
   const gc = d.group ? byName(ds, d.group) : undefined;
   if (d.group && !gc) return err(`No column “${d.group}”.`);
-  const isEvent = (i: number) => (d.eventIs ? levelOf(ec, i) === d.eventIs : Number.isFinite(ec.values[i]) ? ec.values[i] !== 0 : /^(yes|true|dead|died|event|failed|1)$/i.test(levelOf(ec, i)));
+  // (the event: the value chosen; else 1 / 0 and the words of Probability plot — dead, death, failed … / alive,
+  // censored …; 1 and 2 only: R's coding, 2 the event, said; another value: left out, said)
+  const nums = new Set<number>();
+  for (let i = 0; i < ec.values.length; i++) if (Number.isFinite(ec.values[i])) nums.add(ec.values[i]);
+  const r12 = !d.eventIs && nums.size > 0 && [...nums].every((v) => v === 1 || v === 2) && nums.has(2);
+  if (r12) warnings.push(`${ec.name}: coded 1 and 2: 2 taken as the event, 1 as censored (as in R).`);
+  const eventOf = (i: number): boolean | null => {
+    if (d.eventIs) return levelOf(ec, i) === d.eventIs;
+    if (r12) return ec.values[i] === 2;
+    const s = suspendedOf(ec.text?.[i], ec.values[i]);
+    return s === null ? null : !s;
+  };
+  const isEvent = (i: number) => eventOf(i) === true;
+  const unknown = new Set<string>();
   const names: string[] = [];
   const time: number[] = [];
   const ev: boolean[] = [];
@@ -312,6 +355,10 @@ export function survivalNode(ds: Dataset, d: SurvivalData): StatOut {
     const known = Number.isFinite(ec.values[i]) || levelOf(ec, i);
     const g = gc ? levelOf(gc, i) : 'All';
     if (!Number.isFinite(t) || !known || !g) continue;
+    if (eventOf(i) === null) {
+      unknown.add(levelOf(ec, i));
+      continue;
+    }
     if (t < 0) {
       neg++;
       continue;
@@ -323,6 +370,7 @@ export function survivalNode(ds: Dataset, d: SurvivalData): StatOut {
     grp.push(k);
   }
   if (neg) warnings.push(`${neg} negative time${neg > 1 ? 's' : ''} left out.`);
+  if (unknown.size) warnings.push(`${ec.name}: ${[...unknown].slice(0, 5).map((u) => `“${u}”`).join(', ')} neither an event nor censored: left out (choose the value of the event).`);
   if (time.length < 2) return err('At least 2 subjects with a time and an event mark.');
   if (!ev.some(Boolean)) return err('No event: every time is censored (check the event column and the value that means the event).');
   const kms: KM[] = names.map((_, k) => kaplanMeier(time.filter((_, i) => grp[i] === k), ev.filter((_, i) => grp[i] === k), lvl, d.ci));
@@ -370,7 +418,7 @@ export function survivalNode(ds: Dataset, d: SurvivalData): StatOut {
     const TN: Record<SurvivalData['test'], string> = { logrank: 'Log-rank (Mantel–Cox)', gehan: 'Gehan–Breslow–Wilcoxon', tarone: 'Tarone–Ware' };
     const lr = logRank(time, ev, grp, names.length, d.test, lvl);
     const rows: Row[] = [{ Comparison: names.join(' vs '), Test: TN[d.test], 'χ²': lr.chi2, df: lr.df, p: lr.p, 'p (Holm)': NaN, [`Significant (α = ${a})`]: sig(lr.p, a) }];
-    report.push(`${TN[d.test]}: χ²(${lr.df}) = ${f3(lr.chi2)}, ${fp(lr.p)}: the survival ${lr.p < a ? 'differs' : 'does not differ'} between the groups at α = ${a}.`);
+    report.push(`${TN[d.test]}: χ²(${lr.df}) = ${f3(lr.chi2)}, ${fp(lr.p)}: the survival ${says(lr.p, a, 'differs', 'does not differ')} between the groups at α = ${a}.`);
     if (d.pairs && names.length > 2) {
       const pr: Row[] = [];
       for (let x = 0; x < names.length; x++)
@@ -432,6 +480,9 @@ export function designOf(ds: Dataset, d: DesignSpec, yc: Column, rowOk: (i: numb
     return cols.length - 1;
   };
   if (d.intercept) add('Intercept', rowsUsed.map(() => 1));
+  // (no intercept: the first category keeps all its levels — a mean for each —, the others their dummies against a
+  // reference)
+  let allLevels = !d.intercept;
   const main: Term[] = xs.map((c) => {
     if (!isCat(c)) return { name: c.name, vars: [c.name], cols: [add(c.name, rowsUsed.map((i) => c.values[i]))] };
     const lv: string[] = [];
@@ -439,7 +490,8 @@ export function designOf(ds: Dataset, d: DesignSpec, yc: Column, rowOk: (i: numb
     // (in their natural order: I, II, III; 2 before 10)
     lv.sort(natural);
     const ref = d.refs?.[c.name] && lv.includes(d.refs[c.name]) ? d.refs[c.name] : lv[0];
-    const others = lv.filter((l) => l !== ref);
+    const others = allLevels ? lv : lv.filter((l) => l !== ref);
+    allLevels = false;
     return { name: c.name, vars: [c.name], cols: others.map((l) => add(`${c.name} [${l}]`, rowsUsed.map((i) => (levelOf(c, i) === l ? 1 : 0)))) };
   });
   terms.push(...main);
@@ -533,8 +585,9 @@ export function regressNode(ds: Dataset, d: RegressData): StatOut {
   const dw = e.slice(1).reduce((x, v, r) => x + (v - e[r]) ** 2, 0) / e.reduce((x, v) => x + v * v, 0);
   // (Breusch–Pagan, Koenker's studentized form: n R² of e² on the predictors)
   const e2 = e.map((v, r) => (v * sw[r]) ** 2);
+  // (with a constant always: a model without an intercept would else give a negative R²)
   const aux = leastSquares(
-    rowsUsed.map((_, r) => all.map((j) => cols[j][r])),
+    rowsUsed.map((_, r) => [...(d.intercept ? [] : [1]), ...all.map((j) => cols[j][r])]),
     e2,
   );
   const e2m = e2.reduce((x, v) => x + v, 0) / n;

@@ -84,7 +84,7 @@ export function checkStat3(ok: Ok) {
     const ds: Dataset = { name: 'k', columns: [txt('R1', K.r1), txt('R2', K.r2), txt('R3', K.r3)] };
     const kOk = (['none', 'linear', 'quadratic'] as const).every((w, i) => {
       const ref = K[['None', 'linear', 'quadratic'][i]];
-      const t = agreeNode(ds, { ...AGREE_DEFAULTS, mode: 'kappa', cols: 'R1, R2', weights: w }).tables.out;
+      const t = agreeNode(ds, { ...AGREE_DEFAULTS, mode: 'kappa', cols: 'R1, R2', weights: w, order: 'mild, moderate, severe' }).tables.out;
       return near(val(t, 'Value'), ref[0], 1e-12) && near(val(t, 'SE'), ref[1], 1e-10) && near(val(t, 'CI low'), ref[2], 1e-10) && near(val(t, 'z'), ref[4], 1e-9) && near(val(t, 'p'), ref[5], 1e-9);
     });
     const fl = agreeNode(ds, { ...AGREE_DEFAULTS, mode: 'kappa', cols: 'R1, R2, R3' }).tables.out;

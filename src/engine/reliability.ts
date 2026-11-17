@@ -15,8 +15,8 @@ import { maxOf, minOf } from './minmax.ts';
 export function suspendedOf(text: string | undefined, value: number): boolean | null {
   const t = (text ?? '').trim().toLowerCase();
   if (t) {
-    if (/^(0|s|susp|suspended|suspension|c|cens|censored|r|right|runout|run-out|false|no|n|alive|survived)$/.test(t)) return true;
-    if (/^(1|f|fail|failed|failure|e|event|true|yes|y|dead|died)$/.test(t)) return false;
+    if (/^(0|s|susp|suspended|suspension|c|cens|censored|r|right|runout|run-out|false|no|n|alive|survived|lost)$/.test(t)) return true;
+    if (/^(1|f|fail|failed|failure|e|event|true|yes|y|dead|died|death|deceased)$/.test(t)) return false;
     return null;
   }
   if (value === 0) return true;

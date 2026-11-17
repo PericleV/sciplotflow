@@ -561,7 +561,7 @@ function labExample(): Project {
   const cc = add(b, 'agree', 'lab-ccc', 680, 900, { ...AGREE_DEFAULTS, mode: 'ccc', cols: 'Analyzer A, Analyzer B' });
   link(b, mi, cc, 'in');
   const gi = add(b, 'import', 'lab-grades', 0, 1500, { ...IMPORT_DEFAULTS, name: 'three pathologists', fileName: 'biopsies.txt', text: g.join('\n'), textId: 'lab-2' });
-  const kp = add(b, 'agree', 'lab-kappa', 680, 1500, { ...AGREE_DEFAULTS, mode: 'kappa', cols: 'Pathologist 1, Pathologist 2', weights: 'quadratic' });
+  const kp = add(b, 'agree', 'lab-kappa', 680, 1500, { ...AGREE_DEFAULTS, mode: 'kappa', cols: 'Pathologist 1, Pathologist 2', weights: 'quadratic', order: 'mild, moderate, severe' });
   link(b, gi, kp, 'in');
   const fk = add(b, 'agree', 'lab-fleiss', 680, 2200, { ...AGREE_DEFAULTS, mode: 'kappa', cols: 'Pathologist 1, Pathologist 2, Pathologist 3' });
   link(b, gi, fk, 'in');

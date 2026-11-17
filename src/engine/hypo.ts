@@ -537,7 +537,7 @@ function det(a: number[][]): number {
 }
 
 // ---- nonparametric ----
-// Mann–Whitney U (U of the first group; exact without ties when a group has fewer than 8 values, else the normal
+// Mann–Whitney U (U of the first group; exact without ties when a group has 8 values or fewer (as SciPy), else the normal
 // approximation with the tie and continuity corrections)
 export function mannWhitney(a: number[], b: number[], alt: Alt = 'two-sided'): TestResult {
   const [n1, n2] = [a.length, b.length];
@@ -545,7 +545,7 @@ export function mannWhitney(a: number[], b: number[], alt: Alt = 'two-sided'): T
   const R1 = sum(r.slice(0, n1));
   const U1 = R1 - (n1 * (n1 + 1)) / 2;
   const U2 = n1 * n2 - U1;
-  const exact = ties === 0 && Math.min(n1, n2) < 8;
+  const exact = ties === 0 && Math.min(n1, n2) <= 8;
   if (exact) {
     // the counts of U = 0 … n1·n2 (Mann & Whitney's recursion)
     const cnt = uCounts(n1, n2);

@@ -121,10 +121,17 @@ export function nFor(q: PowerQ, effect: number, power: number): number {
   }
   return hi;
 }
-// the smallest effect found with the power wanted at n: d, f, w up to 20; r up to 0.9999; p2 from p1 to 1; HR from 1
-// down to 0
+// the smallest effect found with the power wanted at n: d, f, w up to 20; r up to 0.9999; p2 from p1 up to 1 and down to
+// 0 (the nearer of the two); HR from 1 down to 0
 export function effectFor(q: PowerQ, n: number, power: number): number {
-  const at = (u: number) => (q.test === 'prop' ? q.p1 + u * (1 - q.p1) : q.test === 'logrank' ? Math.exp(-20 * u) : q.test === 'corr' ? 0.9999 * u : 20 * u);
+  if (q.test === 'prop') {
+    const up = effectAlong(q, n, power, (u) => q.p1 + u * (1 - q.p1));
+    const down = effectAlong(q, n, power, (u) => q.p1 - u * q.p1);
+    return !Number.isFinite(up) ? down : !Number.isFinite(down) ? up : Math.abs(down - q.p1) < Math.abs(up - q.p1) ? down : up;
+  }
+  return effectAlong(q, n, power, (u) => (q.test === 'logrank' ? Math.exp(-20 * u) : q.test === 'corr' ? 0.9999 * u : 20 * u));
+}
+function effectAlong(q: PowerQ, n: number, power: number, at: (u: number) => number): number {
   const pw = (u: number) => powerOf(q, n, at(u));
   if (!(pw(1 - 1e-9) >= power)) return NaN;
   let [lo, hi] = [1e-12, 1 - 1e-9];

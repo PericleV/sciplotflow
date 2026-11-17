@@ -3874,6 +3874,27 @@ function fitNode(d: FitNodeData, v: Value | undefined, id: string, irfIn?: Value
 // A column on the input of Filter & sort rows or Clean data: a table of that one column (a Y); their “column” output: the
 // first Y of the result (designated), else its first column
 const oneTable = (v: Value | undefined): Value | undefined => (v?.t === 'column' ? { t: 'dataset', v: { name: v.v.name, columns: [{ ...v.v, role: v.v.role && v.v.role !== 'none' ? v.v.role : 'y' }] } } : v);
+// A dataset with the masked cells of every column empty (NaN, no text) and no masks: the statistics leave them out as
+// missing values. n: the cells emptied; rows: the rows with one at least.
+export function unmaskedCells(ds: Dataset): { ds: Dataset; n: number; rows: number } {
+  if (!ds.columns.some((c) => c.mask?.some(Boolean))) return { ds, n: 0, rows: 0 };
+  let n = 0;
+  const rows = new Set<number>();
+  const columns = ds.columns.map((c) => {
+    if (!c.mask?.some(Boolean)) return c.mask ? { ...c, mask: undefined } : c;
+    const values = Float64Array.from(c.values);
+    const text = c.text ? [...c.text] : undefined;
+    for (let i = 0; i < values.length; i++)
+      if (c.mask[i] && (Number.isFinite(values[i]) || text?.[i]?.trim())) {
+        values[i] = NaN;
+        if (text) text[i] = '';
+        n++;
+        rows.add(i);
+      }
+    return { ...c, values, ...(text ? { text } : {}), mask: undefined };
+  });
+  return { ds: { ...ds, columns }, n, rows: rows.size };
+}
 const mainColumn = (ds: Dataset): Record<string, Value> => {
   const c = ds.columns.find((_, j) => roleOf(ds.columns, j) === 'y') ?? ds.columns[0];
   return c ? { column: { t: 'column', v: c } } : {};
@@ -5011,9 +5032,12 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
     case 'agree':
     case 'methcomp':
     case 'logistic': {
-      const v = one('in');
-      if (v?.t !== 'dataset') return { view: { waiting: STAT_WAIT[n.type] ?? STAT3_WAIT[n.type] ?? 'Connect a dataset: the groups as columns, or a value column with factor columns (indexed), or a row per subject.' } };
-      const available = v.v.columns.map(colInfo);
+      const v0 = one('in');
+      if (v0?.t !== 'dataset') return { view: { waiting: STAT_WAIT[n.type] ?? STAT3_WAIT[n.type] ?? 'Connect a dataset: the groups as columns, or a value column with factor columns (indexed), or a row per subject.' } };
+      const available = v0.v.columns.map(colInfo);
+      // the masked values left out (Data manipulation, Clean data …): each column's masked cells empty, as a missing value
+      const um = unmaskedCells(v0.v);
+      const v = { t: 'dataset' as const, v: um.ds };
       const r: StatOut =
         n.type === 'normality'
           ? normalityNode(v.v, n.data)
@@ -5048,12 +5072,13 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       // (the groups compared taken from the columns, none chosen by hand: an X axis among them was left out — said)
       const sd = n.data as { layout?: string; cols?: string; col?: string; design?: string };
       const fromCols =
-        n.type === 'distfit' ? !sd.col
+        n.type === 'distfit' ? !sd.col && !(n.data as { censor?: string }).censor
         : n.type === 'agree' ? true
         : (n.type === 'normality' || n.type === 'ttest' || n.type === 'nonparam' || n.type === 'resample' || (n.type === 'anova' && (!sd.design || sd.design === 'one' || sd.design === 'repeated'))) && sd.layout !== 'indexed';
       const left = fromCols ? axisLeftOut(v.v, n.type === 'distfit' ? '' : (sd.cols ?? '')) : '';
-      const warnings = left ? [`${left} left out: an X axis (designated X, its values in order), not a column of values to ${n.type === 'distfit' ? 'fit' : 'compare'}. Choose the columns to take it.`, ...r.warnings] : r.warnings;
-      if (r.errors.length) return { errors: r.errors, ...(left ? { warnings: warnings.slice(0, 1) } : {}), view: { available, ...(levels ? { levels } : {}) } };
+      const masked = um.n ? [`${um.rows} masked row${um.rows > 1 ? 's' : ''} left out (Data manipulation, Clean data …).`] : [];
+      const warnings = [...(left ? [`${left} left out: an X axis (designated X, its values in order), not a column of values to ${n.type === 'distfit' ? 'fit' : 'compare'}. Choose the columns to take it.`] : []), ...masked, ...r.warnings];
+      if (r.errors.length) return { errors: r.errors, ...(left || masked.length ? { warnings: warnings.slice(0, (left ? 1 : 0) + masked.length) } : {}), view: { available, ...(levels ? { levels } : {}) } };
       const outputs: Record<string, Value> = Object.fromEntries(Object.entries(r.tables).map(([k, t]) => [k, { t: 'dataset', v: t } as Value]));
       return { outputs, warnings, view: { available, report: r.report, ...(levels ? { levels } : {}) } };
     }

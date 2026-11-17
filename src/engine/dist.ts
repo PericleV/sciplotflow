@@ -115,6 +115,7 @@ export function normInv(p: number): number {
 
 // ---- Student's t, F, χ² ----
 export function tCdf(t: number, nu: number): number {
+  if (Number.isNaN(t) || Number.isNaN(nu)) return NaN;
   if (!Number.isFinite(t)) return t > 0 ? 1 : 0;
   const p = 0.5 * ibeta(nu / 2, 0.5, nu / (nu + t * t));
   return t >= 0 ? 1 - p : p;
@@ -189,6 +190,7 @@ function overScale(nu: number, g: (s: number) => number): number {
 // The noncentral t: P(T ≤ t) for T = (Z + δ) / S with ν degrees of freedom — from its definition, E[Φ(t S − δ)] over the
 // scale S (ν above 10⁵: S = 1, the normal limit); its quantile by bisection.
 export function nctCdf(t: number, nu: number, delta: number): number {
+  if (Number.isNaN(t) || Number.isNaN(nu)) return NaN;
   if (!Number.isFinite(t)) return t > 0 ? 1 : 0;
   if (nu > 1e5) return normCdf(t - delta);
   return Math.min(1, Math.max(0, overScale(nu, (s) => normCdf(t * s - delta))));

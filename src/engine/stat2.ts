@@ -321,8 +321,10 @@ export function kaplanMeier(time: number[], event: boolean[], level = 0.95, ci: 
   const first = (f: (q: KMStep) => number) => steps.find((q) => f(q) <= 0.5)?.t ?? NaN;
   return { steps, n: time.length, events: event.filter(Boolean).length, median: first((q) => q.s), medLo: first((q) => q.lo), medHi: first((q) => q.hi) };
 }
-// the survival at a time (the step at or before it)
+// the survival at a time (the step at or before it); past the last time followed unknown (NaN, as R), unless it fell to 0
 export function survivalAt(km: KM, t: number): number {
+  const last = km.steps[km.steps.length - 1];
+  if (last && t > last.t && last.s > 0) return NaN;
   let s = 1;
   for (const q of km.steps) {
     if (q.t > t) break;
@@ -402,44 +404,51 @@ export function leastSquares(X: number[][], y: number[]): LS {
   const R = Array.from({ length: p }, () => new Array<number>(p).fill(0));
   const vs: number[][] = [];
   const aliased = new Array<boolean>(p).fill(false);
+  const rowOf = new Array<number>(p).fill(-1);
   const scale = Array.from({ length: p }, (_, j) => Math.sqrt(X.reduce((s, r) => s + r[j] * r[j], 0)) || 1);
+  // (the rows reduced so far: r — a column that depends on those before it is left out and takes no row, so the
+  // next one is reduced on the same rows: its coefficients those of the model without it)
+  let r = 0;
   for (let j = 0; j < p; j++) {
     let norm = 0;
-    for (let i = j; i < n; i++) norm += A[i][j] * A[i][j];
+    for (let i = r; i < n; i++) norm += A[i][j] * A[i][j];
     norm = Math.sqrt(norm);
     const v = new Array<number>(n).fill(0);
-    if (norm < 1e-10 * scale[j]) {
+    if (r >= n || norm < 1e-10 * scale[j]) {
       aliased[j] = true;
       vs.push(v);
       continue;
     }
-    const alpha = A[j][j] > 0 ? -norm : norm;
-    for (let i = j; i < n; i++) v[i] = A[i][j];
-    v[j] -= alpha;
-    const vn = v.reduce((s, x) => s + x * x, 0);
+    const alpha = A[r][j] > 0 ? -norm : norm;
+    for (let i = r; i < n; i++) v[i] = A[i][j];
+    v[r] -= alpha;
+    const vn = v.reduce((t, x) => t + x * x, 0);
     vs.push(v);
     if (vn > 0) {
       for (let k = j; k < p; k++) {
-        let s = 0;
-        for (let i = j; i < n; i++) s += v[i] * A[i][k];
-        const f = (2 * s) / vn;
-        for (let i = j; i < n; i++) A[i][k] -= f * v[i];
+        let t = 0;
+        for (let i = r; i < n; i++) t += v[i] * A[i][k];
+        const f = (2 * t) / vn;
+        for (let i = r; i < n; i++) A[i][k] -= f * v[i];
       }
-      let s = 0;
-      for (let i = j; i < n; i++) s += v[i] * yy[i];
-      const f = (2 * s) / vn;
-      for (let i = j; i < n; i++) yy[i] -= f * v[i];
+      let t = 0;
+      for (let i = r; i < n; i++) t += v[i] * yy[i];
+      const f = (2 * t) / vn;
+      for (let i = r; i < n; i++) yy[i] -= f * v[i];
     }
-    for (let k = j; k < p; k++) R[j][k] = A[j][k];
+    // (row r of R, kept at row j: the solving below reads R[keep[a]][…] and yy[keep[a]])
+    for (let k = j; k < p; k++) R[j][k] = A[r][k];
+    rowOf[j] = r;
+    r++;
   }
   // (R b = Qᵀy over the columns kept)
   const keep = Array.from({ length: p }, (_, j) => j).filter((j) => !aliased[j]);
   const b = new Array<number>(p).fill(NaN);
   for (let a = keep.length - 1; a >= 0; a--) {
     const j = keep[a];
-    let s = yy[j];
-    for (let c = a + 1; c < keep.length; c++) s -= R[j][keep[c]] * b[keep[c]];
-    b[j] = s / R[j][j];
+    let t = yy[rowOf[j]];
+    for (let c = a + 1; c < keep.length; c++) t -= R[j][keep[c]] * b[keep[c]];
+    b[j] = t / R[j][j];
   }
   // (R⁻¹ of the kept columns, then (XᵀX)⁻¹ = R⁻¹ R⁻ᵀ)
   const q = keep.length;
