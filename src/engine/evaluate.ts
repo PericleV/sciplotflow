@@ -3871,6 +3871,14 @@ function fitNode(d: FitNodeData, v: Value | undefined, id: string, irfIn?: Value
 // Differentiate / Integrate: every Y column on its own (with its X), in the order of X, inside its regions.
 // Output: X, the Y columns each followed by its result (empty outside the regions), and for an integral the area of
 // every region (a table, and the total of the first run as one value).
+// A column on the input of Filter & sort rows or Clean data: a table of that one column (a Y); their “column” output: the
+// first Y of the result (designated), else its first column
+const oneTable = (v: Value | undefined): Value | undefined => (v?.t === 'column' ? { t: 'dataset', v: { name: v.v.name, columns: [{ ...v.v, role: v.v.role && v.v.role !== 'none' ? v.v.role : 'y' }] } } : v);
+const mainColumn = (ds: Dataset): Record<string, Value> => {
+  const c = ds.columns.find((q) => q.role === 'y') ?? ds.columns[0];
+  return c ? { column: { t: 'column', v: c } } : {};
+};
+
 function calculusNode(d: CalculusData, v: Value | undefined, baseIn: Value | undefined): Out {
   if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset (X and Y from the designations, or chosen) or the data of a Plot curve.' } };
   // every Y with its own X (the designated one on its left, as Plot draws it) unless X is chosen
@@ -4922,7 +4930,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
       return { outputs: { out: { t: 'dataset', v: r.dataset } }, warnings: r.warnings };
     }
     case 'filterrows': {
-      const v = one('in');
+      const v = oneTable(one('in'));
       // every sheet of a workbook: the same rules on each, a workbook out
       if (v?.t === 'workbook') {
         const sheets: Dataset[] = [];
@@ -4935,7 +4943,7 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
         }
         return { outputs: { out: { t: 'workbook', v: { name: v.v.name, sheets } } }, view: { available: (v.v.sheets[0]?.columns ?? []).map(colInfo), report } };
       }
-      if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset or a workbook.' } };
+      if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset, a workbook or a column.' } };
       const available = v.v.columns.map(colInfo);
       const r = filterRows(v.v, n.data);
       if (typeof r === 'string') return { errors: [r], view: { available } };
@@ -4950,15 +4958,15 @@ function evalNode(n: AppNode, inputs: Inputs): Out {
         parts.parts = { t: 'workbook', v: { name: 'parts', sheets: sp } };
         parts.side = { t: 'dataset', v: { name: 'parts', columns: sideBySide(sp.flatMap((p) => p.columns.map((c) => ({ ...c, name: `${p.name}: ${c.name}` })))) } };
       }
-      return { outputs: { out: { t: 'dataset', v: r.dataset }, ...parts }, view: { available, report: [r.report], statRows: { used, of, text: r.text } } };
+      return { outputs: { out: { t: 'dataset', v: r.dataset }, ...mainColumn(r.dataset), ...parts }, view: { available, report: [r.report], statRows: { used, of, text: r.text } } };
     }
     case 'clean': {
-      const v = one('in');
-      if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset.' } };
+      const v = oneTable(one('in'));
+      if (v?.t !== 'dataset') return { view: { waiting: 'Connect a dataset or a column.' } };
       const available = v.v.columns.map(colInfo);
       const r = cleanData(v.v, n.data);
       if (typeof r === 'string') return { errors: [r], view: { available } };
-      return { outputs: { out: { t: 'dataset', v: r.dataset }, changes: { t: 'dataset', v: changesTable(r.changes) } }, view: { available, report: r.report } };
+      return { outputs: { out: { t: 'dataset', v: r.dataset }, ...mainColumn(r.dataset), changes: { t: 'dataset', v: changesTable(r.changes) } }, view: { available, report: r.report } };
     }
     case 'curvemath':
       return curveMathNode(n.data, inputs);

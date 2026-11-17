@@ -138,7 +138,7 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
   const sr = r?.view.statRows;
   return (
     <div className="node node-clean">
-      <InPort label="dataset" port="dataset" id="in" title="The rows of this dataset (every column with them); a workbook: the sheet chosen, or every sheet" />
+      <InPort label="dataset" port="dataset" id="in" title="The rows of this dataset (every column with them); a workbook: the sheet chosen, or every sheet; a column: the rows of that one column" />
       {(r?.view.report ?? []).map((l, i) => (
         <div key={i} className="hint">
           {l}
@@ -208,6 +208,7 @@ export function FilterNodeView({ id, data }: NodeProps<FilterNode>) {
       <ResultSummary result={r} />
       <Messages result={r} />
       <OutPort label={out?.t === 'workbook' ? 'workbook' : 'dataset'} port={out?.t === 'workbook' ? 'workbook' : 'dataset'} id="out" title="The rows kept, merged, sorted, thinned (every column); every sheet: a workbook" />
+      {out?.t !== 'workbook' && <OutPort label="column" port="column" id="column" title="The result as one column: the column connected, or the first Y of the dataset (else its first column)" />}
       {(data.parts ?? []).map((p, k) => (
         <OutPort key={k} label={p.name || `Part ${k + 1}`} port="dataset" id={`p-${k}`} title={`The rows of the part “${p.name || `Part ${k + 1}`}”`} />
       ))}
@@ -259,7 +260,7 @@ export function CleanNodeView({ id, data }: NodeProps<CleanNode>) {
   const o = data.outliers;
   return (
     <div className="node node-clean">
-      <InPort label="dataset" port="dataset" id="in" title="X and the columns to clean" />
+      <InPort label="dataset" port="dataset" id="in" title="X and the columns to clean; or a column alone (its values cleaned)" />
       <NodeOptions>
       <div className="col-form">
         <span>Columns</span>
@@ -345,6 +346,7 @@ export function CleanNodeView({ id, data }: NodeProps<CleanNode>) {
       <ResultSummary result={r} />
       <Messages result={r} />
       <OutPort label="dataset" port="dataset" id="out" title="The data cleaned" />
+      <OutPort label="column" port="column" id="column" title="The result as one column: the column connected, or the first Y of the dataset (else its first column)" />
       <OutPort label="changes" port="dataset" id="changes" title="Every value changed: row, column, old, new, why" />
     </div>
   );

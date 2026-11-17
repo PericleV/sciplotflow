@@ -45,6 +45,8 @@ export function parseRowHandle(h: string): { port: RowPort; row: number } | null
 export type PortContext = { node: (id: string) => AppNode | undefined; edges: Edge[]; groupInputs?: { id: string; type?: string }[] };
 
 export function sourcePort(node: AppNode, handle?: string | null, ctx?: PortContext, depth = 0): PortType | null {
+  // (Filter & sort rows, Clean data: their result as one column too)
+  if ((node.type === 'filterrows' || node.type === 'clean') && handle === 'column') return 'column';
   switch (node.type) {
     case 'import':
     case 'book':
@@ -284,10 +286,11 @@ export function targetAccepts(node: AppNode, handle: string | null | undefined):
     case 'smooth':
     case 'fft':
     case 'clean':
-      return handle === 'in' ? ['dataset'] : [];
+      // (a column: a table of that one column)
+      return handle === 'in' ? ['dataset', 'column'] : [];
     case 'filterrows':
-      // a workbook: the sheet chosen in the node, or every sheet
-      return handle === 'in' ? ['dataset', 'workbook'] : [];
+      // a workbook: the sheet chosen in the node, or every sheet; a column: a table of that one column
+      return handle === 'in' ? ['dataset', 'workbook', 'column'] : [];
     case 'interp':
       return handle === 'in' ? ['dataset'] : handle === 'at' ? ['column', 'dataset'] : [];
     case 'normalize':

@@ -7710,6 +7710,25 @@ checkPhase(ok);
   const dfOld = names('calculus', { ...CALCULUS_NEW, withData: undefined });
   ok(sm === 'X (s) | A (V) (smoothed) | B (V) (smoothed)' && smOld === 'X (s) | A (V) | A (V) (smoothed) | B (V) | B (V) (smoothed)' && df === 'X (s) | dA/dX | dB/dX' && dfOld === 'X (s) | A (V) | dA/dX | B (V) | dB/dX', `a new Smooth, Differentiate gives X and its results only; with the data as before — ${sm} · ${df}`);
 }
+// Filter & sort rows and Clean data take a column alone (a table of it) and give their result as a column too
+{
+  const t = ['X;Y', '1;5', '2;3', '3;NaN', '4;9', '5;1', ''].join(String.fromCharCode(10));
+  const g = (type: string, data: object) => {
+    const r = evaluateGraph(
+      [
+        { id: 'i', type: 'import', position: { x: 0, y: 0 }, data: { ...IMPORT_DEFAULTS, text: t, textId: 'oc' } } as AppNode,
+        { id: 'e', type: 'extract', position: { x: 0, y: 0 }, data: { ...EXTRACT_DEFAULTS, column: 'Y', index: 1 } } as AppNode,
+        { id: 'n', type, position: { x: 0, y: 0 }, data } as AppNode,
+      ],
+      [{ id: '1', source: 'i', sourceHandle: 'out', target: 'e', targetHandle: 'in' }, { id: '2', source: 'e', sourceHandle: 'out', target: 'n', targetHandle: 'in' }],
+    ).get('n');
+    const c = r?.outputs.column;
+    return c?.t === 'column' ? `${c.v.name}: ${Array.from(c.v.values).join(',')}` : String(r?.errors ?? r?.view.waiting);
+  };
+  const sorted = g('filterrows', { ...FILTER_DEFAULTS, sortBy: 'Y' });
+  const cleaned = g('clean', { ...CLEAN_DEFAULTS, missing: 'remove' });
+  ok(sorted === 'Y: 1,3,5,9,NaN' && cleaned === 'Y: 5,3,9,1', `a column alone: sorted (Filter & sort rows), its missing value removed (Clean data) — ${sorted} | ${cleaned}`);
+}
 // the numbers of an axis in E notation (1e−3, 2.5e4; a log axis as few digits as each needs)
 {
   const en = { ...SIDE_DEFAULTS, format: 'enot' as const };
