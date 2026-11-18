@@ -4,6 +4,7 @@
 // numbers, operators, text, superscripts and subscripts, fractions (and binomials), roots, sums / products / integrals
 // with their limits, limits under and over, accents and bars, matrices; the rest as its text.
 import { texToMathml } from '../math/mathml.ts';
+import { xmlSafe } from './richDoc.ts';
 
 type El = { tag: string; attrs: Record<string, string>; kids: (El | string)[] };
 
@@ -34,7 +35,8 @@ function parseXml(xml: string): El {
   return root;
 }
 
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+// (the characters XML cannot carry left out: the OMML goes into a .docx)
+const esc = (s: string) => xmlSafe(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const textOf = (e: El | string): string => (typeof e === 'string' ? e : e.kids.map(textOf).join(''));
 const els = (e: El) => e.kids.filter((k): k is El => typeof k !== 'string');
 

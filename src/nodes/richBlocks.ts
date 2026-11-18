@@ -9,14 +9,17 @@ import type { Node as PMNode } from '@tiptap/pm/model';
 import type { EditorView, ViewMutationRecord } from '@tiptap/pm/view';
 import { NodeSelection } from '@tiptap/pm/state';
 import { imageUrl, isTiff } from '../imageFile.ts';
-import { boxCss, cssText, placeCss, placeOf } from './richDoc.ts';
+import { boxCss, cssText, dataAttr, placeCss, placeOf } from './richDoc.ts';
 import { BoxView, PictureView } from './RichPicture.tsx';
 
+// an attribute the block writes itself (no attribute of its own in the HTML)
+const own = (def: string) => ({ default: def, parseHTML: () => null, renderHTML: () => ({}) });
+
 const pictureAttrs = (width: number) => ({
-  width: { default: width },
-  align: { default: 'center' },
-  wrap: { default: false },
-  caption: { default: '' },
+  width: dataAttr('width', width),
+  align: dataAttr('align', 'center'),
+  wrap: dataAttr('wrap', false),
+  caption: dataAttr('caption', ''),
 });
 
 // a live figure of a node of the project
@@ -26,13 +29,13 @@ export const FigureRef = Node.create({
   atom: true,
   draggable: true,
   addAttributes() {
-    return { node: { default: '' }, ...pictureAttrs(100) };
+    return { node: { default: '', parseHTML: (el: HTMLElement) => el.getAttribute('data-figure-ref') ?? '', renderHTML: (a: Record<string, unknown>) => ({ 'data-figure-ref': String(a.node ?? '') }) }, ...pictureAttrs(100) };
   },
   parseHTML() {
-    return [{ tag: 'div[data-figure-ref]', getAttrs: (el) => ({ node: (el as HTMLElement).getAttribute('data-figure-ref') ?? '' }) }];
+    return [{ tag: 'div[data-figure-ref]' }];
   },
-  renderHTML({ node }) {
-    return ['div', { 'data-figure-ref': node.attrs.node }];
+  renderHTML({ HTMLAttributes }) {
+    return ['div', HTMLAttributes];
   },
   addNodeView() {
     return ReactNodeViewRenderer(PictureView);
@@ -46,13 +49,13 @@ export const ImageBlock = Node.create({
   atom: true,
   draggable: true,
   addAttributes() {
-    return { src: { default: '' }, alt: { default: '' }, ...pictureAttrs(60) };
+    return { src: own(''), alt: own(''), ...pictureAttrs(60) };
   },
   parseHTML() {
-    return [{ tag: 'img[src]', getAttrs: (el) => (/^data:image\//.test((el as HTMLElement).getAttribute('src') ?? '') ? { src: (el as HTMLElement).getAttribute('src') } : false) }];
+    return [{ tag: 'img[src]', getAttrs: (el) => (/^data:image\//.test((el as HTMLElement).getAttribute('src') ?? '') ? { src: (el as HTMLElement).getAttribute('src'), alt: (el as HTMLElement).getAttribute('alt') ?? '' } : false) }];
   },
-  renderHTML({ HTMLAttributes }) {
-    return ['img', mergeAttributes({ src: HTMLAttributes.src, alt: HTMLAttributes.alt })];
+  renderHTML({ node, HTMLAttributes }) {
+    return ['img', mergeAttributes({ src: node.attrs.src, alt: node.attrs.alt }, HTMLAttributes)];
   },
   addNodeView() {
     return ReactNodeViewRenderer(PictureView);
@@ -67,7 +70,7 @@ export const TextBox = Node.create({
   defining: true,
   draggable: true,
   addAttributes() {
-    return { width: { default: 100 }, align: { default: 'left' }, wrap: { default: false }, border: { default: '#555555' }, borderWidth: { default: 0.75 }, fill: { default: '' }, padding: { default: 6 } };
+    return { width: dataAttr('width', 100), align: dataAttr('align', 'left'), wrap: dataAttr('wrap', false), border: dataAttr('border', '#555555'), borderWidth: dataAttr('borderWidth', 0.75), fill: dataAttr('fill', ''), padding: dataAttr('padding', 6) };
   },
   addNodeView() {
     return ReactNodeViewRenderer(BoxView);
@@ -75,8 +78,9 @@ export const TextBox = Node.create({
   parseHTML() {
     return [{ tag: 'div[data-text-box]' }];
   },
-  renderHTML({ node }) {
-    return ['div', { 'data-text-box': '', class: 'rich-box', style: cssText(boxCss(node.attrs)) }, 0];
+  renderHTML({ node, HTMLAttributes }) {
+    // (its look as a style too, for a paste elsewhere)
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-text-box': '', class: 'rich-box', style: cssText(boxCss(node.attrs)) }), 0];
   },
 });
 
@@ -208,7 +212,6 @@ class PlacedTableView extends TableView {
 export const PlacedTable = Table.extend({
   draggable: true,
   addAttributes() {
-    const none = { renderHTML: () => ({}) };
-    return { ...this.parent?.(), width: { default: 100, ...none }, align: { default: 'center', ...none }, wrap: { default: false, ...none } };
+    return { ...this.parent?.(), width: dataAttr('width', 100), align: dataAttr('align', 'center'), wrap: dataAttr('wrap', false) };
   },
 }).configure({ resizable: true, View: PlacedTableView });

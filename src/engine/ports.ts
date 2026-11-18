@@ -381,5 +381,20 @@ export function canConnect(source?: AppNode, target?: AppNode, targetHandle?: st
   const p = sourcePort(source, sourceHandle, ctx);
   if (!p) return false;
   const acc = targetAccepts(target, targetHandle);
-  return p === 'any' ? acc.length > 0 : acc.includes(p);
+  if (!(p === 'any' ? acc.length > 0 : acc.includes(p))) return false;
+  // (a Reroute takes anything, but passes it on: what it gives must suit the ports its output already reaches — else a
+  // dataset would reach, through it, a port that takes only a column)
+  return target.type !== 'reroute' || p === 'any' || !ctx || rerouteTakes(target.id, p, ctx, 0);
+}
+// what a Reroute (or a chain of them) already feeds accepts the type p
+function rerouteTakes(id: string, p: PortType, ctx: PortContext, depth: number): boolean {
+  if (depth > 50) return true;
+  return ctx.edges
+    .filter((e) => e.source === id)
+    .every((e) => {
+      const t = ctx.node(e.target);
+      if (!t) return true;
+      if (t.type === 'reroute') return rerouteTakes(t.id, p, ctx, depth + 1);
+      return targetAccepts(t, e.targetHandle).includes(p);
+    });
 }

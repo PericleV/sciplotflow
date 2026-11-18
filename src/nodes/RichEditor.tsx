@@ -45,12 +45,12 @@ import {
   Undo2,
   X,
 } from 'lucide-react';
-import { FONTS } from '../figure/spec.ts';
+import { FONTS, toPt } from '../figure/spec.ts';
 import { IC } from './iconProps.ts';
 import { OptColor } from './fields.tsx';
 import { INDENT_STEP, RICH_BASE, docFromText, isPlain, plainOf, type RichDoc } from './richDoc.ts';
 import { FigureRef, ImageBlock, PlacedTable, TextBox, pictureFromFile } from './richBlocks.ts';
-import { placeOf } from './richDoc.ts';
+import { figureWidthPct, placeOf } from './richDoc.ts';
 import { PlaceTools } from './RichPlace.tsx';
 import { figureOfResult } from './richFigures.ts';
 import { copiedFigure } from './figureClip.ts';
@@ -105,8 +105,9 @@ const EXTENSIONS = [
 ];
 const BORDERS = ['0', '0.5', '0.75', '1', '1.5', '2'];
 
-// the nodes of the project that give a figure (their live figure can go into a note)
-type FigureChoice = { id: string; name: string };
+// the nodes of the project that give a figure (their live figure can go into a note); width: the width it comes in at
+// (its own size, % of the text: its fonts keep their size in points)
+type FigureChoice = { id: string; name: string; width: number };
 
 const SIZES = ['8', '9', '10', '10.5', '11', '12', '14', '16', '18', '20', '24', '28', '36'];
 const SPACINGS = ['1', '1.15', '1.5', '2'];
@@ -257,7 +258,7 @@ function Toolbar({ editor, onLarge, large, figures, onExport, onMath }: { editor
                     className="nodrag"
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {
-                      chain().insertContent({ type: 'figureRef', attrs: { node: f.id } }).run();
+                      chain().insertContent({ type: 'figureRef', attrs: { node: f.id, width: f.width } }).run();
                       setFigMenu(false);
                     }}
                   >
@@ -383,8 +384,10 @@ export function RichEditor({ doc, text, onChange, onLarge, large, compact, mathF
   const { results } = useContext(EngineContext);
   const { getNodes } = useReactFlow<AppNode>();
   const figures: FigureChoice[] = getNodes()
-    .filter((n) => figureOfResult(results.get(n.id)))
-    .map((n) => ({ id: n.id, name: nodeDisplayName(n) }))
+    .flatMap((n) => {
+      const fig = figureOfResult(results.get(n.id));
+      return fig ? [{ id: n.id, name: nodeDisplayName(n), width: figureWidthPct(toPt(fig.width, fig.unit)) }] : [];
+    })
     .sort((a, b) => a.name.localeCompare(b.name));
   const editorRef = useRef<Editor | null>(null);
   // pictures pasted or dropped: a figure just copied under its node comes in live, any other picture as it is
@@ -393,7 +396,8 @@ export function RichEditor({ doc, text, onChange, onLarge, large, compact, mathF
       const bmp = await createImageBitmap(f).catch(() => null);
       const fig = bmp ? copiedFigure(bmp.width, bmp.height) : null;
       bmp?.close();
-      const content = fig && figures.some((q) => q.id === fig) ? { type: 'figureRef', attrs: { node: fig } } : { type: 'imageBlock', attrs: { src: await pictureFromFile(f), alt: f.name } };
+      const live = fig ? figures.find((q) => q.id === fig) : undefined;
+      const content = live ? { type: 'figureRef', attrs: { node: live.id, width: live.width } } : { type: 'imageBlock', attrs: { src: await pictureFromFile(f), alt: f.name } };
       if (content.type === 'imageBlock' && !content.attrs.src) continue;
       const ed = editorRef.current;
       if (!ed || ed.isDestroyed) return;
@@ -448,12 +452,14 @@ export function RichEditor({ doc, text, onChange, onLarge, large, compact, mathF
   }, [editor, doc, text]);
   if (!editor) return null;
   const figureOf = (id: string) => figureOfResult(results.get(id));
+  // (a figure that cannot be drawn: its node removed, or its figure not ready)
+  const has = (id: string) => !!id && getNodes().some((n) => n.id === id);
   const exportAs = (k: ExportKind) => {
     const json = editor.getJSON() as RichDoc;
-    if (k === 'docx') void downloadDocx(json, figureOf, latexToOmml).catch((e: Error) => notify(`The Word file could not be made: ${e.message}`));
-    else if (k === 'pdf') void printNote(json, figureOf, latexToMathml);
-    else if (k === 'md') void downloadMarkdown(json, figureOf).catch((e: Error) => notify(`The Markdown could not be made: ${e.message}`));
-    else void downloadHtml(json, figureOf, latexToMathml);
+    if (k === 'docx') void downloadDocx(json, figureOf, latexToOmml, has).catch((e: Error) => notify(`The Word file could not be made: ${e.message}`));
+    else if (k === 'pdf') void printNote(json, figureOf, latexToMathml, has);
+    else if (k === 'md') void downloadMarkdown(json, figureOf, has).catch((e: Error) => notify(`The Markdown could not be made: ${e.message}`));
+    else void downloadHtml(json, figureOf, latexToMathml, has);
   };
   return (
     <div className={`rich-editor${large ? ' large' : ''}${compact ? ' compact' : ''}`}>

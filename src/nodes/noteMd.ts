@@ -3,21 +3,23 @@
 // formulas as $…$ and $$…$$, figures and pictures as images of their own files (figures/figure-1.png …) with their
 // numbered caption. Superscript, subscript and underline as their HTML tags (Markdown has none); colours, fonts and
 // places are not kept. Pure.
-import { PICTURES, type RichDoc, type RichMark } from './richDoc.ts';
+import { PICTURES, missingText, xmlSafe, type RichDoc, type RichMark } from './richDoc.ts';
 
 // a text with the characters Markdown reads as marks escaped
 const escMd = (s: string) => s.replace(/([\\`*_[\]<>|#])/g, '\\$1');
 
-function inlineMd(nodes: RichDoc[] | undefined): string {
+// cell: in a table's cell (a line break as <br>, a | escaped even in code and formulas: GitHub splits the row first)
+function inlineMd(nodes: RichDoc[] | undefined, cell = false): string {
+  const bar = (t: string) => (cell ? t.replace(/\|/g, '\\|') : t);
   return (nodes ?? [])
     .map((n) => {
-      if (n.type === 'hardBreak') return '  \n';
-      if (n.type === 'inlineMath') return `$${String(n.attrs?.latex ?? '')}$`;
-      if (n.type !== 'text') return inlineMd(n.content);
+      if (n.type === 'hardBreak') return cell ? '<br>' : '  \n';
+      if (n.type === 'inlineMath') return `$${bar(xmlSafe(String(n.attrs?.latex ?? '')))}$`;
+      if (n.type !== 'text') return inlineMd(n.content, cell);
       const marks = n.marks ?? [];
       const has = (t: string) => marks.some((m: RichMark) => m.type === t);
-      const raw = n.text ?? '';
-      if (has('code')) return `\`${raw.replace(/`/g, '\\`')}\``;
+      const raw = xmlSafe(n.text ?? '');
+      if (has('code')) return `\`${bar(raw.replace(/`/g, '\\`'))}\``;
       // the marks go around the text, its spaces kept outside them
       const [, lead, core, trail] = /^(\s*)([\s\S]*?)(\s*)$/.exec(raw) ?? ['', '', raw, ''];
       if (!core) return raw;
@@ -36,8 +38,9 @@ function inlineMd(nodes: RichDoc[] | undefined): string {
     .join('');
 }
 
-// file: the name of a figure's or a picture's file (null: none to give)
-export function noteMarkdown(doc: RichDoc, file: (n: RichDoc, k: number) => string | null): string {
+// file: the name of a figure's or a picture's file (null: none to give); has: a node still in the project (a figure
+// that cannot be drawn says why)
+export function noteMarkdown(doc: RichDoc, file: (n: RichDoc, k: number) => string | null, has?: (node: string) => boolean): string {
   let figure = 0;
   const out: string[] = [];
   const block = (n: RichDoc, indent = '', quote = ''): string[] => {
@@ -48,7 +51,9 @@ export function noteMarkdown(doc: RichDoc, file: (n: RichDoc, k: number) => stri
       const k = ++figure;
       const caption = typeof a.caption === 'string' ? a.caption : '';
       const f = file(n, k);
-      return pre([f ? `![${escMd(caption || `Figure ${k}`)}](${f})` : `*(Figure ${k}: no longer in the project)*`, ...(caption ? ['', `*Figure ${k}. ${escMd(caption)}*`] : []), '']);
+      // every figure its number (as in the editor), its caption after it
+      const missing = `*(${escMd(missingText(n, has?.(String(a.node ?? ''))))})*`;
+      return pre([f ? `![${escMd(caption || `Figure ${k}`)}](${f})` : missing, '', `*Figure ${k}.${caption ? ` ${escMd(caption)}` : ''}*`, '']);
     }
     switch (n.type) {
       case 'paragraph':
@@ -62,8 +67,12 @@ export function noteMarkdown(doc: RichDoc, file: (n: RichDoc, k: number) => stri
         while (lines.length && lines[lines.length - 1].trim() === `${quote}>`.trim()) lines.pop();
         return [...lines, quote.trimEnd()];
       }
-      case 'codeBlock':
-        return pre(['```', ...inlineMd(kids).split('\n'), '```', '']);
+      case 'codeBlock': {
+        // its text as it is (nothing escaped), in a fence longer than any run of backticks in it
+        const code = xmlSafe(kids.map((t) => t.text ?? '').join(''));
+        const fence = '`'.repeat(Math.max(3, ...[...code.matchAll(/`+/g)].map((m) => m[0].length + 1)));
+        return pre([fence, ...code.split('\n'), fence, '']);
+      }
       case 'horizontalRule':
         return pre(['---', '']);
       case 'blockMath':
@@ -82,7 +91,40 @@ export function noteMarkdown(doc: RichDoc, file: (n: RichDoc, k: number) => stri
         return [...lines, ''];
       }
       case 'table': {
-        const rows = kids.map((r) => (r.content ?? []).flatMap((c) => [inlineMd((c.content ?? []).flatMap((p) => [...(p.content ?? []), { type: 'text', text: ' ' }])).trim(), ...Array.from({ length: (Number(c.attrs?.colspan) || 1) - 1 }, () => '')]));
+        // the grid as in the Word file: a cell merged across, empty places after it; merged down, empty places under it
+        const text = (c: RichDoc) => (c.content ?? []).map((p) => inlineMd(p.content, true).trim()).filter(Boolean).join('<br>');
+        const width = Math.max(1, ...kids.map((r) => (r.content ?? []).reduce((s, c) => s + (Number(c.attrs?.colspan) || 1), 0)));
+        const down = new Array<number>(width).fill(0); // rows still covered by a cell above, per column
+        const downSpan = new Array<number>(width).fill(1);
+        const rows = kids.map((r) => {
+          const out: string[] = [];
+          const own = [...(r.content ?? [])];
+          let col = 0;
+          while (col < width) {
+            if (down[col] > 0) {
+              down[col]--;
+              const s = downSpan[col];
+              out.push(...new Array<string>(s).fill(''));
+              col += s;
+              continue;
+            }
+            const c = own.shift();
+            if (!c) {
+              out.push('');
+              col++;
+              continue;
+            }
+            const span = Math.max(1, Number(c.attrs?.colspan) || 1);
+            const rowspan = Number(c.attrs?.rowspan) || 1;
+            if (rowspan > 1) {
+              down[col] = rowspan - 1;
+              downSpan[col] = span;
+            }
+            out.push(text(c), ...new Array<string>(span - 1).fill(''));
+            col += span;
+          }
+          return out;
+        });
         const cols = Math.max(1, ...rows.map((r) => r.length));
         const line = (r: string[]) => `| ${Array.from({ length: cols }, (_, i) => r[i] ?? '').join(' | ')} |`;
         return pre([line(rows[0] ?? []), `|${' --- |'.repeat(cols)}`, ...rows.slice(1).map(line), '']);

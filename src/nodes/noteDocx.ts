@@ -5,7 +5,7 @@
 // pictures in their paragraph, each with its caption numbered by Word (a SEQ field). Pure: the pictures come as bytes
 // from the caller (the live figures drawn by it).
 import { strToU8, zipSync, type Zippable } from 'fflate';
-import { INDENT_STEP, PICTURES, RICH_BASE, placeOf, type Place, type RichDoc, type RichMark } from './richDoc.ts';
+import { INDENT_STEP, PICTURES, RICH_BASE, missingText, placeOf, xmlSafe, type Place, type RichDoc, type RichMark } from './richDoc.ts';
 
 // a picture ready for the file: its bytes, their kind, its size in pt
 export type DocxPicture = { bytes: Uint8Array; ext: 'png' | 'jpeg'; w: number; h: number };
@@ -16,7 +16,8 @@ const PAGE = { w: 11906, h: 16838, margin: 1134 }; // A4, 20 mm margins (twips)
 const TEXT_W_PT = (PAGE.w - 2 * PAGE.margin) / 20;
 const EMU = 12700; // per pt
 
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+// (every text into XML: the characters XML cannot carry left out)
+const esc = (s: string) => xmlSafe(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const hex = (c: unknown): string | null => {
   if (typeof c !== 'string') return null;
   const m = /^#?([0-9a-f]{6})$/i.exec(c.trim()) ?? /^#?([0-9a-f]{3})$/i.exec(c.trim());
@@ -39,6 +40,7 @@ type Ctx = {
   picture: (n: RichDoc) => DocxPicture | null;
   math?: DocxMath;
   figure: number; // the pictures numbered so far
+  has?: (node: string) => boolean; // a node still in the project (a figure that cannot be drawn: why)
 };
 
 const rel = (ctx: Ctx, type: string, target: string, external = false) => {
@@ -47,47 +49,66 @@ const rel = (ctx: Ctx, type: string, target: string, external = false) => {
   return id;
 };
 
-function runProps(marks: RichMark[] | undefined, extra = ''): string {
-  const p: string[] = [];
+// the run properties (CT_RPr), each element once, in the order of the schema
+const RPR_ORDER = ['rStyle', 'rFonts', 'b', 'bCs', 'i', 'iCs', 'caps', 'smallCaps', 'strike', 'dstrike', 'outline', 'shadow', 'emboss', 'imprint', 'noProof', 'snapToGrid', 'vanish', 'webHidden', 'color', 'spacing', 'w', 'kern', 'position', 'sz', 'szCs', 'highlight', 'u', 'effect', 'bdr', 'shd', 'fitText', 'vertAlign', 'rtl', 'cs', 'em', 'lang', 'eastAsianLayout', 'specVanish', 'oMath'];
+// a run's own properties given by where it stands (a header cell's bold, a link's style, a code block's font): element → its XML
+type RunBase = Record<string, string>;
+const CODE_FONT = '<w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New"/>';
+const shd = (fill: string) => `<w:shd w:val="clear" w:color="auto" w:fill="${fill}"/>`;
+
+function runProps(marks: RichMark[] | undefined, base: RunBase = {}): string {
+  // two marks giving the same property (code and a font, a highlight and a background): the first one, the innermost
+  // (as on screen); the run's place gives what no mark gives
+  const p: Record<string, string> = {};
+  const set = (k: string, xml: string) => {
+    if (!(k in p)) p[k] = xml;
+  };
   for (const m of marks ?? []) {
     const a = m.attrs ?? {};
-    if (m.type === 'bold') p.push('<w:b/>');
-    else if (m.type === 'italic') p.push('<w:i/>');
-    else if (m.type === 'underline') p.push('<w:u w:val="single"/>');
-    else if (m.type === 'strike') p.push('<w:strike/>');
-    else if (m.type === 'superscript') p.push('<w:vertAlign w:val="superscript"/>');
-    else if (m.type === 'subscript') p.push('<w:vertAlign w:val="subscript"/>');
-    else if (m.type === 'code') p.push('<w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New"/>');
-    else if (m.type === 'highlight') {
-      const c = hex(a.color) ?? 'FFF59D';
-      p.push(`<w:shd w:val="clear" w:color="auto" w:fill="${c}"/>`);
-    } else if (m.type === 'textStyle') {
+    if (m.type === 'bold') set('b', '<w:b/>');
+    else if (m.type === 'italic') set('i', '<w:i/>');
+    else if (m.type === 'underline') set('u', '<w:u w:val="single"/>');
+    else if (m.type === 'strike') set('strike', '<w:strike/>');
+    else if (m.type === 'superscript') set('vertAlign', '<w:vertAlign w:val="superscript"/>');
+    else if (m.type === 'subscript') set('vertAlign', '<w:vertAlign w:val="subscript"/>');
+    else if (m.type === 'code') set('rFonts', CODE_FONT);
+    else if (m.type === 'highlight') set('shd', shd(hex(a.color) ?? 'FFF59D'));
+    else if (m.type === 'textStyle') {
       const f = fontName(a.fontFamily);
-      if (f) p.push(`<w:rFonts w:ascii="${esc(f)}" w:hAnsi="${esc(f)}" w:cs="${esc(f)}"/>`);
+      if (f) set('rFonts', `<w:rFonts w:ascii="${esc(f)}" w:hAnsi="${esc(f)}" w:cs="${esc(f)}"/>`);
       const c = hex(a.color);
-      if (c) p.push(`<w:color w:val="${c}"/>`);
+      if (c) set('color', `<w:color w:val="${c}"/>`);
       const sz = ptOf(a.fontSize);
-      if (sz) p.push(`<w:sz w:val="${Math.round(sz * 2)}"/><w:szCs w:val="${Math.round(sz * 2)}"/>`);
+      if (sz) {
+        set('sz', `<w:sz w:val="${Math.round(sz * 2)}"/>`);
+        set('szCs', `<w:szCs w:val="${Math.round(sz * 2)}"/>`);
+      }
       const bg = hex(a.backgroundColor);
-      if (bg) p.push(`<w:shd w:val="clear" w:color="auto" w:fill="${bg}"/>`);
+      if (bg) set('shd', shd(bg));
     }
   }
-  // Word wants the properties in its order: fonts, b, i, strike, color, sz, u, shd, vertAlign
-  const order = ['w:rStyle', 'w:rFonts', 'w:b/', 'w:i/', 'w:strike', 'w:color', 'w:sz ', 'w:szCs', 'w:u ', 'w:shd', 'w:vertAlign'];
-  const all = [extra, ...p].filter(Boolean);
-  all.sort((x, y) => order.findIndex((o) => x.startsWith(`<${o}`)) - order.findIndex((o) => y.startsWith(`<${o}`)));
-  return all.length ? `<w:rPr>${all.join('')}</w:rPr>` : '';
+  for (const [k, xml] of Object.entries(base)) set(k, xml);
+  const keys = Object.keys(p).sort((x, y) => RPR_ORDER.indexOf(x) - RPR_ORDER.indexOf(y));
+  return keys.length ? `<w:rPr>${keys.map((k) => p[k]).join('')}</w:rPr>` : '';
 }
 
-function runs(nodes: RichDoc[] | undefined, ctx: Ctx, extra = ''): string {
+// a run's text: its line breaks and tabs as Word's own (a code block's lines kept)
+const textXml = (s: string) =>
+  s
+    .replace(/\r\n?/g, '\n')
+    .split(/(\n|\t)/)
+    .map((x) => (x === '\n' ? '<w:br/>' : x === '\t' ? '<w:tab/>' : x ? `<w:t xml:space="preserve">${esc(x)}</w:t>` : ''))
+    .join('');
+
+function runs(nodes: RichDoc[] | undefined, ctx: Ctx, base: RunBase = {}): string {
   return (nodes ?? [])
     .map((n) => {
       if (n.type === 'hardBreak') return '<w:r><w:br/></w:r>';
       if (n.type === 'inlineMath' && ctx.math) return ctx.math(String(n.attrs?.latex ?? ''), false) ?? '';
-      if (n.type !== 'text') return runs(n.content, ctx, extra);
+      if (n.type !== 'text') return runs(n.content, ctx, base);
       const link = n.marks?.find((m) => m.type === 'link');
       const href = typeof link?.attrs?.href === 'string' && /^(https?:|mailto:)/i.test(link.attrs.href) ? link.attrs.href : null;
-      const r = `<w:r>${runProps(n.marks, href ? `${extra}<w:rStyle w:val="Hyperlink"/>` : extra)}<w:t xml:space="preserve">${esc(n.text ?? '')}</w:t></w:r>`;
+      const r = `<w:r>${runProps(n.marks, href ? { ...base, rStyle: '<w:rStyle w:val="Hyperlink"/>' } : base)}${textXml(n.text ?? '')}</w:r>`;
       return href ? `<w:hyperlink r:id="${rel(ctx, 'hyperlink', href, true)}">${r}</w:hyperlink>` : r;
     })
     .join('');
@@ -146,10 +167,11 @@ function block(n: RichDoc, ctx: Ctx, level: number, num?: string): string {
     const k = ++ctx.figure;
     const pic = ctx.picture(n);
     const caption = typeof a.caption === 'string' ? a.caption : '';
-    const place = placeOf(a, 100, 'center');
+    const place = placeOf(a, n.type === 'imageBlock' ? 60 : 100, 'center');
     // floating: the picture fills its frame (a table of one cell, no border), the caption under it in the frame
-    const body = pic ? picturePara(pic, place.wrap ? 100 : place.width, place.wrap ? 'center' : place.align, ctx, `Figure ${k}`, place.wrap ? place.width : 100) : `<w:p>${paraProps({}, 'Caption')}<w:r><w:t>(the figure is no longer in the project)</w:t></w:r></w:p>`;
-    const cap = caption ? `<w:p>${paraProps({ textAlign: place.wrap ? 'center' : place.align }, 'Caption')}<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Figure </w:t></w:r><w:fldSimple w:instr=" SEQ Figure \\* ARABIC "><w:r><w:rPr><w:b/></w:rPr><w:t>${k}</w:t></w:r></w:fldSimple><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">. </w:t></w:r><w:r><w:t xml:space="preserve">${esc(caption)}</w:t></w:r></w:p>` : '';
+    const body = pic ? picturePara(pic, place.wrap ? 100 : place.width, place.wrap ? 'center' : place.align, ctx, `Figure ${k}`, place.wrap ? place.width : 100) : `<w:p>${paraProps({}, 'Caption')}<w:r><w:t xml:space="preserve">(${esc(missingText(n, ctx.has?.(String(a.node ?? ''))))})</w:t></w:r></w:p>`;
+    // every figure its number (as in the editor; Word's SEQ field, so the numbers stay right when updated), its caption after it
+    const cap = `<w:p>${paraProps({ textAlign: place.wrap ? 'center' : place.align }, 'Caption')}<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Figure </w:t></w:r><w:fldSimple w:instr=" SEQ Figure \\* ARABIC "><w:r><w:rPr><w:b/></w:rPr><w:t>${k}</w:t></w:r></w:fldSimple><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">.</w:t></w:r>${caption ? `<w:r><w:t xml:space="preserve"> ${esc(caption)}</w:t></w:r>` : ''}</w:p>`;
     if (!place.wrap) return body + cap;
     const none = 'w:val="nil"';
     return `<w:tbl><w:tblPr>${tblPlace(place)}<w:tblBorders>${['top', 'left', 'bottom', 'right'].map((x) => `<w:${x} ${none}/>`).join('')}</w:tblBorders><w:tblCellMar><w:left w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid><w:gridCol/></w:tblGrid><w:tr><w:tc>${body}${cap}</w:tc></w:tr></w:tbl>`;
@@ -164,7 +186,7 @@ function block(n: RichDoc, ctx: Ctx, level: number, num?: string): string {
     case 'blockquote':
       return (kids ?? []).map((p) => (p.type === 'paragraph' ? `<w:p>${paraProps(p.attrs, 'Quote')}${runs(p.content, ctx)}</w:p>` : block(p, ctx, level))).join('');
     case 'codeBlock':
-      return `<w:p>${runs(kids, ctx, '<w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New"/>')}</w:p>`;
+      return `<w:p>${runs(kids, ctx, { rFonts: CODE_FONT })}</w:p>`;
     case 'horizontalRule':
       return '<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="999999"/></w:pBdr></w:pPr></w:p>';
     case 'bulletList':
@@ -220,7 +242,7 @@ function block(n: RichDoc, ctx: Ctx, level: number, num?: string): string {
             downSpan[col] = span;
           }
           const head = c.type === 'tableHeader';
-          const inner = (c.content ?? []).map((p) => (p.type === 'paragraph' ? `<w:p>${paraProps(p.attrs)}${runs(p.content, ctx, head ? '<w:b/>' : '')}</w:p>` : block(p, ctx, 0))).join('') || '<w:p/>';
+          const inner = (c.content ?? []).map((p) => (p.type === 'paragraph' ? `<w:p>${paraProps(p.attrs)}${runs(p.content, ctx, head ? { b: '<w:b/>' } : {})}</w:p>` : block(p, ctx, 0))).join('') || '<w:p/>';
           cells.push(`<w:tc><w:tcPr><w:tcW w:w="${colW * span}" w:type="dxa"/>${span > 1 ? `<w:gridSpan w:val="${span}"/>` : ''}${rowspan > 1 ? '<w:vMerge w:val="restart"/>' : ''}${head ? '<w:shd w:val="clear" w:color="auto" w:fill="F0F0F0"/>' : ''}</w:tcPr>${inner}</w:tc>`);
           col += span;
         }
@@ -257,8 +279,9 @@ const lvl = (k: number, numbered: boolean) =>
   `<w:lvl w:ilvl="${k}"><w:start w:val="1"/><w:numFmt w:val="${numbered ? ['decimal', 'lowerLetter', 'lowerRoman'][k % 3] : 'bullet'}"/><w:lvlText w:val="${numbered ? `%${k + 1}.` : ['•', '◦', '▪'][k % 3]}"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="${360 * (k + 1)}" w:hanging="360"/></w:pPr></w:lvl>`;
 
 // the document as the bytes of a .docx
-export function noteDocx(doc: RichDoc, picture: (n: RichDoc) => DocxPicture | null, math?: DocxMath, title = 'Note'): Uint8Array {
-  const ctx: Ctx = { rels: [], media: {}, nums: [], picture, math, figure: 0 };
+// has: a node still in the project (a figure that cannot be drawn says why)
+export function noteDocx(doc: RichDoc, picture: (n: RichDoc) => DocxPicture | null, math?: DocxMath, title = 'Note', has?: (node: string) => boolean): Uint8Array {
+  const ctx: Ctx = { rels: [], media: {}, nums: [], picture, math, figure: 0, has };
   const body = blocks(doc.content, ctx);
   const font = fontName(RICH_BASE.font) ?? 'Arial';
   const ns =

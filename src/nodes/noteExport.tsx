@@ -54,9 +54,12 @@ const fileName = (title: string) => title.replace(/[^\w.-]+/g, '_').replace(/^_+
 // a formula drawn for a page (MathML: the browser draws it)
 type MathHtml = (latex: string, display: boolean) => string;
 
+// a node still in the project (a figure that cannot be drawn says why)
+type Has = (node: string) => boolean;
+
 // the whole note as an HTML page (A4, 20 mm margins when printed)
-export function noteHtml(doc: RichDoc, figure: (node: string) => Figure | undefined, title = noteTitle(doc), math?: MathHtml): string {
-  const body = renderToStaticMarkup(<RichView doc={doc} full={{ figure, math }} className="rich-full" />);
+export function noteHtml(doc: RichDoc, figure: (node: string) => Figure | undefined, title = noteTitle(doc), math?: MathHtml, has?: Has): string {
+  const body = renderToStaticMarkup(<RichView doc={doc} full={{ figure, math, has }} className="rich-full" />);
   const t = title.replace(/[<&>]/g, (c) => ({ '<': '&lt;', '&': '&amp;', '>': '&gt;' })[c] ?? c);
   return `<!doctype html><html><head><meta charset="utf-8"><title>${t}</title><style>@page { size: A4; margin: 20mm } body { margin: 0; background: #ffffff } @media screen { body { max-width: 170mm; margin: 20mm auto } }${DOC_CSS}</style></head><body>${body}</body></html>`;
 }
@@ -74,24 +77,24 @@ async function figuresReady(doc: RichDoc, figure: (node: string) => Figure | und
   await mathReady();
 }
 
-export async function printNote(doc: RichDoc, figure: (node: string) => Figure | undefined, math?: MathHtml) {
+export async function printNote(doc: RichDoc, figure: (node: string) => Figure | undefined, math?: MathHtml, has?: Has) {
   const w = window.open('', '_blank');
   if (!w) {
     notify('The browser blocked the print window: allow pop-ups for this page.');
     return;
   }
   await figuresReady(doc, figure);
-  w.document.write(noteHtml(doc, figure, noteTitle(doc), math));
+  w.document.write(noteHtml(doc, figure, noteTitle(doc), math, has));
   w.document.close();
   w.focus();
   // the pictures and fonts loaded first
   setTimeout(() => w.print(), 500);
 }
 
-export async function downloadHtml(doc: RichDoc, figure: (node: string) => Figure | undefined, math?: MathHtml) {
+export async function downloadHtml(doc: RichDoc, figure: (node: string) => Figure | undefined, math?: MathHtml, has?: Has) {
   await figuresReady(doc, figure);
   const title = noteTitle(doc);
-  download(noteHtml(doc, figure, title, math), `${fileName(title)}.html`, 'text/html');
+  download(noteHtml(doc, figure, title, math, has), `${fileName(title)}.html`, 'text/html');
 }
 
 // a picture of the note made ready for Word: a live figure drawn at 300 dpi, a picture kept as JPEG or redrawn as PNG
@@ -125,7 +128,7 @@ async function pictureBytes(n: RichDoc, figure: (node: string) => Figure | undef
   return blob ? { bytes: new Uint8Array(await blob.arrayBuffer()), ext: 'png', w, h } : null;
 }
 
-export async function downloadDocx(doc: RichDoc, figure: (node: string) => Figure | undefined, math?: DocxMath) {
+export async function downloadDocx(doc: RichDoc, figure: (node: string) => Figure | undefined, math?: DocxMath, has?: Has) {
   const pics = new Map<RichDoc, DocxPicture | null>();
   const walk = async (n: RichDoc) => {
     if (PICTURES.has(n.type)) pics.set(n, await pictureBytes(n, figure).catch(() => null));
@@ -133,11 +136,11 @@ export async function downloadDocx(doc: RichDoc, figure: (node: string) => Figur
   };
   await walk(doc);
   const title = noteTitle(doc);
-  const bytes = noteDocx(doc, (n) => pics.get(n) ?? null, math, title);
+  const bytes = noteDocx(doc, (n) => pics.get(n) ?? null, math, title, has);
   download(new Blob([bytes as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), `${fileName(title)}.docx`);
 }
 
-export async function downloadMarkdown(doc: RichDoc, figure: (node: string) => Figure | undefined) {
+export async function downloadMarkdown(doc: RichDoc, figure: (node: string) => Figure | undefined, has?: Has) {
   const title = noteTitle(doc);
   const files: Record<string, Uint8Array> = {};
   const pics = new Map<RichDoc, DocxPicture | null>();
@@ -152,7 +155,7 @@ export async function downloadMarkdown(doc: RichDoc, figure: (node: string) => F
     const name = `figures/figure-${k}.${pic.ext === 'jpeg' ? 'jpg' : 'png'}`;
     files[name] = pic.bytes;
     return name;
-  });
+  }, has);
   const base = fileName(title);
   if (!Object.keys(files).length) return download(md, `${base}.md`, 'text/markdown');
   const zip = zipSync({ [`${base}.md`]: strToU8(md), ...files });

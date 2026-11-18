@@ -106,7 +106,7 @@ import { columnsOf, formulaShown, formulaStored, type ColumnsSpec } from '../src
 import { area, centroid, extremum, peakWidth, xAtLevel, yAtX } from '../src/engine/measure.ts';
 import { curveFormulas } from '../src/engine/curvemath.ts';
 import { condsFormula, selectRows, type RowOp } from '../src/engine/rowsel.ts';
-import { rowHandle, sourcePort, targetAccepts } from '../src/engine/ports.ts';
+import { canConnect, rowHandle, sourcePort, targetAccepts } from '../src/engine/ports.ts';
 import { checkImage } from './check-image.ts';
 import { renameSheets } from '../src/engine/sheetNames.ts';
 import { fillNames } from '../src/engine/batch.ts';
@@ -121,6 +121,7 @@ import { checkAuditSignalFrac } from './check-audit-frac.ts';
 import { checkAuditGraphPlot } from './check-audit-graph-plot.ts';
 import { checkAuditGraphStat } from './check-audit-graph-stat.ts';
 import { checkAuditGraphSurf } from './check-audit-graph-surf.ts';
+import { checkAuditNote } from './check-audit-note.ts';
 import { checkPhase } from './check-phase.ts';
 import { armsOf, closestOnSeg, cornersOf as boundaryCorners, createCalMapper, detectRegions, followFrame, evalLeverPoint, frameOf, phaseFaces, regionFills, regionPhases, runPhaseDigitizer, sampleSpline, snapPoint, totalOfUnit, type PhaseDigitizerData } from '../src/engine/phasedigitize.ts';
 import { PHASE_DIGITIZER_DEFAULTS } from '../src/defaults.ts';
@@ -6782,6 +6783,7 @@ checkAuditSignalFrac(ok);
 checkAuditGraphPlot(ok);
 checkAuditGraphStat(ok);
 checkAuditGraphSurf(ok);
+checkAuditNote(ok);
 
 // ---- Phase diagram: against closed forms ----
 checkPhase(ok);
@@ -8033,6 +8035,27 @@ checkPhase(ok);
   ).get('w');
   const wy = (wf?.view.figure?.axes[0].curves ?? []).filter((c) => /^wf:\d$/.test(c.key)).flatMap((c) => Array.from(c.series.y.values).filter(Number.isFinite));
   ok(wy.length > 0 && Math.max(...wy) < 20, `Waterfall: a masked 50 neither drawn nor setting the offsets (largest drawn ${wy.length ? fmtNum(Math.max(...wy), 4) : '—'})`);
+}
+// ---- the audit, section Notes: N8 — a Reroute does not let a type through that what it feeds refuses ----
+{
+  const at = { x: 0, y: 0 };
+  const nodes = [
+    { id: 'i', type: 'import', position: at, data: { ...IMPORT_DEFAULTS } },
+    { id: 'r1', type: 'reroute', position: at, data: {} },
+    { id: 'r2', type: 'reroute', position: at, data: {} },
+    { id: 'm', type: 'mathcol', position: at, data: { ...MATHCOL_DEFAULTS } },
+    { id: 'e', type: 'extract', position: at, data: { ...EXTRACT_DEFAULTS } },
+  ] as AppNode[];
+  const edges = [
+    { id: '1', source: 'r1', sourceHandle: 'out', target: 'r2', targetHandle: 'in' },
+    { id: '2', source: 'r2', sourceHandle: 'out', target: 'm', targetHandle: 'in-0' },
+  ];
+  const ctx = { node: (id: string) => nodes.find((q) => q.id === id), edges };
+  const byId = (id: string) => nodes.find((q) => q.id === id);
+  const dsIn = canConnect(byId('i'), byId('r1'), 'in', 'out', ctx);
+  const colIn = canConnect(byId('e'), byId('r1'), 'in', 'out', ctx);
+  const free = canConnect(byId('i'), byId('r1'), 'in', 'out', { node: ctx.node, edges: [] });
+  ok(!dsIn && colIn && free, `Reroute: a dataset refused when the chain of Reroutes feeds a column port (${dsIn}), a column taken (${colIn}), a free Reroute takes anything (${free})`);
 }
 // the numbers of an axis in E notation (1e−3, 2.5e4; a log axis as few digits as each needs)
 {

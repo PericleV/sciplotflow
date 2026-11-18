@@ -4,7 +4,7 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { FigureSvg } from '../figure/render.tsx';
 import { toPt, type Figure } from '../figure/spec.ts';
-import { INDENT_STEP, PICTURES, RICH_BASE, boxCss, placeCss, placeOf, type RichDoc, type RichMark } from './richDoc.ts';
+import { INDENT_STEP, PICTURES, RICH_BASE, boxCss, missingText, placeCss, placeOf, safeColor, safeFont, safeSize, xmlSafe, type RichDoc, type RichMark } from './richDoc.ts';
 import { MathSvg } from '../math/MathSvg.tsx';
 import { mathFace, type MathFontChoice } from '../math/sizes.ts';
 
@@ -16,7 +16,8 @@ const safeHref = (v: unknown) => (typeof v === 'string' && /^(https?:|mailto:)/i
 const safeSrc = (v: unknown) => (typeof v === 'string' && /^data:image\//.test(v) ? v : undefined);
 
 // full: the whole document (the export), with the figures of the project (by node)
-export type RichFull = { figure: (node: string) => Figure | undefined; math?: (latex: string, display: boolean) => string; mathFont?: MathFontChoice };
+// (has: a node still in the project — a figure that cannot be drawn says why)
+export type RichFull = { figure: (node: string) => Figure | undefined; math?: (latex: string, display: boolean) => string; mathFont?: MathFontChoice; has?: (node: string) => boolean };
 
 function marked(text: ReactNode, marks: RichMark[] | undefined, key: number): ReactNode {
   let out = text;
@@ -29,8 +30,9 @@ function marked(text: ReactNode, marks: RichMark[] | undefined, key: number): Re
     else if (m.type === 'code') out = <code>{out}</code>;
     else if (m.type === 'subscript') out = <sub>{out}</sub>;
     else if (m.type === 'superscript') out = <sup>{out}</sup>;
-    else if (m.type === 'highlight') out = <mark style={{ background: str(a.color) ?? '#fff59d' }}>{out}</mark>;
-    else if (m.type === 'textStyle') out = <span style={{ color: str(a.color), fontFamily: str(a.fontFamily), fontSize: str(a.fontSize), background: str(a.backgroundColor) }}>{out}</span>;
+    // (only a colour, a size, a font family reach the style: never a value that adds properties of its own)
+    else if (m.type === 'highlight') out = <mark style={{ background: safeColor(a.color) ?? '#fff59d' }}>{out}</mark>;
+    else if (m.type === 'textStyle') out = <span style={{ color: safeColor(a.color), fontFamily: safeFont(a.fontFamily), fontSize: safeSize(a.fontSize), background: safeColor(a.backgroundColor) }}>{out}</span>;
     else if (m.type === 'link') out = safeHref(a.href) ? <a href={safeHref(a.href)} target="_blank" rel="noopener noreferrer">{out}</a> : out;
   }
   return <span key={key}>{out}</span>;
@@ -51,7 +53,7 @@ function formula(latex: string, display: boolean, k: number, full?: RichFull): R
 
 function inline(nodes: RichDoc[] | undefined, full?: RichFull): ReactNode[] {
   return (nodes ?? []).map((n, k) =>
-    n.type === 'hardBreak' ? <br key={k} /> : n.type === 'text' ? marked(n.text ?? '', n.marks, k) : n.type === 'inlineMath' ? formula(String(n.attrs?.latex ?? ''), false, k, full) : <span key={k}>{inline(n.content, full)}</span>,
+    n.type === 'hardBreak' ? <br key={k} /> : n.type === 'text' ? marked(xmlSafe(n.text ?? ''), n.marks, k) : n.type === 'inlineMath' ? formula(String(n.attrs?.latex ?? ''), false, k, full) : <span key={k}>{inline(n.content, full)}</span>,
   );
 }
 
@@ -59,8 +61,8 @@ function inline(nodes: RichDoc[] | undefined, full?: RichFull): ReactNode[] {
 function blockStyle(attrs: Record<string, unknown> | undefined): CSSProperties {
   const a = attrs ?? {};
   const s: CSSProperties = {};
-  if (str(a.textAlign) && a.textAlign !== 'left') s.textAlign = a.textAlign as CSSProperties['textAlign'];
-  if (str(a.lineHeight)) s.lineHeight = a.lineHeight as string;
+  if (a.textAlign === 'center' || a.textAlign === 'right' || a.textAlign === 'justify') s.textAlign = a.textAlign;
+  if (safeSize(a.lineHeight)) s.lineHeight = safeSize(a.lineHeight);
   if (num(a.spaceBefore) !== undefined) s.marginTop = `${a.spaceBefore}pt`;
   if (num(a.spaceAfter) !== undefined) s.marginBottom = `${a.spaceAfter}pt`;
   if (num(a.indent)) s.marginLeft = `${(a.indent as number) * INDENT_STEP}pt`;
@@ -84,9 +86,10 @@ function Blocks({ blocks, full, numbers }: { blocks: RichDoc[]; full?: RichFull;
       const fig = n.type === 'figureRef' ? full.figure(String(a.node ?? '')) : undefined;
       const src = n.type === 'imageBlock' ? safeSrc(a.src) : undefined;
       return (
-        <figure key={k} className="rich-pic" style={placeCss(placeOf(a, 100, 'center')) as CSSProperties}>
-          {fig ? <FigureSvg fig={fig} display={{ width: 600, height: (600 * toPt(fig.height, fig.unit)) / toPt(fig.width, fig.unit) }} idPrefix={`ex${no}`} /> : src ? <img src={src} alt={str(a.alt) ?? caption ?? ''} /> : <div className="rich-pic-missing">(a figure no longer in the project)</div>}
-          {caption && <figcaption className="rich-caption">{label}</figcaption>}
+        <figure key={k} className="rich-pic" style={placeCss(placeOf(a, n.type === 'imageBlock' ? 60 : 100, 'center')) as CSSProperties}>
+          {fig ? <FigureSvg fig={fig} display={{ width: 600, height: (600 * toPt(fig.height, fig.unit)) / toPt(fig.width, fig.unit) }} idPrefix={`ex${no}`} /> : src ? <img src={src} alt={str(a.alt) ?? caption ?? ''} /> : <div className="rich-pic-missing">{missingText(n, full.has?.(String(a.node ?? '')))}</div>}
+          {/* every figure its number, as in the editor; its caption after it */}
+          <figcaption className="rich-caption">{label}</figcaption>
         </figure>
       );
     }
