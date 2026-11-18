@@ -122,6 +122,7 @@ import { checkAuditGraphPlot } from './check-audit-graph-plot.ts';
 import { checkAuditGraphStat } from './check-audit-graph-stat.ts';
 import { checkAuditGraphSurf } from './check-audit-graph-surf.ts';
 import { checkAuditNote } from './check-audit-note.ts';
+import { checkCollabRelay } from './check-collab-relay.ts';
 import { checkPhase } from './check-phase.ts';
 import { armsOf, closestOnSeg, cornersOf as boundaryCorners, createCalMapper, detectRegions, followFrame, evalLeverPoint, frameOf, phaseFaces, regionFills, regionPhases, runPhaseDigitizer, sampleSpline, snapPoint, totalOfUnit, type PhaseDigitizerData } from '../src/engine/phasedigitize.ts';
 import { PHASE_DIGITIZER_DEFAULTS } from '../src/defaults.ts';
@@ -6784,6 +6785,7 @@ checkAuditGraphPlot(ok);
 checkAuditGraphStat(ok);
 checkAuditGraphSurf(ok);
 checkAuditNote(ok);
+await checkCollabRelay(ok);
 
 // ---- Phase diagram: against closed forms ----
 checkPhase(ok);

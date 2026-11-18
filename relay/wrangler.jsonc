@@ -1,0 +1,18 @@
+// The SciPlotFlow relay (Cloudflare Workers + Durable Objects, Free plan). Deploy: npx wrangler login, npx wrangler deploy.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sciplotflow-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
+  },
+  // the Free plan needs SQLite-backed Durable Objects
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  "vars": {
+    // the pages that may use the relay (comma list): GitHub Pages, the dev server, the LAN dev server (add your
+    // computer's LAN address, e.g. https://192.168.1.132:5181)
+    "ALLOWED_ORIGINS": "https://periclev.github.io,http://localhost:5180,https://localhost:5181,http://127.0.0.1:5180,https://127.0.0.1:5181,https://192.168.1.132:5181"
+  },
+  "observability": { "enabled": false }
+}

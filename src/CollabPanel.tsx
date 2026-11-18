@@ -1,12 +1,15 @@
-// Collaborate: work on the project together, in real time, browser to browser. Start a session with this project, then
-// invite someone on another computer (an invitation code to send them, their answer code to paste back) or open it in
-// another tab of this browser; or join a session with an invitation. Who is in it, and how each one is connected.
-import { useEffect, useState } from 'react';
+// Collaborate: work on the project together, in real time. Start a session with this project and send its link (the
+// browsers connect directly when they can, else through the relay; encrypted end to end) — or, without a server, invite
+// someone on another computer with codes (an invitation to send them, their answer to paste back), or open it in
+// another tab of this browser; or join a session with its link or an invitation. Who is in it, and how each one is
+// connected.
+import { useEffect, useRef, useState } from 'react';
 import { Check, Copy, LogOut, Users, X } from 'lucide-react';
 import { IC } from './nodes/iconProps.ts';
 import { connectionWord, diagnostics, isAddress, joinLink, linkKind, micAllowed, revealLocalAddresses, roomLink, STUN, type Invitation, type LinkKind } from './collab/links.ts';
 import { myName, setMyColor, setMyName } from './theme.ts';
 import type { CollabSession } from './collab/session.ts';
+import { RELAY_URL, relayUrl, setRelayUrl, socketBase, type Status } from './collab/relay.ts';
 
 function CopyBox({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false);
@@ -117,6 +120,35 @@ function StartCountdown({ at, before }: { at: number; before: string }) {
       {before} <b>{s} s</b>.
     </div>
   );
+}
+
+// the seconds left until a moment, counted down (0 at the end)
+function useSecondsTo(at: number) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, []);
+  return Math.max(0, Math.ceil((at - now) / 1000));
+}
+// A session by link: how it goes (connecting, live, the host's connection lost and the minute left, this side's own
+// connection to the relay lost and coming back)
+function RelayState({ st, host }: { st: Status; host: boolean }) {
+  const left = useSecondsTo(st.s === 'host-lost' || st.s === 'reconnecting' ? st.until : 0);
+  if (st.s === 'connecting') return <div className="msg">Connecting to the relay…</div>;
+  if (st.s === 'host-lost')
+    return (
+      <div className="msg err">
+        The host's connection was lost: save your project (Save). The session ends in <b>{left} s</b> unless the host comes back. Your work here is kept either way, and merged if the host comes back.
+      </div>
+    );
+  if (st.s === 'reconnecting')
+    return (
+      <div className="msg err">
+        The connection to the relay was lost; connecting again (<b>{left} s</b> left). {host ? 'The others wait for you meanwhile.' : 'Your work here is kept and merged when you are back.'}
+      </div>
+    );
+  return null;
 }
 
 // a connection to another browser: its state, how it was made and its round trip (every 2 s), the diagnostics to copy
@@ -232,6 +264,11 @@ export function CollabPanel(props: {
   // the guest's answer to send back (joined by an invitation), with the host's name and the connection
   answer: { code: string; host: string; pc: RTCPeerConnection; at: number } | null;
   joinCode: string; // an invitation that opened the page (#join=…)
+  sessionLink: string; // a session's link that opened the page (#s=…)
+  notice?: string; // how the last session by link ended (shown until another starts)
+  // a session by link, through the relay (at the address given): null when started / joined, else why not
+  onStartLink: (name: string, relay: string) => Promise<string | null>;
+  onJoinLink: (link: string, name: string, relay: string) => Promise<string | null>;
   onStart: (name: string) => void;
   onJoin: (code: string, name: string, address?: string) => Promise<string | null>;
   // a guest in the session: a new invitation (after the connection was lost) answered within it
@@ -246,11 +283,56 @@ export function CollabPanel(props: {
   const [againErr, setAgainErr] = useState('');
   // the other computer's local address, typed (the same network, when the made-up names are not found)
   const [address, setAddress] = useState('');
+  // a session by link: the relay's address (Advanced; kept in this browser), the link to join, what went wrong
+  const [relay, setRelay] = useState(relayUrl);
+  const [link, setLink] = useState(props.sessionLink);
+  const [linkErr, setLinkErr] = useState('');
+  const [startErr, setStartErr] = useState('');
+  const [linkBusy, setLinkBusy] = useState<'' | 'start' | 'join'>('');
+  const [noServer, setNoServer] = useState(false);
   const [, tick] = useState(0);
   const s = props.session;
   useEffect(() => (s ? s.onPeers(() => tick((n) => n + 1)) : undefined), [s]);
   useEffect(() => (s ? s.presence.onChange(() => tick((n) => n + 1)) : undefined), [s]);
+  useEffect(() => (s?.relay ? s.relay.onStatus(() => tick((n) => n + 1)) : undefined), [s]);
+  useEffect(() => (s?.relay ? s.relay.onChange(() => tick((n) => n + 1)) : undefined), [s]);
   const named = name.trim();
+  const relayOk = !!socketBase(relay);
+  const startLink = () => {
+    setMyName(named);
+    setStartErr('');
+    if (!relayOk) {
+      setStartErr(relay.trim() ? 'The relay address under Advanced is not a web address (wss://…).' : 'No relay is set, so a session by link cannot start. Set one under Advanced, or use “Without a server” below.');
+      if (!relay.trim()) setNoServer(true);
+      return;
+    }
+    setLinkBusy('start');
+    void props.onStartLink(named, relay).then((e) => {
+      setLinkBusy('');
+      if (e) setStartErr(e);
+    });
+  };
+  const joinLink = () => {
+    setMyName(named);
+    setLinkErr('');
+    if (!relayOk) {
+      setLinkErr(relay.trim() ? 'The relay address under Advanced is not a web address (wss://…).' : 'No relay is set (Advanced, below): a session link cannot be joined without it.');
+      return;
+    }
+    setLinkBusy('join');
+    void props.onJoinLink(link, named, relay).then((e) => {
+      setLinkBusy('');
+      if (e) setLinkErr(e);
+    });
+  };
+  // opened with a session's link and the name known: joining at once
+  const auto = useRef(false);
+  useEffect(() => {
+    if (auto.current || s || !props.sessionLink || !named) return;
+    auto.current = true;
+    joinLink();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <aside className="library collab-panel">
       <header>
@@ -261,49 +343,93 @@ export function CollabPanel(props: {
       </header>
       {!s && (
         <>
+          {props.notice && <div className="msg">{props.notice}</div>}
           <p className="hint">
-            Work on this project together, in real time: every change shows up for everyone. It goes from browser to browser, encrypted, with no server of ours in between. A public STUN server ({STUN.replace('stun:', '')}) only tells each browser what its address looks like from outside.
-          </p>
-          <p className="hint collab-limits">
-            For now: it works between computers on the same network (an institute, a home), and between most home networks. Between a phone’s mobile network (or its hotspot) and a network behind a firewall, the browsers often cannot reach each other: there is no relay server yet. Joining the institute’s network through its VPN gets round it.
+            Work on this project together, in real time: every change shows up for everyone. Start a session and send its link: whoever opens it joins, as long as you are in the session. The browsers connect directly when they can, else through a small relay server. Everything is encrypted end to end: the key is in the link, after the #, and never reaches the relay.
           </p>
           <label>
             Your name
             <input value={name} placeholder="shown to the others" onChange={(e) => setName(e.target.value)} onBlur={() => setMyName(named)} />
           </label>
           <h4>Start</h4>
-          <button
-            disabled={!named}
-            title={named ? 'A session with this project: then invite the others' : 'Write your name first'}
-            onClick={() => {
-              setMyName(named);
-              props.onStart(named);
-            }}
-          >
-            <Users {...IC} /> Start a session with this project
+          <button disabled={!named || linkBusy !== ''} title={named ? 'A session with this project: you get a link to send to the others' : 'Write your name first'} onClick={startLink}>
+            <Users {...IC} /> {linkBusy === 'start' ? 'Starting…' : 'Start a session'}
           </button>
+          {startErr && <div className="msg err">{startErr}</div>}
           <h4>Join</h4>
-          <textarea rows={4} value={code} placeholder="the invitation you received (the link or the code)" onChange={(e) => setCode(e.target.value)} />
+          {props.sessionLink && <p className="hint">You opened the link of a session.{named ? '' : ' Write your name, then Join.'}</p>}
+          <textarea rows={2} value={link} placeholder="the session's link you received" onChange={(e) => setLink(e.target.value)} />
           <div className="row">
-            <button
-              disabled={!named || !code.trim() || busy}
-              title={named ? 'Join: your answer code appears, to send back' : 'Write your name first'}
-              onClick={() => {
-                setMyName(named);
-                setBusy(true);
-                setErr('');
-                void props.onJoin(code, named, address).then((e) => {
-                  setBusy(false);
-                  if (e) setErr(e);
-                });
-              }}
-            >
-              {busy ? 'Preparing the answer…' : 'Join'}
+            <button disabled={!named || !link.trim() || linkBusy !== ''} title={named ? 'Join the session: its project opens here' : 'Write your name first'} onClick={joinLink}>
+              {linkBusy === 'join' ? 'Joining…' : 'Join'}
             </button>
             <span className="hint">The project you have open now is kept in Projects.</span>
           </div>
-          {err && <div className="msg err">{err}</div>}
-          <SameNetwork address={address} setAddress={setAddress} />
+          {linkErr && <div className="msg err">{linkErr}</div>}
+          <details className="collab-step" open={noServer} onToggle={(e) => setNoServer(e.currentTarget.open)}>
+            <summary>
+              <b>Without a server</b>
+            </summary>
+              <p className="hint">
+                Work on this project together, in real time: every change shows up for everyone. It goes from browser to browser, encrypted, with no server of ours in between. A public STUN server ({STUN.replace('stun:', '')}) only tells each browser what its address looks like from outside.
+              </p>
+              <p className="hint collab-limits">
+                For now: it works between computers on the same network (an institute, a home), and between most home networks. Between a phone’s mobile network (or its hotspot) and a network behind a firewall, the browsers often cannot reach each other: there is no relay server yet. Joining the institute’s network through its VPN gets round it.
+              </p>
+              <h4>Start</h4>
+              <button
+                disabled={!named}
+                title={named ? 'A session with this project: then invite the others with codes' : 'Write your name first'}
+                onClick={() => {
+                  setMyName(named);
+                  props.onStart(named);
+                }}
+              >
+                <Users {...IC} /> Start a session with codes
+              </button>
+              <h4>Join</h4>
+              <textarea rows={4} value={code} placeholder="the invitation you received (the link or the code)" onChange={(e) => setCode(e.target.value)} />
+              <div className="row">
+                <button
+                  disabled={!named || !code.trim() || busy}
+                  title={named ? 'Join: your answer code appears, to send back' : 'Write your name first'}
+                  onClick={() => {
+                    setMyName(named);
+                    setBusy(true);
+                    setErr('');
+                    void props.onJoin(code, named, address).then((e) => {
+                      setBusy(false);
+                      if (e) setErr(e);
+                    });
+                  }}
+                >
+                  {busy ? 'Preparing the answer…' : 'Join'}
+                </button>
+                <span className="hint">The project you have open now is kept in Projects.</span>
+              </div>
+              {err && <div className="msg err">{err}</div>}
+              <SameNetwork address={address} setAddress={setAddress} />
+          </details>
+          <details className="collab-step">
+            <summary>
+              <b>Advanced</b>
+            </summary>
+            <label>
+              Relay address
+              <input
+                value={relay}
+                placeholder={RELAY_URL || 'wss://…'}
+                onChange={(e) => {
+                  setRelay(e.target.value);
+                  setRelayUrl(e.target.value);
+                }}
+              />
+            </label>
+            {relay.trim() && !relayOk && <div className="msg err">Not a web address: write it as wss://name.example.workers.dev (or ws://localhost:8787 for a local one).</div>}
+            <p className="hint">
+              The relay passes on how the browsers set up their connection, and the data when they cannot connect directly. It sees only who sends how much to whom, never what (it never gets the key). {RELAY_URL ? `Empty: SciPlotFlow's own (${RELAY_URL}).` : 'SciPlotFlow has no relay of its own yet: set the address of one (relay/ in the source code runs on a free Cloudflare account).'} Kept in this browser.
+            </p>
+          </details>
         </>
       )}
       {s && (
@@ -312,6 +438,13 @@ export function CollabPanel(props: {
             <b>{s.role === 'host' ? 'You started this session' : 'You joined this session'}</b> as {s.name}.{' '}
             {s.joined ? 'Every change here goes to the others, and theirs come here.' : 'Waiting for the project…'}
           </p>
+          {s.relay && <RelayState st={s.relay.status} host={s.role === 'host'} />}
+          {s.relay && s.link() && (
+            <div className="collab-step">
+              <div>{s.role === 'host' ? 'Send this link to the people you want to work with. Anyone who has it can join while you are in the session:' : "The session's link (whoever has it can join too):"}</div>
+              <CopyBox text={s.link()} label="the link" />
+            </div>
+          )}
           {props.answer && (
             <div className="collab-step">
               <div>Send this answer back to {props.answer.host || 'the person who invited you'}:</div>
@@ -320,7 +453,7 @@ export function CollabPanel(props: {
               <LinkStatus pc={props.answer.pc} role="guest (answered)" />
             </div>
           )}
-          {s.lost().map((n) => (
+          {!s.relay && s.lost().map((n) => (
             <div key={n} className="msg err">
               The connection with <b>{n}</b> was lost (a network that dropped, a computer asleep).{' '}
               {s.role === 'host' ? `Make a New invitation below and send it to ${n}: they join again with it, and what both of you did meanwhile is merged.` : `Ask ${n} for a new invitation and paste it under “Join again”: you stay in the session, and what both of you did meanwhile is merged.`}
@@ -347,13 +480,24 @@ export function CollabPanel(props: {
             {s.peers().map((p) => (
               <li key={p.id}>
                 <span className="collab-dot" style={{ background: s.presence.list().find((o) => o.name === p.name)?.color ?? 'var(--border)' }} />
-                <b>{p.name}</b> · {p.via === 'tab' ? 'another tab of this browser' : 'browser to browser'}
+                <b>{p.name}</b> · {p.via === 'tab' ? 'another tab of this browser' : p.via === 'relay' ? 'through the relay' : s.relay ? 'directly, browser to browser' : 'browser to browser'}
                 {p.synced ? '' : ' · getting in step…'}
               </li>
             ))}
+            {s.relay && s.relay.connecting() > 0 && <li className="hint">{s.relay.connecting()} connecting…</li>}
           </ul>
-          {s.role === 'host' && <InviteBox key={s.room} session={s} address={address} />}
-          {s.role === 'guest' && (
+          {s.role === 'host' && !s.relay && <InviteBox key={s.room} session={s} address={address} />}
+          {s.role === 'host' && s.relay && (
+            <details className="collab-step">
+              <summary>
+                <b>Without a server</b>
+              </summary>
+              <p className="hint">For someone the relay does not reach: an invitation with codes instead.</p>
+              <InviteBox key={s.room} session={s} address={address} />
+              <SameNetwork address={address} setAddress={setAddress} />
+            </details>
+          )}
+          {s.role === 'guest' && !s.relay && (
             <>
               <h4>Join again</h4>
               <textarea rows={3} value={again} placeholder="a new invitation (after the connection was lost)" onChange={(e) => setAgain(e.target.value)} />
@@ -375,7 +519,7 @@ export function CollabPanel(props: {
               {againErr && <div className="msg err">{againErr}</div>}
             </>
           )}
-          <SameNetwork address={address} setAddress={setAddress} />
+          {!s.relay && <SameNetwork address={address} setAddress={setAddress} />}
           <h4>Another tab of this browser</h4>
           <div className="row wrap">
             <button title="The session in a new tab of this browser (to try it, or to see two places at once)" onClick={() => window.open(roomLink(s.room), '_blank')}>
@@ -383,7 +527,7 @@ export function CollabPanel(props: {
             </button>
           </div>
           <h4>Leave</h4>
-          <button title="Out of the session: the project stays here as it is now (and in Projects); the others go on without you" onClick={props.onLeave}>
+          <button title={s.relay && s.role === 'host' ? 'End the session for everyone: the project stays here as it is now (and in Projects); the others keep theirs' : 'Out of the session: the project stays here as it is now (and in Projects); the others go on without you'} onClick={props.onLeave}>
             <LogOut {...IC} /> Leave the session
           </button>
           <p className="hint">Undo (Ctrl+Z) undoes only your own changes while you work together. A Python script changed by someone else does not run here until you allow it again.</p>

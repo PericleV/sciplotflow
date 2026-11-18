@@ -15,9 +15,12 @@ import { mergeEdges, mergeNodes, ProjectBinding } from './yproject.ts';
 import { SyncHub, type Link } from './sync.ts';
 import { colorOf, Presence } from './presence.ts';
 import { answer, invite, tabLinks, type Invitation } from './links.ts';
+import { importKey, newKey, newRoomId, parseSession, RelayClient, RelayPeers, sessionLink, socketBase, type PeersOptions, type SocketFactory } from './relay.ts';
 
 export type Role = 'host' | 'guest';
-export type PeerView = { id: string; name: string; synced: boolean; via: 'tab' | 'network' };
+export type PeerView = { id: string; name: string; synced: boolean; via: 'tab' | 'network' | 'relay' };
+// how a session by link reaches the relay (the checks: a socket of Node, no WebRTC)
+export type RelayOptions = PeersOptions & { socket?: SocketFactory };
 // a merge for the page: its nodes and connections from what it shows, the name when the others changed it, the nodes
 // they changed (to see what kind they are: a Python script's code changed elsewhere)
 export type Incoming = { nodes: (cur: AppNode[]) => AppNode[]; edges: (cur: Edge[]) => Edge[]; name?: string; now: Project; base: Project; changed: Set<string> };
@@ -44,9 +47,13 @@ export class CollabSession {
   private stopTabs: () => void;
   private joinedL = new Set<(p: Project) => void>();
   private invitations: Invitation[] = [];
-  private constructor(role: Role, room: string, name: string, start?: Project) {
+  // a session by link: its links through the relay, and the key (in the link, never sent to the relay)
+  relay: RelayPeers | null = null;
+  private keyText = '';
+  private constructor(role: Role, room: string, name: string, start?: Project, byLink = false) {
     this.role = role;
-    this.room = room;
+    // a session by link: a room of 128 random bits (its name on the relay)
+    this.room = byLink ? newRoomId() : room;
     this.name = name;
     this.binding = new ProjectBinding(this.doc, start);
     this.base = this.binding.state;
@@ -65,13 +72,14 @@ export class CollabSession {
     this.stopTabs = tabLinks(room, (l) => this.hub.add(l));
     // who is linked browser to browser now; one that goes is lost (until a link with the same name comes again)
     this.hub.onPeers(() => {
-      const now = new Map(this.peers().filter((p) => p.via === 'network').map((p) => [p.id, p.name]));
+      const now = new Map(this.peers().filter((p) => p.via !== 'tab').map((p) => [p.id, p.name]));
       for (const [id, name] of this.network) if (!now.has(id) && name && !this.hub.left.has(id)) this.gone.add(name);
       for (const name of now.values()) this.gone.delete(name);
       this.network = now;
     });
   }
   private network = new Map<string, string>();
+  private left = false;
   private gone = new Set<string>();
   static host(project: Project, name: string): CollabSession {
     return new CollabSession('host', crypto.randomUUID().replace(/-/g, '').slice(0, 16), name, project);
@@ -89,6 +97,44 @@ export class CollabSession {
     session = new CollabSession('guest', a.room, name);
     early.forEach((l) => session!.hub.add(l));
     return { session, answer: a.code, host: a.host, pc: a.pc, at: a.at };
+  }
+
+  // A session by link (through the relay at `base`): the host's, with this project — or why it could not start.
+  static async startByLink(project: Project, name: string, base: string, o: RelayOptions = {}): Promise<CollabSession | string> {
+    const url = socketBase(base);
+    if (!url) return 'The relay address is not a web address (wss://…).';
+    const k = await newKey();
+    const s = new CollabSession('host', '', name, project, true);
+    const err = await s.byRelay(url, k.key, k.text, o);
+    return err ?? s;
+  }
+  // a guest by a session's link: in the session (the project comes when the host's link is in step), or why not
+  static async joinByLink(link: string, name: string, base: string, o: RelayOptions = {}): Promise<CollabSession | string> {
+    const p = parseSession(link);
+    if (!p) return 'Not a SciPlotFlow session link (copy it whole).';
+    const url = socketBase(base);
+    if (!url) return 'The relay address is not a web address (wss://…).';
+    let key: CryptoKey;
+    try {
+      key = await importKey(p.key);
+    } catch {
+      return 'Not a SciPlotFlow session link (copy it whole).';
+    }
+    const s = new CollabSession('guest', p.room, name);
+    const err = await s.byRelay(url, key, p.key, o);
+    return err ?? s;
+  }
+  private async byRelay(base: string, key: CryptoKey, keyText: string, o: RelayOptions): Promise<string | null> {
+    this.keyText = keyText;
+    const client = new RelayClient({ base, room: this.room, key, role: this.role, socket: o.socket });
+    this.relay = new RelayPeers(client, (l) => this.hub.add(l), o);
+    const err = await this.relay.start();
+    if (err) this.leave();
+    return err;
+  }
+  // the link to send (a session by link): it holds the key, after # (never sent to any server)
+  link(page?: string): string {
+    return this.keyText ? sessionLink(this.room, this.keyText, page) : '';
   }
 
   // the page: where the project shown is read from (when a change made here is written)
@@ -136,12 +182,12 @@ export class CollabSession {
   }
   // the people whose connection (browser to browser) was lost and not made again: a new invitation brings them back
   lost(): string[] {
-    const now = new Set(this.peers().filter((p) => p.via === 'network').map((p) => p.name));
+    const now = new Set(this.peers().filter((p) => p.via !== 'tab').map((p) => p.name));
     for (const n of now) this.gone.delete(n);
     return [...this.gone];
   }
   peers(): PeerView[] {
-    return [...this.hub.peers.values()].map((p) => ({ id: p.link.id, name: p.name || 'someone', synced: p.synced, via: p.link.id.startsWith('tab-') ? 'tab' : 'network' }));
+    return [...this.hub.peers.values()].map((p) => ({ id: p.link.id, name: p.name || 'someone', synced: p.synced, via: p.link.id.startsWith('tab-') ? 'tab' : p.link.id.startsWith('relay-') ? 'relay' : 'network' }));
   }
   // undo / redo of the changes made here (what is pending is written first)
   undoLocal() {
@@ -170,10 +216,14 @@ export class CollabSession {
     return inv;
   }
   leave() {
+    if (this.left) return;
+    this.left = true;
     this.flush();
     this.presence.leave();
     this.stopTabs();
     this.hub.close();
+    // through the relay: the hub's BYE goes first (a host's bye ends the session for everyone)
+    this.relay?.leave();
     for (const inv of this.invitations) inv.pc.close();
     this.undo.destroy();
     this.doc.destroy();

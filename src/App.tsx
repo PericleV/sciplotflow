@@ -393,10 +393,10 @@ function Flow() {
   useEffect(() => {
     document.title = `${projectName || 'Untitled project'} · SciPlotFlow`;
   }, [projectName]);
-  const [panel, setPanel] = useState<'projects' | 'docs' | 'help' | 'collab' | null>(() => (location.hash.startsWith('#join=') ? 'collab' : null));
+  const [panel, setPanel] = useState<'projects' | 'docs' | 'help' | 'collab' | null>(() => (location.hash.startsWith('#join=') || location.hash.startsWith('#s=') ? 'collab' : null));
   // the welcome window: at start (unless turned off; not over a project opened from a link — shared, a session, an
   // invitation), from Help
-  const [welcome, setWelcome] = useState(() => welcomeAtStart() && !RECORD && !/^#(p|c|join)=/.test(location.hash));
+  const [welcome, setWelcome] = useState(() => welcomeAtStart() && !RECORD && !/^#(p|c|join|s)=/.test(location.hash));
   // the clicks on the empty canvas (each folds the options panel when nothing is pinned there)
   const [paneClicks, setPaneClicks] = useState(0);
   // the clicks on a node (each unfolds the options panel, even when it was folded by hand)
@@ -770,6 +770,10 @@ function Flow() {
   // a guest's answer to send back (joined by an invitation), with the host's name and the connection
   const [answerInfo, setAnswerInfo] = useState<{ code: string; host: string; pc: RTCPeerConnection; at: number } | null>(null);
   const [joinCode] = useState(() => (location.hash.startsWith('#join=') ? location.hash.slice(6) : ''));
+  // a session's link that opened the page (#s=<room>.<key>): the panel joins with it
+  const [sessionFrag, setSessionFrag] = useState(() => (location.hash.startsWith('#s=') ? location.hash : ''));
+  // the end of a session by link, said in Collaborate until another session starts (a toast alone is easily missed)
+  const [collabNote, setCollabNote] = useState('');
   const [peerCount, setPeerCount] = useState(0);
   // a merge of the others' changes given to the page (shown once it has rendered)
   const [mergeTick, setMergeTick] = useState(0);
@@ -809,6 +813,26 @@ function Flow() {
       setMergeTick((t) => t + 1);
     });
     const offPeers = collab.onPeers(() => setPeerCount(collab.peers().length));
+    // a session by link: the host's connection lost (a minute to come back), back, or the session over (the project
+    // stays here, as when leaving)
+    let wasLost = false;
+    const offRelay = collab.relay?.onStatus((st) => {
+      if (st.s === 'host-lost' && !wasLost) {
+        wasLost = true;
+        notify(`The host's connection was lost: save your project. The session ends in ${Math.max(1, Math.round((st.until - Date.now()) / 1000))} s unless the host comes back (see Collaborate).`);
+      } else if (st.s === 'live' && wasLost) {
+        wasLost = false;
+        notify('The host is back: the session goes on.');
+      } else if (st.s === 'ended') {
+        const why = st.why === 'left' ? 'the host left' : st.why === 'timeout' ? "the host's connection did not come back" : st.why === 'lost' ? 'the connection to the relay did not come back' : st.why;
+        const note = `The session is over (${why}). The project stays here as it is: Save it to keep it.`;
+        notify(note);
+        setCollabNote(note);
+        // (its link leads nowhere now: not offered to join again)
+        setSessionFrag('');
+        if (collabRef.current === collab) leaveSession();
+      }
+    });
     collab.onJoined((p) => {
       fromSession.current = true;
       load(p, p.name ?? 'Shared project');
@@ -817,6 +841,7 @@ function Flow() {
     return () => {
       offRemote();
       offPeers();
+      offRelay?.();
       undoExt.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -836,6 +861,23 @@ function Flow() {
   const startSession = async (name: string) => {
     const { CollabSession } = await import('./collab/session.ts');
     setCollab(CollabSession.host(toProject(root.nodes, root.edges, projectName, projectId), name));
+  };
+  // a session by link, through the relay: started here (this project), or joined with a link
+  const startLinkSession = async (name: string, relay: string): Promise<string | null> => {
+    setCollabNote('');
+    const { CollabSession } = await import('./collab/session.ts');
+    const r = await CollabSession.startByLink(toProject(root.nodes, root.edges, projectName, projectId), name, relay);
+    if (typeof r === 'string') return r;
+    setCollab(r);
+    return null;
+  };
+  const joinLinkSession = async (link: string, name: string, relay: string): Promise<string | null> => {
+    setCollabNote('');
+    const { CollabSession } = await import('./collab/session.ts');
+    const r = await CollabSession.joinByLink(link, name, relay);
+    if (typeof r === 'string') return r;
+    setCollab(r);
+    return null;
   };
   const joinSession = async (code: string, name: string, address?: string): Promise<string | null> => {
     const { CollabSession } = await import('./collab/session.ts');
@@ -865,7 +907,8 @@ function Flow() {
   // a link to a session in this browser (#c=…): joined through the tabs; an invitation (#join=…): the panel has it
   useEffect(() => {
     const room = location.hash.startsWith('#c=') ? location.hash.slice(3) : '';
-    if (location.hash.startsWith('#c=') || location.hash.startsWith('#join=')) window.history.replaceState(null, '', location.pathname + location.search);
+    // (a session's link too: its key does not stay in the address bar)
+    if (location.hash.startsWith('#c=') || location.hash.startsWith('#join=') || location.hash.startsWith('#s=')) window.history.replaceState(null, '', location.pathname + location.search);
     if (room) void import('./collab/session.ts').then(({ CollabSession }) => setCollab(CollabSession.guest(room, myName() || 'Guest')));
   }, []);
 
@@ -1885,7 +1928,7 @@ function Flow() {
                   }}
                 />
               )}
-              {shownPanel === 'collab' && <CollabPanel onClose={() => setPanel(null)} session={collab} answer={answerInfo} joinCode={joinCode} onStart={(name) => void startSession(name)} onJoin={joinSession} onRejoin={rejoinSession} onLeave={leaveSession} />}
+              {shownPanel === 'collab' && <CollabPanel key={sessionFrag || 'collab'} notice={collabNote} onClose={() => setPanel(null)} session={collab} answer={answerInfo} joinCode={joinCode} sessionLink={sessionFrag} onStartLink={startLinkSession} onJoinLink={joinLinkSession} onStart={(name) => void startSession(name)} onJoin={joinSession} onRejoin={rejoinSession} onLeave={leaveSession} />}
               {shownPanel === 'docs' && <DocumentPanel onClose={() => setPanel(null)} current={projectInfo.current} id={projectId} results={rootEngine.results} />}
             </Suspense>
             </div>

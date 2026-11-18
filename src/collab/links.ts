@@ -7,10 +7,12 @@ import { deflateSync, inflateSync, strFromU8, strToU8 } from 'fflate';
 import type { Link } from './sync.ts';
 
 export const STUN = 'stun:stun.l.google.com:19302';
+// a second public STUN server beside Google's (Cloudflare's): one of them down, the other answers
+export const STUN2 = 'stun:stun.cloudflare.com:3478';
 // a session's room in another tab of this browser; an invitation as a link (the page opens with it)
 export const roomLink = (room: string) => `${location.origin}${location.pathname}#c=${room}`;
 export const joinLink = (code: string) => `${location.origin}${location.pathname}#join=${code}`;
-const ICE: RTCIceServer[] = [{ urls: STUN }];
+export const ICE: RTCIceServer[] = [{ urls: STUN }, { urls: STUN2 }];
 
 const newId = () => crypto.randomUUID().slice(0, 8);
 
@@ -190,7 +192,7 @@ function gathered(pc: RTCPeerConnection, ms = 4000): Promise<void> {
 }
 
 // A data channel as a link (bytes; a full buffer waits until it has room).
-function channelLink(pc: RTCPeerConnection, ch: RTCDataChannel, id: string): Link {
+export function channelLink(pc: RTCPeerConnection, ch: RTCDataChannel, id: string): Link {
   ch.binaryType = 'arraybuffer';
   ch.bufferedAmountLowThreshold = 256 * 1024;
   const queue: Uint8Array[] = [];
@@ -378,7 +380,7 @@ export async function diagnostics(pc: RTCPeerConnection, role: string): Promise<
     `browser: ${navigator.userAgent}`,
     `secure page: ${window.isSecureContext}; microphone allowed (local addresses shown): ${await micAllowed()}`,
     `connection: ${pc.connectionState}; ICE: ${pc.iceConnectionState}; gathering: ${pc.iceGatheringState}; signaling: ${pc.signalingState}`,
-    `STUN server: ${STUN}`,
+    `STUN servers: ${STUN}, ${STUN2}`,
     `ways found here: ${count('local-candidate')}`,
     `ways of the other side: ${count('remote-candidate')}`,
     `in my code: ${candidatesIn(pc.localDescription?.sdp)}`,
